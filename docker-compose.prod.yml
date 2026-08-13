@@ -1,0 +1,68 @@
+# CLOAK 生产环境编排:Postgres + Go 后端 + Caddy(on-demand TLS,Let's Encrypt)
+# 使用:cp .env.example .env 并填入生产值,然后 docker compose -f docker-compose.prod.yml up -d
+# 详细说明与上线检查清单见 docs/deploy.md
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${CLOAK_DB_USER:-cloak}
+      POSTGRES_PASSWORD: ${CLOAK_DB_PASSWORD:?CLOAK_DB_PASSWORD 必须设置}
+      POSTGRES_DB: ${CLOAK_DB_NAME:-cloak}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CLOAK_DB_USER:-cloak} -d ${CLOAK_DB_NAME:-cloak}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    environment:
+      CLOAK_ADDR: ":8080"
+      CLOAK_DATABASE_URL: "postgres://${CLOAK_DB_USER:-cloak}:${CLOAK_DB_PASSWORD:?}@postgres:5432/${CLOAK_DB_NAME:-cloak}?sslmode=disable"
+      CLOAK_PLATFORM_DOMAIN: "${CLOAK_PLATFORM_DOMAIN:?CLOAK_PLATFORM_DOMAIN 必须设置(裸平台域名)}"
+      CLOAK_SERVER_PUBLIC_IP: "${CLOAK_SERVER_PUBLIC_IP:?CLOAK_SERVER_PUBLIC_IP 必须设置(服务器公网 IP)}"
+      CLOAK_SUPERADMIN_EMAIL: "${CLOAK_SUPERADMIN_EMAIL:-}"
+      # 生产必须 true:HTTPS 下 Secure cookie 生效
+      CLOAK_COOKIE_SECURE: "true"
+      CLOAK_MIGRATIONS_DIR: "/app/migrations"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2
+    environment:
+      # 站点域名在 Caddyfile.prod 中硬编码,此处 PLATFORM_DOMAIN 仅用于 NO_PROXY 与提示
+      PLATFORM_DOMAIN: "${CLOAK_PLATFORM_DOMAIN:?}"
+      ACME_EMAIL: "${CLOAK_ACME_EMAIL:-}"
+      # 生产容器同样需绕开宿主代理,授权端点直连 backend
+      NO_PROXY: "backend,localhost,127.0.0.1,.${CLOAK_PLATFORM_DOMAIN:?}"
+      no_proxy: "backend,localhost,127.0.0.1,.${CLOAK_PLATFORM_DOMAIN:?}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
