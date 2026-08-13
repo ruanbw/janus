@@ -177,9 +177,19 @@ docker compose up -d
 
 > 本机 80/443/8080 常被 nginx 等占用,因此开发环境把 Caddy 映射到 **8443**;后端在终端监听 **8081**(见 5.6)。
 
-### 5.2 配置本地域名解析(`/etc/hosts`)
+### 5.2 配置本地域名解析(SwitchHosts / `/etc/hosts`)
 
-开发环境用 RFC 保留测试域 `cloak.test`。Caddy 按 Host/SNI 路由,因此需要把平台后台域名和你要测试的租户子域指向本机:
+开发环境支持两种访问入口:**localhost 直连**与**域名访问**(把域名指向本机)。域名解析用 SwitchHosts 等 hosts 管理工具或手动改 `/etc/hosts` 均可;Caddy 按 Host/SNI 路由、Vite 按 Host 放行,都需要把平台后台域名和你要测试的租户子域指向本机。
+
+**SwitchHosts**(推荐):新增一条规则并开启,内容与 `/etc/hosts` 相同:
+
+```text
+127.0.0.1 app.cloak.test
+127.0.0.1 alice.cloak.test
+127.0.0.1 bob.cloak.test
+```
+
+**手动追加到 `/etc/hosts`**:
 
 ```bash
 sudo sh -c 'echo "127.0.0.1 app.cloak.test" >> /etc/hosts'
@@ -187,11 +197,12 @@ sudo sh -c 'echo "127.0.0.1 app.cloak.test" >> /etc/hosts'
 sudo sh -c 'echo "127.0.0.1 alice.cloak.test bob.cloak.test" >> /etc/hosts'
 ```
 
-- `app.cloak.test` 承载后台(SPA + API)。
+- `app.cloak.test` 承载后台(SPA + API),域名入口两种方式都可用:`http://app.cloak.test:5173`(Vite Dev Server,热更新)与 `https://app.cloak.test:8443`(Caddy + Go 内嵌产物,验证域名/TLS 形态,见 5.4)。
 - `<slug>.cloak.test` 是租户的**平台默认域名**,用于验证短链跳转。
-- 测试**自有域名**时,同样把它加进 `/etc/hosts`(如 `127.0.0.1 links.example.test`);`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 的 DNS 校验会读取 `/etc/hosts`,走真实代码路径(spec 决策 #14)。
+- 测试**自有域名**时,同样把它加进 hosts(如 `127.0.0.1 links.example.test`);`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 的 DNS 校验会读取 hosts,走真实代码路径(spec 决策 #14)。
 
-> `/etc/hosts` 不支持通配符,每个测试子域都要单独一行。也可以用 `curl --resolve`(见 6.4)临时解析,无需改 hosts。
+> hosts 不支持通配符,每个测试子域都要单独一行。也可以用 `curl --resolve`(见 6.4)临时解析,无需改 hosts。
+> Vite Dev Server 默认拒绝非 localhost 的 Host(防 DNS rebinding,返回 403);项目已在 `vite.config.ts` 用 `server.allowedHosts` 放行 `.cloak.test`(由 `web/.env.development` 的 `VITE_PLATFORM_DOMAIN` 控制),换平台域名时同步修改。
 
 ### 5.3 信任 Caddy 本地 CA
 
@@ -211,14 +222,17 @@ sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keyc
 
 > `certs/` 已在 `.gitignore` 中,不会入库。重新创建 Caddy 数据卷后需重新信任。
 
-### 5.4 访问服务
+### 5.4 访问服务(双入口)
+
+开发环境提供 **localhost 直连**与**域名访问**(SwitchHosts)两套入口:
 
 | 入口 | 地址 | 说明 |
 | --- | --- | --- |
-| 后台 | `https://app.cloak.test:8443` | 浏览器打开,证书为本地 CA |
+| 前端/后台(localhost) | `http://localhost:5173` | Vite Dev Server,热更新;`/api` 代理到 8081 |
+| 前端/后台(域名) | `http://app.cloak.test:5173` | 同上,经 SwitchHosts 域名访问(需 5.2 hosts) |
+| 后台(域名 + HTTPS) | `https://app.cloak.test:8443` | Caddy → Go 内嵌产物,验证域名/TLS/证书形态;前端改动需先 `pnpm build`(见 8.5) |
 | 健康检查 | `https://app.cloak.test:8443/healthz` | 期望 `{"status":"ok"}` |
-| 后端 API(直连) | `http://127.0.0.1:8081` | 开发调试用,绕过 Caddy |
-| 前端 Dev Server | `http://localhost:5173` | 见 5.5 |
+| 后端 API(直连) | `http://127.0.0.1:8081` | 绕过 Caddy/Vite,开发调试用 |
 
 ### 5.5 前端本地开发(热更新)
 
@@ -230,7 +244,7 @@ pnpm install        # 首次
 pnpm dev            # http://localhost:5173,/api 代理到后端 8081
 ```
 
-- 浏览器访问 `http://localhost:5173`,`/api/*` 自动代理到 Go 后端,`Set-Cookie` 透传(会话/CSRF cookie 正常)。
+- 浏览器访问 `http://localhost:5173` 或域名入口 `http://app.cloak.test:5173`(见 5.2),`/api/*` 自动代理到 Go 后端,`Set-Cookie` 透传(会话/CSRF cookie 正常)。
 - 开发环境 `CLOAK_COOKIE_SECURE=false`,http 下 cookie 生效。
 - 修改后端代码后在启动后端的终端 `Ctrl+C` 停掉,再重新 `go run` 即可(见 5.6);前端代码由 Dev Server 自动热更新。
 - 修改前端源码后 Dev Server 自动热更新;发布前需重新构建 `web/dist`(见 8.5)。
@@ -653,6 +667,7 @@ docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
 | --- | --- |
 | 浏览器/curl 报证书不受信任 | 未信任本地 CA:执行 5.3;或把 `certs/caddy-root.pem` 导入钥匙串并信任 |
 | `curl: (60) SSL certificate problem` | 同上;临时排查可用 `-k` |
+| 域名访问 Vite 返回 403 | Vite 的 Host 校验未放行:确认 `web/.env.development` 的 `VITE_PLATFORM_DOMAIN` 与访问域名一致(默认已放行 `.cloak.test`,见 5.2 提示) |
 | Caddy 502 Bad Gateway | 后端没在终端启动:确认已执行 5.6 的 `go run` 且监听 8081(`curl -s http://127.0.0.1:8081/healthz`) |
 | 注册返回 409 | 邮箱/slug 已被占用(开发库有历史数据):换 slug,或 6.5 重置 |
 | 自有域名一直 `pending` | hosts 未加该域名/未指向 127.0.0.1;或未到 5 分钟重试周期,可在后台点「重新校验」 |
