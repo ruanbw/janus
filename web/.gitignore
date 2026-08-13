@@ -2,3 +2,6 @@ node_modules
 dist
 *.local
 .DS_Store
+
+# go:embed 需要 dist 入库(单二进制部署,见 web/embed.go)
+!dist/

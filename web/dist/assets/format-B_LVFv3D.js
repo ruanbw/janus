@@ -1,0 +1,1 @@
+import{K as n}from"./index-CUJ7j_2s.js";function e(r){if(!r)return"-";const t=n(r);return t.isValid()?t.format("YYYY-MM-DD HH:mm:ss"):"-"}function f(r,t=48){return r.length<=t?r:`${r.slice(0,t)}…`}export{e as f,f as t};

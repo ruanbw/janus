@@ -1,0 +1,1 @@
+import{C as s,E as e,H as r,D as t}from"./index-CUJ7j_2s.js";function a(n={}){return s("/links",{...n})}function k(n){return t("/links",n)}function l(n,i){return e(`/links/${n}`,i)}function o(n){return r(`/links/${n}`)}function c(n){return t(`/links/${n}/purge`)}export{k as c,o as d,a as l,c as p,l as u};
