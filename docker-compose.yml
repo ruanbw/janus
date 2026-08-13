@@ -1,5 +1,9 @@
-# CLOAK 开发环境编排:Postgres + Go 后端 + Caddy(on-demand TLS,本地 CA)
-# 使用:docker compose up -d --build
+# CLOAK 开发环境编排:只跑基础设施(Postgres + Caddy 反代)。
+# Go 后端与前端在终端直接启动,便于调试:
+#   docker compose up -d                     # 启动 postgres + caddy
+#   CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8081 go run ./cmd/cloak   # 后端
+#   cd web && pnpm dev                       # 前端(代理 /api 到 127.0.0.1:8081)
+# Caddy 通过 host.docker.internal 反代宿主机上的后端(:8081),授权端点直连同一地址。
 # 需用户手动步骤:
 #   1. /etc/hosts 添加(需 sudo):127.0.0.1 app.cloak.test <测试租户子域>.cloak.test
 #   2. 信任 Caddy 本地 CA 根证书:
@@ -22,52 +26,15 @@ services:
       timeout: 3s
       retries: 30
 
-  backend:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    environment:
-      CLOAK_ADDR: ":8080"
-      CLOAK_DATABASE_URL: "postgres://cloak:cloak@postgres:5432/cloak?sslmode=disable"
-      CLOAK_PLATFORM_DOMAIN: "cloak.test"
-      CLOAK_SERVER_PUBLIC_IP: "127.0.0.1"
-      CLOAK_SUPERADMIN_EMAIL: "${CLOAK_SUPERADMIN_EMAIL:-}"
-      # 开发环境经 http 访问后端(前端 Vite dev proxy),Secure cookie 不生效
-      CLOAK_COOKIE_SECURE: "false"
-      CLOAK_MIGRATIONS_DIR: "/app/migrations"
-      # 可选参数与 .env.example/代码默认值一致(compose 显式转发,便于 .env 覆盖)
-      CLOAK_SESSION_TTL: "${CLOAK_SESSION_TTL:-720h}"
-      CLOAK_SESSION_TTL_SHORT: "${CLOAK_SESSION_TTL_SHORT:-24h}"
-      CLOAK_VERIFY_TOKEN_TTL: "${CLOAK_VERIFY_TOKEN_TTL:-24h}"
-      CLOAK_RESET_TOKEN_TTL: "${CLOAK_RESET_TOKEN_TTL:-1h}"
-      CLOAK_DNS_RETRY_INTERVAL: "${CLOAK_DNS_RETRY_INTERVAL:-5m}"
-      CLOAK_DNS_MAX_AGE: "${CLOAK_DNS_MAX_AGE:-72h}"
-      CLOAK_VISIT_RETENTION: "${CLOAK_VISIT_RETENTION:-2160h}"
-      CLOAK_VISIT_CLEANUP_INTERVAL: "${CLOAK_VISIT_CLEANUP_INTERVAL:-24h}"
-      # 邮件:SMTP 凭据来自 .env(未配置时用控制台 mailer)
-      CLOAK_PUBLIC_BASE_URL: "${CLOAK_PUBLIC_BASE_URL:-https://app.cloak.test:8443}"
-      CLOAK_SMTP_HOST: "${CLOAK_SMTP_HOST:-}"
-      CLOAK_SMTP_PORT: "${CLOAK_SMTP_PORT:-465}"
-      CLOAK_SMTP_USERNAME: "${CLOAK_SMTP_USERNAME:-}"
-      CLOAK_SMTP_PASSWORD: "${CLOAK_SMTP_PASSWORD:-}"
-      CLOAK_SMTP_FROM: "${CLOAK_SMTP_FROM:-}"
-    ports:
-      - "127.0.0.1:8081:8080"
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
-
   caddy:
     image: caddy:2
+    # 让容器能访问宿主机上由终端启动的 Go 后端(Linux 需要;macOS/Windows Docker Desktop 自带)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
-      # 容器继承宿主 HTTP(S)_PROXY(如 host.docker.internal:7890),ask 授权请求必须直连 backend
-      - NO_PROXY=backend,localhost,127.0.0.1,.cloak.test
-      - no_proxy=backend,localhost,127.0.0.1,.cloak.test
+      # 容器继承宿主 HTTP(S)_PROXY(如 host.docker.internal:7890),ask 授权请求必须直连宿主机后端
+      - NO_PROXY=host.docker.internal,localhost,127.0.0.1,.cloak.test
+      - no_proxy=host.docker.internal,localhost,127.0.0.1,.cloak.test
     ports:
       # 本机已有其他服务占用 80/443/8080(如 nginx),开发环境映射到 8443;
       # 生产部署按 15-prod-deploy 使用标准 80/443 映射
@@ -76,8 +43,6 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    depends_on:
-      - backend
 
 volumes:
   pgdata:

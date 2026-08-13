@@ -150,33 +150,32 @@ CLOAK 是一个自托管的多租户短链服务:租户管理自己的域名与�
 
 | 工具 | 版本 | 用途 |
 | --- | --- | --- |
-| Docker Desktop(含 Compose v2) | 任意较新版本 | 一键拉起 Postgres / 后端 / Caddy |
-| Go | ≥ 1.26(见 `go.mod`) | 后端编译与测试 |
+| Docker Desktop(含 Compose v2) | 任意较新版本 | 基础设施:Postgres / Caddy |
+| Go | ≥ 1.26(见 `go.mod`) | 终端启动后端(`go run`)与自动化测试 |
 | Node.js | ≥ 20.19(见 `web/package.json` engines) | 前端开发/构建 |
 | pnpm | ≥ 9 | 前端依赖管理 |
 | Caddy 命令行(可选) | ≥ 2.11 | 开发环境信任本地 CA(`caddy trust`) |
 
-> 后端可以完全通过 Docker 运行;`go` 仅在你需要跑 `go test` 或本机直接调试后端时才必须。前端开发需要 Node + pnpm。
+> 开发环境后端用 `go run` 在终端启动、前端用 `pnpm dev` 启动,因此 `go` 与 Node/pnpm 都是必需;Docker 只承载 Postgres 与 Caddy。
 
 ---
 
 ## 5. 快速开始(开发环境)
 
-### 5.1 启动整套服务
+### 5.1 启动基础设施(Docker)
+
+开发环境的分工:**基础设施放 Docker**(Postgres、Caddy 反代),**Go 后端与前端在终端直接启动**,改代码即时调试(5.5 / 5.6)。
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
-
-首次构建镜像并启动三个容器:
 
 | 服务 | 容器内 | 宿主机映射 | 说明 |
 | --- | --- | --- | --- |
 | `postgres` | 5432 | `127.0.0.1:5432` | PostgreSQL 16,开发凭据 `cloak/cloak` |
-| `backend` | 8080 | `127.0.0.1:8081` | Go 后端(健康检查 `GET /healthz`) |
-| `caddy` | 443 | `127.0.0.1:8443` | HTTPS 入口,on-demand TLS + 本地 CA |
+| `caddy` | 443 | `127.0.0.1:8443` | HTTPS 入口,on-demand TLS + 本地 CA;反代到宿主机 `:8081` 的后端(`host.docker.internal`) |
 
-> 本机 80/443/8080 常被 nginx 等占用,因此开发环境把 Caddy 映射到 **8443**、后端映射到 **8081**(见 `docker-compose.yml` 注释)。
+> 本机 80/443/8080 常被 nginx 等占用,因此开发环境把 Caddy 映射到 **8443**;后端在终端监听 **8081**(见 5.6)。
 
 ### 5.2 配置本地域名解析(`/etc/hosts`)
 
@@ -223,7 +222,7 @@ sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keyc
 
 ### 5.5 前端本地开发(热更新)
 
-后端用 Docker 跑着即可,前端用 Vite Dev Server(自带 `/api` 代理到 `http://localhost:8081`):
+后端按 5.6 在终端跑着,前端用 Vite Dev Server(自带 `/api` 代理到 `http://localhost:8081`):
 
 ```bash
 cd web
@@ -233,21 +232,30 @@ pnpm dev            # http://localhost:5173,/api 代理到后端 8081
 
 - 浏览器访问 `http://localhost:5173`,`/api/*` 自动代理到 Go 后端,`Set-Cookie` 透传(会话/CSRF cookie 正常)。
 - 开发环境 `CLOAK_COOKIE_SECURE=false`,http 下 cookie 生效。
-- 修改后端代码后需重启后端容器:`docker compose restart backend`(或 `docker compose up -d --build backend` 重新构建)。
+- 修改后端代码后在启动后端的终端 `Ctrl+C` 停掉,再重新 `go run` 即可(见 5.6);前端代码由 Dev Server 自动热更新。
 - 修改前端源码后 Dev Server 自动热更新;发布前需重新构建 `web/dist`(见 8.5)。
 
-### 5.6 本机直接运行后端(可选)
+### 5.6 终端启动后端(推荐)
 
-不需要 Docker 跑后端时,可只启动 Postgres,本机用 `go run` 调试:
+后端直接在终端用 `go run` 启动,改代码后 `Ctrl+C` 重启即可,日志(含控制台 mailer 输出)直接显示在终端:
 
 ```bash
-docker compose up -d postgres
-go run ./cmd/cloak          # 默认监听 :8080
-# 覆盖配置(见 .env.example 与 internal/config/config.go)
-CLOAK_ADDR=:8081 CLOAK_DATABASE_URL='postgres://cloak:cloak@localhost:5432/cloak?sslmode=disable' go run ./cmd/cloak
+# 前提:Postgres 已启动(5.1);在仓库根目录执行
+CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8081 go run ./cmd/cloak
 ```
 
-> `go run` 不会自动读取 `.env`(那是 compose 的行为);需要覆盖变量时在命令行/终端里 export。
+- `CLOAK_COOKIE_SECURE=false`:开发走 http(Vite Dev Server / 直连 8081),Secure cookie 不生效;
+- `CLOAK_ADDR=:8081`:与前端代理、Caddy 反代保持一致(本机 8080 常被 nginx 占用);
+- 其余配置用代码默认值即可:数据库 `postgres://cloak:cloak@localhost:5432/cloak`、平台域名 `cloak.test`、公网 IP `127.0.0.1`、控制台 mailer(见 6.4);
+- 需要覆盖时用环境变量,例如 `CLOAK_SUPERADMIN_EMAIL=admin@example.com CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8081 go run ./cmd/cloak`;
+- 完整变量见 [.env.example](.env.example) 与 `internal/config/config.go`。`go run` 不会自动读取 `.env`(那是 compose 的行为),需要覆盖时在命令行 export。
+
+启动后验证:
+
+```bash
+curl -s http://127.0.0.1:8081/healthz        # → {"status":"ok"}
+curl -sk https://app.cloak.test:8443/healthz # 经 Caddy 走通全链路
+```
 
 ### 5.7 环境变量
 
@@ -320,17 +328,17 @@ pnpm build          # 产物输出到 web/dist(生产镜像经 go:embed 使用)
 
 1. 打开 `https://app.cloak.test:8443`,确认证书受信任、页面正常加载。
 2. 注册新租户(邮箱 + 密码 + slug,如 `alice`)。
-3. 查看验证链接:未配置 SMTP 时,邮件打印在后端日志(见 6.4 第 2 步);点击链接完成邮箱验证。
+3. 查看验证链接:未配置 SMTP 时,验证邮件直接打印在启动后端的终端(见 6.4 第 2 步);点击链接完成邮箱验证。
 4. 登录后台:看到「域名」页包含平台默认域名 `alice.cloak.test`(状态 `active`)。
 5. 「短链」页新建短链:目标 URL 填 `https://example.com`,关联 `alice.cloak.test`,提交后得到短码。
 6. 浏览器访问 `https://alice.cloak.test:8443/<短码>`(需 hosts 已加 `alice.cloak.test`),应 302 跳到目标地址;「统计」页能看到该短链访问数 +1。
 7. 尝试访问不存在的短码,应 404。
 8. (可选)添加自有域名:hosts 里加 `127.0.0.1 links.example.test`,后台添加后自动激活并签发证书;停用/恢复/删除流程各走一遍。
-9. (可选)设置 `CLOAK_SUPERADMIN_EMAIL` 后重启 backend,用该邮箱登录,首次登录引导设置密码,进入平台管理页查看租户列表。
+9. (可选)设置 `CLOAK_SUPERADMIN_EMAIL`(如 `CLOAK_SUPERADMIN_EMAIL=admin@example.com CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8081 go run ./cmd/cloak`)重启后端,用该邮箱登录,首次登录引导设置密码,进入平台管理页查看租户列表。
 
 ### 6.4 端到端验证(curl)
 
-以下命令已在开发环境实测通过。未配置 SMTP 时验证链接打印在后端日志:
+以下命令已在开发环境实测通过。未配置 SMTP 时验证链接打印在启动后端的终端:
 
 ```bash
 BASE=https://app.cloak.test:8443
@@ -341,8 +349,8 @@ curl -sk -X POST "$BASE/api/auth/register" \
   -d '{"email":"alice@example.com","password":"password123","slug":"alice"}'
 # → 201,status=pending,返回 defaultDomain:"alice.cloak.test"
 
-# 2. 从后端日志提取验证链接(控制台 mailer)
-docker compose logs backend | grep -A3 "邮箱验证 alice@example.com"
+# 2. 从启动后端的终端读取验证链接(控制台 mailer)
+# 终端启动后端默认不读取 .env 的 SMTP 配置,邮件直接打印在运行 go run 的终端:
 # 输出形如:
 #   [CLOAK mailer] 邮箱验证 alice@example.com
 #     token: <40+ 位 token>
@@ -393,7 +401,7 @@ curl -sk -o /dev/null -w '%{http_code}\n' \
 
 ```bash
 docker compose down -v
-docker compose up -d --build
+docker compose up -d
 ```
 
 > `-v` 会删除 `pgdata`、`caddy_data`、`caddy_config` 卷,所有租户、短链、证书缓存都会消失,之后需重新信任本地 CA(5.3)。
@@ -404,7 +412,7 @@ docker compose up -d --build
 
 | 维度 | 开发 | 生产 |
 | --- | --- | --- |
-| 编排 | `docker compose up -d --build`(docker-compose.yml) | `docker compose -f docker-compose.prod.yml up -d` |
+| 编排 | 基础设施 Docker(`docker compose up -d`:postgres + caddy);后端/前端终端启动(`go run` + `pnpm dev`) | `docker compose -f docker-compose.prod.yml up -d`(全部容器化) |
 | 端口 | 后端 8081、HTTPS 8443(本机常被 nginx 占用 80/443/8080) | 标准 80/443;后端不暴露公网 |
 | 域名解析 | `/etc/hosts` 把 `app.cloak.test` 与测试子域指向 `127.0.0.1`(`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 读 hosts 走真实代码路径) | 真实 DNS 泛解析 `*.<平台域名>` |
 | 证书 | Caddy 本地 CA(`tls internal` + `on_demand_tls`),`caddy trust` 信任根证书 | Let's Encrypt(ACME 自动签发/续期) |
@@ -645,14 +653,14 @@ docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
 | --- | --- |
 | 浏览器/curl 报证书不受信任 | 未信任本地 CA:执行 5.3;或把 `certs/caddy-root.pem` 导入钥匙串并信任 |
 | `curl: (60) SSL certificate problem` | 同上;临时排查可用 `-k` |
-| Caddy 502 Bad Gateway | 后端未就绪:`docker compose ps`、`docker compose logs backend`;等 Postgres healthy 后自动重启 |
+| Caddy 502 Bad Gateway | 后端没在终端启动:确认已执行 5.6 的 `go run` 且监听 8081(`curl -s http://127.0.0.1:8081/healthz`) |
 | 注册返回 409 | 邮箱/slug 已被占用(开发库有历史数据):换 slug,或 6.5 重置 |
 | 自有域名一直 `pending` | hosts 未加该域名/未指向 127.0.0.1;或未到 5 分钟重试周期,可在后台点「重新校验」 |
 | 域名 `failed` | 72 小时未通过校验;检查 hosts、`CLOAK_SERVER_PUBLIC_IP` |
 | 跳转 404 | 短码未创建/域名停用/短链停用;或访问的 Host 不是该租户的 active 域名 |
-| 邮件收不到、日志也没有 `[CLOAK mailer]` | `.env` 配置了 `CLOAK_SMTP_*`,走了真实 SMTP;清空 SMTP 变量并 `docker compose up -d backend` 即可回到控制台 mailer |
-| 后端容器 `unhealthy` | 看 `docker compose logs backend`;多为健康检查探测窗口问题或迁移失败;修复后 `docker compose restart backend` |
-| 修改 Go 代码不生效 | Docker 内是编译产物:需 `docker compose up -d --build backend`;本机调试用 5.6 的 `go run` |
+| 邮件收不到、终端也没有 `[CLOAK mailer]` | 启动后端时 export 了 `CLOAK_SMTP_*`,走了真实 SMTP;不 export 即回到控制台 mailer(邮件打印在终端) |
+| 后端启动失败/连不上数据库 | 确认 Postgres 已启动(`docker compose up -d postgres`、`docker compose ps`);检查 5.6 的启动命令与 `CLOAK_DATABASE_URL` |
+| 修改 Go 代码不生效 | 在启动后端的终端 `Ctrl+C` 后重新 `go run`;开发环境后端不在 Docker 里(见 5.6) |
 | 修改前端不生效 | Vite Dev Server 用 5.5;若看的是 Caddy 上的旧页面,需 `pnpm build` 后重建镜像 |
 | 8080/443/80 被占用 | 开发 compose 已避开(8443/8081);不要改动映射,除非你清楚自己在做什么 |
 

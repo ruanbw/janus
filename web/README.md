@@ -15,7 +15,7 @@ pnpm install
 pnpm dev        # http://localhost:5173,/api 代理到 http://localhost:8081
 ```
 
-环境要求:Go 后端运行于 `http://localhost:8081`(见仓库根 docker-compose.yml;本机 8080 被 nginx 占用)。
+环境要求:Postgres 与 Caddy 由 `docker compose up -d` 提供;Go 后端在终端启动并监听 `http://localhost:8081`(见仓库根 README §5.6:`CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8081 go run ./cmd/cloak`;本机 8080 被 nginx 占用)。
 
 ## 构建
 
