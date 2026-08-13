@@ -65,16 +65,24 @@ type Domain struct {
 	CreatedAt   time.Time  `json:"createdAt"`
 }
 
+// RedirectStatus 跳转方式(契约枚举:"301" | "302";JSON 序列化为字符串)。
+type RedirectStatus string
+
+const (
+	RedirectStatus301 RedirectStatus = "301"
+	RedirectStatus302 RedirectStatus = "302"
+)
+
 type Link struct {
-	ID             int64     `json:"id"`
-	TenantID       int64     `json:"-"`
-	Code           string    `json:"code"`
-	TargetURL      string    `json:"targetUrl"`
-	RedirectStatus int       `json:"redirectStatus"`
-	Status         string    `json:"status"`
-	Domains        []string  `json:"domains"`
-	Visits         int64     `json:"visits"`
-	CreatedAt      time.Time `json:"createdAt"`
+	ID             int64          `json:"id"`
+	TenantID       int64          `json:"-"`
+	Code           string         `json:"code"`
+	TargetURL      string         `json:"targetUrl"`
+	RedirectStatus RedirectStatus `json:"redirectStatus"`
+	Status         string         `json:"status"`
+	Domains        []string       `json:"domains"`
+	Visits         int64          `json:"visits"`
+	CreatedAt      time.Time      `json:"createdAt"`
 }
 
 type Visit struct {
@@ -237,10 +245,12 @@ func (s *Store) SetTenantPassword(ctx context.Context, id int64, hash string) er
 	return err
 }
 
-// VerifyTenant 邮箱验证通过:置 active 并记录 verified_at。
+// VerifyTenant 邮箱验证通过:仅把 pending 租户置 active 并记录 verified_at。
+// 已封禁/已激活租户不因旧验证 token 被重新激活。
 func (s *Store) VerifyTenant(ctx context.Context, id int64) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE tenants SET status='active', verified_at=COALESCE(verified_at, now()) WHERE id=$1`, id)
+		`UPDATE tenants SET status='active', verified_at=COALESCE(verified_at, now())
+		 WHERE id=$1 AND status='pending'`, id)
 	return err
 }
 
@@ -336,6 +346,12 @@ func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
 	return err
 }
 
+// DeleteExpiredEmailTokens 惰性清理过期邮箱 token(验证/重置)。
+func (s *Store) DeleteExpiredEmailTokens(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM email_tokens WHERE expires_at <= now()`)
+	return err
+}
+
 // ---------- 邮箱 token(验证/重置) ----------
 
 func (s *Store) CreateEmailToken(ctx context.Context, tenantID int64, tokenHash, kind string, ttl time.Duration) error {
@@ -346,23 +362,19 @@ func (s *Store) CreateEmailToken(ctx context.Context, tenantID int64, tokenHash,
 }
 
 // ConsumeEmailToken 校验并消费一个 token:有效(未过期、未使用、kind 匹配)返回租户 ID 并标记已用。
+// 用单条原子 UPDATE ... WHERE used_at IS NULL RETURNING 保证并发消费只有一个成功;
+// "不存在/已用/已过期" 统一返回 ErrNotFound(对外错误语义不变)。
 func (s *Store) ConsumeEmailToken(ctx context.Context, tokenHash, kind string) (int64, error) {
-	var id, tenantID int64
-	var usedAt *time.Time
+	var tenantID int64
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, tenant_id, used_at FROM email_tokens
-		 WHERE token_hash=$1 AND kind=$2 AND expires_at > now()`, tokenHash, kind,
-	).Scan(&id, &tenantID, &usedAt)
+		`UPDATE email_tokens SET used_at=now()
+		 WHERE token_hash=$1 AND kind=$2 AND expires_at > now() AND used_at IS NULL
+		 RETURNING tenant_id`, tokenHash, kind,
+	).Scan(&tenantID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, ErrNotFound
 		}
-		return 0, err
-	}
-	if usedAt != nil {
-		return 0, ErrNotFound
-	}
-	if _, err := s.pool.Exec(ctx, `UPDATE email_tokens SET used_at=now() WHERE id=$1`, id); err != nil {
 		return 0, err
 	}
 	return tenantID, nil

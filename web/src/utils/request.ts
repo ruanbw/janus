@@ -16,8 +16,16 @@ const CSRF_COOKIE = 'cloak_csrf';
 /** 无需 CSRF 的安全方法 */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-/** 公开页面:401 时不强制跳登录(如邮箱验证、重置密码链接页) */
-const PUBLIC_PATHS = ['/login', '/register', '/verify-email', '/forgot-password', '/reset-password'];
+/** 公开页面:401 时不强制跳登录(如邮箱验证、重置密码链接页)。用精确匹配,避免 /login-xxx 误命中 */
+const PUBLIC_PATHS = new Set(['/login', '/register', '/verify-email', '/forgot-password', '/reset-password']);
+
+/** 401 处理器(由 main.ts 注册,与 Vue Router 集成);未注册时回退整页跳转 */
+let unauthorizedHandler: ((redirectTo?: string) => void) | null = null;
+
+/** 注册 401 处理(会话失效时清理登录态并跳登录页,保留原路径) */
+export function setUnauthorizedHandler(handler: (redirectTo?: string) => void): void {
+  unauthorizedHandler = handler;
+}
 
 /** 读取 cookie 值(双提交 token 从 cookie 取) */
 export function getCookie(name: string): string | undefined {
@@ -32,6 +40,12 @@ export function getCookie(name: string): string | undefined {
 
 export function getCsrfToken(): string | undefined {
   return getCookie(CSRF_COOKIE);
+}
+
+/** 回退方案:整页跳登录并携带 redirect(与路由守卫的 ?redirect= 衔接) */
+function redirectToLogin(redirectTo?: string): void {
+  const query = redirectTo && redirectTo !== '/' ? `?redirect=${encodeURIComponent(redirectTo)}` : '';
+  window.location.href = `/login${query}`;
 }
 
 const http = axios.create({
@@ -81,11 +95,14 @@ http.interceptors.response.use(
   (error: unknown) => {
     const apiError = extractApiError(error);
     // 未认证:清除本地登录态并回到登录页(公开页面除外)
-    if (
-      apiError.status === 401 &&
-      !PUBLIC_PATHS.some((p) => window.location.pathname.startsWith(p))
-    ) {
-      window.location.href = '/login';
+    if (apiError.status === 401 && !PUBLIC_PATHS.has(window.location.pathname)) {
+      // 保留原路径与查询串,登录后由 LoginView 依据 ?redirect= 跳回
+      const redirectTo = window.location.pathname + window.location.search;
+      if (unauthorizedHandler) {
+        unauthorizedHandler(redirectTo);
+      } else {
+        redirectToLogin(redirectTo);
+      }
     }
     return Promise.reject(apiError);
   },

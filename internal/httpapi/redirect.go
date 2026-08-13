@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"cloak/internal/store"
 )
 
 func hostOnly(h string) string {
@@ -44,7 +46,7 @@ func (a *API) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		_ = err
 	}
 	status := http.StatusFound // 302
-	if link.RedirectStatus == 301 {
+	if link.RedirectStatus == store.RedirectStatus301 {
 		status = http.StatusMovedPermanently
 	}
 	http.Redirect(w, r, link.TargetURL, status)

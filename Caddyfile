@@ -3,7 +3,6 @@
 # 平台默认域名按子域逐个签发(ADR-0004)。
 # 注意:Caddy 2.11+ 全局选项名为 on_demand_tls(旧版为 on_demand),子选项仅 ask/permission;
 # 签发频率限流由 ask 端点(授权端点)与应用侧控制。
-
 {
 	# 本地 CA:开发环境证书签发器(spike 01 验证 tls internal + on_demand 组合);
 	# 生产改为 Let's Encrypt:删除 local_certs,并在各站点 tls 指令去掉 internal。

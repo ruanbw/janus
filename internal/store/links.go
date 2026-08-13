@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,10 +14,12 @@ const linkColumns = `id, tenant_id, code, target_url, redirect_status, status, d
 func scanLink(row pgx.Row) (*Link, error) {
 	var l Link
 	var deletedAt *time.Time
-	err := row.Scan(&l.ID, &l.TenantID, &l.Code, &l.TargetURL, &l.RedirectStatus, &l.Status, &deletedAt, &l.CreatedAt)
+	var redirectStatus int
+	err := row.Scan(&l.ID, &l.TenantID, &l.Code, &l.TargetURL, &redirectStatus, &l.Status, &deletedAt, &l.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
+	l.RedirectStatus = RedirectStatus(strconv.Itoa(redirectStatus))
 	return &l, nil
 }
 
@@ -55,17 +58,18 @@ func (s *Store) linkDomainFQDNs(ctx context.Context, linkID int64) ([]string, er
 
 // CreateLink 创建短链并关联域名。
 // 任一 (domain_id, code) 与既有关联冲突时返回唯一约束错误(整个创建回滚)。
-func (s *Store) CreateLink(ctx context.Context, tenantID int64, code, targetURL string, redirectStatus int, domainIDs []int64) (*Link, error) {
+func (s *Store) CreateLink(ctx context.Context, tenantID int64, code, targetURL string, redirectStatus RedirectStatus, domainIDs []int64) (*Link, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
 
+	redirectStatusInt, _ := strconv.Atoi(string(redirectStatus))
 	var linkID int64
 	err = tx.QueryRow(ctx,
 		`INSERT INTO links (tenant_id, code, target_url, redirect_status) VALUES ($1,$2,$3,$4) RETURNING id`,
-		tenantID, code, targetURL, redirectStatus,
+		tenantID, code, targetURL, redirectStatusInt,
 	).Scan(&linkID)
 	if err != nil {
 		return nil, err
@@ -135,7 +139,7 @@ func (s *Store) ListLinksByTenant(ctx context.Context, tenantID int64, page, pag
 // LinkUpdate 短链局部更新字段(指针非空才更新)。
 type LinkUpdate struct {
 	TargetURL      *string
-	RedirectStatus *int
+	RedirectStatus *RedirectStatus
 	Status         *string
 	// DomainIDs 非空时整体替换关联域名(空数组 = 清空关联,由调用方保证不合法场景已拦截)。
 	DomainIDs *[]int64
@@ -163,9 +167,10 @@ func (s *Store) UpdateLink(ctx context.Context, tenantID, id int64, upd LinkUpda
 	if upd.Status != nil {
 		status = *upd.Status
 	}
+	redirectStatusInt, _ := strconv.Atoi(string(redirectStatus))
 	if _, err := tx.Exec(ctx,
 		`UPDATE links SET target_url=$1, redirect_status=$2, status=$3 WHERE id=$4 AND tenant_id=$5`,
-		targetURL, redirectStatus, status, id, tenantID); err != nil {
+		targetURL, redirectStatusInt, status, id, tenantID); err != nil {
 		return nil, err
 	}
 	if upd.DomainIDs != nil {
@@ -222,6 +227,7 @@ func (s *Store) CountActiveLinks(ctx context.Context, tenantID int64) (int, erro
 func (s *Store) ResolveRedirect(ctx context.Context, domainID int64, code string) (*Link, *Domain, error) {
 	var l Link
 	var d Domain
+	var redirectStatus int
 	err := s.pool.QueryRow(ctx,
 		`SELECT l.id, l.tenant_id, l.code, l.target_url, l.redirect_status, l.status, l.created_at,
 		        d.id, d.tenant_id, d.fqdn, d.origin, d.status, d.cert_status, d.activated_at, d.created_at
@@ -231,8 +237,9 @@ func (s *Store) ResolveRedirect(ctx context.Context, domainID int64, code string
 		 WHERE ld.domain_id=$1 AND ld.code=$2
 		   AND l.deleted_at IS NULL AND l.status='enabled' AND d.status='active'`,
 		domainID, code,
-	).Scan(&l.ID, &l.TenantID, &l.Code, &l.TargetURL, &l.RedirectStatus, &l.Status, &l.CreatedAt,
+	).Scan(&l.ID, &l.TenantID, &l.Code, &l.TargetURL, &redirectStatus, &l.Status, &l.CreatedAt,
 		&d.ID, &d.TenantID, &d.FQDN, &d.Origin, &d.Status, &d.CertStatus, &d.ActivatedAt, &d.CreatedAt)
+	l.RedirectStatus = RedirectStatus(strconv.Itoa(redirectStatus))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, ErrNotFound

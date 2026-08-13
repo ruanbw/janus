@@ -2,10 +2,12 @@
 # ⚠️ Caddy 站点地址不支持环境变量占位符:把下面的 example.com 全部替换为你的平台域名
 #    (与 .env 的 CLOAK_PLATFORM_DOMAIN 保持一致),再挂载到 Caddy 容器。
 # 开发版见 Caddyfile(本地 CA)。
-
 {
-	# ACME 账户邮箱(Let's Encrypt 到期提醒;建议设置,可留空)
-	email {env.ACME_EMAIL}
+	# ACME 账户邮箱(Let's Encrypt 到期提醒;可选)。
+	# 注意:CLOAK_ACME_EMAIL 为空时,email 指令会让 Caddy 启动失败
+	# ("expanding email address ... is empty")。因此默认注释掉:
+	# 需要到期提醒时,取消注释下行并确保 .env 已设置 CLOAK_ACME_EMAIL。
+	# email {env.ACME_EMAIL}
 
 	# on-demand TLS:收到陌生域名的首个 TLS 握手时询问授权端点
 	on_demand_tls {

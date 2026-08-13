@@ -71,14 +71,23 @@ async function onSubmit() {
   try {
     await auth.login(form.email.trim(), form.password, form.rememberMe);
     message.success('登录成功');
-    const redirect = (route.query.redirect as string) || '/domains';
-    router.push(redirect);
+    // 仅允许站内路径,防止 ?redirect= 外部地址
+    const rawRedirect = route.query.redirect;
+    const redirect =
+      typeof rawRedirect === 'string' && rawRedirect.startsWith('/') ? rawRedirect : '/domains';
+    // 超管首次登录(尚无密码):先到账号设置页设置初始密码
+    if (auth.tenant?.firstLoginSetup) {
+      router.push('/account');
+    } else {
+      router.push(redirect);
+    }
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 403) {
         message.error('账号已被封禁,无法登录');
       } else if (error.status === 401) {
-        message.error('邮箱或密码错误;若未完成邮箱验证,请先点击验证邮件中的链接');
+        // 后端区分「邮箱或密码错误」与「邮箱未验证,请查收验证邮件」,直接透出更准确
+        message.error(error.message);
       } else {
         message.error(error.message);
       }

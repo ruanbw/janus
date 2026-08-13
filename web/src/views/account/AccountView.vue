@@ -53,9 +53,10 @@
 
           <a-divider style="margin: 12px 0">自动生成短码长度</a-divider>
           <a-space>
-            <a-input-number v-model:value="codeLength" :min="3" :max="12" />
+            <a-input-number v-model:value="codeLength" :min="4" :max="32" />
             <a-button :loading="savingCodeLength" @click="onSaveCodeLength">保存</a-button>
           </a-space>
+          <div class="quota-note">后端约束:长度须在 4-32 之间</div>
         </a-card>
       </a-col>
 
@@ -160,13 +161,14 @@ async function load() {
 onMounted(load);
 
 async function onSaveCodeLength() {
-  if (!codeLength.value) {
-    message.warning('请输入长度');
+  const value = codeLength.value;
+  if (!value || value < 4 || value > 32) {
+    message.warning('自动生成短码长度须在 4-32 之间');
     return;
   }
   savingCodeLength.value = true;
   try {
-    const me = await updateMyTenant({ codeLength: codeLength.value });
+    const me = await updateMyTenant({ codeLength: value });
     auth.tenant = me;
     message.success('自动生成短码长度已更新');
   } catch (error) {

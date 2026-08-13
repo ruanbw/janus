@@ -32,15 +32,16 @@ func writeNoContent(w http.ResponseWriter) { w.WriteHeader(http.StatusNoContent)
 
 // 常见错误码(契约统一错误结构)。
 const (
-	errValidation = "E_VALIDATION"
-	errConflict   = "E_CONFLICT"
-	errNotFound   = "E_NOT_FOUND"
-	errUnauth     = "E_UNAUTHORIZED"
-	errForbidden  = "E_FORBIDDEN"
-	errInternal   = "E_INTERNAL"
-	errQuota      = "E_QUOTA"
+	errValidation  = "E_VALIDATION"
+	errConflict    = "E_CONFLICT"
+	errNotFound    = "E_NOT_FOUND"
+	errUnauth      = "E_UNAUTHORIZED"
+	errForbidden   = "E_FORBIDDEN"
+	errInternal    = "E_INTERNAL"
+	errQuota       = "E_QUOTA"
 	errDomainQuota = "E_DOMAIN_LIMIT"
 	errLinkQuota   = "E_LINK_LIMIT"
 	errCSRF        = "E_CSRF"
 	errDomainInUse = "E_DOMAIN_IN_USE"
+	errRateLimited = "E_RATE_LIMITED"
 )

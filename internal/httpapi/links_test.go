@@ -84,8 +84,8 @@ func TestCreateLinkAutoCodeAndRedirect(t *testing.T) {
 	if !domain.IsValidCode(link.Code) {
 		t.Errorf("auto code %q contains forbidden chars", link.Code)
 	}
-	if link.RedirectStatus != 302 {
-		t.Errorf("redirectStatus = %d, want default 302", link.RedirectStatus)
+	if link.RedirectStatus != "302" {
+		t.Errorf(`redirectStatus = %s, want default "302"`, link.RedirectStatus)
 	}
 	if link.Status != "enabled" {
 		t.Errorf("status = %s, want enabled", link.Status)

@@ -19,6 +19,16 @@ import (
 
 const minPasswordLen = 8
 
+// dummyPasswordHash 用于不存在邮箱时的假 bcrypt 比较,抹平"账号不存在/密码错误"
+// 的响应时间差,降低邮箱枚举侧信道(登录与忘记密码)。
+var dummyPasswordHash = func() []byte {
+	h, err := bcrypt.GenerateFromPassword([]byte("cloak-dummy-password"), bcrypt.DefaultCost)
+	if err != nil {
+		panic("bcrypt unavailable: " + err.Error())
+	}
+	return h
+}()
+
 func validEmail(s string) bool {
 	addr, err := mail.ParseAddress(s)
 	return err == nil && addr.Address == s
@@ -37,6 +47,9 @@ type registerReq struct {
 // handleRegister 注册:校验 slug 唯一且不与既有域名 FQDN 冲突;
 // 创建租户(pending)与平台默认域名;控制台 mailer 输出验证链接。
 func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
+	if !a.rateLimit(w, r, a.registerRate) {
+		return
+	}
 	var req registerReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
@@ -54,6 +67,12 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validPasswordLen(req.Password) {
 		writeErrDetails(w, http.StatusBadRequest, errValidation, "密码至少 8 个字符", map[string]string{"field": "password"})
+		return
+	}
+	// 平台保留域名(app.<平台域名> 承载后台)不得被租户默认域名占用
+	if slug+"."+a.cfg.PlatformDomain == a.cfg.PlatformDomain ||
+		slug+"."+a.cfg.PlatformDomain == "app."+a.cfg.PlatformDomain {
+		writeErrDetails(w, http.StatusBadRequest, errValidation, "slug 与平台保留域名冲突", map[string]string{"field": "slug"})
 		return
 	}
 	ctx := r.Context()
@@ -74,13 +93,16 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// slug 与既有域名 FQDN 冲突(平台默认域名或他人自有域名)
-	if exists, _ := a.store.DomainFQDNExists(ctx, slug+"."+a.cfg.PlatformDomain); exists {
-		writeErr(w, http.StatusConflict, errConflict, "slug 与既有域名冲突")
-		return
-	}
-	if exists, _ := a.store.DomainFQDNExists(ctx, slug); exists {
-		writeErr(w, http.StatusConflict, errConflict, "slug 与既有域名冲突")
-		return
+	for _, fqdn := range []string{slug + "." + a.cfg.PlatformDomain, slug} {
+		exists, err := a.store.DomainFQDNExists(ctx, fqdn)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+			return
+		}
+		if exists {
+			writeErr(w, http.StatusConflict, errConflict, "slug 与既有域名冲突")
+			return
+		}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
@@ -90,6 +112,10 @@ func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	tenant, err := a.store.CreateTenant(ctx, email, string(hash), slug, false)
 	if err != nil {
+		if store.IsUniqueViolation(err) {
+			writeErr(w, http.StatusConflict, errConflict, "邮箱或 slug 已被占用")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
@@ -121,6 +147,9 @@ type verifyEmailReq struct {
 
 // handleVerifyEmail 邮箱验证:成功后租户转 active,并触发默认域名证书预签发探活。
 func (a *API) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
+	if !a.rateLimit(w, r, a.authRate) {
+		return
+	}
 	var req verifyEmailReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" {
 		writeErr(w, http.StatusBadRequest, errValidation, "token required")
@@ -128,6 +157,12 @@ func (a *API) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	tenantID, err := a.store.ConsumeEmailToken(r.Context(), hashToken(strings.TrimSpace(req.Token)), "verify")
 	if err != nil {
+		writeErr(w, http.StatusBadRequest, errValidation, "无效或已使用的验证 token")
+		return
+	}
+	// 已封禁租户不得凭旧验证 token 复活
+	tenant, err := a.store.GetTenantByID(r.Context(), tenantID)
+	if err != nil || tenant.Status == "banned" {
 		writeErr(w, http.StatusBadRequest, errValidation, "无效或已使用的验证 token")
 		return
 	}
@@ -163,6 +198,9 @@ type loginReq struct {
 }
 
 func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if !a.rateLimit(w, r, a.authRate) {
+		return
+	}
 	var req loginReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
@@ -171,6 +209,8 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	tenant, err := a.store.GetTenantByEmail(r.Context(), email)
 	if err != nil {
+		// 等时化:账号不存在也执行一次 bcrypt 比较
+		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
 		writeErr(w, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
 		return
 	}
@@ -282,6 +322,9 @@ type forgotPasswordReq struct {
 
 // handleForgotPassword 始终返回 202,不泄露邮箱存在性。
 func (a *API) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
+	if !a.rateLimit(w, r, a.authRate) {
+		return
+	}
 	var req forgotPasswordReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
@@ -293,6 +336,9 @@ func (a *API) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
 		if err := a.store.CreateEmailToken(r.Context(), tenant.ID, tokenHash, "reset", a.cfg.ResetTokenTTL); err == nil {
 			_ = a.mailer.SendResetEmail(email, token)
 		}
+	} else {
+		// 等时化:邮箱不存在也执行一次 bcrypt 比较,避免存在性可被时序区分
+		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(email))
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
@@ -304,6 +350,9 @@ type resetPasswordReq struct {
 
 // handleResetPassword 无效/已使用/过期 token 一律 400。
 func (a *API) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	if !a.rateLimit(w, r, a.authRate) {
+		return
+	}
 	var req resetPasswordReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" {
 		writeErr(w, http.StatusBadRequest, errValidation, "token required")

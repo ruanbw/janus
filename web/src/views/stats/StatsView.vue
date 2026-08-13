@@ -73,7 +73,7 @@ import { useRoute } from 'vue-router';
 import { message } from 'ant-design-vue';
 import type { TableColumnsType, TablePaginationConfig } from 'ant-design-vue';
 
-import { listLinks } from '@/api/links';
+import { getLink, listLinks } from '@/api/links';
 import { listVisits } from '@/api/visits';
 import { LINK_STATUS } from '@/constants/dict';
 import { ApiError } from '@/types/api';
@@ -154,8 +154,17 @@ onMounted(async () => {
     // 保持所选短链数据为最新
     const fresh = links.value.find((l) => l.id === selectedLinkId.value);
     if (!fresh) {
-      // 列表分页 100 条内未找到:重置选择
-      selectedLinkId.value = undefined;
+      // 列表前 100 条内未找到:直接按 id 拉取详情(短链页直达统计时可能落在更早的分页)
+      try {
+        const detail = await getLink(selectedLinkId.value);
+        links.value = [detail, ...links.value];
+      } catch (error) {
+        if (error instanceof ApiError && error.status !== 401) {
+          message.error(error.message);
+        }
+        // 不存在或无权访问:重置选择
+        selectedLinkId.value = undefined;
+      }
     }
     await loadVisits();
   }

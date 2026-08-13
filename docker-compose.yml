@@ -35,6 +35,15 @@ services:
       # 开发环境经 http 访问后端(前端 Vite dev proxy),Secure cookie 不生效
       CLOAK_COOKIE_SECURE: "false"
       CLOAK_MIGRATIONS_DIR: "/app/migrations"
+      # 可选参数与 .env.example/代码默认值一致(compose 显式转发,便于 .env 覆盖)
+      CLOAK_SESSION_TTL: "${CLOAK_SESSION_TTL:-720h}"
+      CLOAK_SESSION_TTL_SHORT: "${CLOAK_SESSION_TTL_SHORT:-24h}"
+      CLOAK_VERIFY_TOKEN_TTL: "${CLOAK_VERIFY_TOKEN_TTL:-24h}"
+      CLOAK_RESET_TOKEN_TTL: "${CLOAK_RESET_TOKEN_TTL:-1h}"
+      CLOAK_DNS_RETRY_INTERVAL: "${CLOAK_DNS_RETRY_INTERVAL:-5m}"
+      CLOAK_DNS_MAX_AGE: "${CLOAK_DNS_MAX_AGE:-72h}"
+      CLOAK_VISIT_RETENTION: "${CLOAK_VISIT_RETENTION:-2160h}"
+      CLOAK_VISIT_CLEANUP_INTERVAL: "${CLOAK_VISIT_CLEANUP_INTERVAL:-24h}"
       # 邮件:SMTP 凭据来自 .env(未配置时用控制台 mailer)
       CLOAK_PUBLIC_BASE_URL: "${CLOAK_PUBLIC_BASE_URL:-https://app.cloak.test:8443}"
       CLOAK_SMTP_HOST: "${CLOAK_SMTP_HOST:-}"

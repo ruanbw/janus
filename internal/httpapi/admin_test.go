@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"cloak/internal/bootstrap"
+	"cloak/internal/httpapi"
 	"cloak/internal/store"
 	"cloak/internal/testutil"
 )
@@ -159,4 +160,74 @@ func TestAdminDeleteDomain(t *testing.T) {
 	resp = redirectGet(t, env, "localhost", "/"+link.Code)
 	assertStatus(t, resp, http.StatusNotFound)
 	_ = resp.Body.Close()
+}
+
+func TestAdminCannotBanOrDemoteSelf(t *testing.T) {
+	env := testutil.Setup(t)
+	admin := superadminClient(t, env)
+	adminID := tenantIDOf(t, admin)
+	path := "/api/admin/tenants/" + strconv.FormatInt(adminID, 10)
+
+	// 封禁自己 → 400(不产生封禁,会话仍有效)
+	resp := admin.patch(path, map[string]any{"status": "banned"})
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
+	resp = admin.get("/api/auth/me")
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	// 调整自己的等级 → 400
+	resp = admin.patch(path, map[string]any{"tierId": 1})
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
+}
+
+func TestAdminPatchStatusRejectsPending(t *testing.T) {
+	env := testutil.Setup(t)
+	admin := superadminClient(t, env)
+	c := loggedInTenant(t, env, "alice")
+
+	resp := admin.patch("/api/admin/tenants/"+strconv.FormatInt(tenantIDOf(t, c), 10), map[string]any{"status": "pending"})
+	assertStatus(t, resp, http.StatusBadRequest)
+	body := decodeBody[httpapi.ErrorBody](t, resp)
+	if body.Code != "E_VALIDATION" {
+		t.Fatalf("code = %s, want E_VALIDATION", body.Code)
+	}
+	_ = resp.Body.Close()
+}
+
+// TestVerifyEmailDoesNotUnban 已封禁租户的旧验证 token 不得将其复活(400,状态保持 banned)。
+func TestVerifyEmailDoesNotUnban(t *testing.T) {
+	env := testutil.Setup(t)
+	admin := superadminClient(t, env)
+	register(t, env, "alice") // pending,邮件中已有 verify token
+	token := env.LastToken(t)
+
+	// 从超管列表取 alice 的 id(不登录 alice,避免干扰验证 token)
+	tenants := decodeBody[[]*store.Tenant](t, admin.get("/api/admin/tenants"))
+	var aliceID int64
+	for _, tt := range tenants {
+		if tt.Email == "alice@example.com" {
+			aliceID = tt.ID
+			break
+		}
+	}
+	if aliceID == 0 {
+		t.Fatal("alice tenant not found")
+	}
+	resp := admin.patch("/api/admin/tenants/"+strconv.FormatInt(aliceID, 10), map[string]any{"status": "banned"})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	// 封禁后使用验证 token → 400,且不被置为 active
+	resp = newClient(env).post("/api/auth/verify-email", map[string]string{"token": token})
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
+
+	tenants = decodeBody[[]*store.Tenant](t, admin.get("/api/admin/tenants"))
+	for _, tt := range tenants {
+		if tt.ID == aliceID && tt.Status != "banned" {
+			t.Fatalf("tenant status = %s, want banned (verify must not unban)", tt.Status)
+		}
+	}
 }

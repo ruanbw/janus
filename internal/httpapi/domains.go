@@ -98,6 +98,10 @@ func (a *API) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := a.store.CreateDomain(ctx, t.ID, fqdn, "self")
 	if err != nil {
+		if store.IsUniqueViolation(err) {
+			writeErr(w, http.StatusConflict, errConflict, "域名已被占用")
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}

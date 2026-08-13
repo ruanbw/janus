@@ -66,7 +66,18 @@ type Env struct {
 
 // Setup 启动测试环境:连接测试库、执行迁移、清空业务表、启动 HTTP 服务。
 // 测试库不可用时跳过(需先 docker compose up postgres 并创建 cloak_test 库)。
+// 默认注入高阈值限流,避免通用测试被限流干扰;需要验证限流行为的测试用
+// SetupWithRateLimit 自行控制。
 func Setup(t *testing.T) *Env {
+	return setup(t, nil)
+}
+
+// SetupWithRateLimit 以自定义认证限流配置启动测试环境(用于限流黑盒测试)。
+func SetupWithRateLimit(t *testing.T, rc httpapi.RateLimitConfig) *Env {
+	return setup(t, &rc)
+}
+
+func setup(t *testing.T, rc *httpapi.RateLimitConfig) *Env {
 	t.Helper()
 	ctx := context.Background()
 
@@ -103,7 +114,14 @@ func Setup(t *testing.T) *Env {
 
 	st := store.New(pool)
 	m := mailer.NewMailer(mailer.Config{BaseURL: "https://app.cloak.test"}, mailBuf)
-	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Store: st, Mailer: m, Cfg: cfg}))
+	if rc == nil {
+		high := 100000
+		rc = &httpapi.RateLimitConfig{
+			RegisterLimit: high, RegisterWindow: time.Minute,
+			AuthLimit: high, AuthWindow: time.Minute,
+		}
+	}
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Store: st, Mailer: m, Cfg: cfg, RateLimit: rc}))
 	t.Cleanup(srv.Close)
 
 	return &Env{Server: srv, Pool: pool, Store: st, Cfg: cfg, mail: mailBuf}

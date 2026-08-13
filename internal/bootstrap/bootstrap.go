@@ -74,6 +74,12 @@ func superadminSlug(email string) string {
 		}
 	}
 	slug := sb.String()
+	// 归一化:折叠连续连字符、去掉首尾连字符,防止生成 "a--b"/"a-" 等不合法或不美观的 slug。
+	// 说明:CreateTenant 自身不做 slug 校验(校验在 API 层),超管 slug 由内部生成,此处保证自身合法。
+	slug = strings.Trim(slug, "-")
+	for strings.Contains(slug, "--") {
+		slug = strings.ReplaceAll(slug, "--", "-")
+	}
 	if slug == "" {
 		slug = "sa"
 	}

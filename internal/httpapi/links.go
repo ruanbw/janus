@@ -81,12 +81,12 @@ func (a *API) createLink(r *http.Request, t *store.Tenant, req createLinkReq) (*
 	if !validTargetURL(req.TargetURL) {
 		return nil, apiErr{http.StatusBadRequest, errValidation, "目标 URL 非法(不能包含控制字符)", nil}
 	}
-	redirectStatus := 302
+	redirectStatus := store.RedirectStatus302
 	if req.RedirectStatus != nil {
 		if *req.RedirectStatus != "301" && *req.RedirectStatus != "302" {
 			return nil, apiErr{http.StatusBadRequest, errValidation, "redirectStatus 必须为 301 或 302", nil}
 		}
-		redirectStatus, _ = strconv.Atoi(string(*req.RedirectStatus))
+		redirectStatus = store.RedirectStatus(*req.RedirectStatus)
 	}
 	if len(req.DomainIDs) == 0 {
 		return nil, apiErr{http.StatusBadRequest, errValidation, "至少关联一个域名", nil}
@@ -244,7 +244,7 @@ func (a *API) handlePatchLink(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, errValidation, "redirectStatus 必须为 301 或 302")
 			return
 		}
-		v, _ := strconv.Atoi(string(*req.RedirectStatus))
+		v := store.RedirectStatus(*req.RedirectStatus)
 		upd.RedirectStatus = &v
 	}
 	if req.Status != nil {

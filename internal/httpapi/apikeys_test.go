@@ -185,3 +185,25 @@ func TestV1InvalidKey(t *testing.T) {
 	assertStatus(t, resp, http.StatusUnauthorized)
 	_ = resp.Body.Close()
 }
+
+func TestV1APIKeyRejectedWhenTenantBanned(t *testing.T) {
+	env := testutil.Setup(t)
+	admin := superadminClient(t, env)
+	c := loggedInTenant(t, env, "alice")
+	k := createAPIKey(t, c, "ci")
+	api := newBearerClient(env, k.Key)
+
+	// 封禁前可用
+	resp := api.get("/api/v1/links")
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	// 超管封禁租户后,API Key 立即失效(与 currentTenant 一致)
+	resp = admin.patch("/api/admin/tenants/"+strconv.FormatInt(tenantIDOf(t, c), 10), map[string]any{"status": "banned"})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	resp = api.get("/api/v1/links")
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+}

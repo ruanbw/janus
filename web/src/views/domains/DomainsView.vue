@@ -118,7 +118,7 @@ import type { TableColumnsType } from 'ant-design-vue';
 import { createDomain, deleteDomain, listDomains, recheckDomain, updateDomainStatus } from '@/api/domains';
 import { CERT_STATUS, DOMAIN_ORIGIN, DOMAIN_STATUS } from '@/constants/dict';
 import { useAuthStore } from '@/stores/auth';
-import { ApiError } from '@/types/api';
+import { ApiError, getQuotaUsage } from '@/types/api';
 import type { CertStatus, Domain, DomainOrigin, DomainStatus } from '@/types/api';
 import { formatDateTime } from '@/utils/format';
 
@@ -191,7 +191,12 @@ async function onCreate() {
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 403) {
-        message.error(`域名配额超限:${error.message}`);
+        const usage = getQuotaUsage(error.details);
+        if (usage) {
+          message.error(`域名配额超限:自有域名 ${usage.domains}/${usage.maxDomains} 已达上限`);
+        } else {
+          message.error(`域名配额超限:${error.message}`);
+        }
       } else if (error.status === 409) {
         message.error(`域名已被占用:${error.message}`);
       } else if (error.status === 400) {

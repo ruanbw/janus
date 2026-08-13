@@ -25,6 +25,8 @@
 
 其余可选变量见 `.env.example`(token 有效期、DNS 重试、访问保留时长等)。
 
+> **部署前必须修改 Caddyfile.prod**:Caddy 站点地址不支持环境变量占位符,该文件把站点域名硬编码为 `example.com`(注释中已标注),需要把 `example.com` 全部替换为你的平台域名(与 `CLOAK_PLATFORM_DOMAIN` 一致)。`CLOAK_ACME_EMAIL` 仅在取消注释 Caddyfile.prod 中的 `email` 指令后生效(为空时该指令会导致 Caddy 启动失败)。
+
 ## 3. 启动
 
 ```bash
@@ -65,7 +67,16 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 ## 6. SMTP 配置(邮件发送)
 
-代码中 mailer 为可插拔实现:未配置 SMTP 时使用控制台假 mailer(邮件内容打印到后端日志)。生产接入 SMTP 需要提供 SMTP 凭据实现真实 mailer(后续按 spec 决策 #3 补齐)。
+mailer 为可插拔实现(spec 决策 #3):未配置 SMTP 时使用控制台假 mailer(邮件内容打印到后端日志)。生产接入真实 SMTP 时,在 `.env` 配置:
+
+| 变量 | 说明 |
+| --- | --- |
+| `CLOAK_SMTP_HOST` | SMTP 服务器地址,如 `smtp.example.com` |
+| `CLOAK_SMTP_PORT` | 默认 `465`(隐式 TLS);`587` 必须支持 STARTTLS,否则报错(拒绝明文 AUTH) |
+| `CLOAK_SMTP_USERNAME` / `CLOAK_SMTP_PASSWORD` | 认证凭据;用户名留空则不发送 AUTH |
+| `CLOAK_SMTP_FROM` | 发件人地址;留空回退为 Username,两者都空则发送报错 |
+
+compose 会把上述变量转发给后端容器。
 
 ## 7. 已知限制
 

@@ -73,8 +73,9 @@ type adminPatchTenantReq struct {
 }
 
 // handleAdminPatchTenant 封禁/解封租户、调整等级。
+// 契约仅允许 status=banned|active;禁止超管封禁/调整自己的等级(避免锁死)。
 func (a *API) handleAdminPatchTenant(w http.ResponseWriter, r *http.Request) {
-	_, sess, ok := a.requireSuperadmin(w, r)
+	admin, sess, ok := a.requireSuperadmin(w, r)
 	if !ok {
 		return
 	}
@@ -92,8 +93,12 @@ func (a *API) handleAdminPatchTenant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Status != nil {
-		if *req.Status != "banned" && *req.Status != "active" && *req.Status != "pending" {
-			writeErr(w, http.StatusBadRequest, errValidation, "status 必须为 banned/active/pending")
+		if *req.Status != "banned" && *req.Status != "active" {
+			writeErr(w, http.StatusBadRequest, errValidation, "status 必须为 banned 或 active")
+			return
+		}
+		if id == admin.ID && *req.Status == "banned" {
+			writeErr(w, http.StatusBadRequest, errValidation, "不能封禁自己,请使用其他超管邮箱处理")
 			return
 		}
 		if err := a.store.SetTenantStatus(r.Context(), id, *req.Status); err != nil {
@@ -102,6 +107,10 @@ func (a *API) handleAdminPatchTenant(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.TierID != nil {
+		if id == admin.ID {
+			writeErr(w, http.StatusBadRequest, errValidation, "不能调整自己的等级,请使用其他超管邮箱处理")
+			return
+		}
 		if _, err := a.store.GetTier(r.Context(), *req.TierID); err != nil {
 			writeErr(w, http.StatusBadRequest, errValidation, "tier 不存在")
 			return

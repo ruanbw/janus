@@ -51,9 +51,12 @@ export const TENANT_STATUS: Record<TenantStatus, DictItem> = {
 /** 短码字符集:去除易混淆字符 0/O/1/l/I(见 spec Further Notes) */
 export const SHORT_CODE_ALPHABET = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-/** slug 规则:小写字母/数字开头结尾,可含连字符 */
+/** slug 规则:小写字母/数字开头结尾,可含连字符,长度 1-63(后端 IsValidSlug) */
 export const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
+export const SLUG_MAX_LENGTH = 63;
 
-/** 自定义短码规则:仅允许短码字符集内字符,长度 1-32 */
+/** 自定义短码规则:仅允许字母与数字(易混淆字符由 FORBIDDEN 单独校验),长度 1-64(后端 MaxCodeLen=64) */
 export const SHORT_CODE_PATTERN = /^[a-zA-Z0-9]+$/;
-export const SHORT_CODE_MAX_LENGTH = 32;
+/** 短码中的易混淆字符(后端字符集不含 0/O/1/l/I) */
+export const SHORT_CODE_FORBIDDEN_PATTERN = /[0O1lI]/;
+export const SHORT_CODE_MAX_LENGTH = 64;

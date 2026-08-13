@@ -22,21 +22,32 @@ type Deps struct {
 	Store  *store.Store
 	Mailer mailer.Mailer
 	Cfg    config.Config
+	// RateLimit 认证端点限流配置;nil 时使用 DefaultRateLimit()。
+	// 测试环境可注入高阈值/关闭(见 testutil)。
+	RateLimit *RateLimitConfig
 }
 
 type API struct {
-	store  *store.Store
-	mailer mailer.Mailer
-	cfg    config.Config
-	dns    *domain.DNSChecker
+	store        *store.Store
+	mailer       mailer.Mailer
+	cfg          config.Config
+	dns          *domain.DNSChecker
+	registerRate *rateLimiter // POST /api/auth/register
+	authRate     *rateLimiter // login/verify-email/forgot/reset
 }
 
 func New(d Deps) http.Handler {
+	rl := DefaultRateLimit()
+	if d.RateLimit != nil {
+		rl = *d.RateLimit
+	}
 	a := &API{
-		store:  d.Store,
-		mailer: d.Mailer,
-		cfg:    d.Cfg,
-		dns:    &domain.DNSChecker{ExpectedIP: d.Cfg.ServerPublicIP},
+		store:        d.Store,
+		mailer:       d.Mailer,
+		cfg:          d.Cfg,
+		dns:          &domain.DNSChecker{ExpectedIP: d.Cfg.ServerPublicIP},
+		registerRate: newRateLimiter(rl.RegisterLimit, rl.RegisterWindow),
+		authRate:     newRateLimiter(rl.AuthLimit, rl.AuthWindow),
 	}
 	mux := http.NewServeMux()
 

@@ -30,6 +30,10 @@ func (a *API) apiKeyTenant(r *http.Request) (*store.Tenant, bool) {
 	if err != nil {
 		return nil, false
 	}
+	// 与 currentTenant 一致:封禁后 API Key 立即失效(Caddy 授权端点同样拒绝)
+	if t.Status == "banned" {
+		return nil, false
+	}
 	return t, true
 }
 

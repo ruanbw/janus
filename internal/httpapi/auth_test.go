@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"cloak/internal/store"
@@ -65,7 +66,7 @@ func (c *testClient) do(method, path string, body any) *http.Response {
 	return resp
 }
 
-func (c *testClient) get(path string) *http.Response  { return c.do(http.MethodGet, path, nil) }
+func (c *testClient) get(path string) *http.Response { return c.do(http.MethodGet, path, nil) }
 func (c *testClient) post(path string, body any) *http.Response {
 	return c.do(http.MethodPost, path, body)
 }
@@ -133,6 +134,7 @@ func TestRegisterValidation(t *testing.T) {
 		{"bad slug uppercase", map[string]string{"email": "bob@example.com", "password": "password123", "slug": "Bob"}, http.StatusBadRequest},
 		{"bad slug leading dash", map[string]string{"email": "bob@example.com", "password": "password123", "slug": "-bob"}, http.StatusBadRequest},
 		{"short password", map[string]string{"email": "bob@example.com", "password": "short", "slug": "bob"}, http.StatusBadRequest},
+		{"reserved app slug", map[string]string{"email": "app@example.com", "password": "password123", "slug": "app"}, http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -346,4 +348,46 @@ func TestChangePassword(t *testing.T) {
 	resp = c.post("/api/auth/login", map[string]string{"email": "alice@example.com", "password": "newpass456"})
 	assertStatus(t, resp, http.StatusOK)
 	_ = resp.Body.Close()
+}
+
+// TestResetTokenConcurrentConsume 并发重置同一 token:原子消费保证恰好一个成功,
+// 另一个 400(防止双重消费竞态)。
+func TestResetTokenConcurrentConsume(t *testing.T) {
+	env := testutil.Setup(t)
+	register(t, env, "alice")
+	verifyLastEmail(t, env)
+
+	c := newClient(env)
+	_ = c.post("/api/auth/forgot-password", map[string]string{"email": "alice@example.com"})
+	token := env.LastToken(t)
+
+	const n = 4
+	results := make(chan int, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := c.post("/api/auth/reset-password", map[string]string{"token": token, "newPassword": "newpass456"})
+			results <- resp.StatusCode
+			_ = resp.Body.Close()
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	ok, rejected := 0, 0
+	for code := range results {
+		switch code {
+		case http.StatusNoContent:
+			ok++
+		case http.StatusBadRequest:
+			rejected++
+		default:
+			t.Fatalf("unexpected status %d", code)
+		}
+	}
+	if ok != 1 || rejected != n-1 {
+		t.Fatalf("consumes = %d success / %d rejected, want 1/%d", ok, rejected, n-1)
+	}
 }

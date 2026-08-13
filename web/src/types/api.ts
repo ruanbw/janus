@@ -104,6 +104,34 @@ export interface ApiErrorBody {
   details?: unknown;
 }
 
+/** 配额超限错误详情(后端 403 E_DOMAIN_LIMIT / E_LINK_LIMIT 附 details.usage) */
+export interface QuotaErrorDetails {
+  usage?: QuotaUsage;
+  field?: string;
+}
+
+/** 从统一错误 details 中提取配额用量(结构与 QuotaUsage 一致时返回) */
+export function getQuotaUsage(details: unknown): QuotaUsage | undefined {
+  if (!details || typeof details !== 'object') return undefined;
+  const usage = (details as { usage?: unknown }).usage;
+  if (!usage || typeof usage !== 'object') return undefined;
+  const u = usage as Record<string, unknown>;
+  if (
+    typeof u.links === 'number' &&
+    typeof u.domains === 'number' &&
+    typeof u.maxLinks === 'number' &&
+    typeof u.maxDomains === 'number'
+  ) {
+    return {
+      links: u.links,
+      domains: u.domains,
+      maxLinks: u.maxLinks,
+      maxDomains: u.maxDomains,
+    };
+  }
+  return undefined;
+}
+
 /** 前端统一的 API 错误 */
 export class ApiError extends Error {
   code: string;

@@ -9,8 +9,8 @@ import (
 // 放行条件:
 //   - 平台后台域名(裸平台域名)始终放行;
 //   - 域名记录 active 且:
-//     - 自有域名:租户未封禁;
-//     - 平台默认域名:租户已邮箱验证(active)且未封禁。
+//   - 自有域名:租户未封禁;
+//   - 平台默认域名:租户已邮箱验证(active)且未封禁。
 //
 // 仅内网可达;放行 200,拒绝 403。
 func (a *API) handleCaddyAuthorize(w http.ResponseWriter, r *http.Request) {

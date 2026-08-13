@@ -1,0 +1,36 @@
+# CLOAK 构建上下文排除清单
+# docker/Dockerfile 用 COPY . . 构建 Go 二进制,此处排除一切非构建所需文件,
+# 避免敏感/大体积文件(.env、.git、node_modules 等)进入构建上下文与镜像。
+
+# 敏感文件:绝不进入镜像(.env 含真实 SMTP/DB 凭据)
+.env
+.env.*
+!.env.example
+
+# 版本控制与协作/本地数据
+.git
+.gitignore
+.scratch
+.reasonix
+certs
+docs
+*.md
+AGENTS.md
+CLAUDE.md
+CONTEXT.md
+
+# 编排与 Caddy 配置:运行期由 compose 挂载,无需进镜像
+docker-compose.yml
+docker-compose.prod.yml
+Caddyfile
+Caddyfile.prod
+
+# 前端源码/依赖:镜像只需要 web/dist(go:embed 编译进二进制)与 web/embed.go
+web/*
+!web/embed.go
+!web/dist
+!web/dist/**
+
+# 依赖与临时产物
+node_modules
+**/node_modules

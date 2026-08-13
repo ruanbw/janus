@@ -84,7 +84,7 @@ func Load() Config {
 
 		MigrationsDir: getenv("CLOAK_MIGRATIONS_DIR", "migrations"),
 
-		PublicBaseURL: getenv("CLOAK_PUBLIC_BASE_URL", "https://app.cloak.test"),
+		PublicBaseURL: getenv("CLOAK_PUBLIC_BASE_URL", "https://app.cloak.test:8443"), // 与 .env.example/开发 compose 一致(dev Caddy 映射 8443)
 		SMTPHost:      os.Getenv("CLOAK_SMTP_HOST"),
 		SMTPPort:      getint("CLOAK_SMTP_PORT", 465),
 		SMTPUsername:  os.Getenv("CLOAK_SMTP_USERNAME"),

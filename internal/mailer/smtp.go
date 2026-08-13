@@ -1,16 +1,28 @@
 // SMTPMailer 通过真实 SMTP 服务器发送邮件。
 // 支持两种安全模式:465 隐式 TLS(SMTPS)与 587 STARTTLS(显式升级)。
+// 安全约束:
+//   - 非 465 端口必须 STARTTLS,服务器不支持则报错(拒绝明文 AUTH,防止凭据泄露);
+//   - SMTP_USERNAME 为空时不调用 AUTH;
+//   - SMTP_FROM 为空时回退 Username,两者都空直接报错;
+//   - 整个 SMTP 会话设置 deadline,避免连接/命令无限阻塞。
+//
 // 仅使用标准库(net/smtp + crypto/tls),不引入第三方依赖。
 package mailer
 
 import (
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"net/smtp"
 	"strings"
 	"time"
+)
+
+const (
+	smtpDialTimeout = 15 * time.Second // TCP 拨号超时
+	smtpCmdTimeout  = 30 * time.Second // SMTP 会话级 deadline(覆盖 TLS 握手、命令与 DATA)
 )
 
 type SMTPMailer struct {
@@ -32,51 +44,67 @@ func (m *SMTPMailer) SendResetEmail(to, token string) error {
 
 // send 建立连接并发送一封纯文本邮件。
 func (m *SMTPMailer) send(to, subject, body string) error {
-	addr := net.JoinHostPort(m.cfg.Host, fmt.Sprintf("%d", m.cfg.Port))
 	from := m.cfg.From
 	if from == "" {
 		from = m.cfg.Username
 	}
+	if from == "" {
+		return errors.New("smtp: SMTP_FROM 与 SMTP_USERNAME 均为空,无法确定发件人地址")
+	}
 	auth := smtp.PlainAuth("", m.cfg.Username, m.cfg.Password, m.cfg.Host)
 
-	// 465:隐式 TLS;587 及其他端口:STARTTLS 显式升级
+	addr := net.JoinHostPort(m.cfg.Host, fmt.Sprintf("%d", m.cfg.Port))
+	client, err := m.dial(addr)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
+	return m.mail(client, auth, from, to, subject, body)
+}
+
+// dial 建立连接并完成安全升级:465 隐式 TLS;其他端口显式 STARTTLS(必须)。
+func (m *SMTPMailer) dial(addr string) (*smtp.Client, error) {
+	conn, err := net.DialTimeout("tcp", addr, smtpDialTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("smtp dial: %w", err)
+	}
+	// 会话级 deadline:同一底层连接上的 TLS 握手、SMTP 命令与 DATA 全部受控
+	_ = conn.SetDeadline(time.Now().Add(smtpCmdTimeout))
+
 	if m.cfg.Port == 465 {
-		return m.sendSMTPS(addr, auth, from, to, subject, body)
-	}
-	return m.sendSTARTTLS(addr, auth, from, to, subject, body)
-}
-
-func (m *SMTPMailer) sendSMTPS(addr string, auth smtp.Auth, from, to, subject, body string) error {
-	conn, err := net.DialTimeout("tcp", addr, 15*time.Second)
-	if err != nil {
-		return fmt.Errorf("smtp dial: %w", err)
-	}
-	tlsConn := tls.Client(conn, &tls.Config{ServerName: m.cfg.Host})
-	client, err := smtp.NewClient(tlsConn, m.cfg.Host)
-	if err != nil {
-		_ = tlsConn.Close()
-		return fmt.Errorf("smtp client: %w", err)
-	}
-	defer func() { _ = client.Close() }()
-	return m.mail(client, auth, from, to, subject, body)
-}
-
-func (m *SMTPMailer) sendSTARTTLS(addr string, auth smtp.Auth, from, to, subject, body string) error {
-	client, err := smtp.Dial(addr)
-	if err != nil {
-		return fmt.Errorf("smtp dial: %w", err)
-	}
-	defer func() { _ = client.Close() }()
-	if ok, _ := client.Extension("STARTTLS"); ok {
-		if err := client.StartTLS(&tls.Config{ServerName: m.cfg.Host}); err != nil {
-			return fmt.Errorf("smtp starttls: %w", err)
+		tlsConn := tls.Client(conn, &tls.Config{ServerName: m.cfg.Host})
+		client, err := smtp.NewClient(tlsConn, m.cfg.Host)
+		if err != nil {
+			_ = tlsConn.Close()
+			return nil, fmt.Errorf("smtp client: %w", err)
 		}
+		return client, nil
 	}
-	return m.mail(client, auth, from, to, subject, body)
+
+	client, err := smtp.NewClient(conn, m.cfg.Host)
+	if err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("smtp client: %w", err)
+	}
+	ok, _ := client.Extension("STARTTLS")
+	if !ok {
+		_ = client.Close()
+		return nil, errors.New("smtp: 服务器不支持 STARTTLS;非 465 端口拒绝明文 AUTH")
+	}
+	if err := client.StartTLS(&tls.Config{ServerName: m.cfg.Host}); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("smtp starttls: %w", err)
+	}
+	return client, nil
 }
 
 func (m *SMTPMailer) mail(client *smtp.Client, auth smtp.Auth, from, to, subject, body string) error {
-	if ok, _ := client.Extension("AUTH"); ok {
+	// 仅配置了用户名时才 AUTH;未配置则不发送 AUTH(避免明文凭据与无谓认证)。
+	// StartTLS 之后 smtp.Client.Extension 会基于 TLS 会话内的 EHLO 能力重新查询。
+	if m.cfg.Username != "" {
+		if ok, _ := client.Extension("AUTH"); !ok {
+			return errors.New("smtp auth: 服务器不支持 AUTH,但已配置 SMTP_USERNAME")
+		}
 		if err := client.Auth(auth); err != nil {
 			return fmt.Errorf("smtp auth: %w", err)
 		}

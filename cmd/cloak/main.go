@@ -60,15 +60,23 @@ func main() {
 
 	app := httpapi.New(httpapi.Deps{Store: st, Mailer: m, Cfg: cfg})
 
-	// 后台任务:DNS 重试、证书预签发探活、访问记录清理
+	// 后台任务:DNS 重试、证书预签发探活、访问/会话清理。
+	// Shutdown 后显式 cancel 并等待 worker 退出,避免进程退出时后台任务仍在写库。
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
-	go domain.NewWorker(st, cfg).Run(workerCtx)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		domain.NewWorker(st, cfg).Run(workerCtx)
+	}()
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           app,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	go func() {
 		log.Printf("cloak listening on %s", cfg.Addr)
@@ -82,5 +90,13 @@ func main() {
 	<-stop
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("http shutdown: %v", err)
+	}
+	workerCancel()
+	select {
+	case <-workerDone:
+	case <-time.After(5 * time.Second):
+		log.Printf("worker did not stop within 5s")
+	}
 }

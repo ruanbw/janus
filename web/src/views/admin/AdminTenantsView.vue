@@ -45,8 +45,11 @@
         </template>
         <template v-else-if="column.key === 'action'">
           <a-space>
+            <a-tooltip v-if="record.isSuperAdmin" title="平台管理员账号不可封禁">
+              <a-button size="small" danger disabled>封禁</a-button>
+            </a-tooltip>
             <a-button
-              v-if="record.status === 'active'"
+              v-else-if="record.status === 'active'"
               size="small"
               danger
               @click="onToggleBan(record, 'banned')"
@@ -91,7 +94,7 @@
           v-if="selectedTier"
           type="info"
           show-icon
-          :message="`该等级配额:短链 ${selectedTier.maxLinks} 条 / 自有域名 ${selectedTier.maxDomains} 个`"
+          :message="`该等级配额:短链 ${selectedTier.maxLinks} 条 / 自有域名 ${selectedTier.maxDomains} 个。调整后立即生效,若现有用量超过新上限,后续新增将被拒绝。`"
         />
       </a-form>
     </a-modal>

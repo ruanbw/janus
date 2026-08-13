@@ -29,7 +29,7 @@
           </a-input-password>
         </a-form-item>
         <a-form-item label="前缀" name="slug" extra="小写字母或数字开头/结尾,可包含连字符;将用于生成你的平台默认域名">
-          <a-input v-model:value="form.slug" placeholder="例如 mybrand" :maxlength="32">
+          <a-input v-model:value="form.slug" placeholder="例如 mybrand" :maxlength="SLUG_MAX_LENGTH">
             <template #prefix><GlobalOutlined /></template>
           </a-input>
         </a-form-item>
@@ -55,13 +55,13 @@ import { GlobalOutlined, LockOutlined, MailOutlined } from '@ant-design/icons-vu
 import type { Rule } from 'ant-design-vue/es/form';
 
 import { register } from '@/api/auth';
-import { SLUG_PATTERN } from '@/constants/dict';
+import { SLUG_MAX_LENGTH, SLUG_PATTERN } from '@/constants/dict';
 import { ApiError } from '@/types/api';
 
 const router = useRouter();
 const submitting = ref(false);
 
-const PLATFORM_DOMAIN = 'cloak.test';
+const PLATFORM_DOMAIN = import.meta.env.VITE_PLATFORM_DOMAIN || 'cloak.test';
 
 const form = reactive({
   email: '',

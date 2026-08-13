@@ -150,7 +150,12 @@ const pagination = computed<TablePaginationConfig>(() => ({
 async function load() {
   loading.value = true;
   try {
-    const result = await listLinks({ page: page.value, pageSize: pageSize.value });
+    let result = await listLinks({ page: page.value, pageSize: pageSize.value });
+    // 删除/彻底删除后当前页可能已空:自动回退到最后一页
+    if (result.items.length === 0 && result.total > 0 && page.value > 1) {
+      page.value = Math.max(1, Math.ceil(result.total / pageSize.value));
+      result = await listLinks({ page: page.value, pageSize: pageSize.value });
+    }
     links.value = result.items;
     total.value = result.total;
   } catch (error) {

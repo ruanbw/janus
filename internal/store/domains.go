@@ -143,8 +143,8 @@ func (s *Store) DeleteDomain(ctx context.Context, id int64) error {
 
 // DomainAuth 返回授权端点所需的域名与租户状态。
 type DomainAuth struct {
-	Status      string
-	Origin      string
+	Status       string
+	Origin       string
 	TenantStatus string
 }
 
