@@ -27,7 +27,7 @@
 
 ## 资源形状(要点)
 
-- `tenant`: `{ id, email, slug, status, isSuperAdmin, codeLength, tier, defaultDomain: "<slug>.<平台域名>", createdAt }`
+- `tenant`: `{ id, email, slug, status, isSuperAdmin, codeLength, tier, defaultDomain: "<slug>.<平台域名>", createdAt, firstLoginSetup?, usage? }`(`firstLoginSetup` 仅超管首次登录(尚无密码)时为 true;`usage` 见 /api/me)
 - `domain`: `{ id, fqdn, origin, status, certStatus, activatedAt, createdAt }`
 - `link`: `{ id, code, targetUrl, redirectStatus, status, domains: [fqdn...], visits, createdAt }`(列表默认不含逻辑删除项)
 - `visit`: `{ id, linkId, domain, userAgent, referer, createdAt }`
@@ -38,12 +38,12 @@
 ### 认证(后台,会话)
 | 方法 | 路径 | 请求 | 成功 | 说明 |
 | --- | --- | --- | --- | --- |
-| POST | /api/auth/register | `{email, password, slug}` | 201 tenant | 400 slug 非法;409 邮箱或 slug 已占用;创建租户(pending)+ 平台默认域名 |
+| POST | /api/auth/register | `{email, password, slug}` | 201 tenant | 400 slug 非法/密码过短;409 邮箱或 slug 已占用;创建租户(pending)+ 平台默认域名 |
 | POST | /api/auth/verify-email | `{token}` | 200 | 无效 token 400;成功后租户 active,触发默认域名证书预签发 |
-| POST | /api/auth/login | `{email, password}` | 200 tenant + Set-Cookie | 401 凭证错误或未验证 |
-| POST | /api/auth/logout | - | 204 | |
+| POST | /api/auth/login | `{email, password, rememberMe?}` | 200 tenant + Set-Cookie | 401 凭证错误或未验证;403 已封禁;`rememberMe` 省略或 true → 会话 30 天,false → 24 小时(契约调整) |
+| POST | /api/auth/logout | - | 204 | 需 X-CSRF-Token |
 | GET | /api/auth/me | - | 200 tenant | |
-| POST | /api/auth/change-password | `{oldPassword, newPassword}` | 204 | |
+| POST | /api/auth/change-password | `{oldPassword, newPassword}` | 204 | 超管首次登录(无密码)可省略 oldPassword |
 | POST | /api/auth/forgot-password | `{email}` | 202 | 始终成功,不泄露存在性 |
 | POST | /api/auth/reset-password | `{token, newPassword}` | 204 | 无效/过期 token 400 |
 
@@ -51,10 +51,10 @@
 | 方法 | 路径 | 请求 | 成功 | 说明 |
 | --- | --- | --- | --- | --- |
 | GET | /api/domains | - | 200 [domain] | 含平台默认域名 |
-| POST | /api/domains | `{fqdn}` | 201 domain | 409 域名已被他人占用;403 域名配额超限;平台默认域名不可重复添加 |
+| POST | /api/domains | `{fqdn}` | 201 domain | 400 fqdn 非法/平台保留域名;409 域名已被占用;403 域名配额超限;平台默认域名不可重复添加 |
 | GET | /api/domains/{id} | - | 200 domain | 404 |
 | POST | /api/domains/{id}/recheck | - | 202 | 手动重新 DNS 校验 |
-| PATCH | /api/domains/{id} | `{status: "stopped"\|"active"}` | 200 | 停用/恢复;平台默认域名不可停用则忽略或拒绝 |
+| PATCH | /api/domains/{id} | `{status: "stopped"\|"active"}` | 200 | 停用/恢复;**平台默认域名可停用/恢复**(spec 故事 55:只能停用不可删除;契约调整);自有域名恢复前校验 DNS 仍指向本机 |
 | DELETE | /api/domains/{id} | - | 204 | 存在未删除短链 → 409(附关联数);平台默认域名 → 400 |
 
 ### 短链(后台,会话)
