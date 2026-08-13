@@ -7,6 +7,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	webui "cloak/web"
 )
 
 func hostOnly(h string) string {
@@ -17,6 +19,11 @@ func hostOnly(h string) string {
 }
 
 func (a *API) handleRedirect(w http.ResponseWriter, r *http.Request) {
+	// 平台后台域名(裸平台域名 / app.<平台域名>):服务内嵌 SPA,不做短码跳转
+	if h := hostOnly(r.Host); h == a.cfg.PlatformDomain || h == "app."+a.cfg.PlatformDomain {
+		webui.Handler().ServeHTTP(w, r)
+		return
+	}
 	code := r.PathValue("code")
 	if code == "" || strings.Contains(code, "/") {
 		writeErr(w, http.StatusNotFound, errNotFound, "short link not found")
