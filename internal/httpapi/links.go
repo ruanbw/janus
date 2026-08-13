@@ -6,6 +6,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -26,11 +27,32 @@ func validTargetURL(s string) bool {
 	return true
 }
 
+// RedirectStatus 跳转方式(契约枚举:"301" | "302")。
+// 兼容字符串("301"/"302")与数字(301/302)两种 JSON 表示。
+type RedirectStatus string
+
+// UnmarshalJSON 接受字符串或数字形式的 301/302。
+func (s *RedirectStatus) UnmarshalJSON(b []byte) error {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	switch n := v.(type) {
+	case string:
+		*s = RedirectStatus(n)
+	case float64:
+		*s = RedirectStatus(strconv.Itoa(int(n)))
+	default:
+		return fmt.Errorf("redirectStatus must be \"301\" or \"302\"")
+	}
+	return nil
+}
+
 type createLinkReq struct {
-	Code           string  `json:"code"`
-	TargetURL      string  `json:"targetUrl"`
-	DomainIDs      []int64 `json:"domainIds"`
-	RedirectStatus *int    `json:"redirectStatus"`
+	Code           string          `json:"code"`
+	TargetURL      string          `json:"targetUrl"`
+	DomainIDs      []int64         `json:"domainIds"`
+	RedirectStatus *RedirectStatus `json:"redirectStatus"`
 }
 
 func (a *API) handleCreateLink(w http.ResponseWriter, r *http.Request) {
@@ -61,10 +83,10 @@ func (a *API) createLink(r *http.Request, t *store.Tenant, req createLinkReq) (*
 	}
 	redirectStatus := 302
 	if req.RedirectStatus != nil {
-		if *req.RedirectStatus != 301 && *req.RedirectStatus != 302 {
+		if *req.RedirectStatus != "301" && *req.RedirectStatus != "302" {
 			return nil, apiErr{http.StatusBadRequest, errValidation, "redirectStatus 必须为 301 或 302", nil}
 		}
-		redirectStatus = *req.RedirectStatus
+		redirectStatus, _ = strconv.Atoi(string(*req.RedirectStatus))
 	}
 	if len(req.DomainIDs) == 0 {
 		return nil, apiErr{http.StatusBadRequest, errValidation, "至少关联一个域名", nil}
@@ -185,10 +207,10 @@ func (a *API) handleGetLink(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchLinkReq struct {
-	TargetURL      *string `json:"targetUrl"`
-	DomainIDs      *[]int64 `json:"domainIds"`
-	RedirectStatus *int    `json:"redirectStatus"`
-	Status         *string `json:"status"`
+	TargetURL      *string         `json:"targetUrl"`
+	DomainIDs      *[]int64        `json:"domainIds"`
+	RedirectStatus *RedirectStatus `json:"redirectStatus"`
+	Status         *string         `json:"status"`
 }
 
 func (a *API) handlePatchLink(w http.ResponseWriter, r *http.Request) {
@@ -218,11 +240,12 @@ func (a *API) handlePatchLink(w http.ResponseWriter, r *http.Request) {
 		upd.TargetURL = req.TargetURL
 	}
 	if req.RedirectStatus != nil {
-		if *req.RedirectStatus != 301 && *req.RedirectStatus != 302 {
+		if *req.RedirectStatus != "301" && *req.RedirectStatus != "302" {
 			writeErr(w, http.StatusBadRequest, errValidation, "redirectStatus 必须为 301 或 302")
 			return
 		}
-		upd.RedirectStatus = req.RedirectStatus
+		v, _ := strconv.Atoi(string(*req.RedirectStatus))
+		upd.RedirectStatus = &v
 	}
 	if req.Status != nil {
 		if *req.Status != "enabled" && *req.Status != "disabled" {

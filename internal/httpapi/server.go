@@ -7,7 +7,10 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
+
+	webui "cloak/web"
 
 	"cloak/internal/config"
 	"cloak/internal/domain"
@@ -101,7 +104,7 @@ func New(d Deps) http.Handler {
 	return a.withMiddleware(mux)
 }
 
-// withMiddleware 全局中间件:panic 恢复与访问日志。
+// withMiddleware 全局中间件:后台域名 SPA 分流、panic 恢复与访问日志。
 func (a *API) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -113,6 +116,16 @@ func (a *API) withMiddleware(next http.Handler) http.Handler {
 			}
 			log.Printf("%s %s -> %d (%s)", r.Method, r.URL.Path, sw.status, time.Since(start))
 		}()
+		// 平台后台域名(裸平台域名 / app.<平台域名>):除 API、内部端点与健康检查外的
+		// 一切 GET 请求交给内嵌 SPA(单二进制部署,spec 决策 #1)。mux 只有
+		// "GET /{code}" 等精确路由,多段路径(assets、/admin/tenants 等)必须在此分流。
+		if r.Method == http.MethodGet && !strings.HasPrefix(r.URL.Path, "/api/") &&
+			!strings.HasPrefix(r.URL.Path, "/internal/") && r.URL.Path != "/healthz" {
+			if h := hostOnly(r.Host); h == a.cfg.PlatformDomain || h == "app."+a.cfg.PlatformDomain {
+				webui.Handler().ServeHTTP(sw, r)
+				return
+			}
+		}
 		next.ServeHTTP(sw, r)
 	})
 }

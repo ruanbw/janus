@@ -9,27 +9,36 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"sync"
 )
 
 //go:embed all:dist
 var distFS embed.FS
 
-// Handler 返回内嵌前端静态文件处理器;未知路径回退到 index.html(SPA 路由)。
+var (
+	handlerOnce sync.Once
+	handler     http.Handler
+)
+
+// Handler 返回内嵌前端静态文件处理器(单例);未知路径回退到 index.html(SPA 路由)。
 func Handler() http.Handler {
-	sub, err := fs.Sub(distFS, "dist")
-	if err != nil {
-		panic(err)
-	}
-	fileServer := http.FileServer(http.FS(sub))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-		if p != "" {
-			if _, err := fs.Stat(sub, p); err == nil {
-				fileServer.ServeHTTP(w, r)
-				return
-			}
+	handlerOnce.Do(func() {
+		sub, err := fs.Sub(distFS, "dist")
+		if err != nil {
+			panic(err)
 		}
-		// SPA fallback:未命中的路径一律返回 index.html
-		http.ServeFileFS(w, r, sub, "index.html")
+		fileServer := http.FileServer(http.FS(sub))
+		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+			if p != "" {
+				if _, err := fs.Stat(sub, p); err == nil {
+					fileServer.ServeHTTP(w, r)
+					return
+				}
+			}
+			// SPA fallback:未命中的路径一律返回 index.html
+			http.ServeFileFS(w, r, sub, "index.html")
+		})
 	})
+	return handler
 }
