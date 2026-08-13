@@ -1,0 +1,9 @@
+allowBuilds:
+  core-js: true
+  esbuild: true
+  vue-demi: true
+# pnpm 11:构建脚本白名单(esbuild 需 postinstall 下载二进制,core-js/vue-demi 需 postinstall)
+onlyBuiltDependencies:
+  - core-js
+  - esbuild
+  - vue-demi

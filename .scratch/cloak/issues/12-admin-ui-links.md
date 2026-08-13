@@ -4,8 +4,16 @@
 
 **Blocked by:** 10, 05
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] 短链列表展示短码、目标、关联域名、状态、访问数
 - [ ] 创建短链:自定义或自动短码、选择关联域名、配置 302/301、目标任意协议
 - [ ] 编辑、启用/停用、逻辑删除、彻底删除可用;配额超限的错误提示清晰
+
+## Comments
+
+- 已实现 `web/src/views/links/LinksView.vue` + `LinkFormModal.vue`:分页列表(短码可复制、目标 URL 截断+tooltip、关联域名 tags、重定向方式 302/301、状态、访问数、创建时间)。
+- 创建/编辑弹窗:自定义短码(前端校验:仅字母数字、不含易混淆字符 0/O/1/l/I、最长 32;留空自动生成)、目标 URL(任意协议,前端拒绝控制字符/CRLF)、多选关联域名(停用/未激活域名置灰并提示)、302/301 单选;编辑可改状态。
+- 操作:启用/停用、逻辑删除(确认弹窗说明记录与访问保留)、彻底删除(popconfirm 强提示,调 purge);403 配额超限展示后端 message(含当前用量/上限);409 同域名同短码冲突提示。
+- 用到的契约端点:GET /api/links(分页)、POST /api/links、GET /api/links/{id}、PATCH /api/links/{id}、DELETE /api/links/{id}、POST /api/links/{id}/purge。
+- 待联调:创建(自动/自定义短码)、配额超限 403、同域名短码冲突 409、彻底删除需主会话在 web/ 下 dev 后与真实后端验证。

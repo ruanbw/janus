@@ -1,0 +1,288 @@
+<template>
+  <div>
+    <div class="page-header">
+      <h2 class="page-title">域名</h2>
+      <a-button type="primary" @click="openCreate">
+        <template #icon><PlusOutlined /></template>
+        添加自有域名
+      </a-button>
+    </div>
+
+    <a-alert
+      v-if="quotaInfo"
+      class="quota-alert"
+      type="info"
+      show-icon
+      :message="quotaInfo"
+    />
+
+    <a-table
+      :columns="columns"
+      :data-source="domains"
+      :loading="loading"
+      row-key="id"
+      :pagination="false"
+    >
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'fqdn'">
+          <a-typography-text copyable>{{ record.fqdn }}</a-typography-text>
+        </template>
+        <template v-else-if="column.key === 'origin'">
+          <a-tag :color="DOMAIN_ORIGIN[record.origin as DomainOrigin].color">
+            {{ DOMAIN_ORIGIN[record.origin as DomainOrigin].label }}
+          </a-tag>
+        </template>
+        <template v-else-if="column.key === 'status'">
+          <a-tag :color="DOMAIN_STATUS[record.status as DomainStatus].color">
+            {{ DOMAIN_STATUS[record.status as DomainStatus].label }}
+          </a-tag>
+        </template>
+        <template v-else-if="column.key === 'certStatus'">
+          <a-tag :color="CERT_STATUS[record.certStatus as CertStatus].color">
+            {{ CERT_STATUS[record.certStatus as CertStatus].label }}
+          </a-tag>
+        </template>
+        <template v-else-if="column.key === 'activatedAt'">
+          {{ formatDateTime(record.activatedAt) }}
+        </template>
+        <template v-else-if="column.key === 'createdAt'">
+          {{ formatDateTime(record.createdAt) }}
+        </template>
+        <template v-else-if="column.key === 'action'">
+          <a-space>
+            <a-button size="small" @click="onRecheck(record)">手动重检</a-button>
+            <a-button
+              v-if="record.status !== 'stopped'"
+              size="small"
+              danger
+              @click="onToggleStatus(record, 'stopped')"
+            >
+              停用
+            </a-button>
+            <a-button v-else size="small" type="primary" ghost @click="onToggleStatus(record, 'active')">
+              恢复
+            </a-button>
+            <a-button
+              v-if="record.origin === 'self'"
+              size="small"
+              type="text"
+              danger
+              @click="onDelete(record)"
+            >
+              删除
+            </a-button>
+            <a-tooltip v-else title="平台默认域名不可删除,可停用">
+              <a-button size="small" type="text" disabled>删除</a-button>
+            </a-tooltip>
+          </a-space>
+        </template>
+      </template>
+    </a-table>
+
+    <!-- 添加自有域名 -->
+    <a-modal
+      v-model:open="createOpen"
+      title="添加自有域名"
+      :confirm-loading="creating"
+      ok-text="添加"
+      cancel-text="取消"
+      @ok="onCreate"
+    >
+      <a-form layout="vertical">
+        <a-form-item
+          label="域名"
+          extra="需先将该域名的 A/AAAA 记录指向本服务器,添加后系统会自动校验并签发证书"
+        >
+          <a-input
+            v-model:value="newFqdn"
+            placeholder="例如 links.example.com"
+            @press-enter="onCreate"
+          />
+        </a-form-item>
+      </a-form>
+      <a-alert
+        type="warning"
+        show-icon
+        message="添加前请确认 DNS 已指向本服务器,否则域名将停留在「待激活」并在 72 小时后标记为「校验失败」。"
+      />
+    </a-modal>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { Modal, message } from 'ant-design-vue';
+import { PlusOutlined } from '@ant-design/icons-vue';
+import type { TableColumnsType } from 'ant-design-vue';
+
+import { createDomain, deleteDomain, listDomains, recheckDomain, updateDomainStatus } from '@/api/domains';
+import { CERT_STATUS, DOMAIN_ORIGIN, DOMAIN_STATUS } from '@/constants/dict';
+import { useAuthStore } from '@/stores/auth';
+import { ApiError } from '@/types/api';
+import type { CertStatus, Domain, DomainOrigin, DomainStatus } from '@/types/api';
+import { formatDateTime } from '@/utils/format';
+
+const auth = useAuthStore();
+
+const domains = ref<Domain[]>([]);
+const loading = ref(false);
+const createOpen = ref(false);
+const creating = ref(false);
+const newFqdn = ref('');
+
+const quotaInfo = computed(() => {
+  const usage = auth.tenant?.usage;
+  if (!usage) return '';
+  return `当前配额:自有域名 ${usage.domains}/${usage.maxDomains} 条,短链 ${usage.links}/${usage.maxLinks} 条(平台默认域名不计入域名配额)。`;
+});
+
+const columns: TableColumnsType = [
+  { title: '域名', key: 'fqdn', dataIndex: 'fqdn' },
+  { title: '来源', key: 'origin', dataIndex: 'origin', width: 140 },
+  { title: '状态', key: 'status', dataIndex: 'status', width: 110 },
+  { title: '证书', key: 'certStatus', dataIndex: 'certStatus', width: 110 },
+  { title: '激活时间', key: 'activatedAt', dataIndex: 'activatedAt', width: 170 },
+  { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 170 },
+  { title: '操作', key: 'action', width: 280 },
+];
+
+let timer: number | undefined;
+
+async function load() {
+  loading.value = true;
+  try {
+    domains.value = await listDomains();
+  } catch (error) {
+    if (error instanceof ApiError && error.status !== 401) {
+      message.error(error.message);
+    }
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(() => {
+  load();
+  // 轮询刷新:观察 DNS 校验与证书签发状态变化
+  timer = window.setInterval(load, 10_000);
+});
+
+onUnmounted(() => {
+  if (timer) window.clearInterval(timer);
+});
+
+function openCreate() {
+  newFqdn.value = '';
+  createOpen.value = true;
+}
+
+async function onCreate() {
+  const fqdn = newFqdn.value.trim();
+  if (!fqdn) {
+    message.warning('请输入域名');
+    return;
+  }
+  creating.value = true;
+  try {
+    const domain = await createDomain({ fqdn });
+    message.success(`域名 ${domain.fqdn} 已添加,正在等待 DNS 校验`);
+    createOpen.value = false;
+    await load();
+  } catch (error) {
+    if (error instanceof ApiError) {
+      if (error.status === 403) {
+        message.error(`域名配额超限:${error.message}`);
+      } else if (error.status === 409) {
+        message.error(`域名已被占用:${error.message}`);
+      } else if (error.status === 400) {
+        message.error(`域名不合法:${error.message}`);
+      } else {
+        message.error(error.message);
+      }
+    } else {
+      message.error('添加失败,请稍后重试');
+    }
+  } finally {
+    creating.value = false;
+  }
+}
+
+async function onRecheck(domain: Domain) {
+  try {
+    await recheckDomain(domain.id);
+    message.success(`已提交 ${domain.fqdn} 的重新校验,稍后自动刷新状态`);
+  } catch (error) {
+    if (error instanceof ApiError) message.error(error.message);
+    else message.error('操作失败,请稍后重试');
+  }
+}
+
+async function onToggleStatus(domain: Domain, status: DomainStatus) {
+  const label = status === 'stopped' ? '停用' : '恢复';
+  Modal.confirm({
+    title: `${label}域名 ${domain.fqdn}?`,
+    content:
+      status === 'stopped'
+        ? '停用后,该域名下的所有短码将立即未命中(404)。'
+        : '恢复后,该域名下的短链将重新可访问(自有域名恢复前会重新校验 DNS)。',
+    okText: label,
+    okButtonProps: status === 'stopped' ? { danger: true } : undefined,
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await updateDomainStatus(domain.id, status);
+        message.success(`域名已${label}`);
+        await load();
+      } catch (error) {
+        if (error instanceof ApiError) message.error(error.message);
+        else message.error('操作失败,请稍后重试');
+      }
+    },
+  });
+}
+
+function onDelete(domain: Domain) {
+  Modal.confirm({
+    title: `删除域名 ${domain.fqdn}?`,
+    content: '删除为物理删除。若该域名下仍有关联的未删除短链,将被拒绝(409);请先清空关联。',
+    okText: '删除',
+    okButtonProps: { danger: true },
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await deleteDomain(domain.id);
+        message.success('域名已删除');
+        await load();
+      } catch (error) {
+        if (error instanceof ApiError) {
+          if (error.status === 409) {
+            message.error(`无法删除:${error.message}(请先移除该域名下关联的未删除短链)`);
+          } else {
+            message.error(error.message);
+          }
+        } else {
+          message.error('删除失败,请稍后重试');
+        }
+      }
+    },
+  });
+}
+</script>
+
+<style scoped>
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.quota-alert {
+  margin-bottom: 16px;
+}
+</style>
