@@ -28,6 +28,14 @@ type Config struct {
 	VisitCleanupEvery time.Duration // 访问记录清理任务间隔
 
 	MigrationsDir string // SQL 迁移文件目录
+
+	// SMTP 邮件(可选):配置后启用真实邮件发送,否则控制台 mailer(spec 决策 #3)
+	PublicBaseURL string // 后台访问地址,邮件链接前缀(如 https://app.cloak.test)
+	SMTPHost      string
+	SMTPPort      int
+	SMTPUsername  string
+	SMTPPassword  string
+	SMTPFrom      string
 }
 
 func getenv(key, def string) string {
@@ -75,5 +83,21 @@ func Load() Config {
 		VisitCleanupEvery: getdur("CLOAK_VISIT_CLEANUP_INTERVAL", 24*time.Hour),
 
 		MigrationsDir: getenv("CLOAK_MIGRATIONS_DIR", "migrations"),
+
+		PublicBaseURL: getenv("CLOAK_PUBLIC_BASE_URL", "https://app.cloak.test"),
+		SMTPHost:      os.Getenv("CLOAK_SMTP_HOST"),
+		SMTPPort:      getint("CLOAK_SMTP_PORT", 465),
+		SMTPUsername:  os.Getenv("CLOAK_SMTP_USERNAME"),
+		SMTPPassword:  os.Getenv("CLOAK_SMTP_PASSWORD"),
+		SMTPFrom:      os.Getenv("CLOAK_SMTP_FROM"),
 	}
+}
+
+func getint(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
 }

@@ -35,6 +35,13 @@ services:
       # 开发环境经 http 访问后端(前端 Vite dev proxy),Secure cookie 不生效
       CLOAK_COOKIE_SECURE: "false"
       CLOAK_MIGRATIONS_DIR: "/app/migrations"
+      # 邮件:SMTP 凭据来自 .env(未配置时用控制台 mailer)
+      CLOAK_PUBLIC_BASE_URL: "${CLOAK_PUBLIC_BASE_URL:-https://app.cloak.test:8443}"
+      CLOAK_SMTP_HOST: "${CLOAK_SMTP_HOST:-}"
+      CLOAK_SMTP_PORT: "${CLOAK_SMTP_PORT:-465}"
+      CLOAK_SMTP_USERNAME: "${CLOAK_SMTP_USERNAME:-}"
+      CLOAK_SMTP_PASSWORD: "${CLOAK_SMTP_PASSWORD:-}"
+      CLOAK_SMTP_FROM: "${CLOAK_SMTP_FROM:-}"
     ports:
       - "127.0.0.1:8081:8080"
     depends_on:

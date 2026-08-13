@@ -102,7 +102,7 @@ func Setup(t *testing.T) *Env {
 	}
 
 	st := store.New(pool)
-	m := mailer.NewConsoleMailer(mailBuf)
+	m := mailer.NewMailer(mailer.Config{BaseURL: "https://app.cloak.test"}, mailBuf)
 	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Store: st, Mailer: m, Cfg: cfg}))
 	t.Cleanup(srv.Close)
 

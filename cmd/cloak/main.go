@@ -42,7 +42,21 @@ func main() {
 		}
 	}
 
-	m := mailer.NewConsoleMailer(os.Stdout)
+	// 邮件:配置 SMTP 后启用真实发送(见 .env.example),否则控制台 mailer
+	var smtpCfg *mailer.SMTPConfig
+	if cfg.SMTPHost != "" {
+		smtpCfg = &mailer.SMTPConfig{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUsername,
+			Password: cfg.SMTPPassword,
+			From:     cfg.SMTPFrom,
+		}
+	}
+	m := mailer.NewMailer(mailer.Config{
+		BaseURL: cfg.PublicBaseURL,
+		SMTP:    smtpCfg,
+	}, os.Stdout)
 
 	app := httpapi.New(httpapi.Deps{Store: st, Mailer: m, Cfg: cfg})
 
