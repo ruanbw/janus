@@ -7,64 +7,66 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 	"strconv"
 
 	"cloak/internal/store"
 )
 
-func (a *API) requireSuperadmin(w http.ResponseWriter, r *http.Request) (*store.Tenant, *store.Session, bool) {
-	t, sess, ok := a.requireSession(w, r)
+func (a *API) requireSuperadmin(c *gin.Context) (*store.Tenant, *store.Session, bool) {
+	t, sess, ok := a.requireSession(c)
 	if !ok {
 		return nil, nil, false
 	}
 	if !t.IsSuperAdmin {
-		writeErr(w, http.StatusForbidden, errForbidden, "superadmin only")
+		writeErr(c, http.StatusForbidden, errForbidden, "superadmin only")
 		return nil, nil, false
 	}
 	return t, sess, true
 }
 
-func (a *API) handleAdminListTenants(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.requireSuperadmin(w, r); !ok {
+func (a *API) handleAdminListTenants(c *gin.Context) {
+	if _, _, ok := a.requireSuperadmin(c); !ok {
 		return
 	}
-	tenants, err := a.store.ListTenants(r.Context())
+	tenants, err := a.store.ListTenants(c.Request.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	if tenants == nil {
 		tenants = []*store.Tenant{}
 	}
 	for _, t := range tenants {
-		u, err := a.store.Usage(r.Context(), t.ID)
+		u, err := a.store.Usage(c.Request.Context(), t.ID)
 		if err != nil {
 			continue
 		}
 		t.Usage = u
 	}
-	writeJSON(w, http.StatusOK, tenants)
+	writeJSON(c, http.StatusOK, tenants)
 }
 
-func (a *API) handleAdminGetTenant(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.requireSuperadmin(w, r); !ok {
+func (a *API) handleAdminGetTenant(c *gin.Context) {
+	if _, _, ok := a.requireSuperadmin(c); !ok {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	t, err := a.store.GetTenantByID(r.Context(), id)
+	t, err := a.store.GetTenantByID(c.Request.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, errNotFound, "tenant not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "tenant not found")
 		return
 	}
-	u, err := a.store.Usage(r.Context(), t.ID)
+	u, err := a.store.Usage(c.Request.Context(), t.ID)
 	if err == nil {
 		t.Usage = u
 	}
-	writeJSON(w, http.StatusOK, t)
+	writeJSON(c, http.StatusOK, t)
 }
 
 type adminPatchTenantReq struct {
@@ -74,85 +76,85 @@ type adminPatchTenantReq struct {
 
 // handleAdminPatchTenant 封禁/解封租户、调整等级。
 // 契约仅允许 status=banned|active;禁止超管封禁/调整自己的等级(避免锁死)。
-func (a *API) handleAdminPatchTenant(w http.ResponseWriter, r *http.Request) {
-	admin, sess, ok := a.requireSuperadmin(w, r)
+func (a *API) handleAdminPatchTenant(c *gin.Context) {
+	admin, sess, ok := a.requireSuperadmin(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
 	var req adminPatchTenantReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
 	if req.Status != nil {
 		if *req.Status != "banned" && *req.Status != "active" {
-			writeErr(w, http.StatusBadRequest, errValidation, "status 必须为 banned 或 active")
+			writeErr(c, http.StatusBadRequest, errValidation, "status 必须为 banned 或 active")
 			return
 		}
 		if id == admin.ID && *req.Status == "banned" {
-			writeErr(w, http.StatusBadRequest, errValidation, "不能封禁自己,请使用其他超管邮箱处理")
+			writeErr(c, http.StatusBadRequest, errValidation, "不能封禁自己,请使用其他超管邮箱处理")
 			return
 		}
-		if err := a.store.SetTenantStatus(r.Context(), id, *req.Status); err != nil {
-			writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		if err := a.store.SetTenantStatus(c.Request.Context(), id, *req.Status); err != nil {
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 			return
 		}
 	}
 	if req.TierID != nil {
 		if id == admin.ID {
-			writeErr(w, http.StatusBadRequest, errValidation, "不能调整自己的等级,请使用其他超管邮箱处理")
+			writeErr(c, http.StatusBadRequest, errValidation, "不能调整自己的等级,请使用其他超管邮箱处理")
 			return
 		}
-		if _, err := a.store.GetTier(r.Context(), *req.TierID); err != nil {
-			writeErr(w, http.StatusBadRequest, errValidation, "tier 不存在")
+		if _, err := a.store.GetTier(c.Request.Context(), *req.TierID); err != nil {
+			writeErr(c, http.StatusBadRequest, errValidation, "tier 不存在")
 			return
 		}
-		if err := a.store.SetTenantTier(r.Context(), id, *req.TierID); err != nil {
-			writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		if err := a.store.SetTenantTier(c.Request.Context(), id, *req.TierID); err != nil {
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 			return
 		}
 	}
-	t, err := a.store.GetTenantByID(r.Context(), id)
+	t, err := a.store.GetTenantByID(c.Request.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, errNotFound, "tenant not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "tenant not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	writeJSON(c, http.StatusOK, t)
 }
 
 // handleAdminDeleteDomain 平台强删违规域名(解除其短链关联,不要求短链已删除)。
-func (a *API) handleAdminDeleteDomain(w http.ResponseWriter, r *http.Request) {
-	_, sess, ok := a.requireSuperadmin(w, r)
+func (a *API) handleAdminDeleteDomain(c *gin.Context) {
+	_, sess, ok := a.requireSuperadmin(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	if _, err := a.store.GetDomainByID(r.Context(), id); err != nil {
+	if _, err := a.store.GetDomainByID(c.Request.Context(), id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeErr(w, http.StatusNotFound, errNotFound, "domain not found")
+			writeErr(c, http.StatusNotFound, errNotFound, "domain not found")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	if err := a.store.DetachDomain(r.Context(), id); err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+	if err := a.store.DetachDomain(c.Request.Context(), id); err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeNoContent(w)
+	writeNoContent(c)
 }

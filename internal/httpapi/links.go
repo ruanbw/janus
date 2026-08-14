@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 	"strconv"
 
 	"cloak/internal/domain"
@@ -55,29 +57,29 @@ type createLinkReq struct {
 	RedirectStatus *RedirectStatus `json:"redirectStatus"`
 }
 
-func (a *API) handleCreateLink(w http.ResponseWriter, r *http.Request) {
-	t, sess, ok := a.requireSession(w, r)
+func (a *API) handleCreateLink(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
 	var req createLinkReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
-	link, err := a.createLink(r, t, req)
+	link, err := a.createLink(c, t, req)
 	if err != nil {
-		writeAPIError(w, err)
+		writeAPIError(c, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, link)
+	writeJSON(c, http.StatusCreated, link)
 }
 
 // createLink 供后台与公开 API 共用(同一规则)。
-func (a *API) createLink(r *http.Request, t *store.Tenant, req createLinkReq) (*store.Link, error) {
+func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*store.Link, error) {
 	if !validTargetURL(req.TargetURL) {
 		return nil, apiErr{http.StatusBadRequest, errValidation, "目标 URL 非法(不能包含控制字符)", nil}
 	}
@@ -92,12 +94,12 @@ func (a *API) createLink(r *http.Request, t *store.Tenant, req createLinkReq) (*
 		return nil, apiErr{http.StatusBadRequest, errValidation, "至少关联一个域名", nil}
 	}
 	// 域名必须属于当前租户且 active
-	domainIDs, err := a.validateLinkDomains(r, t.ID, req.DomainIDs)
+	domainIDs, err := a.validateLinkDomains(c, t.ID, req.DomainIDs)
 	if err != nil {
 		return nil, err
 	}
 	// 短链配额:按"尚未物理删除"计数
-	usage, err := a.store.Usage(r.Context(), t.ID)
+	usage, err := a.store.Usage(c.Request.Context(), t.ID)
 	if err != nil {
 		return nil, apiErr{http.StatusInternalServerError, errInternal, "internal error", nil}
 	}
@@ -111,7 +113,7 @@ func (a *API) createLink(r *http.Request, t *store.Tenant, req createLinkReq) (*
 			return nil, apiErr{http.StatusBadRequest, errValidation,
 				"短码非法(字符集不含 0/O/1/l/I,长度 1-64)", nil}
 		}
-		link, err := a.store.CreateLink(r.Context(), t.ID, req.Code, req.TargetURL, redirectStatus, domainIDs)
+		link, err := a.store.CreateLink(c.Request.Context(), t.ID, req.Code, req.TargetURL, redirectStatus, domainIDs)
 		if err != nil {
 			if store.IsUniqueViolation(err) {
 				return nil, apiErr{http.StatusConflict, errConflict, "同一域名下短码已存在", nil}
@@ -123,7 +125,7 @@ func (a *API) createLink(r *http.Request, t *store.Tenant, req createLinkReq) (*
 	// 自动生成短码:随机生成直到无冲突(生成失败重试 10 次)
 	for i := 0; i < 10; i++ {
 		code := domain.GenerateCode(t.CodeLength)
-		link, err := a.store.CreateLink(r.Context(), t.ID, code, req.TargetURL, redirectStatus, domainIDs)
+		link, err := a.store.CreateLink(c.Request.Context(), t.ID, code, req.TargetURL, redirectStatus, domainIDs)
 		if err == nil {
 			return link, nil
 		}
@@ -136,7 +138,7 @@ func (a *API) createLink(r *http.Request, t *store.Tenant, req createLinkReq) (*
 }
 
 // validateLinkDomains 校验域名归属与激活状态,返回去重后的 domainID 列表。
-func (a *API) validateLinkDomains(r *http.Request, tenantID int64, ids []int64) ([]int64, error) {
+func (a *API) validateLinkDomains(c *gin.Context, tenantID int64, ids []int64) ([]int64, error) {
 	seen := map[int64]bool{}
 	var out []int64
 	for _, id := range ids {
@@ -144,7 +146,7 @@ func (a *API) validateLinkDomains(r *http.Request, tenantID int64, ids []int64) 
 			continue
 		}
 		seen[id] = true
-		d, err := a.store.GetDomainByID(r.Context(), id)
+		d, err := a.store.GetDomainByID(c.Request.Context(), id)
 		if err != nil || d.TenantID != tenantID {
 			return nil, apiErr{http.StatusBadRequest, errValidation, "域名不存在或不属于当前租户", nil}
 		}
@@ -156,12 +158,12 @@ func (a *API) validateLinkDomains(r *http.Request, tenantID int64, ids []int64) 
 	return out, nil
 }
 
-func pageParams(r *http.Request) (page, pageSize int) {
-	page, _ = strconv.Atoi(r.URL.Query().Get("page"))
+func pageParams(c *gin.Context) (page, pageSize int) {
+	page, _ = strconv.Atoi(c.Request.URL.Query().Get("page"))
 	if page < 1 {
 		page = 1
 	}
-	pageSize, _ = strconv.Atoi(r.URL.Query().Get("pageSize"))
+	pageSize, _ = strconv.Atoi(c.Request.URL.Query().Get("pageSize"))
 	if pageSize < 1 {
 		pageSize = 20
 	}
@@ -171,39 +173,39 @@ func pageParams(r *http.Request) (page, pageSize int) {
 	return page, pageSize
 }
 
-func (a *API) handleListLinks(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := a.requireSession(w, r)
+func (a *API) handleListLinks(c *gin.Context) {
+	t, _, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	page, pageSize := pageParams(r)
-	items, total, err := a.store.ListLinksByTenant(r.Context(), t.ID, page, pageSize)
+	page, pageSize := pageParams(c)
+	items, total, err := a.store.ListLinksByTenant(c.Request.Context(), t.ID, page, pageSize)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	if items == nil {
 		items = []*store.Link{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
+	writeJSON(c, http.StatusOK, map[string]any{"items": items, "total": total})
 }
 
-func (a *API) handleGetLink(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := a.requireSession(w, r)
+func (a *API) handleGetLink(c *gin.Context) {
+	t, _, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	link, err := a.store.GetLinkByID(r.Context(), t.ID, id)
+	link, err := a.store.GetLinkByID(c.Request.Context(), t.ID, id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, errNotFound, "link not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, link)
+	writeJSON(c, http.StatusOK, link)
 }
 
 type patchLinkReq struct {
@@ -213,35 +215,35 @@ type patchLinkReq struct {
 	Status         *string         `json:"status"`
 }
 
-func (a *API) handlePatchLink(w http.ResponseWriter, r *http.Request) {
-	t, sess, ok := a.requireSession(w, r)
+func (a *API) handlePatchLink(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
 	var req patchLinkReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
 	upd := store.LinkUpdate{}
 	if req.TargetURL != nil {
 		if !validTargetURL(*req.TargetURL) {
-			writeErr(w, http.StatusBadRequest, errValidation, "目标 URL 非法(不能包含控制字符)")
+			writeErr(c, http.StatusBadRequest, errValidation, "目标 URL 非法(不能包含控制字符)")
 			return
 		}
 		upd.TargetURL = req.TargetURL
 	}
 	if req.RedirectStatus != nil {
 		if *req.RedirectStatus != "301" && *req.RedirectStatus != "302" {
-			writeErr(w, http.StatusBadRequest, errValidation, "redirectStatus 必须为 301 或 302")
+			writeErr(c, http.StatusBadRequest, errValidation, "redirectStatus 必须为 301 或 302")
 			return
 		}
 		v := store.RedirectStatus(*req.RedirectStatus)
@@ -249,119 +251,119 @@ func (a *API) handlePatchLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Status != nil {
 		if *req.Status != "enabled" && *req.Status != "disabled" {
-			writeErr(w, http.StatusBadRequest, errValidation, "status 必须为 enabled 或 disabled")
+			writeErr(c, http.StatusBadRequest, errValidation, "status 必须为 enabled 或 disabled")
 			return
 		}
 		upd.Status = req.Status
 	}
 	if req.DomainIDs != nil {
-		ids, err := a.validateLinkDomains(r, t.ID, *req.DomainIDs)
+		ids, err := a.validateLinkDomains(c, t.ID, *req.DomainIDs)
 		if err != nil {
-			writeAPIError(w, err)
+			writeAPIError(c, err)
 			return
 		}
 		upd.DomainIDs = &ids
 	}
-	link, err := a.store.UpdateLink(r.Context(), t.ID, id, upd)
+	link, err := a.store.UpdateLink(c.Request.Context(), t.ID, id, upd)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeErr(w, http.StatusNotFound, errNotFound, "link not found")
+			writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 			return
 		}
 		if store.IsUniqueViolation(err) {
-			writeErr(w, http.StatusConflict, errConflict, "同一域名下短码已存在")
+			writeErr(c, http.StatusConflict, errConflict, "同一域名下短码已存在")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, link)
+	writeJSON(c, http.StatusOK, link)
 }
 
-func (a *API) handleDeleteLink(w http.ResponseWriter, r *http.Request) {
-	t, sess, ok := a.requireSession(w, r)
+func (a *API) handleDeleteLink(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	if err := a.store.SoftDeleteLink(r.Context(), t.ID, id); err != nil {
-		writeErr(w, http.StatusNotFound, errNotFound, "link not found")
+	if err := a.store.SoftDeleteLink(c.Request.Context(), t.ID, id); err != nil {
+		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
-	writeNoContent(w)
+	writeNoContent(c)
 }
 
-func (a *API) handlePurgeLink(w http.ResponseWriter, r *http.Request) {
-	t, sess, ok := a.requireSession(w, r)
+func (a *API) handlePurgeLink(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	if err := a.store.PurgeLink(r.Context(), t.ID, id); err != nil {
-		writeErr(w, http.StatusNotFound, errNotFound, "link not found")
+	if err := a.store.PurgeLink(c.Request.Context(), t.ID, id); err != nil {
+		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
-	writeNoContent(w)
+	writeNoContent(c)
 }
 
 // ---------- 访问列表与统计(07) ----------
 
-func (a *API) handleListVisits(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := a.requireSession(w, r)
+func (a *API) handleListVisits(c *gin.Context) {
+	t, _, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	if _, err := a.store.GetLinkByID(r.Context(), t.ID, id); err != nil {
-		writeErr(w, http.StatusNotFound, errNotFound, "link not found")
+	if _, err := a.store.GetLinkByID(c.Request.Context(), t.ID, id); err != nil {
+		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
-	page, pageSize := pageParams(r)
-	items, total, err := a.store.ListVisitsByLink(r.Context(), id, page, pageSize)
+	page, pageSize := pageParams(c)
+	items, total, err := a.store.ListVisitsByLink(c.Request.Context(), id, page, pageSize)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	if items == nil {
 		items = []*store.Visit{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
+	writeJSON(c, http.StatusOK, map[string]any{"items": items, "total": total})
 }
 
-func (a *API) handleLinkStats(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := a.requireSession(w, r)
+func (a *API) handleLinkStats(c *gin.Context) {
+	t, _, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	link, err := a.store.GetLinkByID(r.Context(), t.ID, id)
+	link, err := a.store.GetLinkByID(c.Request.Context(), t.ID, id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, errNotFound, "link not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"visits": link.Visits})
+	writeJSON(c, http.StatusOK, map[string]any{"visits": link.Visits})
 }
 
 // ---------- 错误封装 ----------
@@ -375,15 +377,15 @@ type apiErr struct {
 
 func (e apiErr) Error() string { return e.message }
 
-func writeAPIError(w http.ResponseWriter, err error) {
+func writeAPIError(c *gin.Context, err error) {
 	var ae apiErr
 	if errors.As(err, &ae) {
 		if ae.details != nil {
-			writeErrDetails(w, ae.status, ae.code, ae.message, ae.details)
+			writeErrDetails(c, ae.status, ae.code, ae.message, ae.details)
 		} else {
-			writeErr(w, ae.status, ae.code, ae.message)
+			writeErr(c, ae.status, ae.code, ae.message)
 		}
 		return
 	}
-	writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+	writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 }

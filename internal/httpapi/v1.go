@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 	"strconv"
 	"strings"
 
@@ -13,8 +15,8 @@ import (
 )
 
 // apiKeyTenant 从 Authorization: Bearer <key> 解析租户;无效/已吊销 → nil。
-func (a *API) apiKeyTenant(r *http.Request) (*store.Tenant, bool) {
-	h := r.Header.Get("Authorization")
+func (a *API) apiKeyTenant(c *gin.Context) (*store.Tenant, bool) {
+	h := c.GetHeader("Authorization")
 	if !strings.HasPrefix(h, "Bearer ") {
 		return nil, false
 	}
@@ -22,11 +24,11 @@ func (a *API) apiKeyTenant(r *http.Request) (*store.Tenant, bool) {
 	if key == "" {
 		return nil, false
 	}
-	tenantID, err := a.store.GetTenantIDByAPIKeyHash(r.Context(), hashToken(key))
+	tenantID, err := a.store.GetTenantIDByAPIKeyHash(c.Request.Context(), hashToken(key))
 	if err != nil {
 		return nil, false
 	}
-	t, err := a.store.GetTenantByID(r.Context(), tenantID)
+	t, err := a.store.GetTenantByID(c.Request.Context(), tenantID)
 	if err != nil {
 		return nil, false
 	}
@@ -37,85 +39,85 @@ func (a *API) apiKeyTenant(r *http.Request) (*store.Tenant, bool) {
 	return t, true
 }
 
-func (a *API) requireAPIKey(w http.ResponseWriter, r *http.Request) (*store.Tenant, bool) {
-	t, ok := a.apiKeyTenant(r)
+func (a *API) requireAPIKey(c *gin.Context) (*store.Tenant, bool) {
+	t, ok := a.apiKeyTenant(c)
 	if !ok {
-		writeErr(w, http.StatusUnauthorized, errUnauth, "invalid or revoked api key")
+		writeErr(c, http.StatusUnauthorized, errUnauth, "invalid or revoked api key")
 		return nil, false
 	}
 	return t, true
 }
 
-func (a *API) handleV1ListLinks(w http.ResponseWriter, r *http.Request) {
-	t, ok := a.requireAPIKey(w, r)
+func (a *API) handleV1ListLinks(c *gin.Context) {
+	t, ok := a.requireAPIKey(c)
 	if !ok {
 		return
 	}
-	page, pageSize := pageParams(r)
-	items, total, err := a.store.ListLinksByTenant(r.Context(), t.ID, page, pageSize)
+	page, pageSize := pageParams(c)
+	items, total, err := a.store.ListLinksByTenant(c.Request.Context(), t.ID, page, pageSize)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	if items == nil {
 		items = []*store.Link{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total})
+	writeJSON(c, http.StatusOK, map[string]any{"items": items, "total": total})
 }
 
-func (a *API) handleV1CreateLink(w http.ResponseWriter, r *http.Request) {
-	t, ok := a.requireAPIKey(w, r)
+func (a *API) handleV1CreateLink(c *gin.Context) {
+	t, ok := a.requireAPIKey(c)
 	if !ok {
 		return
 	}
 	var req createLinkReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
-	link, err := a.createLink(r, t, req)
+	link, err := a.createLink(c, t, req)
 	if err != nil {
-		writeAPIError(w, err)
+		writeAPIError(c, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, link)
+	writeJSON(c, http.StatusCreated, link)
 }
 
-func (a *API) handleV1GetLink(w http.ResponseWriter, r *http.Request) {
-	t, ok := a.requireAPIKey(w, r)
+func (a *API) handleV1GetLink(c *gin.Context) {
+	t, ok := a.requireAPIKey(c)
 	if !ok {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	link, err := a.store.GetLinkByID(r.Context(), t.ID, id)
+	link, err := a.store.GetLinkByID(c.Request.Context(), t.ID, id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, errNotFound, "link not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, link)
+	writeJSON(c, http.StatusOK, link)
 }
 
-func (a *API) handleV1DeleteLink(w http.ResponseWriter, r *http.Request) {
-	t, ok := a.requireAPIKey(w, r)
+func (a *API) handleV1DeleteLink(c *gin.Context) {
+	t, ok := a.requireAPIKey(c)
 	if !ok {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	if err := a.store.SoftDeleteLink(r.Context(), t.ID, id); err != nil {
+	if err := a.store.SoftDeleteLink(c.Request.Context(), t.ID, id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			writeErr(w, http.StatusNotFound, errNotFound, "link not found")
+			writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeNoContent(w)
+	writeNoContent(c)
 }

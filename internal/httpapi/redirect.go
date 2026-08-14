@@ -6,6 +6,8 @@ package httpapi
 import (
 	"net"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 	"strings"
 
 	"cloak/internal/store"
@@ -18,30 +20,30 @@ func hostOnly(h string) string {
 	return strings.ToLower(h)
 }
 
-func (a *API) handleRedirect(w http.ResponseWriter, r *http.Request) {
-	code := r.PathValue("code")
+func (a *API) handleRedirect(c *gin.Context) {
+	code := c.Param("code")
 	if code == "" || strings.Contains(code, "/") {
-		writeErr(w, http.StatusNotFound, errNotFound, "short link not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
 	}
-	host := hostOnly(r.Host)
+	host := hostOnly(c.Request.Host)
 	if host == "" {
-		writeErr(w, http.StatusNotFound, errNotFound, "short link not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
 	}
-	d, err := a.store.GetDomainByFQDN(r.Context(), host)
+	d, err := a.store.GetDomainByFQDN(c.Request.Context(), host)
 	if err != nil || d.Status != "active" {
 		// 域名未激活/停用/不存在:未命中
-		writeErr(w, http.StatusNotFound, errNotFound, "short link not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
 	}
-	link, _, err := a.store.ResolveRedirect(r.Context(), d.ID, code)
+	link, _, err := a.store.ResolveRedirect(c.Request.Context(), d.ID, code)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, errNotFound, "short link not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
 	}
 	// 记录访问(短链、域名、IP、UA、来源、时间)
-	if err := a.store.InsertVisit(r.Context(), link.ID, d.ID, clientIP(r), r.UserAgent(), r.Referer()); err != nil {
+	if err := a.store.InsertVisit(c.Request.Context(), link.ID, d.ID, clientIP(c.Request), c.Request.UserAgent(), c.Request.Referer()); err != nil {
 		// 统计失败不阻断跳转
 		_ = err
 	}
@@ -49,5 +51,5 @@ func (a *API) handleRedirect(w http.ResponseWriter, r *http.Request) {
 	if link.RedirectStatus == store.RedirectStatus301 {
 		status = http.StatusMovedPermanently
 	}
-	http.Redirect(w, r, link.TargetURL, status)
+	c.Redirect(status, link.TargetURL)
 }

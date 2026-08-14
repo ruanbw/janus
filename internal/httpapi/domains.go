@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 	"strconv"
 	"strings"
 	"time"
@@ -36,20 +38,20 @@ func validFQDN(s string) bool {
 	return true
 }
 
-func (a *API) handleListDomains(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := a.requireSession(w, r)
+func (a *API) handleListDomains(c *gin.Context) {
+	t, _, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	domains, err := a.store.ListDomainsByTenant(r.Context(), t.ID)
+	domains, err := a.store.ListDomainsByTenant(c.Request.Context(), t.ID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	if domains == nil {
 		domains = []*store.Domain{}
 	}
-	writeJSON(w, http.StatusOK, domains)
+	writeJSON(c, http.StatusOK, domains)
 }
 
 type createDomainReq struct {
@@ -57,126 +59,126 @@ type createDomainReq struct {
 	Description string `json:"description"`
 }
 
-func (a *API) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
-	t, sess, ok := a.requireSession(w, r)
+func (a *API) handleCreateDomain(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
 	var req createDomainReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
 	fqdn := strings.ToLower(strings.TrimSpace(req.FQDN))
 	if !validFQDN(fqdn) {
-		writeErr(w, http.StatusBadRequest, errValidation, "域名格式非法")
+		writeErr(c, http.StatusBadRequest, errValidation, "域名格式非法")
 		return
 	}
 	desc := strings.TrimSpace(req.Description)
 	if len([]rune(desc)) > domain.MaxDomainDescriptionLen {
-		writeErr(w, http.StatusBadRequest, errValidation, "描述过长(最多 200 字)")
+		writeErr(c, http.StatusBadRequest, errValidation, "描述过长(最多 200 字)")
 		return
 	}
 	if fqdn == a.cfg.PlatformDomain || fqdn == "app."+a.cfg.PlatformDomain {
-		writeErr(w, http.StatusBadRequest, errValidation, "平台保留域名,不可添加")
+		writeErr(c, http.StatusBadRequest, errValidation, "平台保留域名,不可添加")
 		return
 	}
-	ctx := r.Context()
+	ctx := c.Request.Context()
 	if exists, err := a.store.DomainFQDNExists(ctx, fqdn); err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	} else if exists {
-		writeErr(w, http.StatusConflict, errConflict, "域名已被占用")
+		writeErr(c, http.StatusConflict, errConflict, "域名已被占用")
 		return
 	}
 	usage, err := a.store.Usage(ctx, t.ID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	if usage.Domains >= usage.MaxDomains {
-		writeErrDetails(w, http.StatusForbidden, errDomainQuota,
+		writeErrDetails(c, http.StatusForbidden, errDomainQuota,
 			"域名数量已达上限", map[string]any{"usage": usage})
 		return
 	}
 	d, err := a.store.CreateDomain(ctx, t.ID, fqdn, "self", desc)
 	if err != nil {
 		if store.IsUniqueViolation(err) {
-			writeErr(w, http.StatusConflict, errConflict, "域名已被占用")
+			writeErr(c, http.StatusConflict, errConflict, "域名已被占用")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	// 立即 DNS 校验(真实代码路径,读 /etc/hosts;dev 下 hosts 指向 127.0.0.1 即通过)
 	okDNS, err := a.dns.Check(ctx, fqdn)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	if okDNS {
 		if err := a.store.SetDomainActive(ctx, d.ID); err != nil {
-			writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 			return
 		}
 		a.probeDomainAsync(d.ID)
 	} else {
 		// 未生效:进入重试队列(pending,worker 每 5 分钟重试,最长 72h)
 		if err := a.store.MarkDomainDNSChecked(ctx, d.ID); err != nil {
-			writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 			return
 		}
 	}
 	updated, err := a.store.GetDomainByID(ctx, d.ID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusCreated, updated)
+	writeJSON(c, http.StatusCreated, updated)
 }
 
-func (a *API) handleGetDomain(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := a.requireSession(w, r)
+func (a *API) handleGetDomain(c *gin.Context) {
+	t, _, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	d, err := a.store.GetDomainByID(r.Context(), id)
+	d, err := a.store.GetDomainByID(c.Request.Context(), id)
 	if err != nil || d.TenantID != t.ID {
-		writeErr(w, http.StatusNotFound, errNotFound, "domain not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "domain not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, d)
+	writeJSON(c, http.StatusOK, d)
 }
 
 // handleRecheckDomain 手动触发 DNS 重新校验(202)。
-func (a *API) handleRecheckDomain(w http.ResponseWriter, r *http.Request) {
-	t, sess, ok := a.requireSession(w, r)
+func (a *API) handleRecheckDomain(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	d, err := a.store.GetDomainByID(r.Context(), id)
+	d, err := a.store.GetDomainByID(c.Request.Context(), id)
 	if err != nil || d.TenantID != t.ID {
-		writeErr(w, http.StatusNotFound, errNotFound, "domain not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "domain not found")
 		return
 	}
 	go a.recheckDomain(d.ID, d.FQDN)
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+	writeJSON(c, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
 
 func (a *API) recheckDomain(id int64, fqdn string) {
@@ -207,101 +209,101 @@ type patchDomainReq struct {
 }
 
 // handlePatchDomain 停用/恢复域名。平台默认域名可停用(契约注明),不可删除。
-func (a *API) handlePatchDomain(w http.ResponseWriter, r *http.Request) {
-	t, sess, ok := a.requireSession(w, r)
+func (a *API) handlePatchDomain(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
 	var req patchDomainReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
 	if req.Status != "stopped" && req.Status != "active" {
-		writeErr(w, http.StatusBadRequest, errValidation, "status must be stopped or active")
+		writeErr(c, http.StatusBadRequest, errValidation, "status must be stopped or active")
 		return
 	}
-	d, err := a.store.GetDomainByID(r.Context(), id)
+	d, err := a.store.GetDomainByID(c.Request.Context(), id)
 	if err != nil || d.TenantID != t.ID {
-		writeErr(w, http.StatusNotFound, errNotFound, "domain not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "domain not found")
 		return
 	}
 	// 恢复(active)前要求 DNS 仍指向本机(防域名易主后误服务);平台默认域名除外
 	// (泛域名解析由部署者配置,开发环境 hosts 无子域记录)
 	if req.Status == "active" && d.Status != "active" && d.Origin == "self" {
-		okDNS, err := a.dns.Check(r.Context(), d.FQDN)
+		okDNS, err := a.dns.Check(c.Request.Context(), d.FQDN)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 			return
 		}
 		if !okDNS {
-			writeErr(w, http.StatusConflict, errConflict, "DNS 未指向本服务器,无法恢复")
+			writeErr(c, http.StatusConflict, errConflict, "DNS 未指向本服务器,无法恢复")
 			return
 		}
 	}
-	if err := a.store.SetDomainStatus(r.Context(), id, req.Status); err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+	if err := a.store.SetDomainStatus(c.Request.Context(), id, req.Status); err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	if req.Status == "active" {
 		// 恢复激活后确保证书探活
 		a.probeDomainAsync(id)
 	}
-	updated, err := a.store.GetDomainByID(r.Context(), id)
+	updated, err := a.store.GetDomainByID(c.Request.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, updated)
+	writeJSON(c, http.StatusOK, updated)
 }
 
 // handleDeleteDomain 删除域名:平台默认域名 400;存在未删除短链 409;否则物理删除。
-func (a *API) handleDeleteDomain(w http.ResponseWriter, r *http.Request) {
-	t, sess, ok := a.requireSession(w, r)
+func (a *API) handleDeleteDomain(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid id")
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid id")
 		return
 	}
-	d, err := a.store.GetDomainByID(r.Context(), id)
+	d, err := a.store.GetDomainByID(c.Request.Context(), id)
 	if err != nil || d.TenantID != t.ID {
-		writeErr(w, http.StatusNotFound, errNotFound, "domain not found")
+		writeErr(c, http.StatusNotFound, errNotFound, "domain not found")
 		return
 	}
 	if d.Origin == "platform" {
-		writeErr(w, http.StatusBadRequest, errValidation, "平台默认域名不可删除(可停用)")
+		writeErr(c, http.StatusBadRequest, errValidation, "平台默认域名不可删除(可停用)")
 		return
 	}
-	n, err := a.store.CountNonDeletedLinksOnDomain(r.Context(), id)
+	n, err := a.store.CountNonDeletedLinksOnDomain(c.Request.Context(), id)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	if n > 0 {
-		writeErrDetails(w, http.StatusConflict, errDomainInUse,
+		writeErrDetails(c, http.StatusConflict, errDomainInUse,
 			"该域名下仍有未删除的短链,请先解除关联或删除短链",
 			map[string]any{"links": n})
 		return
 	}
-	if err := a.store.DetachDomain(r.Context(), id); err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+	if err := a.store.DetachDomain(c.Request.Context(), id); err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeNoContent(w)
+	writeNoContent(c)
 }
 
 // probeDomainAsync 后台触发证书预签发探活(HTTPS 访问触发 Caddy on-demand 签发)。

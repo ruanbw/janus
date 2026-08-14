@@ -6,6 +6,8 @@ package httpapi
 import (
 	"net"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 	"strings"
 	"sync"
 	"time"
@@ -106,9 +108,9 @@ func clientIP(r *http.Request) string {
 }
 
 // authRateLimit 注册端点限流:超限 429。
-func (a *API) rateLimit(w http.ResponseWriter, r *http.Request, l *rateLimiter) bool {
-	if !l.Allow(clientIP(r)) {
-		writeErr(w, http.StatusTooManyRequests, errRateLimited, "请求过于频繁,请稍后再试")
+func (a *API) rateLimit(c *gin.Context, l *rateLimiter) bool {
+	if !l.Allow(clientIP(c.Request)) {
+		writeErr(c, http.StatusTooManyRequests, errRateLimited, "请求过于频繁,请稍后再试")
 		return false
 	}
 	return true

@@ -7,6 +7,8 @@ package httpapi
 import (
 	"net/http"
 
+	"github.com/gin-gonic/gin"
+
 	"cloak/internal/store"
 )
 
@@ -17,17 +19,17 @@ type appConfigResp struct {
 }
 
 // handleGetConfig 返回当前会话租户的启动配置(未登录 401)。
-func (a *API) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := a.requireSession(w, r)
+func (a *API) handleGetConfig(c *gin.Context) {
+	t, _, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	usage, err := a.store.Usage(r.Context(), t.ID)
+	usage, err := a.store.Usage(c.Request.Context(), t.ID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, appConfigResp{
+	writeJSON(c, http.StatusOK, appConfigResp{
 		ServerIP:       a.cfg.ServerPublicIP,
 		PlatformDomain: a.cfg.PlatformDomain,
 		Usage:          *usage,

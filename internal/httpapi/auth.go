@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 	"net/mail"
 	"strings"
 	"time"
@@ -46,99 +48,99 @@ type registerReq struct {
 
 // handleRegister 注册:校验 slug 唯一且不与既有域名 FQDN 冲突;
 // 创建租户(pending)与平台默认域名;控制台 mailer 输出验证链接。
-func (a *API) handleRegister(w http.ResponseWriter, r *http.Request) {
-	if !a.rateLimit(w, r, a.registerRate) {
+func (a *API) handleRegister(c *gin.Context) {
+	if !a.rateLimit(c, a.registerRate) {
 		return
 	}
 	var req registerReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	slug := strings.TrimSpace(req.Slug)
 	if !validEmail(email) {
-		writeErr(w, http.StatusBadRequest, errValidation, "邮箱格式非法")
+		writeErr(c, http.StatusBadRequest, errValidation, "邮箱格式非法")
 		return
 	}
 	if !domain.IsValidSlug(slug) {
-		writeErrDetails(w, http.StatusBadRequest, errValidation, "slug 非法(小写字母/数字开头结尾,可含连字符,1-63 字符)", map[string]string{"field": "slug"})
+		writeErrDetails(c, http.StatusBadRequest, errValidation, "slug 非法(小写字母/数字开头结尾,可含连字符,1-63 字符)", map[string]string{"field": "slug"})
 		return
 	}
 	if !validPasswordLen(req.Password) {
-		writeErrDetails(w, http.StatusBadRequest, errValidation, "密码至少 8 个字符", map[string]string{"field": "password"})
+		writeErrDetails(c, http.StatusBadRequest, errValidation, "密码至少 8 个字符", map[string]string{"field": "password"})
 		return
 	}
 	// 平台保留域名(app.<平台域名> 承载后台)不得被租户默认域名占用
 	if slug+"."+a.cfg.PlatformDomain == a.cfg.PlatformDomain ||
 		slug+"."+a.cfg.PlatformDomain == "app."+a.cfg.PlatformDomain {
-		writeErrDetails(w, http.StatusBadRequest, errValidation, "slug 与平台保留域名冲突", map[string]string{"field": "slug"})
+		writeErrDetails(c, http.StatusBadRequest, errValidation, "slug 与平台保留域名冲突", map[string]string{"field": "slug"})
 		return
 	}
-	ctx := r.Context()
+	ctx := c.Request.Context()
 
 	if _, err := a.store.GetTenantByEmail(ctx, email); err == nil {
-		writeErr(w, http.StatusConflict, errConflict, "邮箱已被注册")
+		writeErr(c, http.StatusConflict, errConflict, "邮箱已被注册")
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	slug = strings.ToLower(slug)
 	if _, err := a.store.GetTenantBySlug(ctx, slug); err == nil {
-		writeErr(w, http.StatusConflict, errConflict, "slug 已被占用")
+		writeErr(c, http.StatusConflict, errConflict, "slug 已被占用")
 		return
 	} else if !errors.Is(err, store.ErrNotFound) {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	// slug 与既有域名 FQDN 冲突(平台默认域名或他人自有域名)
 	for _, fqdn := range []string{slug + "." + a.cfg.PlatformDomain, slug} {
 		exists, err := a.store.DomainFQDNExists(ctx, fqdn)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 			return
 		}
 		if exists {
-			writeErr(w, http.StatusConflict, errConflict, "slug 与既有域名冲突")
+			writeErr(c, http.StatusConflict, errConflict, "slug 与既有域名冲突")
 			return
 		}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	tenant, err := a.store.CreateTenant(ctx, email, string(hash), slug, false)
 	if err != nil {
 		if store.IsUniqueViolation(err) {
-			writeErr(w, http.StatusConflict, errConflict, "邮箱或 slug 已被占用")
+			writeErr(c, http.StatusConflict, errConflict, "邮箱或 slug 已被占用")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	if _, err := a.store.CreatePlatformDomain(ctx, tenant.ID, slug+"."+a.cfg.PlatformDomain); err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	// 重新获取租户(含默认域名)
 	if tenant, err = a.store.GetTenantByID(ctx, tenant.ID); err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	// 验证邮件(控制台 mailer)
 	token, tokenHash := newToken()
 	if err := a.store.CreateEmailToken(ctx, tenant.ID, tokenHash, "verify", a.cfg.VerifyTokenTTL); err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	if err := a.mailer.SendVerifyEmail(email, token); err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusCreated, tenant)
+	writeJSON(c, http.StatusCreated, tenant)
 }
 
 type verifyEmailReq struct {
@@ -146,33 +148,33 @@ type verifyEmailReq struct {
 }
 
 // handleVerifyEmail 邮箱验证:成功后租户转 active,并触发默认域名证书预签发探活。
-func (a *API) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
-	if !a.rateLimit(w, r, a.authRate) {
+func (a *API) handleVerifyEmail(c *gin.Context) {
+	if !a.rateLimit(c, a.authRate) {
 		return
 	}
 	var req verifyEmailReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" {
-		writeErr(w, http.StatusBadRequest, errValidation, "token required")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" {
+		writeErr(c, http.StatusBadRequest, errValidation, "token required")
 		return
 	}
-	tenantID, err := a.store.ConsumeEmailToken(r.Context(), hashToken(strings.TrimSpace(req.Token)), "verify")
+	tenantID, err := a.store.ConsumeEmailToken(c.Request.Context(), hashToken(strings.TrimSpace(req.Token)), "verify")
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "无效或已使用的验证 token")
+		writeErr(c, http.StatusBadRequest, errValidation, "无效或已使用的验证 token")
 		return
 	}
 	// 已封禁租户不得凭旧验证 token 复活
-	tenant, err := a.store.GetTenantByID(r.Context(), tenantID)
+	tenant, err := a.store.GetTenantByID(c.Request.Context(), tenantID)
 	if err != nil || tenant.Status == "banned" {
-		writeErr(w, http.StatusBadRequest, errValidation, "无效或已使用的验证 token")
+		writeErr(c, http.StatusBadRequest, errValidation, "无效或已使用的验证 token")
 		return
 	}
-	if err := a.store.VerifyTenant(r.Context(), tenantID); err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+	if err := a.store.VerifyTenant(c.Request.Context(), tenantID); err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	// 触发平台默认域名证书预签发探活(active 域名由后台任务补探活,这里立即触发)
 	go a.probeTenantDefaultDomain(tenantID)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(c, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (a *API) probeTenantDefaultDomain(tenantID int64) {
@@ -197,39 +199,39 @@ type loginReq struct {
 	RememberMe *bool  `json:"rememberMe"` // 契约调整:可选;true/省略 30 天,false 24 小时
 }
 
-func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if !a.rateLimit(w, r, a.authRate) {
+func (a *API) handleLogin(c *gin.Context) {
+	if !a.rateLimit(c, a.authRate) {
 		return
 	}
 	var req loginReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
-	tenant, err := a.store.GetTenantByEmail(r.Context(), email)
+	tenant, err := a.store.GetTenantByEmail(c.Request.Context(), email)
 	if err != nil {
 		// 等时化:账号不存在也执行一次 bcrypt 比较
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
-		writeErr(w, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
+		writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
 		return
 	}
 	switch tenant.Status {
 	case "pending":
-		writeErr(w, http.StatusUnauthorized, errUnauth, "邮箱未验证,请查收验证邮件")
+		writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱未验证,请查收验证邮件")
 		return
 	case "banned":
-		writeErr(w, http.StatusForbidden, errForbidden, "账号已被封禁")
+		writeErr(c, http.StatusForbidden, errForbidden, "账号已被封禁")
 		return
 	}
 	if !tenant.FirstLoginSetup {
-		pwHash, err := a.store.TenantPasswordHash(r.Context(), tenant.ID)
+		pwHash, err := a.store.TenantPasswordHash(c.Request.Context(), tenant.ID)
 		if err != nil || pwHash == nil {
-			writeErr(w, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
+			writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
 			return
 		}
 		if bcrypt.CompareHashAndPassword([]byte(*pwHash), []byte(req.Password)) != nil {
-			writeErr(w, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
+			writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
 			return
 		}
 	}
@@ -239,37 +241,37 @@ func (a *API) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	token, tokenHash := newToken()
 	csrf, _ := newToken()
-	sess, err := a.store.CreateSession(r.Context(), tenant.ID, tokenHash, csrf, ttl)
+	sess, err := a.store.CreateSession(c.Request.Context(), tenant.ID, tokenHash, csrf, ttl)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	a.setSessionCookies(w, token, sess.CSRFToken, ttl)
-	writeJSON(w, http.StatusOK, tenant)
+	a.setSessionCookies(c, token, sess.CSRFToken, ttl)
+	writeJSON(c, http.StatusOK, tenant)
 }
 
-func (a *API) handleLogout(w http.ResponseWriter, r *http.Request) {
-	t, sess, ok := a.requireSession(w, r)
+func (a *API) handleLogout(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
 	_ = t
-	if c, err := r.Cookie(sessionCookieName); err == nil {
-		_ = a.store.DeleteSession(r.Context(), hashToken(c.Value))
+	if ck, err := c.Request.Cookie(sessionCookieName); err == nil {
+		_ = a.store.DeleteSession(c.Request.Context(), hashToken(ck.Value))
 	}
-	a.clearSessionCookies(w)
-	writeNoContent(w)
+	a.clearSessionCookies(c)
+	writeNoContent(c)
 }
 
-func (a *API) handleMe(w http.ResponseWriter, r *http.Request) {
-	t, _, ok := a.requireSession(w, r)
+func (a *API) handleMe(c *gin.Context) {
+	t, _, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	writeJSON(c, http.StatusOK, t)
 }
 
 // ---------- 修改密码 / 忘记密码 / 重置密码(03) ----------
@@ -280,40 +282,40 @@ type changePasswordReq struct {
 }
 
 // handleChangePassword 修改密码;超管首次登录(无密码)可省略旧密码。
-func (a *API) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	t, sess, ok := a.requireSession(w, r)
+func (a *API) handleChangePassword(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	if !a.requireCSRF(w, r, sess) {
+	if !a.requireCSRF(c, sess) {
 		return
 	}
 	var req changePasswordReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
 	if !validPasswordLen(req.NewPassword) {
-		writeErr(w, http.StatusBadRequest, errValidation, "新密码至少 8 个字符")
+		writeErr(c, http.StatusBadRequest, errValidation, "新密码至少 8 个字符")
 		return
 	}
 	if !t.FirstLoginSetup {
-		pwHash, err := a.store.TenantPasswordHash(r.Context(), t.ID)
+		pwHash, err := a.store.TenantPasswordHash(c.Request.Context(), t.ID)
 		if err != nil || pwHash == nil || bcrypt.CompareHashAndPassword([]byte(*pwHash), []byte(req.OldPassword)) != nil {
-			writeErr(w, http.StatusBadRequest, errValidation, "旧密码错误")
+			writeErr(c, http.StatusBadRequest, errValidation, "旧密码错误")
 			return
 		}
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	if err := a.store.SetTenantPassword(r.Context(), t.ID, string(hash)); err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+	if err := a.store.SetTenantPassword(c.Request.Context(), t.ID, string(hash)); err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeNoContent(w)
+	writeNoContent(c)
 }
 
 type forgotPasswordReq struct {
@@ -321,26 +323,26 @@ type forgotPasswordReq struct {
 }
 
 // handleForgotPassword 始终返回 202,不泄露邮箱存在性。
-func (a *API) handleForgotPassword(w http.ResponseWriter, r *http.Request) {
-	if !a.rateLimit(w, r, a.authRate) {
+func (a *API) handleForgotPassword(c *gin.Context) {
+	if !a.rateLimit(c, a.authRate) {
 		return
 	}
 	var req forgotPasswordReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
-	if tenant, err := a.store.GetTenantByEmail(r.Context(), email); err == nil {
+	if tenant, err := a.store.GetTenantByEmail(c.Request.Context(), email); err == nil {
 		token, tokenHash := newToken()
-		if err := a.store.CreateEmailToken(r.Context(), tenant.ID, tokenHash, "reset", a.cfg.ResetTokenTTL); err == nil {
+		if err := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "reset", a.cfg.ResetTokenTTL); err == nil {
 			_ = a.mailer.SendResetEmail(email, token)
 		}
 	} else {
 		// 等时化:邮箱不存在也执行一次 bcrypt 比较,避免存在性可被时序区分
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(email))
 	}
-	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
+	writeJSON(c, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
 
 type resetPasswordReq struct {
@@ -349,32 +351,32 @@ type resetPasswordReq struct {
 }
 
 // handleResetPassword 无效/已使用/过期 token 一律 400。
-func (a *API) handleResetPassword(w http.ResponseWriter, r *http.Request) {
-	if !a.rateLimit(w, r, a.authRate) {
+func (a *API) handleResetPassword(c *gin.Context) {
+	if !a.rateLimit(c, a.authRate) {
 		return
 	}
 	var req resetPasswordReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" {
-		writeErr(w, http.StatusBadRequest, errValidation, "token required")
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil || strings.TrimSpace(req.Token) == "" {
+		writeErr(c, http.StatusBadRequest, errValidation, "token required")
 		return
 	}
 	if !validPasswordLen(req.NewPassword) {
-		writeErr(w, http.StatusBadRequest, errValidation, "新密码至少 8 个字符")
+		writeErr(c, http.StatusBadRequest, errValidation, "新密码至少 8 个字符")
 		return
 	}
-	tenantID, err := a.store.ConsumeEmailToken(r.Context(), hashToken(strings.TrimSpace(req.Token)), "reset")
+	tenantID, err := a.store.ConsumeEmailToken(c.Request.Context(), hashToken(strings.TrimSpace(req.Token)), "reset")
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, errValidation, "无效、已使用或过期的重置 token")
+		writeErr(c, http.StatusBadRequest, errValidation, "无效、已使用或过期的重置 token")
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	if err := a.store.SetTenantPassword(r.Context(), tenantID, string(hash)); err != nil {
-		writeErr(w, http.StatusInternalServerError, errInternal, "internal error")
+	if err := a.store.SetTenantPassword(c.Request.Context(), tenantID, string(hash)); err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeNoContent(w)
+	writeNoContent(c)
 }

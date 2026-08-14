@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 	"strings"
 )
 
@@ -13,31 +15,31 @@ import (
 //   - 平台默认域名:租户已邮箱验证(active)且未封禁。
 //
 // 仅内网可达;放行 200,拒绝 403。
-func (a *API) handleCaddyAuthorize(w http.ResponseWriter, r *http.Request) {
-	if !isPrivateAddr(r.RemoteAddr) {
-		writeErr(w, http.StatusForbidden, errForbidden, "internal endpoint only")
+func (a *API) handleCaddyAuthorize(c *gin.Context) {
+	if !isPrivateAddr(c.Request.RemoteAddr) {
+		writeErr(c, http.StatusForbidden, errForbidden, "internal endpoint only")
 		return
 	}
-	fqdn := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("domain")))
+	fqdn := strings.ToLower(strings.TrimSpace(c.Request.URL.Query().Get("domain")))
 	if fqdn == "" {
-		writeErr(w, http.StatusBadRequest, errValidation, "domain query parameter required")
+		writeErr(c, http.StatusBadRequest, errValidation, "domain query parameter required")
 		return
 	}
 	if fqdn == a.cfg.PlatformDomain || fqdn == "app."+a.cfg.PlatformDomain {
-		w.WriteHeader(http.StatusOK)
+		c.Status(http.StatusOK)
 		return
 	}
-	auth, err := a.store.GetDomainAuth(r.Context(), fqdn)
+	auth, err := a.store.GetDomainAuth(c.Request.Context(), fqdn)
 	if err != nil {
 		// 未注册域名:拒绝签发,防止任意域名解析到本机即触发签发
-		writeErr(w, http.StatusForbidden, errForbidden, "domain not authorized")
+		writeErr(c, http.StatusForbidden, errForbidden, "domain not authorized")
 		return
 	}
 	ok := auth.Status == "active" &&
 		(auth.Origin == "self" || (auth.Origin == "platform" && auth.TenantStatus == "active"))
 	if !ok {
-		writeErr(w, http.StatusForbidden, errForbidden, "domain not authorized")
+		writeErr(c, http.StatusForbidden, errForbidden, "domain not authorized")
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	c.Status(http.StatusOK)
 }

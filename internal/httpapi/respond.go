@@ -1,8 +1,9 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
 // errorBody 统一错误响应:{code, message, details?}(见 API 契约)。
@@ -12,23 +13,19 @@ type ErrorBody struct {
 	Details any    `json:"details,omitempty"`
 }
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(status)
-	if v != nil {
-		_ = json.NewEncoder(w).Encode(v)
-	}
+func writeJSON(c *gin.Context, status int, v any) {
+	c.JSON(status, v)
 }
 
-func writeErr(w http.ResponseWriter, status int, code, msg string) {
-	writeErrDetails(w, status, code, msg, nil)
+func writeErr(c *gin.Context, status int, code, msg string) {
+	writeErrDetails(c, status, code, msg, nil)
 }
 
-func writeErrDetails(w http.ResponseWriter, status int, code, msg string, details any) {
-	writeJSON(w, status, ErrorBody{Code: code, Message: msg, Details: details})
+func writeErrDetails(c *gin.Context, status int, code, msg string, details any) {
+	c.AbortWithStatusJSON(status, ErrorBody{Code: code, Message: msg, Details: details})
 }
 
-func writeNoContent(w http.ResponseWriter) { w.WriteHeader(http.StatusNoContent) }
+func writeNoContent(c *gin.Context) { c.Status(http.StatusNoContent) }
 
 // 常见错误码(契约统一错误结构)。
 const (
