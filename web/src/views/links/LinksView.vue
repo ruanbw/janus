@@ -151,7 +151,7 @@ const pageSize = ref(10);
 const modalOpen = ref(false);
 const editingLink = ref<Link | null>(null);
 
-const usage = computed(() => auth.tenant?.usage);
+const usage = computed(() => auth.config?.usage);
 
 const columns: TableColumnsType = [
   { title: '短码', key: 'code', dataIndex: 'code', width: 150 },

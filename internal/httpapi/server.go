@@ -100,6 +100,9 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/me", a.handleGetMe)
 	mux.HandleFunc("PATCH /api/me", a.handlePatchMe)
 
+	// 前端启动配置(会话):服务器 IP/平台域名/当前租户配额,按租户返回
+	mux.HandleFunc("GET /api/config", a.handleGetConfig)
+
 	// 平台管理(超管)——08
 	mux.HandleFunc("GET /api/admin/tenants", a.handleAdminListTenants)
 	mux.HandleFunc("GET /api/admin/tenants/{id}", a.handleAdminGetTenant)

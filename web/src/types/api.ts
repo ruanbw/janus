@@ -30,6 +30,16 @@ export interface QuotaUsage {
   maxDomains: number;
 }
 
+/** 前端启动配置(GET /api/config,按当前租户返回) */
+export interface AppConfig {
+  /** 本服务器公网 IP,DNS 校验指向地址(CLOAK_SERVER_PUBLIC_IP) */
+  serverIp: string;
+  /** 平台域名,如 cloak.test */
+  platformDomain: string;
+  /** 当前租户配额用量 */
+  usage: QuotaUsage;
+}
+
 /** 租户 */
 export interface Tenant {
   id: number;

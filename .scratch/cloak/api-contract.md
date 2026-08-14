@@ -29,6 +29,7 @@
 
 - `tenant`: `{ id, email, slug, status, isSuperAdmin, codeLength, tier, defaultDomain: "<slug>.<平台域名>", createdAt, firstLoginSetup?, usage? }`(`firstLoginSetup` 仅超管首次登录(尚无密码)时为 true;`usage` 见 /api/me)
 - `domain`: `{ id, fqdn, description, origin, status, certStatus, activatedAt, createdAt }`(`description` 为创建时填写的备注,可空,最长 200 字)
+- `config`: `{ serverIp, platformDomain, usage }`(`serverIp` 为 `CLOAK_SERVER_PUBLIC_IP`,DNS 校验指向地址;`usage` 为当前租户配额用量,按租户返回)
 - `link`: `{ id, code, targetUrl, redirectStatus, status, domains: [fqdn...], visits, createdAt }`(列表默认不含逻辑删除项)
 - `visit`: `{ id, linkId, domain, userAgent, referer, createdAt }`
 - `apiKey`: `{ id, name, createdAt, key? }`(`key` 明文仅在创建响应中出现一次)
@@ -80,6 +81,7 @@
 | 方法 | 路径 | 请求 | 成功 | 说明 |
 | --- | --- | --- | --- | --- |
 | GET | /api/me | - | 200 tenant | 含配额用量 `{usage:{links, domains, maxLinks, maxDomains}}` |
+| GET | /api/config | - | 200 config | 前端启动配置:服务器 IP/平台域名/当前租户配额(按租户返回);未登录 401 |
 | PATCH | /api/me | `{codeLength?}` | 200 tenant | 自动生成短码长度 |
 
 ### 平台管理(后台,超管)

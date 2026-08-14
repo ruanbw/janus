@@ -100,7 +100,7 @@
         <a-form-item
           name="fqdn"
           label="域名"
-          extra="需先将该域名的 A/AAAA 记录指向本服务器,添加后系统会自动校验并签发证书。仅支持字母、数字与连字符,如 links.example.com"
+          :extra="'需先将该域名的 A/AAAA 记录指向本服务器' + (auth.config?.serverIp ? ' (IP: ' + auth.config.serverIp + ')' : '') + ',添加后系统会自动校验并签发证书。仅支持字母、数字与连字符,如 links.example.com'"
         >
           <a-input
             v-model:value="formState.fqdn"
@@ -192,7 +192,7 @@ const createRules: Record<string, Rule[]> = {
   description: [{ max: 200, message: '描述最多 200 字' }],
 };
 
-const usage = computed(() => auth.tenant?.usage);
+const usage = computed(() => auth.config?.usage);
 
 const columns: TableColumnsType = [
   { title: '域名', key: 'fqdn', dataIndex: 'fqdn' },

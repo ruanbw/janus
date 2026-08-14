@@ -3,12 +3,15 @@ import { computed, ref } from 'vue';
 import { defineStore } from 'pinia';
 
 import * as authApi from '@/api/auth';
+import * as configApi from '@/api/config';
 import * as meApi from '@/api/me';
 
-import type { Tenant } from '@/types/api';
+import type { AppConfig, Tenant } from '@/types/api';
 
 export const useAuthStore = defineStore('auth', () => {
   const tenant = ref<Tenant | null>(null);
+  /** 启动配置(GET /api/config):服务器 IP/平台域名/当前租户配额,登录后默认加载 */
+  const config = ref<AppConfig | null>(null);
   /** 是否已完成启动时的会话探测 */
   const initialized = ref(false);
 
@@ -28,11 +31,21 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /** 加载启动配置(GET /api/config),失败不阻塞(配置为可选展示信息) */
+  async function loadConfig(): Promise<void> {
+    try {
+      config.value = await configApi.fetchConfig();
+    } catch {
+      config.value = null;
+    }
+  }
+
   /** 探测当前会话(未登录时返回 null,由路由守卫决定去向) */
   async function fetchMe(): Promise<Tenant | null> {
     try {
       tenant.value = await authApi.fetchMe();
       await enrichUsage();
+      await loadConfig();
       return tenant.value;
     } catch {
       tenant.value = null;
@@ -45,6 +58,7 @@ export const useAuthStore = defineStore('auth', () => {
     const me = await authApi.login({ email, password, rememberMe });
     tenant.value = me;
     await enrichUsage();
+    await loadConfig();
     return tenant.value;
   }
 
@@ -56,11 +70,13 @@ export const useAuthStore = defineStore('auth', () => {
       // 会话已失效等情况下忽略,本地状态照常清理
     }
     tenant.value = null;
+    config.value = null;
   }
 
   function clear(): void {
     tenant.value = null;
+    config.value = null;
   }
 
-  return { tenant, initialized, isAuthenticated, isSuperAdmin, fetchMe, login, logout, clear };
+  return { tenant, config, initialized, isAuthenticated, isSuperAdmin, fetchMe, login, logout, clear };
 });
