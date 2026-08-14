@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 // Connect 建立连接池并等待数据库就绪(最多约 30 秒)。
@@ -33,4 +36,20 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	}
 	pool.Close()
 	return nil, fmt.Errorf("database not reachable: %w", lastErr)
+}
+
+// OpenGORM 建立 GORM ORM 连接(数据访问层使用;迁移与测试原生操作仍走 pgxpool)。
+func OpenGORM(url string) (*gorm.DB, error) {
+	gdb, err := gorm.Open(postgres.Open(url), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("open gorm: %w", err)
+	}
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		return nil, fmt.Errorf("gorm sql db: %w", err)
+	}
+	sqlDB.SetMaxOpenConns(10)
+	return gdb, nil
 }

@@ -34,7 +34,11 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
-	st := store.New(pool)
+	gdb, err := db.OpenGORM(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("open gorm: %v", err)
+	}
+	st := store.New(gdb)
 
 	if cfg.SuperadminEmail != "" {
 		if err := bootstrap.Superadmin(ctx, st, cfg.SuperadminEmail); err != nil {

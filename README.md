@@ -2,7 +2,7 @@
 
 CLOAK 是一个自托管的多租户短链服务:租户管理自己的域名与短链,系统为每个已激活域名自动签发并续期 HTTPS 证书,并把「域名/短码」的访问重定向到目标 URL。
 
-- **单服务器部署**:Go 后端(Gin RESTful API + 内嵌前端)+ PostgreSQL + Caddy(on-demand TLS,Let's Encrypt 自动签发/续期)。
+- **单服务器部署**:Go 后端(Gin RESTful API + GORM ORM + 内嵌前端)+ PostgreSQL + Caddy(on-demand TLS,Let's Encrypt 自动签发/续期)。
 - **多租户隔离**:租户之间的域名与短链完全隔离;部署者拥有平台管理员角色,可治理全平台。
 - **单二进制交付**:前端构建产物(`web/dist`)经 `go:embed` 内嵌进 Go 二进制,镜像即服务。
 

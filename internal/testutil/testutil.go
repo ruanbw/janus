@@ -112,7 +112,17 @@ func setup(t *testing.T, rc *httpapi.RateLimitConfig) *Env {
 		MigrationsDir:     migrationsDir,
 	}
 
-	st := store.New(pool)
+	gdb, err := db.OpenGORM(TestDatabaseURL)
+	if err != nil {
+		t.Fatalf("open gorm: %v", err)
+	}
+	t.Cleanup(func() {
+		sqlDB, _ := gdb.DB()
+		if sqlDB != nil {
+			_ = sqlDB.Close()
+		}
+	})
+	st := store.New(gdb)
 	m := mailer.NewMailer(mailer.Config{BaseURL: "https://app.cloak.test"}, mailBuf)
 	if rc == nil {
 		high := 100000

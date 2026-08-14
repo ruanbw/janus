@@ -1,15 +1,15 @@
-// Package store 封装全部数据库访问。
+// Package store 封装全部数据库访问,数据层使用 GORM(ORM)操作 Postgres。
 // 黑盒测试以 HTTP API 为 seam,本包不暴露测试专用逻辑。
 package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/gorm"
 )
 
 var ErrNotFound = errors.New("not found")
@@ -21,16 +21,16 @@ func IsUniqueViolation(err error) bool {
 }
 
 type Store struct {
-	pool *pgxpool.Pool
+	db *gorm.DB
 }
 
-func New(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
+func New(gdb *gorm.DB) *Store { return &Store{db: gdb} }
 
 type Tier struct {
-	ID         int64  `json:"id"`
+	ID         int64  `json:"id" gorm:"primaryKey"`
 	Name       string `json:"name"`
-	MaxLinks   int    `json:"maxLinks"`
-	MaxDomains int    `json:"maxDomains"`
+	MaxLinks   int    `json:"maxLinks" gorm:"column:max_links"`
+	MaxDomains int    `json:"maxDomains" gorm:"column:max_domains"`
 }
 
 type Usage struct {
@@ -41,96 +41,53 @@ type Usage struct {
 }
 
 type Tenant struct {
-	ID              int64     `json:"id"`
-	Email           string    `json:"email"`
-	Slug            string    `json:"slug"`
-	Status          string    `json:"status"`
-	IsSuperAdmin    bool      `json:"isSuperAdmin"`
-	CodeLength      int       `json:"codeLength"`
-	Tier            Tier      `json:"tier"`
-	DefaultDomain   string    `json:"defaultDomain"`
-	CreatedAt       time.Time `json:"createdAt"`
-	FirstLoginSetup bool      `json:"firstLoginSetup,omitempty"` // 超管首次登录(尚无密码)
-	Usage           *Usage    `json:"usage,omitempty"`
+	ID              int64      `json:"id" gorm:"primaryKey"`
+	Email           string     `json:"email"`
+	PasswordHash    *string    `json:"-" gorm:"column:password_hash"`
+	Slug            string     `json:"slug"`
+	Status          string     `json:"status"`
+	IsSuperAdmin    bool       `json:"isSuperAdmin" gorm:"column:is_super_admin"`
+	CodeLength      int        `json:"codeLength" gorm:"column:code_length"`
+	TierID          int64      `json:"-" gorm:"column:tier_id"`
+	Tier            Tier       `json:"tier" gorm:"foreignKey:TierID"`
+	VerifiedAt      *time.Time `json:"-" gorm:"column:verified_at"`
+	CreatedAt       time.Time  `json:"createdAt" gorm:"column:created_at"`
+	DefaultDomain   string     `json:"defaultDomain" gorm:"-"`             // 平台默认域名,查询后填充
+	FirstLoginSetup bool       `json:"firstLoginSetup,omitempty" gorm:"-"` // 超管首次登录(尚无密码)
+	Usage           *Usage     `json:"usage,omitempty" gorm:"-"`
 }
 
-type Domain struct {
-	ID          int64      `json:"id"`
-	TenantID    int64      `json:"-"`
-	FQDN        string     `json:"fqdn"`
-	Description string     `json:"description"`
-	Origin      string     `json:"origin"`
-	Status      string     `json:"status"`
-	CertStatus  string     `json:"certStatus"`
-	ActivatedAt *time.Time `json:"activatedAt"`
-	CreatedAt   time.Time  `json:"createdAt"`
+// loadTenantMeta 填充平台默认域名与 FirstLoginSetup(超管尚无密码时 true)。
+func (s *Store) loadTenantMeta(ctx context.Context, t *Tenant) error {
+	var fqdn string
+	err := s.db.WithContext(ctx).Model(&Domain{}).
+		Where("tenant_id = ? AND origin = 'platform'", t.ID).Order("id").Limit(1).
+		Pluck("fqdn", &fqdn).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	t.DefaultDomain = fqdn
+	t.FirstLoginSetup = t.IsSuperAdmin && (t.PasswordHash == nil || *t.PasswordHash == "")
+	return nil
 }
 
-// RedirectStatus 跳转方式(契约枚举:"301" | "302";JSON 序列化为字符串)。
-type RedirectStatus string
-
-const (
-	RedirectStatus301 RedirectStatus = "301"
-	RedirectStatus302 RedirectStatus = "302"
-)
-
-type Link struct {
-	ID             int64          `json:"id"`
-	TenantID       int64          `json:"-"`
-	Code           string         `json:"code"`
-	TargetURL      string         `json:"targetUrl"`
-	RedirectStatus RedirectStatus `json:"redirectStatus"`
-	Status         string         `json:"status"`
-	Domains        []string       `json:"domains"`
-	Visits         int64          `json:"visits"`
-	CreatedAt      time.Time      `json:"createdAt"`
-}
-
-type Visit struct {
-	ID        int64     `json:"id"`
-	LinkID    int64     `json:"linkId"`
-	Domain    string    `json:"domain"`
-	IP        string    `json:"ip"`
-	UserAgent string    `json:"userAgent"`
-	Referer   string    `json:"referer"`
-	CreatedAt time.Time `json:"createdAt"`
-}
-
-type APIKey struct {
-	ID        int64     `json:"id"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"createdAt"`
-	Key       string    `json:"key,omitempty"` // 明文仅在创建响应中出现一次
-}
-
-// ---------- 租户 ----------
-
-const tenantColumns = ` t.id, t.email, t.slug, t.status, t.is_super_admin, t.code_length,
-	tier.id, tier.name, tier.max_links, tier.max_domains, t.verified_at, t.created_at, t.password_hash,
-	COALESCE((SELECT d.fqdn FROM domains d WHERE d.tenant_id = t.id AND d.origin='platform' ORDER BY d.id LIMIT 1), '')`
-
-func scanTenant(row pgx.Row) (*Tenant, error) {
+func (s *Store) getTenant(ctx context.Context, q *gorm.DB) (*Tenant, error) {
 	var t Tenant
-	var verifiedAt *time.Time
-	var pwHash *string
-	err := row.Scan(&t.ID, &t.Email, &t.Slug, &t.Status, &t.IsSuperAdmin, &t.CodeLength,
-		&t.Tier.ID, &t.Tier.Name, &t.Tier.MaxLinks, &t.Tier.MaxDomains, &verifiedAt, &t.CreatedAt, &pwHash,
-		&t.DefaultDomain)
-	if err != nil {
+	if err := q.Preload("Tier").First(&t).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
-	t.FirstLoginSetup = t.IsSuperAdmin && (pwHash == nil || *pwHash == "")
+	if err := s.loadTenantMeta(ctx, &t); err != nil {
+		return nil, err
+	}
 	return &t, nil
 }
 
-const tenantJoin = ` FROM tenants t JOIN tiers tier ON tier.id = t.tier_id`
-
 func (s *Store) GetFreeTier(ctx context.Context) (*Tier, error) {
 	var tier Tier
-	err := s.pool.QueryRow(ctx,
-		`SELECT id, name, max_links, max_domains FROM tiers WHERE name='free'`,
-	).Scan(&tier.ID, &tier.Name, &tier.MaxLinks, &tier.MaxDomains)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Where("name = 'free'").First(&tier).Error; err != nil {
 		return nil, err
 	}
 	return &tier, nil
@@ -138,11 +95,8 @@ func (s *Store) GetFreeTier(ctx context.Context) (*Tier, error) {
 
 func (s *Store) GetTier(ctx context.Context, id int64) (*Tier, error) {
 	var tier Tier
-	err := s.pool.QueryRow(ctx,
-		`SELECT id, name, max_links, max_domains FROM tiers WHERE id=$1`, id,
-	).Scan(&tier.ID, &tier.Name, &tier.MaxLinks, &tier.MaxDomains)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+	if err := s.db.WithContext(ctx).First(&tier, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -151,21 +105,11 @@ func (s *Store) GetTier(ctx context.Context, id int64) (*Tier, error) {
 }
 
 func (s *Store) ListTiers(ctx context.Context) ([]Tier, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, max_links, max_domains FROM tiers ORDER BY id`)
-	if err != nil {
+	var out []Tier
+	if err := s.db.WithContext(ctx).Order("id").Find(&out).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []Tier
-	for rows.Next() {
-		var tier Tier
-		if err := rows.Scan(&tier.ID, &tier.Name, &tier.MaxLinks, &tier.MaxDomains); err != nil {
-			return nil, err
-		}
-		out = append(out, tier)
-	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // CreateTenant 创建租户(默认免费档)。passwordHash 为空表示尚无密码(超管)。
@@ -174,162 +118,132 @@ func (s *Store) CreateTenant(ctx context.Context, email, passwordHash, slug stri
 	if err != nil {
 		return nil, err
 	}
-	var id int64
-	err = s.pool.QueryRow(ctx,
-		`INSERT INTO tenants (email, password_hash, tier_id, status, slug, is_super_admin)
-		 VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-		email, nullableStr(passwordHash), tier.ID, "pending", slug, isSuperAdmin,
-	).Scan(&id)
-	if err != nil {
+	t := Tenant{
+		Email: email, Slug: slug, Status: "pending",
+		IsSuperAdmin: isSuperAdmin, TierID: tier.ID, CodeLength: 6,
+	}
+	if passwordHash != "" {
+		t.PasswordHash = &passwordHash
+	}
+	if err := s.db.WithContext(ctx).Create(&t).Error; err != nil {
 		return nil, err
 	}
-	return s.GetTenantByID(ctx, id)
-}
-
-func nullableStr(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
+	return s.GetTenantByID(ctx, t.ID)
 }
 
 func (s *Store) GetTenantByID(ctx context.Context, id int64) (*Tenant, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT`+tenantColumns+tenantJoin+` WHERE t.id=$1`, id)
-	t, err := scanTenant(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	return t, nil
+	return s.getTenant(ctx, s.db.WithContext(ctx).Where("id = ?", id))
 }
 
 func (s *Store) GetTenantByEmail(ctx context.Context, email string) (*Tenant, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT`+tenantColumns+tenantJoin+` WHERE t.email=$1`, email)
-	t, err := scanTenant(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	return t, nil
+	return s.getTenant(ctx, s.db.WithContext(ctx).Where("email = ?", email))
 }
 
 func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*Tenant, error) {
-	row := s.pool.QueryRow(ctx,
-		`SELECT`+tenantColumns+tenantJoin+` WHERE t.slug=$1`, slug)
-	t, err := scanTenant(row)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, err
-	}
-	return t, nil
+	return s.getTenant(ctx, s.db.WithContext(ctx).Where("slug = ?", slug))
 }
 
 // TenantPasswordHash 返回租户密码哈希(NULL 表示尚无密码)。
 func (s *Store) TenantPasswordHash(ctx context.Context, id int64) (*string, error) {
-	var h *string
-	err := s.pool.QueryRow(ctx, `SELECT password_hash FROM tenants WHERE id=$1`, id).Scan(&h)
-	if err != nil {
-		return nil, err
+	var ns sql.NullString
+	res := s.db.WithContext(ctx).Model(&Tenant{}).Select("password_hash").Where("id = ?", id).Scan(&ns)
+	if res.Error != nil {
+		return nil, res.Error
 	}
-	return h, nil
+	if res.RowsAffected == 0 {
+		return nil, ErrNotFound
+	}
+	if !ns.Valid {
+		return nil, nil
+	}
+	return &ns.String, nil
 }
 
 func (s *Store) SetTenantPassword(ctx context.Context, id int64, hash string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE tenants SET password_hash=$1 WHERE id=$2`, hash, id)
-	return err
+	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Update("password_hash", hash).Error
 }
 
 // VerifyTenant 邮箱验证通过:仅把 pending 租户置 active 并记录 verified_at。
 // 已封禁/已激活租户不因旧验证 token 被重新激活。
 func (s *Store) VerifyTenant(ctx context.Context, id int64) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE tenants SET status='active', verified_at=COALESCE(verified_at, now())
-		 WHERE id=$1 AND status='pending'`, id)
-	return err
+	return s.db.WithContext(ctx).Model(&Tenant{}).
+		Where("id = ? AND status = 'pending'", id).
+		Updates(map[string]any{"status": "active", "verified_at": gorm.Expr("COALESCE(verified_at, now())")}).Error
 }
 
 func (s *Store) SetTenantStatus(ctx context.Context, id int64, status string) error {
-	_, err := s.pool.Exec(ctx, `UPDATE tenants SET status=$1 WHERE id=$2`, status, id)
-	return err
+	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Update("status", status).Error
 }
 
 func (s *Store) SetTenantTier(ctx context.Context, id, tierID int64) error {
-	_, err := s.pool.Exec(ctx, `UPDATE tenants SET tier_id=$1 WHERE id=$2`, tierID, id)
-	return err
+	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Update("tier_id", tierID).Error
 }
 
 func (s *Store) SetTenantCodeLength(ctx context.Context, id int64, length int) error {
-	_, err := s.pool.Exec(ctx, `UPDATE tenants SET code_length=$1 WHERE id=$2`, length, id)
-	return err
+	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Update("code_length", length).Error
 }
 
 // SetTenantSuperAdmin 标记租户为平台管理员。
 func (s *Store) SetTenantSuperAdmin(ctx context.Context, id int64) error {
-	_, err := s.pool.Exec(ctx, `UPDATE tenants SET is_super_admin=true WHERE id=$1`, id)
-	return err
+	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Update("is_super_admin", true).Error
 }
 
 // ListTenants 平台管理:全部租户(按创建时间倒序)。
 func (s *Store) ListTenants(ctx context.Context) ([]*Tenant, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT`+tenantColumns+tenantJoin+` ORDER BY t.id DESC`)
-	if err != nil {
+	var out []*Tenant
+	if err := s.db.WithContext(ctx).Preload("Tier").Order("id DESC").Find(&out).Error; err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []*Tenant
-	for rows.Next() {
-		t, err := scanTenant(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, t)
+	// 一次查询所有平台默认域名,避免 N+1
+	type defDomain struct {
+		TenantID int64
+		FQDN     string
 	}
-	return out, rows.Err()
+	var defs []defDomain
+	if err := s.db.WithContext(ctx).Model(&Domain{}).
+		Select("tenant_id, fqdn").Where("origin = 'platform'").Order("id").Scan(&defs).Error; err != nil {
+		return nil, err
+	}
+	defMap := map[int64]string{}
+	for _, d := range defs {
+		if _, ok := defMap[d.TenantID]; !ok {
+			defMap[d.TenantID] = d.FQDN
+		}
+	}
+	for _, t := range out {
+		t.DefaultDomain = defMap[t.ID]
+		t.FirstLoginSetup = t.IsSuperAdmin && (t.PasswordHash == nil || *t.PasswordHash == "")
+	}
+	return out, nil
 }
 
 // ---------- 会话 ----------
 
 type Session struct {
-	ID        int64
-	TenantID  int64
-	TokenHash string
-	CSRFToken string
-	ExpiresAt time.Time
+	ID        int64     `gorm:"primaryKey"`
+	TenantID  int64     `gorm:"column:tenant_id"`
+	TokenHash string    `gorm:"column:token_hash"`
+	CSRFToken string    `gorm:"column:csrf_token"`
+	ExpiresAt time.Time `gorm:"column:expires_at"`
 }
 
 // CreateSession 创建会话并返回会话记录。token 由调用方生成,此处仅存哈希。
 func (s *Store) CreateSession(ctx context.Context, tenantID int64, tokenHash, csrfToken string, ttl time.Duration) (*Session, error) {
-	expires := time.Now().Add(ttl)
-	var id int64
-	err := s.pool.QueryRow(ctx,
-		`INSERT INTO sessions (tenant_id, token_hash, csrf_token, expires_at)
-		 VALUES ($1, $2, $3, $4) RETURNING id`,
-		tenantID, tokenHash, csrfToken, expires,
-	).Scan(&id)
-	if err != nil {
+	sess := Session{
+		TenantID: tenantID, TokenHash: tokenHash, CSRFToken: csrfToken,
+		ExpiresAt: time.Now().Add(ttl),
+	}
+	if err := s.db.WithContext(ctx).Create(&sess).Error; err != nil {
 		return nil, err
 	}
-	return &Session{ID: id, TenantID: tenantID, TokenHash: tokenHash, CSRFToken: csrfToken, ExpiresAt: expires}, nil
+	return &sess, nil
 }
 
 // GetSessionByTokenHash 返回未过期的会话。
 func (s *Store) GetSessionByTokenHash(ctx context.Context, tokenHash string) (*Session, error) {
 	var sess Session
-	err := s.pool.QueryRow(ctx,
-		`SELECT id, tenant_id, token_hash, csrf_token, expires_at FROM sessions
-		 WHERE token_hash=$1 AND expires_at > now()`, tokenHash,
-	).Scan(&sess.ID, &sess.TenantID, &sess.TokenHash, &sess.CSRFToken, &sess.ExpiresAt)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+	if err := s.db.WithContext(ctx).Where("token_hash = ? AND expires_at > now()", tokenHash).First(&sess).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, err
@@ -338,29 +252,33 @@ func (s *Store) GetSessionByTokenHash(ctx context.Context, tokenHash string) (*S
 }
 
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash=$1`, tokenHash)
-	return err
+	return s.db.WithContext(ctx).Where("token_hash = ?", tokenHash).Delete(&Session{}).Error
 }
 
 // DeleteExpiredSessions 惰性清理过期会话。
 func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at <= now()`)
-	return err
+	return s.db.WithContext(ctx).Where("expires_at <= now()").Delete(&Session{}).Error
 }
 
 // DeleteExpiredEmailTokens 惰性清理过期邮箱 token(验证/重置)。
 func (s *Store) DeleteExpiredEmailTokens(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM email_tokens WHERE expires_at <= now()`)
-	return err
+	return s.db.WithContext(ctx).Where("expires_at <= now()").Delete(&EmailToken{}).Error
 }
 
 // ---------- 邮箱 token(验证/重置) ----------
 
+type EmailToken struct {
+	ID        int64      `gorm:"primaryKey"`
+	TenantID  int64      `gorm:"column:tenant_id"`
+	TokenHash string     `gorm:"column:token_hash"`
+	Kind      string     `gorm:"column:kind"`
+	ExpiresAt time.Time  `gorm:"column:expires_at"`
+	UsedAt    *time.Time `gorm:"column:used_at"`
+}
+
 func (s *Store) CreateEmailToken(ctx context.Context, tenantID int64, tokenHash, kind string, ttl time.Duration) error {
-	_, err := s.pool.Exec(ctx,
-		`INSERT INTO email_tokens (tenant_id, token_hash, kind, expires_at) VALUES ($1,$2,$3,$4)`,
-		tenantID, tokenHash, kind, time.Now().Add(ttl))
-	return err
+	tok := EmailToken{TenantID: tenantID, TokenHash: tokenHash, Kind: kind, ExpiresAt: time.Now().Add(ttl)}
+	return s.db.WithContext(ctx).Create(&tok).Error
 }
 
 // ConsumeEmailToken 校验并消费一个 token:有效(未过期、未使用、kind 匹配)返回租户 ID 并标记已用。
@@ -368,16 +286,16 @@ func (s *Store) CreateEmailToken(ctx context.Context, tenantID int64, tokenHash,
 // "不存在/已用/已过期" 统一返回 ErrNotFound(对外错误语义不变)。
 func (s *Store) ConsumeEmailToken(ctx context.Context, tokenHash, kind string) (int64, error) {
 	var tenantID int64
-	err := s.pool.QueryRow(ctx,
-		`UPDATE email_tokens SET used_at=now()
-		 WHERE token_hash=$1 AND kind=$2 AND expires_at > now() AND used_at IS NULL
-		 RETURNING tenant_id`, tokenHash, kind,
-	).Scan(&tenantID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return 0, ErrNotFound
-		}
-		return 0, err
+	res := s.db.WithContext(ctx).Raw(
+		`UPDATE email_tokens SET used_at = now()
+		 WHERE token_hash = ? AND kind = ? AND expires_at > now() AND used_at IS NULL
+		 RETURNING tenant_id`, tokenHash, kind).Scan(&tenantID)
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	// 零行:不存在/已用/已过期,统一 ErrNotFound(对外错误语义不变)
+	if res.RowsAffected == 0 {
+		return 0, ErrNotFound
 	}
 	return tenantID, nil
 }
@@ -387,15 +305,16 @@ func (s *Store) ConsumeEmailToken(ctx context.Context, tokenHash, kind string) (
 // Usage 返回租户配额用量:短链按"尚未物理删除"计数,域名按"尚未删除"的自有域名计数(平台默认不计)。
 func (s *Store) Usage(ctx context.Context, tenantID int64) (*Usage, error) {
 	u := &Usage{}
-	err := s.pool.QueryRow(ctx,
-		`SELECT
-			(SELECT count(*) FROM links WHERE tenant_id=$1),
-			(SELECT count(*) FROM domains WHERE tenant_id=$1 AND origin='self')`,
-		tenantID,
-	).Scan(&u.Links, &u.Domains)
-	if err != nil {
+	var links, domains int64
+	if err := s.db.WithContext(ctx).Model(&Link{}).Where("tenant_id = ?", tenantID).Count(&links).Error; err != nil {
 		return nil, err
 	}
+	if err := s.db.WithContext(ctx).Model(&Domain{}).
+		Where("tenant_id = ? AND origin = 'self'", tenantID).Count(&domains).Error; err != nil {
+		return nil, err
+	}
+	u.Links = int(links)
+	u.Domains = int(domains)
 	t, err := s.GetTenantByID(ctx, tenantID)
 	if err != nil {
 		return nil, err
