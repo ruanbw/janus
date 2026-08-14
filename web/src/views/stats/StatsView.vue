@@ -56,10 +56,18 @@
           <template v-if="column.key === 'createdAt'">
             {{ formatDateTime(record.createdAt) }}
           </template>
-          <template v-else-if="column.key === 'userAgent'">
-            <a-tooltip :title="record.userAgent">
-              <span>{{ truncateText(record.userAgent, 60) }}</span>
+          <template v-else-if="column.key === 'deviceKind'">
+            <a-tag :color="parseDevice(record.userAgent).kindColor">
+              {{ parseDevice(record.userAgent).kind }}
+            </a-tag>
+          </template>
+          <template v-else-if="column.key === 'device'">
+            <a-tooltip :title="record.userAgent || '未知'">
+              <span>{{ parseDevice(record.userAgent).device }}</span>
             </a-tooltip>
+          </template>
+          <template v-else-if="column.key === 'osBrowser'">
+            <span class="ua-muted">{{ parseDevice(record.userAgent).osBrowser }}</span>
           </template>
           <template v-else-if="column.key === 'referer'">
             <a-tooltip :title="record.referer || '直接访问'">
@@ -79,6 +87,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
 import { message } from 'ant-design-vue';
+import { UAParser } from 'ua-parser-js';
 import type { TableColumnsType, TablePaginationConfig } from 'ant-design-vue';
 
 import { getLink, listLinks } from '@/api/links';
@@ -114,10 +123,46 @@ const linkOptions = computed(() =>
 
 const columns: TableColumnsType = [
   { title: '访问时间', key: 'createdAt', dataIndex: 'createdAt', width: 180 },
-  { title: '域名', key: 'domain', dataIndex: 'domain', width: 180 },
-  { title: 'User-Agent', key: 'userAgent', dataIndex: 'userAgent' },
-  { title: '来源', key: 'referer', dataIndex: 'referer', width: 220 },
+  { title: '域名', key: 'domain', dataIndex: 'domain', width: 150 },
+  { title: '设备类型', key: 'deviceKind', width: 100 },
+  { title: '设备', key: 'device', width: 200 },
+  { title: '系统/浏览器', key: 'osBrowser', width: 240 },
+  { title: '来源', key: 'referer', dataIndex: 'referer', width: 200 },
 ];
+
+interface DeviceInfo {
+  kind: string;
+  kindColor: string;
+  device: string;
+  osBrowser: string;
+}
+
+/** 解析 User-Agent:设备类型(PC/移动端/平板)、品牌型号、系统与浏览器版本 */
+function parseDevice(ua: string): DeviceInfo {
+  const empty: DeviceInfo = { kind: '未知', kindColor: 'default', device: '-', osBrowser: '-' };
+  if (!ua.trim()) return empty;
+  const p = new UAParser(ua);
+  const d = p.getDevice();
+  const o = p.getOS();
+  const b = p.getBrowser();
+  let kind = 'PC';
+  let kindColor = 'blue';
+  if (d.type === 'mobile') {
+    kind = '移动端';
+    kindColor = 'green';
+  } else if (d.type === 'tablet') {
+    kind = '平板';
+    kindColor = 'orange';
+  } else if (d.type) {
+    kind = '其他';
+    kindColor = 'purple';
+  }
+  const device = [d.vendor, d.model].filter(Boolean).join(' ').trim() || o.name || '未知设备';
+  const osPart = [o.name, o.version].filter(Boolean).join(' ').trim();
+  const browserPart = [b.name, b.major || b.version].filter(Boolean).join(' ').trim();
+  const osBrowser = [osPart, browserPart].filter(Boolean).join(' · ') || '未知';
+  return { kind, kindColor, device, osBrowser };
+}
 
 const pagination = computed<TablePaginationConfig>(() => ({
   current: page.value,
@@ -253,5 +298,10 @@ function onTableChange(p: TablePaginationConfig) {
   font-size: 13px;
   color: #334155;
   word-break: break-all;
+}
+
+.ua-muted {
+  color: #5b6b7c;
+  font-size: 13px;
 }
 </style>
