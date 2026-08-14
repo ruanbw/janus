@@ -9,12 +9,7 @@
       </template>
     </PageHeader>
 
-    <QuotaBar
-      :links-used="usage?.links"
-      :links-max="usage?.maxLinks"
-      :domains-used="usage?.domains"
-      :domains-max="usage?.maxDomains"
-    />
+    <QuotaBar :domains-used="usage?.domains" :domains-max="usage?.maxDomains" />
 
     <a-table
       :columns="columns"
