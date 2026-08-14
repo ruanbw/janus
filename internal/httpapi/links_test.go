@@ -337,11 +337,11 @@ func TestVisitsRecordedAndCounted(t *testing.T) {
 	addDomain(t, c, "localhost")
 	link := createLink(t, c, map[string]any{"targetUrl": "https://a.example.com", "domainIds": []int64{localhostDomainID(t, c)}})
 
-	// 三次访问(不同 UA/referer)
-	reqUA := []struct{ ua, ref string }{
-		{"Mozilla/5.0 (iPhone)", "https://google.com/"},
-		{"curl/8.0", ""},
-		{"Mozilla/5.0 (Macintosh)", "https://x.com/"},
+	// 三次访问(不同 UA/referer;第二条带 X-Forwarded-For 模拟 Caddy 反代,应记录转发 IP)
+	reqUA := []struct{ ua, ref, xff, wantIP string }{
+		{"Mozilla/5.0 (iPhone)", "https://google.com/", "", "127.0.0.1"},
+		{"curl/8.0", "", "203.0.113.9", "203.0.113.9"},
+		{"Mozilla/5.0 (Macintosh)", "https://x.com/", "", "127.0.0.1"},
 	}
 	for _, v := range reqUA {
 		req, err := http.NewRequest(http.MethodGet, env.Server.URL+"/"+link.Code, nil)
@@ -351,6 +351,9 @@ func TestVisitsRecordedAndCounted(t *testing.T) {
 		req.Host = "localhost"
 		req.Header.Set("User-Agent", v.ua)
 		req.Header.Set("Referer", v.ref)
+		if v.xff != "" {
+			req.Header.Set("X-Forwarded-For", v.xff)
+		}
 		resp, err := noFollowClient(env).Do(req)
 		if err != nil {
 			t.Fatal(err)
@@ -394,6 +397,16 @@ func TestVisitsRecordedAndCounted(t *testing.T) {
 	for _, v := range reqUA {
 		if !foundUA[v.ua] {
 			t.Errorf("visit with UA %q not recorded", v.ua)
+		}
+	}
+	// IP 记录:无 XFF 时取 RemoteAddr(127.0.0.1);带 XFF 时取转发 IP
+	foundIP := map[string]bool{}
+	for _, v := range vl.Items {
+		foundIP[v.IP] = true
+	}
+	for _, v := range reqUA {
+		if !foundIP[v.wantIP] {
+			t.Errorf("visit with IP %q not recorded (got %v)", v.wantIP, foundIP)
 		}
 	}
 

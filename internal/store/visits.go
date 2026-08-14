@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-// InsertVisit 记录一次成功跳转。
-func (s *Store) InsertVisit(ctx context.Context, linkID, domainID int64, userAgent, referer string) error {
+// InsertVisit 记录一次成功跳转(含访问者 IP)。
+func (s *Store) InsertVisit(ctx context.Context, linkID, domainID int64, ip, userAgent, referer string) error {
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO visits (link_id, domain_id, user_agent, referer) VALUES ($1,$2,$3,$4)`,
-		linkID, domainID, userAgent, referer)
+		`INSERT INTO visits (link_id, domain_id, ip, user_agent, referer) VALUES ($1,$2,$3,$4,$5)`,
+		linkID, domainID, ip, userAgent, referer)
 	return err
 }
 
@@ -27,7 +27,7 @@ func (s *Store) ListVisitsByLink(ctx context.Context, linkID int64, page, pageSi
 		return nil, 0, err
 	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT v.id, v.link_id, d.fqdn, v.user_agent, v.referer, v.created_at
+		`SELECT v.id, v.link_id, d.fqdn, v.ip, v.user_agent, v.referer, v.created_at
 		 FROM visits v JOIN domains d ON d.id = v.domain_id
 		 WHERE v.link_id=$1 ORDER BY v.id DESC LIMIT $2 OFFSET $3`,
 		linkID, pageSize, (page-1)*pageSize)
@@ -38,7 +38,7 @@ func (s *Store) ListVisitsByLink(ctx context.Context, linkID int64, page, pageSi
 	var out []*Visit
 	for rows.Next() {
 		var v Visit
-		if err := rows.Scan(&v.ID, &v.LinkID, &v.Domain, &v.UserAgent, &v.Referer, &v.CreatedAt); err != nil {
+		if err := rows.Scan(&v.ID, &v.LinkID, &v.Domain, &v.IP, &v.UserAgent, &v.Referer, &v.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, &v)

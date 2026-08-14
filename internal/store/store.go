@@ -90,6 +90,7 @@ type Visit struct {
 	ID        int64     `json:"id"`
 	LinkID    int64     `json:"linkId"`
 	Domain    string    `json:"domain"`
+	IP        string    `json:"ip"`
 	UserAgent string    `json:"userAgent"`
 	Referer   string    `json:"referer"`
 	CreatedAt time.Time `json:"createdAt"`

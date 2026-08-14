@@ -40,8 +40,8 @@ func (a *API) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, errNotFound, "short link not found")
 		return
 	}
-	// 记录访问(短链、域名、UA、来源、时间)
-	if err := a.store.InsertVisit(r.Context(), link.ID, d.ID, r.UserAgent(), r.Referer()); err != nil {
+	// 记录访问(短链、域名、IP、UA、来源、时间)
+	if err := a.store.InsertVisit(r.Context(), link.ID, d.ID, clientIP(r), r.UserAgent(), r.Referer()); err != nil {
 		// 统计失败不阻断跳转
 		_ = err
 	}

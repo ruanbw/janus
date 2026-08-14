@@ -90,6 +90,8 @@ export interface Visit {
   id: number;
   linkId: number;
   domain: string;
+  /** 访问者 IP(X-Forwarded-For 优先,回退 RemoteAddr) */
+  ip: string;
   userAgent: string;
   referer: string;
   createdAt: string;

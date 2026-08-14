@@ -31,7 +31,7 @@
 - `domain`: `{ id, fqdn, description, origin, status, certStatus, activatedAt, createdAt }`(`description` 为创建时填写的备注,可空,最长 200 字)
 - `config`: `{ serverIp, platformDomain, usage }`(`serverIp` 为 `CLOAK_SERVER_PUBLIC_IP`,DNS 校验指向地址;`usage` 为当前租户配额用量,按租户返回)
 - `link`: `{ id, code, targetUrl, redirectStatus, status, domains: [fqdn...], visits, createdAt }`(列表默认不含逻辑删除项)
-- `visit`: `{ id, linkId, domain, userAgent, referer, createdAt }`
+- `visit`: `{ id, linkId, domain, ip, userAgent, referer, createdAt }`(`ip` 为访问者 IP:部署前置 Caddy 时取 `X-Forwarded-For` 首段,否则取 `RemoteAddr`;旧记录为空字符串)
 - `apiKey`: `{ id, name, createdAt, key? }`(`key` 明文仅在创建响应中出现一次)
 
 ## 端点

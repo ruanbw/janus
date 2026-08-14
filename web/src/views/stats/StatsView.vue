@@ -50,12 +50,15 @@
         :loading="visitsLoading"
         row-key="id"
         :pagination="pagination"
-        :scroll="{ x: 810 }"
+        :scroll="{ x: 940 }"
         @change="onTableChange"
       >
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'createdAt'">
             {{ formatDateTime(record.createdAt) }}
+          </template>
+          <template v-else-if="column.key === 'ip'">
+            <span class="ua-muted mono">{{ record.ip || '-' }}</span>
           </template>
           <template v-else-if="column.key === 'deviceKind'">
             <a-tag :color="parseDevice(record.userAgent).kindColor">
@@ -122,6 +125,7 @@ const linkOptions = computed(() =>
 
 const columns: TableColumnsType = [
   { title: '访问时间', key: 'createdAt', dataIndex: 'createdAt', width: 180 },
+  { title: '访问IP', key: 'ip', dataIndex: 'ip', width: 130 },
   { title: '设备类型', key: 'deviceKind', width: 100 },
   { title: '设备', key: 'device', width: 140 },
   { title: '系统/浏览器', key: 'osBrowser', width: 190 },
