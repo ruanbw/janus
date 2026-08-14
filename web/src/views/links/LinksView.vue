@@ -21,7 +21,20 @@
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'code'">
-          <a-typography-text strong copyable class="code mono">{{ record.code }}</a-typography-text>
+          <div class="code-cell">
+            <a-typography-text strong copyable class="code mono">{{ record.code }}</a-typography-text>
+            <div class="domain-links">
+              <a-tooltip
+                v-for="fqdn in record.domains"
+                :key="fqdn"
+                :title="'点击复制 https://' + fqdn + '/' + record.code"
+              >
+                <span class="domain-link mono" @click="copyShortLink(record, fqdn)">
+                  https://{{ fqdn }}/{{ record.code }}
+                </span>
+              </a-tooltip>
+            </div>
+          </div>
         </template>
         <template v-else-if="column.key === 'targetUrl'">
           <a-tooltip :title="record.targetUrl">
@@ -30,11 +43,6 @@
               {{ truncateText(record.targetUrl, 40) }}
             </span>
           </a-tooltip>
-        </template>
-        <template v-else-if="column.key === 'domains'">
-          <a-space :size="4" wrap>
-            <a-tag v-for="fqdn in record.domains" :key="fqdn" color="cyan">{{ fqdn }}</a-tag>
-          </a-space>
         </template>
         <template v-else-if="column.key === 'redirectStatus'">
           <a-tag :color="REDIRECT_STATUS[record.redirectStatus as RedirectStatus].color">
@@ -149,9 +157,8 @@ const editingLink = ref<Link | null>(null);
 const usage = computed(() => auth.config?.usage);
 
 const columns: TableColumnsType = [
-  { title: '短码', key: 'code', dataIndex: 'code', width: 150 },
+  { title: '短码 / 域名', key: 'code', dataIndex: 'code', width: 220 },
   { title: '目标 URL', key: 'targetUrl', dataIndex: 'targetUrl' },
-  { title: '关联域名', key: 'domains', dataIndex: 'domains' },
   { title: '重定向', key: 'redirectStatus', dataIndex: 'redirectStatus', width: 130 },
   { title: '状态', key: 'status', dataIndex: 'status', width: 90 },
   { title: '访问数', key: 'visits', dataIndex: 'visits', width: 100 },
@@ -262,11 +269,52 @@ async function onPurge(link: Link) {
 function goStats(link: Link) {
   router.push({ path: '/stats', query: { linkId: String(link.id) } });
 }
+
+/** 复制"域名/短码"的完整短链(https://<域名>/<短码>)到剪贴板 */
+async function copyShortLink(link: Link, fqdn: string) {
+  const url = `https://${fqdn}/${link.code}`;
+  try {
+    await navigator.clipboard.writeText(url);
+    message.success(`已复制:${url}`);
+  } catch {
+    message.error('复制失败,请手动选择复制');
+  }
+}
 </script>
 
 <style scoped>
 .code {
   font-size: 13px;
+}
+
+.code-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.domain-links {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.domain-link {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #1677ff;
+  cursor: pointer;
+}
+
+.domain-link:hover {
+  text-decoration: underline;
 }
 
 .target-cell {
