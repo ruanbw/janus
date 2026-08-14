@@ -1,40 +1,48 @@
 <template>
   <div>
-    <div class="page-header">
-      <h2 class="page-title">统计</h2>
-      <a-select
-        v-model:value="selectedLinkId"
-        class="link-select"
-        placeholder="选择短链查看访问统计"
-        :options="linkOptions"
-        allow-clear
-        show-search
-        option-filter-prop="label"
-        @change="onSelectLink"
-      />
-    </div>
+    <PageHeader title="统计" description="选择一条短链,查看访问记录与来源明细">
+      <template #actions>
+        <a-select
+          v-model:value="selectedLinkId"
+          class="link-select"
+          placeholder="选择短链查看访问统计"
+          :options="linkOptions"
+          allow-clear
+          show-search
+          option-filter-prop="label"
+          @change="onSelectLink"
+        />
+      </template>
+    </PageHeader>
 
-    <a-empty v-if="!selectedLink" description="请选择一条短链查看访问统计" />
+    <a-empty v-if="!selectedLink" description="请选择一条短链查看访问统计" class="stats-empty" />
 
     <template v-else>
-      <a-card class="stat-card" :bordered="false" size="small">
-        <a-descriptions :column="4" size="small">
-          <a-descriptions-item label="短码">
-            <a-typography-text strong copyable>{{ selectedLink.code }}</a-typography-text>
-          </a-descriptions-item>
-          <a-descriptions-item label="访问数">{{ selectedLink.visits }}</a-descriptions-item>
-          <a-descriptions-item label="目标 URL">
-            <a-tooltip :title="selectedLink.targetUrl">
-              <span>{{ truncateText(selectedLink.targetUrl, 40) }}</span>
-            </a-tooltip>
-          </a-descriptions-item>
-          <a-descriptions-item label="状态">
-            <a-tag :color="LINK_STATUS[selectedLink.status].color">
-              {{ LINK_STATUS[selectedLink.status].label }}
-            </a-tag>
-          </a-descriptions-item>
-        </a-descriptions>
-      </a-card>
+      <div class="summary">
+        <div class="summary-item">
+          <span class="summary-label">短码</span>
+          <a-typography-text strong copyable class="summary-code mono">
+            {{ selectedLink.code }}
+          </a-typography-text>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">访问数</span>
+          <span class="summary-value">{{ selectedLink.visits }}</span>
+          <span class="summary-unit">次</span>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">目标 URL</span>
+          <a-tooltip :title="selectedLink.targetUrl">
+            <span class="summary-target">{{ truncateText(selectedLink.targetUrl, 40) }}</span>
+          </a-tooltip>
+        </div>
+        <div class="summary-item">
+          <span class="summary-label">状态</span>
+          <a-tag :color="LINK_STATUS[selectedLink.status].color">
+            {{ LINK_STATUS[selectedLink.status].label }}
+          </a-tag>
+        </div>
+      </div>
 
       <a-table
         :columns="columns"
@@ -59,7 +67,7 @@
             </a-tooltip>
           </template>
           <template v-else-if="column.key === 'domain'">
-            <a-tag color="blue">{{ record.domain }}</a-tag>
+            <a-tag color="cyan">{{ record.domain }}</a-tag>
           </template>
         </template>
       </a-table>
@@ -75,6 +83,7 @@ import type { TableColumnsType, TablePaginationConfig } from 'ant-design-vue';
 
 import { getLink, listLinks } from '@/api/links';
 import { listVisits } from '@/api/visits';
+import PageHeader from '@/components/PageHeader.vue';
 import { LINK_STATUS } from '@/constants/dict';
 import { ApiError } from '@/types/api';
 import type { Link, Visit } from '@/types/api';
@@ -183,24 +192,66 @@ function onTableChange(p: TablePaginationConfig) {
 </script>
 
 <style scoped>
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-}
-
 .link-select {
   width: 320px;
+  max-width: 100%;
 }
 
-.stat-card {
-  margin-bottom: 16px;
-  background: #fafafa;
+.stats-empty {
+  padding: 48px 0;
+}
+
+.summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1px;
+  background: #e6ebf1;
+  border: 1px solid #e6ebf1;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+@media (min-width: 992px) {
+  .summary {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.summary-item {
+  background: #f8fafc;
+  padding: 14px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.summary-label {
+  font-size: 12px;
+  color: #8b98a5;
+}
+
+.summary-code {
+  font-size: 15px;
+}
+
+.summary-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #0e7490;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.summary-unit {
+  font-size: 12px;
+  color: #8b98a5;
+}
+
+.summary-target {
+  font-size: 13px;
+  color: #334155;
+  word-break: break-all;
 }
 </style>

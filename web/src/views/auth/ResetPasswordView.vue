@@ -1,44 +1,40 @@
 <template>
-  <div class="auth-page">
-    <a-card class="auth-card" :bordered="false">
-      <a-result v-if="done" status="success" title="密码已重置" sub-title="请使用新密码登录">
-        <template #extra>
-          <a-button type="primary" @click="router.push('/login')">前往登录</a-button>
-        </template>
-      </a-result>
+  <AuthShell :show-heading="!done">
+    <template #title>重置密码</template>
+    <template #subtitle>设置你的新密码</template>
 
-      <template v-else>
-        <div class="title">重置密码</div>
-        <div class="subtitle">设置你的新密码</div>
-
-        <a-form :model="form" :rules="rules" layout="vertical" @finish="onSubmit">
-          <a-form-item label="新密码" name="newPassword">
-            <a-input-password
-              v-model:value="form.newPassword"
-              placeholder="至少 8 位"
-              autocomplete="new-password"
-            >
-              <template #prefix><LockOutlined /></template>
-            </a-input-password>
-          </a-form-item>
-          <a-form-item label="确认新密码" name="confirmPassword">
-            <a-input-password
-              v-model:value="form.confirmPassword"
-              placeholder="再次输入新密码"
-              autocomplete="new-password"
-            >
-              <template #prefix><LockOutlined /></template>
-            </a-input-password>
-          </a-form-item>
-          <a-form-item>
-            <a-button type="primary" html-type="submit" block :loading="submitting">
-              重置密码
-            </a-button>
-          </a-form-item>
-        </a-form>
+    <a-result v-if="done" status="success" title="密码已重置" sub-title="请使用新密码登录">
+      <template #extra>
+        <a-button type="primary" @click="router.push('/login')">前往登录</a-button>
       </template>
-    </a-card>
-  </div>
+    </a-result>
+
+    <a-form v-else :model="form" :rules="rules" layout="vertical" @finish="onSubmit">
+      <a-form-item label="新密码" name="newPassword">
+        <a-input-password
+          v-model:value="form.newPassword"
+          placeholder="至少 8 位"
+          autocomplete="new-password"
+          size="large"
+        >
+          <template #prefix><LockOutlined class="input-icon" /></template>
+        </a-input-password>
+      </a-form-item>
+      <a-form-item label="确认新密码" name="confirmPassword">
+        <a-input-password
+          v-model:value="form.confirmPassword"
+          placeholder="再次输入新密码"
+          autocomplete="new-password"
+          size="large"
+        >
+          <template #prefix><LockOutlined class="input-icon" /></template>
+        </a-input-password>
+      </a-form-item>
+      <a-button type="primary" html-type="submit" block size="large" :loading="submitting">
+        重置密码
+      </a-button>
+    </a-form>
+  </AuthShell>
 </template>
 
 <script setup lang="ts">
@@ -49,6 +45,7 @@ import { LockOutlined } from '@ant-design/icons-vue';
 import type { Rule } from 'ant-design-vue/es/form';
 
 import { resetPassword } from '@/api/auth';
+import AuthShell from '@/components/AuthShell.vue';
 import { ApiError } from '@/types/api';
 
 const route = useRoute();
@@ -94,28 +91,7 @@ async function onSubmit() {
 </script>
 
 <style scoped>
-.auth-page {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #1f2d3d 0%, #2b3a4a 100%);
-}
-
-.auth-card {
-  width: 400px;
-  border-radius: 12px;
-}
-
-.title {
-  font-size: 22px;
-  font-weight: 700;
-  text-align: center;
-}
-
-.subtitle {
-  text-align: center;
-  color: rgba(0, 0, 0, 0.45);
-  margin-bottom: 24px;
+.input-icon {
+  color: #8b98a5;
 }
 </style>

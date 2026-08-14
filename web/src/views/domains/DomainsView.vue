@@ -1,19 +1,19 @@
 <template>
   <div>
-    <div class="page-header">
-      <h2 class="page-title">域名</h2>
-      <a-button type="primary" @click="openCreate">
-        <template #icon><PlusOutlined /></template>
-        添加自有域名
-      </a-button>
-    </div>
+    <PageHeader title="域名" description="管理自有域名与平台默认域名;DNS 指向本服务器后自动校验并签发证书">
+      <template #actions>
+        <a-button type="primary" @click="openCreate">
+          <template #icon><PlusOutlined /></template>
+          添加自有域名
+        </a-button>
+      </template>
+    </PageHeader>
 
-    <a-alert
-      v-if="quotaInfo"
-      class="quota-alert"
-      type="info"
-      show-icon
-      :message="quotaInfo"
+    <QuotaBar
+      :links-used="usage?.links"
+      :links-max="usage?.maxLinks"
+      :domains-used="usage?.domains"
+      :domains-max="usage?.maxDomains"
     />
 
     <a-table
@@ -25,7 +25,7 @@
     >
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'fqdn'">
-          <a-typography-text copyable>{{ record.fqdn }}</a-typography-text>
+          <a-typography-text copyable class="fqdn mono">{{ record.fqdn }}</a-typography-text>
         </template>
         <template v-else-if="column.key === 'origin'">
           <a-tag :color="DOMAIN_ORIGIN[record.origin as DomainOrigin].color">
@@ -49,17 +49,23 @@
           {{ formatDateTime(record.createdAt) }}
         </template>
         <template v-else-if="column.key === 'action'">
-          <a-space>
-            <a-button size="small" @click="onRecheck(record)">手动重检</a-button>
+          <a-space :size="4">
+            <a-button size="small" type="text" @click="onRecheck(record)">
+              <template #icon><SyncOutlined /></template>
+              手动重检
+            </a-button>
             <a-button
               v-if="record.status !== 'stopped'"
               size="small"
+              type="text"
               danger
               @click="onToggleStatus(record, 'stopped')"
             >
+              <template #icon><StopOutlined /></template>
               停用
             </a-button>
-            <a-button v-else size="small" type="primary" ghost @click="onToggleStatus(record, 'active')">
+            <a-button v-else size="small" type="text" @click="onToggleStatus(record, 'active')">
+              <template #icon><PlayCircleOutlined /></template>
               恢复
             </a-button>
             <a-button
@@ -69,10 +75,14 @@
               danger
               @click="onDelete(record)"
             >
+              <template #icon><DeleteOutlined /></template>
               删除
             </a-button>
             <a-tooltip v-else title="平台默认域名不可删除,可停用">
-              <a-button size="small" type="text" disabled>删除</a-button>
+              <a-button size="small" type="text" disabled>
+                <template #icon><DeleteOutlined /></template>
+                删除
+              </a-button>
             </a-tooltip>
           </a-space>
         </template>
@@ -112,10 +122,18 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { Modal, message } from 'ant-design-vue';
-import { PlusOutlined } from '@ant-design/icons-vue';
+import {
+  DeleteOutlined,
+  PlayCircleOutlined,
+  PlusOutlined,
+  StopOutlined,
+  SyncOutlined,
+} from '@ant-design/icons-vue';
 import type { TableColumnsType } from 'ant-design-vue';
 
 import { createDomain, deleteDomain, listDomains, recheckDomain, updateDomainStatus } from '@/api/domains';
+import PageHeader from '@/components/PageHeader.vue';
+import QuotaBar from '@/components/QuotaBar.vue';
 import { CERT_STATUS, DOMAIN_ORIGIN, DOMAIN_STATUS } from '@/constants/dict';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError, getQuotaUsage } from '@/types/api';
@@ -130,20 +148,16 @@ const createOpen = ref(false);
 const creating = ref(false);
 const newFqdn = ref('');
 
-const quotaInfo = computed(() => {
-  const usage = auth.tenant?.usage;
-  if (!usage) return '';
-  return `当前配额:自有域名 ${usage.domains}/${usage.maxDomains} 条,短链 ${usage.links}/${usage.maxLinks} 条(平台默认域名不计入域名配额)。`;
-});
+const usage = computed(() => auth.tenant?.usage);
 
 const columns: TableColumnsType = [
   { title: '域名', key: 'fqdn', dataIndex: 'fqdn' },
   { title: '来源', key: 'origin', dataIndex: 'origin', width: 140 },
-  { title: '状态', key: 'status', dataIndex: 'status', width: 110 },
-  { title: '证书', key: 'certStatus', dataIndex: 'certStatus', width: 110 },
+  { title: '状态', key: 'status', dataIndex: 'status', width: 100 },
+  { title: '证书', key: 'certStatus', dataIndex: 'certStatus', width: 100 },
   { title: '激活时间', key: 'activatedAt', dataIndex: 'activatedAt', width: 170 },
   { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 170 },
-  { title: '操作', key: 'action', width: 280 },
+  { title: '操作', key: 'action', width: 300 },
 ];
 
 let timer: number | undefined;
@@ -275,19 +289,7 @@ function onDelete(domain: Domain) {
 </script>
 
 <style scoped>
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-}
-
-.quota-alert {
-  margin-bottom: 16px;
+.fqdn {
+  font-size: 13px;
 }
 </style>

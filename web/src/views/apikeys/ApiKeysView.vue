@@ -1,19 +1,13 @@
 <template>
   <div>
-    <div class="page-header">
-      <h2 class="page-title">API Key</h2>
-      <a-button type="primary" @click="openCreate">
-        <template #icon><PlusOutlined /></template>
-        生成 API Key
-      </a-button>
-    </div>
-
-    <a-alert
-      class="tip-alert"
-      type="info"
-      show-icon
-      message="API Key 用于程序化调用公开 REST API(Authorization: Bearer <key>)。密钥明文仅在生成时展示一次,请立即保存。"
-    />
+    <PageHeader title="API Key" description="用于程序化调用公开 REST API(Authorization: Bearer &lt;key&gt;)">
+      <template #actions>
+        <a-button type="primary" @click="openCreate">
+          <template #icon><PlusOutlined /></template>
+          生成 API Key
+        </a-button>
+      </template>
+    </PageHeader>
 
     <a-table
       :columns="columns"
@@ -23,7 +17,10 @@
       :pagination="false"
     >
       <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'createdAt'">
+        <template v-if="column.key === 'name'">
+          <span class="key-name">{{ record.name }}</span>
+        </template>
+        <template v-else-if="column.key === 'createdAt'">
           {{ formatDateTime(record.createdAt) }}
         </template>
         <template v-else-if="column.key === 'action'">
@@ -34,7 +31,10 @@
             cancel-text="取消"
             @confirm="onRevoke(record)"
           >
-            <a-button size="small" type="text" danger>吊销</a-button>
+            <a-button size="small" type="text" danger>
+              <template #icon><StopOutlined /></template>
+              吊销
+            </a-button>
           </a-popconfirm>
         </template>
       </template>
@@ -73,11 +73,12 @@
         show-icon
         message="密钥明文仅展示这一次,关闭后将无法再次查看。请立即复制并妥善保存。"
       />
-      <div class="key-box">
-        <a-typography-text code copyable>{{ plainKey }}</a-typography-text>
-      </div>
+      <div class="key-box mono">{{ plainKey }}</div>
       <div class="key-actions">
-        <a-button type="primary" @click="copyKey">复制密钥</a-button>
+        <a-button type="primary" @click="copyKey">
+          <template #icon><CopyOutlined /></template>
+          复制密钥
+        </a-button>
         <a-button @click="keyOpen = false">我已保存</a-button>
       </div>
     </a-modal>
@@ -87,10 +88,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { message } from 'ant-design-vue';
-import { PlusOutlined } from '@ant-design/icons-vue';
+import { CopyOutlined, PlusOutlined, StopOutlined } from '@ant-design/icons-vue';
 import type { TableColumnsType } from 'ant-design-vue';
 
 import { createApiKey, deleteApiKey, listApiKeys } from '@/api/apiKeys';
+import PageHeader from '@/components/PageHeader.vue';
 import { ApiError } from '@/types/api';
 import type { ApiKey } from '@/types/api';
 import { formatDateTime } from '@/utils/format';
@@ -174,29 +176,20 @@ async function onRevoke(record: ApiKey) {
 </script>
 
 <style scoped>
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 18px;
-}
-
-.tip-alert {
-  margin-bottom: 16px;
+.key-name {
+  font-weight: 500;
 }
 
 .key-box {
   margin: 16px 0;
-  padding: 12px;
-  background: #fafafa;
-  border: 1px dashed #d9d9d9;
-  border-radius: 6px;
+  padding: 12px 14px;
+  background: #f0f9fb;
+  border: 1px solid #c9e4ec;
+  border-radius: 8px;
   word-break: break-all;
+  font-size: 13px;
+  color: #0e7490;
+  user-select: all;
 }
 
 .key-actions {

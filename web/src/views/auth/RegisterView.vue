@@ -1,50 +1,66 @@
 <template>
-  <div class="auth-page">
-    <a-card class="auth-card" :bordered="false">
-      <div class="title">注册新租户</div>
-      <div class="subtitle">注册后将获得平台默认域名 {{ slugHint }}</div>
+  <AuthShell>
+    <template #title>注册新租户</template>
+    <template #subtitle>
+      注册后将自动获得平台默认域名
+      <span class="slug-chip mono">{{ slugHint }}</span>
+    </template>
 
-      <a-form :model="form" :rules="rules" layout="vertical" @finish="onSubmit">
-        <a-form-item label="邮箱" name="email">
-          <a-input v-model:value="form.email" placeholder="you@example.com" autocomplete="email">
-            <template #prefix><MailOutlined /></template>
-          </a-input>
-        </a-form-item>
-        <a-form-item label="密码" name="password">
-          <a-input-password
-            v-model:value="form.password"
-            placeholder="至少 8 位"
-            autocomplete="new-password"
-          >
-            <template #prefix><LockOutlined /></template>
-          </a-input-password>
-        </a-form-item>
-        <a-form-item label="确认密码" name="confirmPassword">
-          <a-input-password
-            v-model:value="form.confirmPassword"
-            placeholder="再次输入密码"
-            autocomplete="new-password"
-          >
-            <template #prefix><LockOutlined /></template>
-          </a-input-password>
-        </a-form-item>
-        <a-form-item label="前缀" name="slug" extra="小写字母或数字开头/结尾,可包含连字符;将用于生成你的平台默认域名">
-          <a-input v-model:value="form.slug" placeholder="例如 mybrand" :maxlength="SLUG_MAX_LENGTH">
-            <template #prefix><GlobalOutlined /></template>
-          </a-input>
-        </a-form-item>
-        <a-form-item>
-          <a-button type="primary" html-type="submit" block :loading="submitting">
-            注册
-          </a-button>
-        </a-form-item>
-      </a-form>
+    <a-form :model="form" :rules="rules" layout="vertical" @finish="onSubmit">
+      <a-form-item label="邮箱" name="email">
+        <a-input
+          v-model:value="form.email"
+          placeholder="you@example.com"
+          autocomplete="email"
+          size="large"
+        >
+          <template #prefix><MailOutlined class="input-icon" /></template>
+        </a-input>
+      </a-form-item>
+      <a-form-item label="密码" name="password">
+        <a-input-password
+          v-model:value="form.password"
+          placeholder="至少 8 位"
+          autocomplete="new-password"
+          size="large"
+        >
+          <template #prefix><LockOutlined class="input-icon" /></template>
+        </a-input-password>
+      </a-form-item>
+      <a-form-item label="确认密码" name="confirmPassword">
+        <a-input-password
+          v-model:value="form.confirmPassword"
+          placeholder="再次输入密码"
+          autocomplete="new-password"
+          size="large"
+        >
+          <template #prefix><LockOutlined class="input-icon" /></template>
+        </a-input-password>
+      </a-form-item>
+      <a-form-item
+        label="前缀"
+        name="slug"
+        extra="小写字母或数字开头/结尾,可包含连字符;将用于生成你的平台默认域名"
+      >
+        <a-input
+          v-model:value="form.slug"
+          placeholder="例如 mybrand"
+          :maxlength="SLUG_MAX_LENGTH"
+          size="large"
+        >
+          <template #prefix><GlobalOutlined class="input-icon" /></template>
+        </a-input>
+      </a-form-item>
+      <a-button type="primary" html-type="submit" block size="large" :loading="submitting">
+        注册
+      </a-button>
+    </a-form>
 
-      <div class="links">
-        <router-link to="/login">已有账号?直接登录</router-link>
-      </div>
-    </a-card>
-  </div>
+    <div class="auth-footer-links">
+      已有账号?
+      <router-link to="/login">直接登录</router-link>
+    </div>
+  </AuthShell>
 </template>
 
 <script setup lang="ts">
@@ -55,6 +71,7 @@ import { GlobalOutlined, LockOutlined, MailOutlined } from '@ant-design/icons-vu
 import type { Rule } from 'ant-design-vue/es/form';
 
 import { register } from '@/api/auth';
+import AuthShell from '@/components/AuthShell.vue';
 import { SLUG_MAX_LENGTH, SLUG_PATTERN } from '@/constants/dict';
 import { ApiError } from '@/types/api';
 
@@ -128,33 +145,25 @@ async function onSubmit() {
 </script>
 
 <style scoped>
-.auth-page {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #1f2d3d 0%, #2b3a4a 100%);
+.input-icon {
+  color: #8b98a5;
 }
 
-.auth-card {
-  width: 420px;
-  border-radius: 12px;
+.slug-chip {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 8px;
+  border-radius: 5px;
+  background: #f0f9fb;
+  border: 1px solid #c9e4ec;
+  color: #0e7490;
+  font-size: 12.5px;
 }
 
-.title {
-  font-size: 22px;
-  font-weight: 700;
-  text-align: center;
-}
-
-.subtitle {
-  text-align: center;
-  color: rgba(0, 0, 0, 0.45);
-  margin-bottom: 24px;
-}
-
-.links {
+.auth-footer-links {
+  margin-top: 24px;
   text-align: center;
   font-size: 13px;
+  color: #8b98a5;
 }
 </style>

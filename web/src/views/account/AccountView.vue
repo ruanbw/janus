@@ -1,6 +1,6 @@
 <template>
   <div>
-    <h2 class="page-title">账号设置</h2>
+    <PageHeader title="账号设置" description="租户信息、配额用量与安全设置" />
 
     <a-alert
       v-if="auth.tenant?.firstLoginSetup"
@@ -18,10 +18,10 @@
             <a-descriptions-item label="邮箱">{{ auth.tenant?.email }}</a-descriptions-item>
             <a-descriptions-item label="前缀">{{ auth.tenant?.slug }}</a-descriptions-item>
             <a-descriptions-item label="等级">
-              <a-tag color="blue">{{ auth.tenant?.tier?.name ?? '-' }}</a-tag>
+              <a-tag color="cyan">{{ auth.tenant?.tier?.name ?? '-' }}</a-tag>
             </a-descriptions-item>
             <a-descriptions-item label="平台默认域名">
-              <a-typography-text copyable>{{ auth.tenant?.defaultDomain }}</a-typography-text>
+              <a-typography-text copyable class="mono">{{ auth.tenant?.defaultDomain }}</a-typography-text>
             </a-descriptions-item>
             <a-descriptions-item label="状态">
               <a-tag :color="TENANT_STATUS[auth.tenant?.status ?? 'pending'].color">
@@ -30,28 +30,36 @@
             </a-descriptions-item>
           </a-descriptions>
 
-          <a-divider style="margin: 12px 0">配额用量</a-divider>
+          <a-divider style="margin: 16px 0 12px">配额用量</a-divider>
           <div class="quota-item">
             <div class="quota-label">
-              短链:{{ usage?.links ?? 0 }} / {{ usage?.maxLinks ?? '-' }}
+              <span>短链</span>
+              <span class="quota-num">
+                {{ usage?.links ?? 0 }} / {{ usage?.maxLinks ?? '-' }}
+              </span>
             </div>
             <a-progress
               :percent="linkPercent"
               :status="linkPercent >= 100 ? 'exception' : 'active'"
+              :stroke-width="8"
             />
           </div>
           <div class="quota-item">
             <div class="quota-label">
-              自有域名:{{ usage?.domains ?? 0 }} / {{ usage?.maxDomains ?? '-' }}
-              <span class="quota-note">(平台默认域名不计入)</span>
+              <span>自有域名</span>
+              <span class="quota-num">
+                {{ usage?.domains ?? 0 }} / {{ usage?.maxDomains ?? '-' }}
+              </span>
             </div>
             <a-progress
               :percent="domainPercent"
               :status="domainPercent >= 100 ? 'exception' : 'active'"
+              :stroke-width="8"
             />
           </div>
+          <div class="quota-note">平台默认域名不计入域名配额</div>
 
-          <a-divider style="margin: 12px 0">自动生成短码长度</a-divider>
+          <a-divider style="margin: 16px 0 12px">自动生成短码长度</a-divider>
           <a-space>
             <a-input-number v-model:value="codeLength" :min="4" :max="32" />
             <a-button :loading="savingCodeLength" @click="onSaveCodeLength">保存</a-button>
@@ -104,6 +112,7 @@ import type { Rule } from 'ant-design-vue/es/form';
 
 import { changePassword } from '@/api/auth';
 import { fetchMyTenant, updateMyTenant } from '@/api/me';
+import PageHeader from '@/components/PageHeader.vue';
 import { TENANT_STATUS } from '@/constants/dict';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
@@ -205,26 +214,32 @@ async function onChangePassword() {
 </script>
 
 <style scoped>
-.page-title {
-  margin: 0 0 16px;
-  font-size: 18px;
-}
-
 .setup-alert {
   margin-bottom: 16px;
 }
 
 .quota-item {
-  margin-bottom: 8px;
+  margin-bottom: 14px;
 }
 
 .quota-label {
-  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
   font-size: 13px;
-  color: rgba(0, 0, 0, 0.65);
+  color: #5b6b7c;
+}
+
+.quota-num {
+  font-weight: 600;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
 }
 
 .quota-note {
-  color: rgba(0, 0, 0, 0.45);
+  margin-top: 6px;
+  font-size: 12px;
+  color: #8b98a5;
 }
 </style>

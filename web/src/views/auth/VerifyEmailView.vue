@@ -1,40 +1,38 @@
 <template>
-  <div class="auth-page">
-    <a-card class="auth-card" :bordered="false">
-      <div v-if="verifying" class="center">
-        <a-spin />
-        <p>正在验证邮箱…</p>
-      </div>
+  <AuthShell :show-heading="false">
+    <div v-if="verifying" class="center">
+      <a-spin size="large" />
+      <p>正在验证邮箱…</p>
+    </div>
 
-      <a-result
-        v-else-if="verified"
-        status="success"
-        title="邮箱验证成功"
-        sub-title="你的平台默认域名已激活,现在可以登录后台创建短链了。"
-      >
-        <template #extra>
-          <a-button type="primary" @click="router.push('/login')">前往登录</a-button>
-        </template>
-      </a-result>
+    <a-result
+      v-else-if="verified"
+      status="success"
+      title="邮箱验证成功"
+      sub-title="你的平台默认域名已激活,现在可以登录后台创建短链了。"
+    >
+      <template #extra>
+        <a-button type="primary" @click="router.push('/login')">前往登录</a-button>
+      </template>
+    </a-result>
 
-      <a-result
-        v-else-if="failed"
-        status="error"
-        :title="failTitle"
-        :sub-title="failMessage"
-      >
-        <template #extra>
-          <a-button type="primary" @click="router.push('/login')">返回登录</a-button>
-        </template>
-      </a-result>
+    <a-result
+      v-else-if="failed"
+      status="error"
+      :title="failTitle"
+      :sub-title="failMessage"
+    >
+      <template #extra>
+        <a-button type="primary" @click="router.push('/login')">返回登录</a-button>
+      </template>
+    </a-result>
 
-      <a-result v-else status="info" title="请完成邮箱验证" :sub-title="sentHint">
-        <template #extra>
-          <a-button type="primary" @click="router.push('/login')">返回登录</a-button>
-        </template>
-      </a-result>
-    </a-card>
-  </div>
+    <a-result v-else status="info" title="请完成邮箱验证" :sub-title="sentHint">
+      <template #extra>
+        <a-button type="primary" @click="router.push('/login')">返回登录</a-button>
+      </template>
+    </a-result>
+  </AuthShell>
 </template>
 
 <script setup lang="ts">
@@ -42,6 +40,7 @@ import { onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
 import { verifyEmail } from '@/api/auth';
+import AuthShell from '@/components/AuthShell.vue';
 import { ApiError } from '@/types/api';
 
 const route = useRoute();
@@ -80,21 +79,14 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.auth-page {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #1f2d3d 0%, #2b3a4a 100%);
-}
-
-.auth-card {
-  width: 480px;
-  border-radius: 12px;
-}
-
 .center {
   text-align: center;
-  padding: 32px 0;
+  padding: 48px 0;
+  color: #5b6b7c;
+}
+
+.center p {
+  margin-top: 16px;
+  font-size: 14px;
 }
 </style>

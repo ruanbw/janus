@@ -1,40 +1,43 @@
 <template>
-  <div class="auth-page">
-    <a-card class="auth-card" :bordered="false">
-      <div class="title">CLOAK 后台</div>
-      <div class="subtitle">登录以管理你的域名与短链</div>
+  <AuthShell>
+    <template #title>登录后台</template>
+    <template #subtitle>管理你的域名、短链与访问统计</template>
 
-      <a-form :model="form" :rules="rules" layout="vertical" @finish="onSubmit">
-        <a-form-item label="邮箱" name="email">
-          <a-input v-model:value="form.email" placeholder="you@example.com" autocomplete="email">
-            <template #prefix><MailOutlined /></template>
-          </a-input>
-        </a-form-item>
-        <a-form-item label="密码" name="password">
-          <a-input-password
-            v-model:value="form.password"
-            placeholder="请输入密码"
-            autocomplete="current-password"
-          >
-            <template #prefix><LockOutlined /></template>
-          </a-input-password>
-        </a-form-item>
-        <a-form-item>
-          <a-checkbox v-model:checked="form.rememberMe">记住我(会话保持 30 天)</a-checkbox>
-        </a-form-item>
-        <a-form-item>
-          <a-button type="primary" html-type="submit" block :loading="submitting">
-            登录
-          </a-button>
-        </a-form-item>
-      </a-form>
-
-      <div class="links">
-        <router-link to="/forgot-password">忘记密码</router-link>
-        <router-link to="/register">注册新租户</router-link>
+    <a-form :model="form" :rules="rules" layout="vertical" @finish="onSubmit">
+      <a-form-item label="邮箱" name="email">
+        <a-input
+          v-model:value="form.email"
+          placeholder="you@example.com"
+          autocomplete="email"
+          size="large"
+        >
+          <template #prefix><MailOutlined class="input-icon" /></template>
+        </a-input>
+      </a-form-item>
+      <a-form-item label="密码" name="password">
+        <a-input-password
+          v-model:value="form.password"
+          placeholder="请输入密码"
+          autocomplete="current-password"
+          size="large"
+        >
+          <template #prefix><LockOutlined class="input-icon" /></template>
+        </a-input-password>
+      </a-form-item>
+      <div class="form-options">
+        <a-checkbox v-model:checked="form.rememberMe">记住我(会话保持 30 天)</a-checkbox>
+        <router-link to="/forgot-password" class="forgot-link">忘记密码</router-link>
       </div>
-    </a-card>
-  </div>
+      <a-button type="primary" html-type="submit" block size="large" :loading="submitting">
+        登录
+      </a-button>
+    </a-form>
+
+    <div class="auth-footer-links">
+      还没有账号?
+      <router-link to="/register">注册新租户</router-link>
+    </div>
+  </AuthShell>
 </template>
 
 <script setup lang="ts">
@@ -44,6 +47,7 @@ import { message } from 'ant-design-vue';
 import { LockOutlined, MailOutlined } from '@ant-design/icons-vue';
 import type { Rule } from 'ant-design-vue/es/form';
 
+import AuthShell from '@/components/AuthShell.vue';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
 
@@ -85,10 +89,8 @@ async function onSubmit() {
     if (error instanceof ApiError) {
       if (error.status === 403) {
         message.error('账号已被封禁,无法登录');
-      } else if (error.status === 401) {
-        // 后端区分「邮箱或密码错误」与「邮箱未验证,请查收验证邮件」,直接透出更准确
-        message.error(error.message);
       } else {
+        // 后端区分「邮箱或密码错误」与「邮箱未验证,请查收验证邮件」,直接透出更准确
         message.error(error.message);
       }
     } else {
@@ -101,34 +103,25 @@ async function onSubmit() {
 </script>
 
 <style scoped>
-.auth-page {
-  min-height: 100vh;
+.input-icon {
+  color: #8b98a5;
+}
+
+.form-options {
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #1f2d3d 0%, #2b3a4a 100%);
-}
-
-.auth-card {
-  width: 400px;
-  border-radius: 12px;
-}
-
-.title {
-  font-size: 24px;
-  font-weight: 700;
-  text-align: center;
-}
-
-.subtitle {
-  text-align: center;
-  color: rgba(0, 0, 0, 0.45);
-  margin-bottom: 24px;
-}
-
-.links {
-  display: flex;
   justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.forgot-link {
   font-size: 13px;
+}
+
+.auth-footer-links {
+  margin-top: 24px;
+  text-align: center;
+  font-size: 13px;
+  color: #8b98a5;
 }
 </style>
