@@ -7,11 +7,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const domainColumns = `id, tenant_id, fqdn, origin, status, cert_status, activated_at, created_at`
+const domainColumns = `id, tenant_id, fqdn, description, origin, status, cert_status, activated_at, created_at`
 
 func scanDomain(row pgx.Row) (*Domain, error) {
 	var d Domain
-	err := row.Scan(&d.ID, &d.TenantID, &d.FQDN, &d.Origin, &d.Status, &d.CertStatus, &d.ActivatedAt, &d.CreatedAt)
+	err := row.Scan(&d.ID, &d.TenantID, &d.FQDN, &d.Description, &d.Origin, &d.Status, &d.CertStatus, &d.ActivatedAt, &d.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -19,11 +19,11 @@ func scanDomain(row pgx.Row) (*Domain, error) {
 }
 
 // CreateDomain 创建域名记录(fqdn 唯一冲突返回唯一约束错误)。
-func (s *Store) CreateDomain(ctx context.Context, tenantID int64, fqdn, origin string) (*Domain, error) {
+func (s *Store) CreateDomain(ctx context.Context, tenantID int64, fqdn, origin, description string) (*Domain, error) {
 	var id int64
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO domains (tenant_id, fqdn, origin, status) VALUES ($1,$2,$3,$4) RETURNING id`,
-		tenantID, fqdn, origin, "pending",
+		`INSERT INTO domains (tenant_id, fqdn, origin, status, description) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+		tenantID, fqdn, origin, "pending", description,
 	).Scan(&id)
 	if err != nil {
 		return nil, err

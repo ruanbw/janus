@@ -22,6 +22,9 @@
         <template v-if="column.key === 'fqdn'">
           <a-typography-text copyable class="fqdn mono">{{ record.fqdn }}</a-typography-text>
         </template>
+        <template v-else-if="column.key === 'description'">
+          {{ record.description || '-' }}
+        </template>
         <template v-else-if="column.key === 'origin'">
           <a-tag :color="DOMAIN_ORIGIN[record.origin as DomainOrigin].color">
             {{ DOMAIN_ORIGIN[record.origin as DomainOrigin].label }}
@@ -93,15 +96,29 @@
       cancel-text="取消"
       @ok="onCreate"
     >
-      <a-form layout="vertical">
+      <a-form ref="formRef" :model="formState" :rules="createRules" layout="vertical">
         <a-form-item
+          name="fqdn"
           label="域名"
-          extra="需先将该域名的 A/AAAA 记录指向本服务器,添加后系统会自动校验并签发证书"
+          extra="需先将该域名的 A/AAAA 记录指向本服务器,添加后系统会自动校验并签发证书。仅支持字母、数字与连字符,如 links.example.com"
         >
           <a-input
-            v-model:value="newFqdn"
+            v-model:value="formState.fqdn"
             placeholder="例如 links.example.com"
             @press-enter="onCreate"
+          />
+        </a-form-item>
+        <a-form-item
+          name="description"
+          label="描述"
+          extra="可选,备注该域名的用途,便于在列表中区分"
+        >
+          <a-textarea
+            v-model:value="formState.description"
+            placeholder="例如:生产环境主站,用于产品文档"
+            :maxlength="200"
+            :rows="2"
+            show-count
           />
         </a-form-item>
       </a-form>
@@ -115,7 +132,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
 import { Modal, message } from 'ant-design-vue';
 import {
   DeleteOutlined,
@@ -125,6 +142,7 @@ import {
   SyncOutlined,
 } from '@ant-design/icons-vue';
 import type { TableColumnsType } from 'ant-design-vue';
+import type { Rule } from 'ant-design-vue/es/form';
 
 import { createDomain, deleteDomain, listDomains, recheckDomain, updateDomainStatus } from '@/api/domains';
 import PageHeader from '@/components/PageHeader.vue';
@@ -141,12 +159,44 @@ const domains = ref<Domain[]>([]);
 const loading = ref(false);
 const createOpen = ref(false);
 const creating = ref(false);
-const newFqdn = ref('');
+const formRef = ref();
+const formState = reactive({ fqdn: '', description: '' });
+
+/** 域名格式校验(与后端 validFQDN 一致):点分标签,字母/数字/连字符,标签不以连字符开头结尾,总长 ≤253 */
+function isValidFQDN(s: string): boolean {
+  const value = s.endsWith('.') ? s.slice(0, -1) : s;
+  if (!value || value.length > 253) return false;
+  return value.split('.').every((label) => {
+    if (!label || label.length > 63) return false;
+    for (let i = 0; i < label.length; i++) {
+      const c = label[i];
+      const ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c === '-';
+      if (!ok || (c === '-' && (i === 0 || i === label.length - 1))) return false;
+    }
+    return true;
+  });
+}
+
+const createRules: Record<string, Rule[]> = {
+  fqdn: [
+    { required: true, message: '请输入域名' },
+    {
+      validator: (_rule, value: string) => {
+        if (!value) return Promise.resolve();
+        return isValidFQDN(value)
+          ? Promise.resolve()
+          : Promise.reject(new Error('域名格式非法:仅支持字母、数字、连字符,标签不能以连字符开头或结尾,如 links.example.com'));
+      },
+    },
+  ],
+  description: [{ max: 200, message: '描述最多 200 字' }],
+};
 
 const usage = computed(() => auth.tenant?.usage);
 
 const columns: TableColumnsType = [
   { title: '域名', key: 'fqdn', dataIndex: 'fqdn' },
+  { title: '描述', key: 'description', dataIndex: 'description', width: 200, ellipsis: true },
   { title: '来源', key: 'origin', dataIndex: 'origin', width: 140 },
   { title: '状态', key: 'status', dataIndex: 'status', width: 100 },
   { title: '证书', key: 'certStatus', dataIndex: 'certStatus', width: 100 },
@@ -181,19 +231,23 @@ onUnmounted(() => {
 });
 
 function openCreate() {
-  newFqdn.value = '';
+  formState.fqdn = '';
+  formState.description = '';
+  formRef.value?.clearValidate();
   createOpen.value = true;
 }
 
 async function onCreate() {
-  const fqdn = newFqdn.value.trim();
-  if (!fqdn) {
-    message.warning('请输入域名');
+  try {
+    await formRef.value?.validate();
+  } catch {
     return;
   }
+  const fqdn = formState.fqdn.trim().toLowerCase();
+  const description = formState.description.trim();
   creating.value = true;
   try {
-    const domain = await createDomain({ fqdn });
+    const domain = await createDomain({ fqdn, description });
     message.success(`域名 ${domain.fqdn} 已添加,正在等待 DNS 校验`);
     createOpen.value = false;
     await load();

@@ -58,6 +58,7 @@ type Domain struct {
 	ID          int64      `json:"id"`
 	TenantID    int64      `json:"-"`
 	FQDN        string     `json:"fqdn"`
+	Description string     `json:"description"`
 	Origin      string     `json:"origin"`
 	Status      string     `json:"status"`
 	CertStatus  string     `json:"certStatus"`

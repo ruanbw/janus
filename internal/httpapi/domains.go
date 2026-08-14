@@ -53,7 +53,8 @@ func (a *API) handleListDomains(w http.ResponseWriter, r *http.Request) {
 }
 
 type createDomainReq struct {
-	FQDN string `json:"fqdn"`
+	FQDN        string `json:"fqdn"`
+	Description string `json:"description"`
 }
 
 func (a *API) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +73,11 @@ func (a *API) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 	fqdn := strings.ToLower(strings.TrimSpace(req.FQDN))
 	if !validFQDN(fqdn) {
 		writeErr(w, http.StatusBadRequest, errValidation, "域名格式非法")
+		return
+	}
+	desc := strings.TrimSpace(req.Description)
+	if len([]rune(desc)) > domain.MaxDomainDescriptionLen {
+		writeErr(w, http.StatusBadRequest, errValidation, "描述过长(最多 200 字)")
 		return
 	}
 	if fqdn == a.cfg.PlatformDomain || fqdn == "app."+a.cfg.PlatformDomain {
@@ -96,7 +102,7 @@ func (a *API) handleCreateDomain(w http.ResponseWriter, r *http.Request) {
 			"域名数量已达上限", map[string]any{"usage": usage})
 		return
 	}
-	d, err := a.store.CreateDomain(ctx, t.ID, fqdn, "self")
+	d, err := a.store.CreateDomain(ctx, t.ID, fqdn, "self", desc)
 	if err != nil {
 		if store.IsUniqueViolation(err) {
 			writeErr(w, http.StatusConflict, errConflict, "域名已被占用")

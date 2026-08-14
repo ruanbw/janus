@@ -28,7 +28,7 @@
 ## 资源形状(要点)
 
 - `tenant`: `{ id, email, slug, status, isSuperAdmin, codeLength, tier, defaultDomain: "<slug>.<平台域名>", createdAt, firstLoginSetup?, usage? }`(`firstLoginSetup` 仅超管首次登录(尚无密码)时为 true;`usage` 见 /api/me)
-- `domain`: `{ id, fqdn, origin, status, certStatus, activatedAt, createdAt }`
+- `domain`: `{ id, fqdn, description, origin, status, certStatus, activatedAt, createdAt }`(`description` 为创建时填写的备注,可空,最长 200 字)
 - `link`: `{ id, code, targetUrl, redirectStatus, status, domains: [fqdn...], visits, createdAt }`(列表默认不含逻辑删除项)
 - `visit`: `{ id, linkId, domain, userAgent, referer, createdAt }`
 - `apiKey`: `{ id, name, createdAt, key? }`(`key` 明文仅在创建响应中出现一次)
@@ -51,7 +51,7 @@
 | 方法 | 路径 | 请求 | 成功 | 说明 |
 | --- | --- | --- | --- | --- |
 | GET | /api/domains | - | 200 [domain] | 含平台默认域名 |
-| POST | /api/domains | `{fqdn}` | 201 domain | 400 fqdn 非法/平台保留域名;409 域名已被占用;403 域名配额超限;平台默认域名不可重复添加 |
+| POST | /api/domains | `{fqdn, description?}` | 201 domain | 400 fqdn 非法/平台保留域名/描述超 200 字;409 域名已被占用;403 域名配额超限;平台默认域名不可重复添加 |
 | GET | /api/domains/{id} | - | 200 domain | 404 |
 | POST | /api/domains/{id}/recheck | - | 202 | 手动重新 DNS 校验 |
 | PATCH | /api/domains/{id} | `{status: "stopped"\|"active"}` | 200 | 停用/恢复;**平台默认域名可停用/恢复**(spec 故事 55:只能停用不可删除;契约调整);自有域名恢复前校验 DNS 仍指向本机 |

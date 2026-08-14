@@ -8,8 +8,8 @@ export function listDomains(): Promise<Domain[]> {
   return get<Domain[]>('/domains');
 }
 
-/** 添加自有域名(403 域名配额超限;409 已被占用;400 非法/平台保留) */
-export function createDomain(data: { fqdn: string }): Promise<Domain> {
+/** 添加自有域名(403 域名配额超限;409 已被占用;400 非法/平台保留/描述过长) */
+export function createDomain(data: { fqdn: string; description?: string }): Promise<Domain> {
   return post<Domain>('/domains', data);
 }
 

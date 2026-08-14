@@ -52,6 +52,8 @@ export interface Tenant {
 export interface Domain {
   id: number;
   fqdn: string;
+  /** 域名描述/备注,创建时填写,可空 */
+  description: string;
   origin: DomainOrigin;
   status: DomainStatus;
   certStatus: CertStatus;

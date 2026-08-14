@@ -8,6 +8,7 @@ package httpapi_test
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +75,33 @@ func TestCreateDomainValidation(t *testing.T) {
 			assertStatus(t, resp, tc.want)
 			_ = resp.Body.Close()
 		})
+	}
+}
+
+func TestCreateDomainDescription(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+
+	// 携带描述创建 → 返回描述
+	resp := c.post("/api/domains", map[string]string{"fqdn": "desc.example.com", "description": "生产环境主站,用于产品文档"})
+	assertStatus(t, resp, http.StatusCreated)
+	d := decodeBody[store.Domain](t, resp)
+	if d.Description != "生产环境主站,用于产品文档" {
+		t.Fatalf("description = %q, want 生产环境主站,用于产品文档", d.Description)
+	}
+
+	// 描述超长 → 400
+	longDesc := strings.Repeat("长", 201)
+	resp = c.post("/api/domains", map[string]string{"fqdn": "long.example.com", "description": longDesc})
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
+
+	// 不传描述 → 空字符串
+	resp = c.post("/api/domains", map[string]string{"fqdn": "nodesc.example.com"})
+	assertStatus(t, resp, http.StatusCreated)
+	d = decodeBody[store.Domain](t, resp)
+	if d.Description != "" {
+		t.Fatalf("description = %q, want empty", d.Description)
 	}
 }
 
