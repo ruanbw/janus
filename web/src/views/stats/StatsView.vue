@@ -50,6 +50,7 @@
         :loading="visitsLoading"
         row-key="id"
         :pagination="pagination"
+        :scroll="{ x: 810 }"
         @change="onTableChange"
       >
         <template #bodyCell="{ column, record }">
@@ -62,21 +63,19 @@
             </a-tag>
           </template>
           <template v-else-if="column.key === 'device'">
-            <a-tooltip :title="record.userAgent || '未知'">
-              <span>{{ parseDevice(record.userAgent).device }}</span>
+            <a-tooltip placement="top" :title="record.userAgent || '未知'">
+              <span class="ua-cell">{{ parseDevice(record.userAgent).device }}</span>
             </a-tooltip>
           </template>
           <template v-else-if="column.key === 'osBrowser'">
-            <span class="ua-muted">{{ parseDevice(record.userAgent).osBrowser }}</span>
+            <span class="ua-muted ua-cell">{{ parseDevice(record.userAgent).osBrowser }}</span>
           </template>
           <template v-else-if="column.key === 'referer'">
             <a-tooltip :title="record.referer || '直接访问'">
               <span>{{ record.referer ? truncateText(record.referer, 40) : '直接访问' }}</span>
             </a-tooltip>
           </template>
-          <template v-else-if="column.key === 'domain'">
-            <a-tag color="cyan">{{ record.domain }}</a-tag>
-          </template>
+
         </template>
       </a-table>
     </template>
@@ -123,10 +122,9 @@ const linkOptions = computed(() =>
 
 const columns: TableColumnsType = [
   { title: '访问时间', key: 'createdAt', dataIndex: 'createdAt', width: 180 },
-  { title: '域名', key: 'domain', dataIndex: 'domain', width: 150 },
   { title: '设备类型', key: 'deviceKind', width: 100 },
-  { title: '设备', key: 'device', width: 200 },
-  { title: '系统/浏览器', key: 'osBrowser', width: 240 },
+  { title: '设备', key: 'device', width: 140 },
+  { title: '系统/浏览器', key: 'osBrowser', width: 190 },
   { title: '来源', key: 'referer', dataIndex: 'referer', width: 200 },
 ];
 
@@ -303,5 +301,14 @@ function onTableChange(p: TablePaginationConfig) {
 .ua-muted {
   color: #5b6b7c;
   font-size: 13px;
+}
+
+.ua-cell {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 </style>
