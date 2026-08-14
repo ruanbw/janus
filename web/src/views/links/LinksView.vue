@@ -160,7 +160,7 @@ const columns: TableColumnsType = [
   { title: '重定向', key: 'redirectStatus', dataIndex: 'redirectStatus', width: 130 },
   { title: '状态', key: 'status', dataIndex: 'status', width: 90 },
   { title: '访问数', key: 'visits', dataIndex: 'visits', width: 100 },
-  { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 170 },
+  { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 200 },
   { title: '操作', key: 'action', width: 330 },
 ];
 

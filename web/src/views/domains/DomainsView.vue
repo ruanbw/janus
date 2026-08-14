@@ -155,8 +155,8 @@ const columns: TableColumnsType = [
   { title: '来源', key: 'origin', dataIndex: 'origin', width: 140 },
   { title: '状态', key: 'status', dataIndex: 'status', width: 100 },
   { title: '证书', key: 'certStatus', dataIndex: 'certStatus', width: 100 },
-  { title: '激活时间', key: 'activatedAt', dataIndex: 'activatedAt', width: 170 },
-  { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 170 },
+  { title: '激活时间', key: 'activatedAt', dataIndex: 'activatedAt', width: 200 },
+  { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 200 },
   { title: '操作', key: 'action', width: 300 },
 ];
 
