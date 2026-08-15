@@ -29,6 +29,19 @@ func validTargetURL(s string) bool {
 	return true
 }
 
+// validTargetURLs 校验目标 URL 列表:至少 1 个,逐项沿用 validTargetURL 规则。
+func validTargetURLs(urls []string) error {
+	if len(urls) == 0 {
+		return errors.New("targetUrls 至少需要一个目标 URL")
+	}
+	for _, u := range urls {
+		if !validTargetURL(u) {
+			return errors.New("目标 URL 非法(不能为空、超长或包含控制字符)")
+		}
+	}
+	return nil
+}
+
 // RedirectStatus 跳转方式(契约枚举:"301" | "302")。
 // 兼容字符串("301"/"302")与数字(301/302)两种 JSON 表示。
 type RedirectStatus string
@@ -52,7 +65,7 @@ func (s *RedirectStatus) UnmarshalJSON(b []byte) error {
 
 type createLinkReq struct {
 	Code           string          `json:"code"`
-	TargetURL      string          `json:"targetUrl"`
+	TargetURLs     []string        `json:"targetUrls"`
 	DomainIDs      []int64         `json:"domainIds"`
 	RedirectStatus *RedirectStatus `json:"redirectStatus"`
 }
@@ -80,8 +93,8 @@ func (a *API) handleCreateLink(c *gin.Context) {
 
 // createLink 供后台短链创建共用。
 func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*store.Link, error) {
-	if !validTargetURL(req.TargetURL) {
-		return nil, apiErr{http.StatusBadRequest, errValidation, "目标 URL 非法(不能包含控制字符)", nil}
+	if err := validTargetURLs(req.TargetURLs); err != nil {
+		return nil, apiErr{http.StatusBadRequest, errValidation, err.Error(), nil}
 	}
 	redirectStatus := store.RedirectStatus302
 	if req.RedirectStatus != nil {
@@ -113,7 +126,7 @@ func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*s
 			return nil, apiErr{http.StatusBadRequest, errValidation,
 				"短码非法(字符集不含 0/O/1/l/I,长度 1-64)", nil}
 		}
-		link, err := a.store.CreateLink(c.Request.Context(), t.ID, req.Code, req.TargetURL, redirectStatus, domainIDs)
+		link, err := a.store.CreateLink(c.Request.Context(), t.ID, req.Code, req.TargetURLs, redirectStatus, domainIDs)
 		if err != nil {
 			if store.IsUniqueViolation(err) {
 				return nil, apiErr{http.StatusConflict, errConflict, "同一域名下短码已存在", nil}
@@ -125,7 +138,7 @@ func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*s
 	// 自动生成短码:随机生成直到无冲突(生成失败重试 10 次)
 	for i := 0; i < 10; i++ {
 		code := domain.GenerateCode(t.CodeLength)
-		link, err := a.store.CreateLink(c.Request.Context(), t.ID, code, req.TargetURL, redirectStatus, domainIDs)
+		link, err := a.store.CreateLink(c.Request.Context(), t.ID, code, req.TargetURLs, redirectStatus, domainIDs)
 		if err == nil {
 			return link, nil
 		}
@@ -209,7 +222,7 @@ func (a *API) handleGetLink(c *gin.Context) {
 }
 
 type patchLinkReq struct {
-	TargetURL      *string         `json:"targetUrl"`
+	TargetURLs     *[]string       `json:"targetUrls"`
 	DomainIDs      *[]int64        `json:"domainIds"`
 	RedirectStatus *RedirectStatus `json:"redirectStatus"`
 	Status         *string         `json:"status"`
@@ -234,12 +247,12 @@ func (a *API) handlePatchLink(c *gin.Context) {
 		return
 	}
 	upd := store.LinkUpdate{}
-	if req.TargetURL != nil {
-		if !validTargetURL(*req.TargetURL) {
-			writeErr(c, http.StatusBadRequest, errValidation, "目标 URL 非法(不能包含控制字符)")
+	if req.TargetURLs != nil {
+		if err := validTargetURLs(*req.TargetURLs); err != nil {
+			writeErr(c, http.StatusBadRequest, errValidation, err.Error())
 			return
 		}
-		upd.TargetURL = req.TargetURL
+		upd.TargetURLs = req.TargetURLs
 	}
 	if req.RedirectStatus != nil {
 		if *req.RedirectStatus != "301" && *req.RedirectStatus != "302" {

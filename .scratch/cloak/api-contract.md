@@ -29,7 +29,7 @@
 - `tenant`: `{ id, email, slug, status, isSuperAdmin, codeLength, tier, defaultDomain: "<slug>.<平台域名>", createdAt, firstLoginSetup?, usage? }`(`firstLoginSetup` 仅超管首次登录(尚无密码)时为 true;`usage` 见 /api/me)
 - `domain`: `{ id, fqdn, description, origin, status, certStatus, activatedAt, createdAt }`(`description` 为创建时填写的备注,可空,最长 200 字)
 - `config`: `{ serverIp, platformDomain, usage }`(`serverIp` 为 `CLOAK_SERVER_PUBLIC_IP`,DNS 校验指向地址;`usage` 为当前租户配额用量,按租户返回)
-- `link`: `{ id, code, targetUrl, redirectStatus, status, domains: [fqdn...], visits, createdAt }`(列表默认不含逻辑删除项)
+- `link`: `{ id, code, targetUrls: string[], redirectStatus, status, domains: [fqdn...], visits, createdAt }`(列表默认不含逻辑删除项)
 - `visit`: `{ id, linkId, domain, ip, userAgent, referer, createdAt }`(`ip` 为访问者 IP:部署前置 Caddy 时取 `X-Forwarded-For` 首段,否则取 `RemoteAddr`;旧记录为空字符串)
 
 ## 端点
@@ -60,13 +60,15 @@
 | 方法 | 路径 | 请求 | 成功 | 说明 |
 | --- | --- | --- | --- | --- |
 | GET | /api/links | query `page,pageSize` | 200 {items, total} | 短链列表,含 visits |
-| POST | /api/links | `{code?, targetUrl, domainIds[], redirectStatus?}` | 201 link | 400 目标含 CRLF 控制字符/短码非法;409 同域名同短码;403 短链配额超限 |
+| POST | /api/links | `{code?, targetUrls: string[], domainIds[], redirectStatus?}` | 201 link | 400 目标少于 1 个/含 CRLF 控制字符(每项任意协议且不含控制字符)/短码非法;409 同域名同短码;403 短链配额超限 |
 | GET | /api/links/{id} | - | 200 link | 404 |
-| PATCH | /api/links/{id} | `{targetUrl?, domainIds?, redirectStatus?, status?}` | 200 | |
+| PATCH | /api/links/{id} | `{targetUrls?, domainIds?, redirectStatus?, status?}` | 200 | 传 `targetUrls` 时整体替换 |
 | DELETE | /api/links/{id} | - | 204 | 逻辑删除 |
 | POST | /api/links/{id}/purge | - | 204 | 物理删除(含访问记录) |
 | GET | /api/links/{id}/visits | query `page,pageSize` | 200 {items, total} | 访问列表 |
 | GET | /api/links/{id}/stats | - | 200 {visits} | 访问数 |
+
+> 目标 URL 支持多个;跳转命中后默认按轮询(round-robin)在 `targetUrls` 中选择一个作为重定向目的地。
 
 ### 租户设置(后台,会话)
 | 方法 | 路径 | 请求 | 成功 | 说明 |

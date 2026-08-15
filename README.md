@@ -407,8 +407,9 @@ curl -sk -c "$JAR" -b "$JAR" "$BASE/api/domains"
 curl -sk -c "$JAR" -b "$JAR" -X POST "$BASE/api/links" \
   -H 'Content-Type: application/json' \
   -H "X-CSRF-Token: $CSRF" \
-  -d '{"targetUrl":"https://example.com","domainIds":[1]}'
+  -d '{"targetUrls":["https://example.com"],"domainIds":[1]}'
 # → 201,返回自动生成的短码(如 yomNzx)
+# 目标 URL 支持多个(数组),跳转命中后默认按轮询(round-robin)选择其一
 
 # 7. 跳转验证:不需要改 hosts,用 --resolve 把子域临时解析到本机
 curl -sk -o /dev/null -w '%{http_code} %{redirect_url}\n' \

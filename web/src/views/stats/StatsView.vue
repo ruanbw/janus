@@ -32,9 +32,18 @@
         </div>
         <div class="summary-item">
           <span class="summary-label">目标 URL</span>
-          <a-tooltip :title="selectedLink.targetUrl">
-            <span class="summary-target">{{ truncateText(selectedLink.targetUrl, 40) }}</span>
+          <a-tooltip v-if="selectedLink.targetUrls.length > 0">
+            <template #title>
+              <div v-for="(url, i) in selectedLink.targetUrls" :key="i">{{ url }}</div>
+            </template>
+            <span class="summary-target">
+              {{ truncateText(selectedLink.targetUrls[0], 40) }}
+              <span v-if="selectedLink.targetUrls.length > 1" class="summary-target-more">
+                +{{ selectedLink.targetUrls.length - 1 }}
+              </span>
+            </span>
           </a-tooltip>
+          <span v-else class="summary-target">-</span>
         </div>
         <div class="summary-item">
           <span class="summary-label">状态</span>
@@ -300,6 +309,17 @@ function onTableChange(p: TablePaginationConfig) {
   font-size: 13px;
   color: #334155;
   word-break: break-all;
+}
+
+.summary-target-more {
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: #1677ff;
+  background: rgba(22, 119, 255, 0.1);
+  border-radius: 9px;
+  white-space: nowrap;
 }
 
 .ua-muted {

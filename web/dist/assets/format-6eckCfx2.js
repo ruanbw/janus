@@ -1,1 +1,0 @@
-import{Z as n}from"./index-Ce4Ztdf8.js";function e(r){if(!r)return"-";const t=n(r);return t.isValid()?t.format("YYYY-MM-DD HH:mm:ss"):"-"}function f(r,t=48){return r.length<=t?r:`${r.slice(0,t)}…`}export{e as f,f as t};

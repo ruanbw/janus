@@ -10,7 +10,7 @@ Status: ready
 
 一个部署在单台服务器上的**多租户短链服务**(CLOAK):
 - 租户注册后,管理自己的**域名**与**短链**;添加域名后系统自动完成 **DNS 激活校验 → HTTPS 证书签发 → 自动续期** 的全流程;
-- 每条短链由**短码 + 目标 URL + 一组关联域名**构成,同一短码可在不同域名下指向不同目标;
+- 每条短链由**短码 + 一个或多个目标 URL + 一组关联域名**构成,同一短码可在不同域名下指向不同目标;
 - 提供**后台管理界面**(Vben Admin)与 **RESTful API**,前后端分离;
 - 平台部署者拥有**平台管理员**角色,可治理全平台(查看/封禁租户、调整等级、移除违规域名)。
 
@@ -98,12 +98,12 @@ Status: ready
    - `tenants(id, email, password_hash, tier_id, status[pending|active|banned], verified_at, slug 全局唯一, is_super_admin, code_length(默认6), created_at)`
    - `tiers(id, name, max_links, max_domains)` — 种子数据:免费档(短链 100 / 域名 10)
    - `domains(id, tenant_id, fqdn 全局唯一, origin[self|platform], status[pending|active|failed|stopped], cert_status[pending|issued|failed], dns_checked_at, cert_probed_at, activated_at, created_at)` — 物理删除(平台默认域名除外,不可删)
-   - `links(id, tenant_id, code, target_url, redirect_status[302|301], status[enabled|disabled], deleted_at 逻辑删除, created_at)`
+   - `links(id, tenant_id, code, redirect_status[302|301], status[enabled|disabled], rr_index 轮询游标, deleted_at 逻辑删除, created_at)` — 目标 URL 存 `link_targets(link_id, url, position)` 表(`position` 即轮询顺序),`links` 不再有 `target_url` 列
    - `link_domains(link_id, domain_id, code)` — **唯一约束 (domain_id, code)**,在关联层强制"同一域名下短码不重复"
    - `visits(id, link_id, domain_id, user_agent, referer, created_at)` — 保留 90 天,定期清理
    - `api_keys(id, tenant_id, name, key_hash, revoked_at, created_at)` — 明文仅生成时展示一次,库中存哈希
 6. **域名生命周期**:自有域名添加 → `pending` → 立即 DNS 校验(A/AAAA 记录包含本服务器公网 IP)→ 失败进入重试队列(每 5 分钟、最长 72h)→ 成功置 `active` → 触发证书预签发探活(内部请求 `https://<fqdn>/`,on-demand 授权端点放行)→ 更新 `cert_status`。删除前须清空该域名上"未删除"的短链关联;停用后该域名下所有短码立即未命中。平台默认域名(origin=platform)创建即 `active`(泛域名解析已指向本机),不进入 DNS 校验;租户邮箱未验证或已封禁时,授权端点不放行其默认域名。
-7. **跳转路由**:访问 `域名/短码` → 按 Host 定位 `active` 域名 → 短码经 `link_domains` 命中 → 记录 Visit 并更新计数(异步/批量)→ 返回 302/301(`Location` = 目标 URL);未命中/域名停用/短链停用或逻辑删除 → 404。
+7. **跳转路由**:访问 `域名/短码` → 按 Host 定位 `active` 域名 → 短码经 `link_domains` 命中 → 记录 Visit 并更新计数(异步/批量)→ 多目标 URL 默认按轮询选择一个作为 `Location`,返回 302/301;未命中/域名停用/短链停用或逻辑删除 → 404。
 8. **Caddy on-demand 授权端点**:内部端点 `GET /internal/caddy/authorize?domain=<fqdn>`;仅内网可达。放行条件:该域名 `active`,且(自有域名)或(平台默认域名:前缀属于已邮箱验证、未封禁的租户);平台后台域名(裸平台域名)始终放行。否则拒绝签发——防止任意域名解析到本机即触发签发。
 9. **配额强制**:创建短链按"未物理删除"计数对比 `tier.max_links`;添加**自有域名**按未删除计数对比 `tier.max_domains`(平台默认域名不计配额);超限返回 4xx 并附当前用量/上限。
 10. **API Key 与公开 API**:管理端生成/吊销 API Key;公开端点用 Bearer/X-API-Key 鉴权;MVP 端点:`POST /v1/links`、`GET /v1/links`、`GET /v1/links/{id}`、`DELETE /v1/links/{id}`。

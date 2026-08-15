@@ -22,12 +22,11 @@
       <template #bodyCell="{ column, record }">
         <template v-if="column.key === 'code'">
           <div class="code-cell">
-            <a-typography-text strong copyable class="code mono">{{ record.code }}</a-typography-text>
             <div class="domain-links">
               <a-tooltip
                 v-for="fqdn in record.domains"
                 :key="fqdn"
-                :title="'点击复制 https://' + fqdn + '/' + record.code"
+                title="点击复制"
               >
                 <span class="domain-link mono" @click="copyShortLink(record, fqdn)">
                   https://{{ fqdn }}/{{ record.code }}
@@ -36,13 +35,20 @@
             </div>
           </div>
         </template>
-        <template v-else-if="column.key === 'targetUrl'">
-          <a-tooltip :title="record.targetUrl">
+        <template v-else-if="column.key === 'targetUrls'">
+          <a-tooltip v-if="record.targetUrls.length > 0">
+            <template #title>
+              <div v-for="(url, i) in record.targetUrls" :key="i">{{ url }}</div>
+            </template>
             <span class="target-cell">
               <LinkOutlined class="target-icon" />
-              {{ truncateText(record.targetUrl, 40) }}
+              {{ truncateText(record.targetUrls[0], 40) }}
+              <span v-if="record.targetUrls.length > 1" class="target-more">
+                +{{ record.targetUrls.length - 1 }}
+              </span>
             </span>
           </a-tooltip>
+          <span v-else class="target-cell">-</span>
         </template>
         <template v-else-if="column.key === 'redirectStatus'">
           <a-tag :color="REDIRECT_STATUS[record.redirectStatus as RedirectStatus].color">
@@ -157,8 +163,8 @@ const editingLink = ref<Link | null>(null);
 const usage = computed(() => auth.config?.usage);
 
 const columns: TableColumnsType = [
-  { title: '短码 / 域名', key: 'code', dataIndex: 'code', width: 220 },
-  { title: '目标 URL', key: 'targetUrl', dataIndex: 'targetUrl' },
+  { title: '链接', key: 'code', dataIndex: 'code', width: 260 },
+  { title: '目标 URL', key: 'targetUrls', dataIndex: 'targetUrls' },
   { title: '重定向', key: 'redirectStatus', dataIndex: 'redirectStatus', width: 130 },
   { title: '状态', key: 'status', dataIndex: 'status', width: 90 },
   { title: '访问数', key: 'visits', dataIndex: 'visits', width: 100 },
@@ -283,10 +289,6 @@ async function copyShortLink(link: Link, fqdn: string) {
 </script>
 
 <style scoped>
-.code {
-  font-size: 13px;
-}
-
 .code-cell {
   display: flex;
   flex-direction: column;
@@ -325,6 +327,17 @@ async function copyShortLink(link: Link, fqdn: string) {
   margin-right: 4px;
   color: #8b98a5;
   font-size: 12px;
+}
+
+.target-more {
+  margin-left: 6px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: #1677ff;
+  background: rgba(22, 119, 255, 0.1);
+  border-radius: 9px;
+  white-space: nowrap;
 }
 
 .visits-link {

@@ -23,8 +23,36 @@
         />
       </a-form-item>
 
-      <a-form-item name="targetUrl" label="目标 URL" extra="任意协议(如 https://、mailto:),不能包含控制字符">
-        <a-input v-model:value="form.targetUrl" placeholder="https://example.com/page" />
+      <a-form-item
+        name="targetUrls"
+        label="目标 URL"
+        extra="支持多个目标 URL,按顺序轮询;任意协议(如 https://、mailto:),不能包含控制字符"
+      >
+        <div class="target-url-list">
+          <div
+            v-for="(_, index) in form.targetUrls"
+            :key="index"
+            class="target-url-row"
+          >
+            <a-input
+              v-model:value="form.targetUrls[index]"
+              placeholder="https://example.com/page"
+            />
+            <a-button
+              v-if="form.targetUrls.length > 1"
+              type="text"
+              danger
+              class="target-url-remove"
+              @click="removeTargetUrl(index)"
+            >
+              <template #icon><MinusCircleOutlined /></template>
+            </a-button>
+          </div>
+          <a-button type="dashed" block class="target-url-add" @click="addTargetUrl">
+            <template #icon><PlusOutlined /></template>
+            添加目标 URL
+          </a-button>
+        </div>
       </a-form-item>
 
       <a-form-item
@@ -61,6 +89,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { message } from 'ant-design-vue';
+import { MinusCircleOutlined, PlusOutlined } from '@ant-design/icons-vue';
 import type { FormInstance, Rule } from 'ant-design-vue/es/form';
 
 import { createLink, updateLink } from '@/api/links';
@@ -92,13 +121,13 @@ const isEdit = computed(() => props.link !== null);
 
 const form = reactive<{
   code: string;
-  targetUrl: string;
+  targetUrls: string[];
   domainIds: number[];
   redirectStatus: RedirectStatus;
   status: 'enabled' | 'disabled';
 }>({
   code: '',
-  targetUrl: '',
+  targetUrls: [''],
   domainIds: [],
   redirectStatus: '302',
   status: 'enabled',
@@ -143,13 +172,23 @@ const rules: Record<string, Rule[]> = {
       },
     },
   ],
-  targetUrl: [
-    { required: true, message: '请输入目标 URL' },
+  targetUrls: [
     {
-      validator: (_rule, value: string) => {
-        if (!value) return Promise.resolve();
-        if (hasControlChars(value)) {
-          return Promise.reject(new Error('目标 URL 不能包含控制字符(换行/制表符等)'));
+      validator: (_rule, value: string[]) => {
+        if (!Array.isArray(value) || value.length === 0) {
+          return Promise.reject(new Error('请至少填写一个目标 URL'));
+        }
+        for (let i = 0; i < value.length; i++) {
+          const url = (value[i] ?? '').trim();
+          if (!url) {
+            return Promise.reject(new Error(`第 ${i + 1} 个目标 URL 不能为空`));
+          }
+          if (hasControlChars(url)) {
+            return Promise.reject(new Error('目标 URL 不能包含控制字符(换行/制表符等)'));
+          }
+          if (url.length > 4096) {
+            return Promise.reject(new Error('目标 URL 最长 4096 字符'));
+          }
         }
         return Promise.resolve();
       },
@@ -176,13 +215,13 @@ watch(
       // 编辑:由 fqdn 列表反查域名 id
       const fqdnSet = new Set(props.link.domains);
       form.code = props.link.code;
-      form.targetUrl = props.link.targetUrl;
+      form.targetUrls = props.link.targetUrls.length > 0 ? [...props.link.targetUrls] : [''];
       form.redirectStatus = props.link.redirectStatus;
       form.status = props.link.status;
       form.domainIds = props.domains.filter((d) => fqdnSet.has(d.fqdn)).map((d) => d.id);
     } else {
       form.code = '';
-      form.targetUrl = '';
+      form.targetUrls = [''];
       form.redirectStatus = '302';
       form.status = 'enabled';
       // 默认选中所有已激活域名
@@ -192,6 +231,17 @@ watch(
     }
   },
 );
+
+/** 新增一行目标 URL(允许存在空行,提交前统一 trim 并在校验中提示空值) */
+function addTargetUrl() {
+  form.targetUrls.push('');
+}
+
+/** 删除指定行目标 URL(至少保留 1 行) */
+function removeTargetUrl(index: number) {
+  if (form.targetUrls.length <= 1) return;
+  form.targetUrls.splice(index, 1);
+}
 
 async function onSubmit() {
   try {
@@ -203,7 +253,7 @@ async function onSubmit() {
   submitting.value = true;
   try {
     const payload = {
-      targetUrl: form.targetUrl.trim(),
+      targetUrls: form.targetUrls.map((s) => s.trim()),
       domainIds: form.domainIds,
       redirectStatus: form.redirectStatus,
     };
@@ -248,3 +298,25 @@ function onCancel() {
   emit('update:open', false);
 }
 </script>
+
+<style scoped>
+.target-url-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.target-url-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.target-url-remove {
+  flex-shrink: 0;
+}
+
+.target-url-add {
+  width: 100%;
+}
+</style>

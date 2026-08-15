@@ -14,7 +14,7 @@ type Link struct {
 	ID             int64          `json:"id" gorm:"primaryKey"`
 	TenantID       int64          `json:"-" gorm:"column:tenant_id"`
 	Code           string         `json:"code"`
-	TargetURL      string         `json:"targetUrl" gorm:"column:target_url"`
+	TargetURLs     []string       `json:"targetUrls" gorm:"-"`
 	RedirectStatus RedirectStatus `json:"redirectStatus" gorm:"column:redirect_status"`
 	Status         string         `json:"status"`
 	DeletedAt      *time.Time     `json:"-" gorm:"column:deleted_at"`
@@ -31,13 +31,26 @@ type LinkDomain struct {
 	Code     string
 }
 
-// fillLinkMeta 补充 domains(fqdn 列表)与 visits 计数。
+// LinkTarget 短链目标 URL(position 从 0 开始,按 position 升序;(link_id, position) 唯一)。
+type LinkTarget struct {
+	ID       int64 `gorm:"primaryKey"`
+	LinkID   int64 `gorm:"column:link_id"`
+	URL      string
+	Position int
+}
+
+// fillLinkMeta 补充 domains(fqdn 列表)、targetUrls 与 visits 计数。
 func (s *Store) fillLinkMeta(ctx context.Context, l *Link) error {
 	domains, err := s.linkDomainFQDNs(ctx, l.ID)
 	if err != nil {
 		return err
 	}
 	l.Domains = domains
+	urls, err := s.linkTargetURLs(ctx, l.ID)
+	if err != nil {
+		return err
+	}
+	l.TargetURLs = urls
 	n, err := s.CountVisitsByLink(ctx, l.ID)
 	if err != nil {
 		return err
@@ -54,16 +67,30 @@ func (s *Store) linkDomainFQDNs(ctx context.Context, linkID int64) ([]string, er
 	return out, err
 }
 
+// linkTargetURLs 按 position 升序返回短链的全部目标 URL。
+func (s *Store) linkTargetURLs(ctx context.Context, linkID int64) ([]string, error) {
+	var out []string
+	err := s.db.WithContext(ctx).Table("link_targets").
+		Where("link_id = ?", linkID).Order("position").Pluck("url", &out).Error
+	return out, err
+}
+
 // CreateLink 创建短链并关联域名。
 // 任一 (domain_id, code) 与既有关联冲突时返回唯一约束错误(整个创建回滚)。
-func (s *Store) CreateLink(ctx context.Context, tenantID int64, code, targetURL string, redirectStatus RedirectStatus, domainIDs []int64) (*Link, error) {
+func (s *Store) CreateLink(ctx context.Context, tenantID int64, code string, targetURLs []string, redirectStatus RedirectStatus, domainIDs []int64) (*Link, error) {
 	var linkID int64
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		link := Link{TenantID: tenantID, Code: code, TargetURL: targetURL, RedirectStatus: redirectStatus, Status: "enabled"}
+		link := Link{TenantID: tenantID, Code: code, RedirectStatus: redirectStatus, Status: "enabled"}
 		if err := tx.Create(&link).Error; err != nil {
 			return err
 		}
 		linkID = link.ID
+		for i, u := range targetURLs {
+			lt := LinkTarget{LinkID: linkID, URL: u, Position: i}
+			if err := tx.Create(&lt).Error; err != nil {
+				return err
+			}
+		}
 		for _, dID := range domainIDs {
 			ld := LinkDomain{LinkID: linkID, DomainID: dID, Code: code}
 			if err := tx.Create(&ld).Error; err != nil {
@@ -117,7 +144,7 @@ func (s *Store) ListLinksByTenant(ctx context.Context, tenantID int64, page, pag
 
 // LinkUpdate 短链局部更新字段(指针非空才更新)。
 type LinkUpdate struct {
-	TargetURL      *string
+	TargetURLs     *[]string
 	RedirectStatus *RedirectStatus
 	Status         *string
 	// DomainIDs 非空时整体替换关联域名(空数组 = 清空关联,由调用方保证不合法场景已拦截)。
@@ -131,10 +158,7 @@ func (s *Store) UpdateLink(ctx context.Context, tenantID, id int64, upd LinkUpda
 		return nil, err
 	}
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		targetURL, redirectStatus, status := cur.TargetURL, cur.RedirectStatus, cur.Status
-		if upd.TargetURL != nil {
-			targetURL = *upd.TargetURL
-		}
+		redirectStatus, status := cur.RedirectStatus, cur.Status
 		if upd.RedirectStatus != nil {
 			redirectStatus = *upd.RedirectStatus
 		}
@@ -142,8 +166,20 @@ func (s *Store) UpdateLink(ctx context.Context, tenantID, id int64, upd LinkUpda
 			status = *upd.Status
 		}
 		if err := tx.Model(&Link{}).Where("id = ? AND tenant_id = ?", id, tenantID).
-			Updates(map[string]any{"target_url": targetURL, "redirect_status": redirectStatus, "status": status}).Error; err != nil {
+			Updates(map[string]any{"redirect_status": redirectStatus, "status": status}).Error; err != nil {
 			return err
+		}
+		// TargetURLs 非空时整体替换目标列表(先删后插,保持 position 顺序)
+		if upd.TargetURLs != nil {
+			if err := tx.Where("link_id = ?", id).Delete(&LinkTarget{}).Error; err != nil {
+				return err
+			}
+			for i, u := range *upd.TargetURLs {
+				lt := LinkTarget{LinkID: id, URL: u, Position: i}
+				if err := tx.Create(&lt).Error; err != nil {
+					return err
+				}
+			}
 		}
 		if upd.DomainIDs != nil {
 			if err := tx.Where("link_id = ?", id).Delete(&LinkDomain{}).Error; err != nil {
@@ -199,14 +235,13 @@ func (s *Store) CountActiveLinks(ctx context.Context, tenantID int64) (int, erro
 	return int(n), nil
 }
 
-// ResolveRedirect 跳转路由:在 active 域名下按短码命中未删除、启用的短链。
-// 返回短链与命中的域名记录;未命中返回 ErrNotFound。
-func (s *Store) ResolveRedirect(ctx context.Context, domainID int64, code string) (*Link, *Domain, error) {
+// ResolveRedirect 跳转路由:在 active 域名下按短码命中未删除、启用的短链,
+// 从 link_targets 按轮询(rr_index 自增)选一个目标 URL;未命中返回 ErrNotFound。
+func (s *Store) ResolveRedirect(ctx context.Context, domainID int64, code string) (*Link, *Domain, string, error) {
 	var row struct {
 		LinkID          int64
 		LinkTenantID    int64
 		Code            string
-		TargetURL       string
 		RedirectStatus  RedirectStatus
 		LinkStatus      string
 		LinkCreatedAt   time.Time
@@ -221,7 +256,7 @@ func (s *Store) ResolveRedirect(ctx context.Context, domainID int64, code string
 		DomainCreatedAt time.Time
 	}
 	res := s.db.WithContext(ctx).Raw(
-		`SELECT l.id AS link_id, l.tenant_id AS link_tenant_id, l.code, l.target_url,
+		`SELECT l.id AS link_id, l.tenant_id AS link_tenant_id, l.code,
 		        l.redirect_status, l.status AS link_status, l.created_at AS link_created_at,
 		        d.id AS domain_id, d.tenant_id AS domain_tenant_id, d.fqdn, d.description,
 		        d.origin, d.status AS domain_status, d.cert_status, d.activated_at,
@@ -233,19 +268,37 @@ func (s *Store) ResolveRedirect(ctx context.Context, domainID int64, code string
 		   AND l.deleted_at IS NULL AND l.status = 'enabled' AND d.status = 'active'`,
 		domainID, code).Scan(&row)
 	if res.Error != nil {
-		return nil, nil, res.Error
+		return nil, nil, "", res.Error
 	}
 	if res.RowsAffected == 0 {
-		return nil, nil, ErrNotFound
+		return nil, nil, "", ErrNotFound
 	}
+	targets, err := s.linkTargetURLs(ctx, row.LinkID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if len(targets) == 0 {
+		// 无目标 URL 视为未命中(不推进轮询计数)
+		return nil, nil, "", ErrNotFound
+	}
+	// 轮询:rr_index 自增后取 (cur-1) mod n 作为本次选中的目标下标。
+	var cur int64
+	if err := s.db.WithContext(ctx).Raw(
+		`UPDATE links SET rr_index = rr_index + 1 WHERE id = ? RETURNING rr_index`, row.LinkID).
+		Scan(&cur).Error; err != nil {
+		return nil, nil, "", err
+	}
+	n := len(targets)
+	picked := int(((cur-1)%int64(n) + int64(n)) % int64(n))
 	return &Link{
-			ID: row.LinkID, TenantID: row.LinkTenantID, Code: row.Code, TargetURL: row.TargetURL,
+			ID: row.LinkID, TenantID: row.LinkTenantID, Code: row.Code,
 			RedirectStatus: row.RedirectStatus, Status: row.LinkStatus, CreatedAt: row.LinkCreatedAt,
+			TargetURLs: targets,
 		}, &Domain{
 			ID: row.DomainID, TenantID: row.DomainTenantID, FQDN: row.FQDN, Description: row.Description,
 			Origin: row.Origin, Status: row.DomainStatus, CertStatus: row.CertStatus,
 			ActivatedAt: row.ActivatedAt, CreatedAt: row.DomainCreatedAt,
-		}, nil
+		}, targets[picked], nil
 }
 
 // RedirectStatus 跳转方式(契约枚举:"301" | "302";JSON 序列化为字符串,

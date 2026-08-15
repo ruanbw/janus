@@ -16,6 +16,7 @@ function normalizeLink(link: Link): Link {
   return {
     ...link,
     domains: Array.isArray(link.domains) ? link.domains : [],
+    targetUrls: Array.isArray(link.targetUrls) ? link.targetUrls : [],
     redirectStatus: String(link.redirectStatus) as RedirectStatus,
   };
 }
@@ -29,7 +30,7 @@ export async function listLinks(query: LinkListQuery = {}): Promise<PageResult<L
 /** 创建短链(code 省略则自动生成;403 配额超限;409 同域名同短码) */
 export function createLink(data: {
   code?: string;
-  targetUrl: string;
+  targetUrls: string[];
   domainIds: number[];
   redirectStatus?: RedirectStatus;
 }): Promise<Link> {
@@ -45,7 +46,7 @@ export function getLink(id: number): Promise<Link> {
 export function updateLink(
   id: number,
   data: {
-    targetUrl?: string;
+    targetUrls?: string[];
     domainIds?: number[];
     redirectStatus?: RedirectStatus;
     status?: LinkStatus;

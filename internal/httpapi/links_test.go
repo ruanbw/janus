@@ -75,7 +75,7 @@ func TestCreateLinkAutoCodeAndRedirect(t *testing.T) {
 	ids := []int64{localhostDomainID(t, c)}
 
 	link := createLink(t, c, map[string]any{
-		"targetUrl": "https://example.com/landing?utm=x",
+		"targetUrls": []string{"https://example.com/landing?utm=x"},
 		"domainIds": ids[:1],
 	})
 	if len(link.Code) != 6 {
@@ -107,7 +107,7 @@ func TestCustomCodeAnd301(t *testing.T) {
 
 	link := createLink(t, c, map[string]any{
 		"code":           "go3ab",
-		"targetUrl":      "https://example.com/permanent",
+		"targetUrls":     []string{"https://example.com/permanent"},
 		"domainIds":      ids[:1],
 		"redirectStatus": 301,
 	})
@@ -140,8 +140,8 @@ func TestSameCodeAcrossDomains(t *testing.T) {
 		t.Fatalf("need localhost + alice.cloak.test domains, got %+v", domains)
 	}
 
-	createLink(t, c, map[string]any{"code": "dup", "targetUrl": "https://a.example.com", "domainIds": []int64{localID}})
-	createLink(t, c, map[string]any{"code": "dup", "targetUrl": "https://b.example.com", "domainIds": []int64{platformID}})
+	createLink(t, c, map[string]any{"code": "dup", "targetUrls": []string{"https://a.example.com"}, "domainIds": []int64{localID}})
+	createLink(t, c, map[string]any{"code": "dup", "targetUrls": []string{"https://b.example.com"}, "domainIds": []int64{platformID}})
 
 	resp := redirectGet(t, env, "localhost", "/dup")
 	assertStatus(t, resp, http.StatusFound)
@@ -155,13 +155,37 @@ func TestSameCodeAcrossDomains(t *testing.T) {
 	}
 }
 
+// TestRedirectRoundRobin 多目标短链默认按轮询选择:连续 3 次依次 t1、t2、t1。
+func TestRedirectRoundRobin(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	localID := localhostDomainID(t, c)
+
+	link := createLink(t, c, map[string]any{
+		"targetUrls": []string{"https://t1.example.com", "https://t2.example.com"},
+		"domainIds":  []int64{localID},
+	})
+	if len(link.TargetURLs) != 2 || link.TargetURLs[0] != "https://t1.example.com" || link.TargetURLs[1] != "https://t2.example.com" {
+		t.Fatalf("targetUrls = %v", link.TargetURLs)
+	}
+	want := []string{"https://t1.example.com", "https://t2.example.com", "https://t1.example.com"}
+	for i, w := range want {
+		resp := redirectGet(t, env, "localhost", "/"+link.Code)
+		assertStatus(t, resp, http.StatusFound)
+		if loc := resp.Header.Get("Location"); loc != w {
+			t.Errorf("round %d Location = %q, want %q", i+1, loc, w)
+		}
+	}
+}
+
 func TestDuplicateCodeConflict(t *testing.T) {
 	env := testutil.Setup(t)
 	c := loggedInTenant(t, env, "alice")
 	ids := domainIDsOf(t, c)
-	createLink(t, c, map[string]any{"code": "abc234", "targetUrl": "https://a.example.com", "domainIds": ids[:1]})
+	createLink(t, c, map[string]any{"code": "abc234", "targetUrls": []string{"https://a.example.com"}, "domainIds": ids[:1]})
 	resp := c.post("/api/links", map[string]any{
-		"code": "abc234", "targetUrl": "https://b.example.com", "domainIds": ids[:1]})
+		"code": "abc234", "targetUrls": []string{"https://b.example.com"}, "domainIds": ids[:1]})
 	assertStatus(t, resp, http.StatusConflict)
 	_ = resp.Body.Close()
 }
@@ -176,11 +200,12 @@ func TestLinkValidation(t *testing.T) {
 		body map[string]any
 		want int
 	}{
-		{"crlf in target", map[string]any{"targetUrl": "https://a.example.com/\r\nX-Injected: 1", "domainIds": ids[:1]}, http.StatusBadRequest},
-		{"forbidden char in code", map[string]any{"code": "l000se", "targetUrl": "https://a.example.com", "domainIds": ids[:1]}, http.StatusBadRequest},
-		{"no domains", map[string]any{"targetUrl": "https://a.example.com", "domainIds": []int64{}}, http.StatusBadRequest},
-		{"unknown domain", map[string]any{"targetUrl": "https://a.example.com", "domainIds": []int64{99999}}, http.StatusBadRequest},
-		{"bad redirect status", map[string]any{"targetUrl": "https://a.example.com", "domainIds": ids[:1], "redirectStatus": 303}, http.StatusBadRequest},
+		{"crlf in target", map[string]any{"targetUrls": []string{"https://a.example.com/\r\nX-Injected: 1"}, "domainIds": ids[:1]}, http.StatusBadRequest},
+		{"empty targetUrls", map[string]any{"targetUrls": []string{}, "domainIds": ids[:1]}, http.StatusBadRequest},
+		{"forbidden char in code", map[string]any{"code": "l000se", "targetUrls": []string{"https://a.example.com"}, "domainIds": ids[:1]}, http.StatusBadRequest},
+		{"no domains", map[string]any{"targetUrls": []string{"https://a.example.com"}, "domainIds": []int64{}}, http.StatusBadRequest},
+		{"unknown domain", map[string]any{"targetUrls": []string{"https://a.example.com"}, "domainIds": []int64{99999}}, http.StatusBadRequest},
+		{"bad redirect status", map[string]any{"targetUrls": []string{"https://a.example.com"}, "domainIds": ids[:1], "redirectStatus": 303}, http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -196,7 +221,7 @@ func TestRedirectMissDisabledDeleted(t *testing.T) {
 	c := loggedInTenant(t, env, "alice")
 	addDomain(t, c, "localhost")
 	localID := localhostDomainID(t, c)
-	link := createLink(t, c, map[string]any{"targetUrl": "https://a.example.com", "domainIds": []int64{localID}})
+	link := createLink(t, c, map[string]any{"targetUrls": []string{"https://a.example.com"}, "domainIds": []int64{localID}})
 
 	// 未命中
 	resp := redirectGet(t, env, "localhost", "/zzzzzz")
@@ -224,7 +249,7 @@ func TestRedirectMissDisabledDeleted(t *testing.T) {
 	assertStatus(t, resp, http.StatusNotFound)
 
 	// 停用域名 → 404(域名停用后其下所有短码未命中)
-	link2 := createLink(t, c, map[string]any{"targetUrl": "https://b.example.com", "domainIds": []int64{localID}})
+	link2 := createLink(t, c, map[string]any{"targetUrls": []string{"https://b.example.com"}, "domainIds": []int64{localID}})
 	resp = c.patch("/api/domains/"+strconv.FormatInt(localID, 10), map[string]any{"status": "stopped"})
 	assertStatus(t, resp, http.StatusOK)
 	_ = resp.Body.Close()
@@ -238,8 +263,8 @@ func TestLinkListAndPatch(t *testing.T) {
 	addDomain(t, c, "localhost")
 	localID := localhostDomainID(t, c)
 
-	l1 := createLink(t, c, map[string]any{"targetUrl": "https://a.example.com", "domainIds": []int64{localID}})
-	createLink(t, c, map[string]any{"targetUrl": "https://b.example.com", "domainIds": []int64{localID}})
+	l1 := createLink(t, c, map[string]any{"targetUrls": []string{"https://a.example.com"}, "domainIds": []int64{localID}})
+	createLink(t, c, map[string]any{"targetUrls": []string{"https://b.example.com"}, "domainIds": []int64{localID}})
 
 	resp := c.get("/api/links?page=1&pageSize=10")
 	assertStatus(t, resp, http.StatusOK)
@@ -262,11 +287,11 @@ func TestLinkListAndPatch(t *testing.T) {
 		}
 	}
 	resp = c.patch("/api/links/"+strconv.FormatInt(l1.ID, 10), map[string]any{
-		"targetUrl": "https://updated.example.com", "domainIds": []int64{platformID}})
+		"targetUrls": []string{"https://updated.example.com"}, "domainIds": []int64{platformID}})
 	assertStatus(t, resp, http.StatusOK)
 	upd := decodeBody[store.Link](t, resp)
-	if upd.TargetURL != "https://updated.example.com" {
-		t.Errorf("targetUrl = %s", upd.TargetURL)
+	if len(upd.TargetURLs) != 1 || upd.TargetURLs[0] != "https://updated.example.com" {
+		t.Errorf("targetUrls = %v", upd.TargetURLs)
 	}
 	if len(upd.Domains) != 1 || upd.Domains[0] != "alice.cloak.test" {
 		t.Errorf("domains = %v", upd.Domains)
@@ -295,14 +320,41 @@ func TestLinkListAndPatch(t *testing.T) {
 	_ = resp.Body.Close()
 }
 
+// TestPatchReplacesTargets PATCH 传新 targetUrls 时整体替换,访问验证 Location 为新的第一个。
+func TestPatchReplacesTargets(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	localID := localhostDomainID(t, c)
+
+	link := createLink(t, c, map[string]any{
+		"targetUrls": []string{"https://old1.example.com", "https://old2.example.com"},
+		"domainIds":  []int64{localID},
+	})
+	resp := c.patch("/api/links/"+strconv.FormatInt(link.ID, 10), map[string]any{
+		"targetUrls": []string{"https://new1.example.com", "https://new2.example.com"},
+	})
+	assertStatus(t, resp, http.StatusOK)
+	upd := decodeBody[store.Link](t, resp)
+	if len(upd.TargetURLs) != 2 || upd.TargetURLs[0] != "https://new1.example.com" || upd.TargetURLs[1] != "https://new2.example.com" {
+		t.Errorf("targetUrls after patch = %v", upd.TargetURLs)
+	}
+	// 整体替换后首次访问 → 新的第一个目标
+	resp = redirectGet(t, env, "localhost", "/"+link.Code)
+	assertStatus(t, resp, http.StatusFound)
+	if loc := resp.Header.Get("Location"); loc != "https://new1.example.com" {
+		t.Errorf("Location after patch = %q, want new1", loc)
+	}
+}
+
 func TestLinkQuota(t *testing.T) {
 	env := testutil.Setup(t)
 	c := loggedInTenant(t, env, "alice")
 	ids := domainIDsOf(t, c)
 
 	env.SetTierLimits(t, tenantIDOf(t, c), 1, 10)
-	createLink(t, c, map[string]any{"targetUrl": "https://a.example.com", "domainIds": ids[:1]})
-	resp := c.post("/api/links", map[string]any{"targetUrl": "https://b.example.com", "domainIds": ids[:1]})
+	createLink(t, c, map[string]any{"targetUrls": []string{"https://a.example.com"}, "domainIds": ids[:1]})
+	resp := c.post("/api/links", map[string]any{"targetUrls": []string{"https://b.example.com"}, "domainIds": ids[:1]})
 	assertStatus(t, resp, http.StatusForbidden)
 	body := decodeBody[httpapi.ErrorBody](t, resp)
 	if body.Code != "E_LINK_LIMIT" {
@@ -313,7 +365,7 @@ func TestLinkQuota(t *testing.T) {
 	resp = c.del("/api/links/" + strconv.FormatInt(links[0].ID, 10))
 	assertStatus(t, resp, http.StatusNoContent)
 	_ = resp.Body.Close()
-	resp = c.post("/api/links", map[string]any{"targetUrl": "https://c.example.com", "domainIds": ids[:1]})
+	resp = c.post("/api/links", map[string]any{"targetUrls": []string{"https://c.example.com"}, "domainIds": ids[:1]})
 	assertStatus(t, resp, http.StatusForbidden)
 	_ = resp.Body.Close()
 }
@@ -335,7 +387,7 @@ func TestVisitsRecordedAndCounted(t *testing.T) {
 	env := testutil.Setup(t)
 	c := loggedInTenant(t, env, "alice")
 	addDomain(t, c, "localhost")
-	link := createLink(t, c, map[string]any{"targetUrl": "https://a.example.com", "domainIds": []int64{localhostDomainID(t, c)}})
+	link := createLink(t, c, map[string]any{"targetUrls": []string{"https://a.example.com"}, "domainIds": []int64{localhostDomainID(t, c)}})
 
 	// 三次访问(不同 UA/referer;第二条带 X-Forwarded-For 模拟 Caddy 反代,应记录转发 IP)
 	reqUA := []struct{ ua, ref, xff, wantIP string }{
@@ -428,7 +480,7 @@ func TestVisitCleanup(t *testing.T) {
 	env.StartWorker(t)
 	c := loggedInTenant(t, env, "alice")
 	addDomain(t, c, "localhost")
-	link := createLink(t, c, map[string]any{"targetUrl": "https://a.example.com", "domainIds": []int64{localhostDomainID(t, c)}})
+	link := createLink(t, c, map[string]any{"targetUrls": []string{"https://a.example.com"}, "domainIds": []int64{localhostDomainID(t, c)}})
 
 	resp := redirectGet(t, env, "localhost", "/"+link.Code)
 	assertStatus(t, resp, http.StatusFound)

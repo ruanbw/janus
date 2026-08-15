@@ -75,7 +75,8 @@ export interface Domain {
 export interface Link {
   id: number;
   code: string;
-  targetUrl: string;
+  /** 目标 URL 列表(至少 1 个,顺序即轮询顺序) */
+  targetUrls: string[];
   redirectStatus: RedirectStatus;
   status: LinkStatus;
   /** 关联域名列表 */

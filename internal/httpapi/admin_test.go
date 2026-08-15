@@ -149,7 +149,7 @@ func TestAdminDeleteDomain(t *testing.T) {
 	c := loggedInTenant(t, env, "alice")
 
 	d := addDomain(t, c, "localhost")
-	link := createLink(t, c, map[string]any{"targetUrl": "https://a.example.com", "domainIds": []int64{d.ID}})
+	link := createLink(t, c, map[string]any{"targetUrls": []string{"https://a.example.com"}, "domainIds": []int64{d.ID}})
 
 	// 超管强删违规域名(即使其上有未删除短链)
 	resp := admin.del("/api/admin/domains/" + strconv.FormatInt(d.ID, 10))

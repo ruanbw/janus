@@ -37,7 +37,7 @@ func (a *API) handleRedirect(c *gin.Context) {
 		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
 	}
-	link, _, err := a.store.ResolveRedirect(c.Request.Context(), d.ID, code)
+	link, _, targetURL, err := a.store.ResolveRedirect(c.Request.Context(), d.ID, code)
 	if err != nil {
 		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
@@ -51,5 +51,5 @@ func (a *API) handleRedirect(c *gin.Context) {
 	if link.RedirectStatus == store.RedirectStatus301 {
 		status = http.StatusMovedPermanently
 	}
-	c.Redirect(status, link.TargetURL)
+	c.Redirect(status, targetURL)
 }

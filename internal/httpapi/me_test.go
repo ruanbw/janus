@@ -32,7 +32,7 @@ func TestMeUsageAndCodeLength(t *testing.T) {
 	// 添加自有域名 + 短链后用量增长
 	addDomain(t, c, "localhost")
 	ids := domainIDsOf(t, c)
-	createLink(t, c, map[string]any{"targetUrl": "https://a.example.com", "domainIds": ids[:1]})
+	createLink(t, c, map[string]any{"targetUrls": []string{"https://a.example.com"}, "domainIds": ids[:1]})
 	resp = c.get("/api/me")
 	assertStatus(t, resp, http.StatusOK)
 	me = decodeBody[store.Tenant](t, resp)
@@ -47,7 +47,7 @@ func TestMeUsageAndCodeLength(t *testing.T) {
 	if me.CodeLength != 8 {
 		t.Fatalf("codeLength = %d, want 8", me.CodeLength)
 	}
-	link := createLink(t, c, map[string]any{"targetUrl": "https://b.example.com", "domainIds": ids[:1]})
+	link := createLink(t, c, map[string]any{"targetUrls": []string{"https://b.example.com"}, "domainIds": ids[:1]})
 	if len(link.Code) != 8 {
 		t.Fatalf("auto code length = %d, want 8", len(link.Code))
 	}
