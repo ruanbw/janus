@@ -133,13 +133,6 @@
         </template>
       </template>
     </a-table>
-
-    <LinkFormModal
-      v-model:open="modalOpen"
-      :link="editingLink"
-      :domains="domains"
-      @saved="load"
-    />
   </div>
 </template>
 
@@ -169,8 +162,6 @@ import { ApiError } from '@/types/api';
 import type { Domain, Link, LinkStatus, LinkType, RedirectStatus } from '@/types/api';
 import { formatDateTime, truncateText } from '@/utils/format';
 
-import LinkFormModal from './LinkFormModal.vue';
-
 const auth = useAuthStore();
 const router = useRouter();
 
@@ -180,9 +171,6 @@ const loading = ref(false);
 const total = ref(0);
 const page = ref(1);
 const pageSize = ref(10);
-
-const modalOpen = ref(false);
-const editingLink = ref<Link | null>(null);
 
 const usage = computed(() => auth.config?.usage);
 
@@ -247,13 +235,11 @@ function onTableChange(p: TablePaginationConfig) {
 }
 
 function openCreate() {
-  editingLink.value = null;
-  modalOpen.value = true;
+  router.push({ name: 'link-create' });
 }
 
 function openEdit(link: Link) {
-  editingLink.value = link;
-  modalOpen.value = true;
+  router.push({ name: 'link-edit', params: { id: String(link.id) } });
 }
 
 async function onToggleStatus(link: Link) {

@@ -86,53 +86,12 @@
         </template>
       </template>
     </a-table>
-
-    <!-- 添加自有域名 -->
-    <a-modal
-      v-model:open="createOpen"
-      title="添加自有域名"
-      :confirm-loading="creating"
-      ok-text="添加"
-      cancel-text="取消"
-      @ok="onCreate"
-    >
-      <a-form ref="formRef" :model="formState" :rules="createRules" layout="vertical">
-        <a-form-item
-          name="fqdn"
-          label="域名"
-          :extra="'需先将该域名的 A/AAAA 记录指向本服务器' + (auth.config?.serverIp ? ' (IP: ' + auth.config.serverIp + ')' : '') + ',添加后系统会自动校验并签发证书。仅支持字母、数字与连字符,如 links.example.com'"
-        >
-          <a-input
-            v-model:value="formState.fqdn"
-            placeholder="例如 links.example.com"
-            @press-enter="onCreate"
-          />
-        </a-form-item>
-        <a-form-item
-          name="description"
-          label="描述"
-          extra="可选,备注该域名的用途,便于在列表中区分"
-        >
-          <a-textarea
-            v-model:value="formState.description"
-            placeholder="例如:生产环境主站,用于产品文档"
-            :maxlength="200"
-            :rows="2"
-            show-count
-          />
-        </a-form-item>
-      </a-form>
-      <a-alert
-        type="warning"
-        show-icon
-        message="添加前请确认 DNS 已指向本服务器,否则域名将停留在「待激活」并在 72 小时后标记为「校验失败」。"
-      />
-    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { Modal, message } from 'ant-design-vue';
 import {
   DeleteOutlined,
@@ -142,55 +101,21 @@ import {
   SyncOutlined,
 } from '@ant-design/icons-vue';
 import type { TableColumnsType } from 'ant-design-vue';
-import type { Rule } from 'ant-design-vue/es/form';
 
-import { createDomain, deleteDomain, listDomains, recheckDomain, updateDomainStatus } from '@/api/domains';
+import { deleteDomain, listDomains, recheckDomain, updateDomainStatus } from '@/api/domains';
 import PageHeader from '@/components/PageHeader.vue';
 import QuotaBar from '@/components/QuotaBar.vue';
 import { CERT_STATUS, DOMAIN_ORIGIN, DOMAIN_STATUS } from '@/constants/dict';
 import { useAuthStore } from '@/stores/auth';
-import { ApiError, getQuotaUsage } from '@/types/api';
+import { ApiError } from '@/types/api';
 import type { CertStatus, Domain, DomainOrigin, DomainStatus } from '@/types/api';
 import { formatDateTime } from '@/utils/format';
 
+const router = useRouter();
 const auth = useAuthStore();
 
 const domains = ref<Domain[]>([]);
 const loading = ref(false);
-const createOpen = ref(false);
-const creating = ref(false);
-const formRef = ref();
-const formState = reactive({ fqdn: '', description: '' });
-
-/** 域名格式校验(与后端 validFQDN 一致):点分标签,字母/数字/连字符,标签不以连字符开头结尾,总长 ≤253 */
-function isValidFQDN(s: string): boolean {
-  const value = s.endsWith('.') ? s.slice(0, -1) : s;
-  if (!value || value.length > 253) return false;
-  return value.split('.').every((label) => {
-    if (!label || label.length > 63) return false;
-    for (let i = 0; i < label.length; i++) {
-      const c = label[i];
-      const ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c === '-';
-      if (!ok || (c === '-' && (i === 0 || i === label.length - 1))) return false;
-    }
-    return true;
-  });
-}
-
-const createRules: Record<string, Rule[]> = {
-  fqdn: [
-    { required: true, message: '请输入域名' },
-    {
-      validator: (_rule, value: string) => {
-        if (!value) return Promise.resolve();
-        return isValidFQDN(value)
-          ? Promise.resolve()
-          : Promise.reject(new Error('域名格式非法:仅支持字母、数字、连字符,标签不能以连字符开头或结尾,如 links.example.com'));
-      },
-    },
-  ],
-  description: [{ max: 200, message: '描述最多 200 字' }],
-};
 
 const usage = computed(() => auth.config?.usage);
 
@@ -231,54 +156,13 @@ onUnmounted(() => {
 });
 
 function openCreate() {
-  formState.fqdn = '';
-  formState.description = '';
-  formRef.value?.clearValidate();
-  createOpen.value = true;
-}
-
-async function onCreate() {
-  try {
-    await formRef.value?.validate();
-  } catch {
-    return;
-  }
-  const fqdn = formState.fqdn.trim().toLowerCase();
-  const description = formState.description.trim();
-  creating.value = true;
-  try {
-    const domain = await createDomain({ fqdn, description });
-    message.success(`域名 ${domain.fqdn} 已添加,正在等待 DNS 校验`);
-    createOpen.value = false;
-    await load();
-  } catch (error) {
-    if (error instanceof ApiError) {
-      if (error.status === 403) {
-        const usage = getQuotaUsage(error.details);
-        if (usage) {
-          message.error(`域名配额超限:自有域名 ${usage.domains}/${usage.maxDomains} 已达上限`);
-        } else {
-          message.error(`域名配额超限:${error.message}`);
-        }
-      } else if (error.status === 409) {
-        message.error(`域名已被占用:${error.message}`);
-      } else if (error.status === 400) {
-        message.error(`域名不合法:${error.message}`);
-      } else {
-        message.error(error.message);
-      }
-    } else {
-      message.error('添加失败,请稍后重试');
-    }
-  } finally {
-    creating.value = false;
-  }
+  router.push({ name: 'domain-create' });
 }
 
 async function onRecheck(domain: Domain) {
   try {
     await recheckDomain(domain.id);
-    message.success(`已提交 ${domain.fqdn} 的重新校验,稍后自动刷新状态`);
+    message.success('已提交 ' + domain.fqdn + ' 的重新校验,稍后自动刷新状态');
   } catch (error) {
     if (error instanceof ApiError) message.error(error.message);
     else message.error('操作失败,请稍后重试');
@@ -288,7 +172,7 @@ async function onRecheck(domain: Domain) {
 async function onToggleStatus(domain: Domain, status: DomainStatus) {
   const label = status === 'stopped' ? '停用' : '恢复';
   Modal.confirm({
-    title: `${label}域名 ${domain.fqdn}?`,
+    title: label + '域名 ' + domain.fqdn + '?',
     content:
       status === 'stopped'
         ? '停用后,该域名下的所有短码将立即未命中(404)。'
@@ -299,7 +183,7 @@ async function onToggleStatus(domain: Domain, status: DomainStatus) {
     onOk: async () => {
       try {
         await updateDomainStatus(domain.id, status);
-        message.success(`域名已${label}`);
+        message.success('域名已' + label);
         await load();
       } catch (error) {
         if (error instanceof ApiError) message.error(error.message);
@@ -311,7 +195,7 @@ async function onToggleStatus(domain: Domain, status: DomainStatus) {
 
 function onDelete(domain: Domain) {
   Modal.confirm({
-    title: `删除域名 ${domain.fqdn}?`,
+    title: '删除域名 ' + domain.fqdn + '?',
     content: '删除为物理删除。若该域名下仍有关联的未删除短链,将被拒绝(409);请先清空关联。',
     okText: '删除',
     okButtonProps: { danger: true },
@@ -324,7 +208,7 @@ function onDelete(domain: Domain) {
       } catch (error) {
         if (error instanceof ApiError) {
           if (error.status === 409) {
-            message.error(`无法删除:${error.message}(请先移除该域名下关联的未删除短链)`);
+            message.error('无法删除:' + error.message + '(请先移除该域名下关联的未删除短链)');
           } else {
             message.error(error.message);
           }

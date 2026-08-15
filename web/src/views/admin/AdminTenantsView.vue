@@ -102,61 +102,12 @@
         </template>
       </template>
     </a-table>
-
-    <!-- 调整等级 -->
-    <a-modal
-      v-model:open="tierModalOpen"
-      title="调整等级"
-      :confirm-loading="tierSubmitting"
-      ok-text="保存"
-      cancel-text="取消"
-      @ok="onSaveTier"
-    >
-      <a-form layout="vertical">
-        <a-form-item label="租户">
-          <span class="mono">{{ tierTarget?.email }}</span>
-        </a-form-item>
-        <a-form-item label="等级" required>
-          <a-select v-model:value="selectedTierId" :options="tierOptions" />
-        </a-form-item>
-        <a-alert
-          v-if="selectedTier"
-          type="info"
-          show-icon
-          :message="`该等级配额:短链 ${selectedTier.maxLinks} 条 / 自有域名 ${selectedTier.maxDomains} 个。调整后立即生效,若现有用量超过新上限,后续新增将被拒绝。`"
-        />
-      </a-form>
-    </a-modal>
-
-    <!-- 移除域名 -->
-    <a-modal
-      v-model:open="removeDomainOpen"
-      title="移除违规域名"
-      :confirm-loading="removeSubmitting"
-      ok-text="移除"
-      :ok-button-props="{ danger: true }"
-      cancel-text="取消"
-      @ok="onRemoveDomain"
-    >
-      <a-form layout="vertical">
-        <a-form-item label="租户">
-          <span class="mono">{{ removeTarget?.email }}</span>
-        </a-form-item>
-        <a-form-item label="域名 ID" required extra="契约暂未提供超管域名列表端点,请填写域名 ID(可从数据库或后端日志获取)">
-          <a-input-number v-model:value="removeDomainId" :min="1" style="width: 100%" />
-        </a-form-item>
-        <a-alert
-          type="warning"
-          show-icon
-          message="平台强删将解除该域名上的短链关联,请确认该域名确为违规。"
-        />
-      </a-form>
-    </a-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { onMounted, ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { Modal, message } from 'ant-design-vue';
 import {
   DeleteOutlined,
@@ -167,47 +118,21 @@ import {
 } from '@ant-design/icons-vue';
 import type { TableColumnsType } from 'ant-design-vue';
 
-import { listTenants, removeDomain, updateTenant } from '@/api/admin';
+import { listTenants, updateTenant } from '@/api/admin';
 import PageHeader from '@/components/PageHeader.vue';
 import { TENANT_STATUS } from '@/constants/dict';
 import { ApiError } from '@/types/api';
-import type { Tenant, TenantStatus, Tier } from '@/types/api';
+import type { Tenant, TenantStatus } from '@/types/api';
 import { formatDateTime } from '@/utils/format';
+
+const router = useRouter();
 
 const tenants = ref<Tenant[]>([]);
 const loading = ref(false);
 
-const tierModalOpen = ref(false);
-const tierSubmitting = ref(false);
-const tierTarget = ref<Tenant | null>(null);
-const selectedTierId = ref<number | undefined>(undefined);
-
-const removeDomainOpen = ref(false);
-const removeSubmitting = ref(false);
-const removeTarget = ref<Tenant | null>(null);
-const removeDomainId = ref<number | undefined>(undefined);
-
 function statusCount(status: TenantStatus): number {
   return tenants.value.filter((t) => t.status === status).length;
 }
-
-/** 等级选项:从租户列表收集去重(契约无独立等级列表端点) */
-const tierOptions = computed(() => {
-  const map = new Map<number, Tier>();
-  for (const t of tenants.value) {
-    if (t.tier) map.set(t.tier.id, t.tier);
-  }
-  return [...map.values()].map((tier) => ({
-    value: tier.id,
-    label: `${tier.name}(短链 ${tier.maxLinks} / 域名 ${tier.maxDomains})`,
-    maxLinks: tier.maxLinks,
-    maxDomains: tier.maxDomains,
-  }));
-});
-
-const selectedTier = computed(() =>
-  tierOptions.value.find((o) => o.value === selectedTierId.value),
-);
 
 const columns: TableColumnsType = [
   { title: '邮箱', key: 'email', dataIndex: 'email' },
@@ -263,53 +188,11 @@ function onToggleBan(record: Tenant, status: 'banned' | 'active') {
 }
 
 function openTierModal(record: Tenant) {
-  tierTarget.value = record;
-  selectedTierId.value = record.tier?.id;
-  tierModalOpen.value = true;
-}
-
-async function onSaveTier() {
-  if (!tierTarget.value || selectedTierId.value === undefined) {
-    message.warning('请选择等级');
-    return;
-  }
-  tierSubmitting.value = true;
-  try {
-    await updateTenant(tierTarget.value.id, { tierId: selectedTierId.value });
-    message.success('等级已调整');
-    tierModalOpen.value = false;
-    await load();
-  } catch (error) {
-    if (error instanceof ApiError) message.error(error.message);
-    else message.error('操作失败,请稍后重试');
-  } finally {
-    tierSubmitting.value = false;
-  }
+  router.push({ name: 'admin-tenant-tier', params: { id: String(record.id) } });
 }
 
 function openRemoveDomain(record: Tenant) {
-  removeTarget.value = record;
-  removeDomainId.value = undefined;
-  removeDomainOpen.value = true;
-}
-
-async function onRemoveDomain() {
-  if (!removeDomainId.value) {
-    message.warning('请输入域名 ID');
-    return;
-  }
-  removeSubmitting.value = true;
-  try {
-    await removeDomain(removeDomainId.value);
-    message.success('违规域名已移除');
-    removeDomainOpen.value = false;
-    await load();
-  } catch (error) {
-    if (error instanceof ApiError) message.error(error.message);
-    else message.error('移除失败,请稍后重试');
-  } finally {
-    removeSubmitting.value = false;
-  }
+  router.push({ name: 'admin-tenant-remove-domain', params: { id: String(record.id) } });
 }
 </script>
 

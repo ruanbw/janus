@@ -1,3 +1,4 @@
+
 import { createRouter, createWebHistory } from 'vue-router';
 
 import AdminLayout from '@/layouts/AdminLayout.vue';
@@ -48,10 +49,28 @@ const router = createRouter({
           meta: { title: '域名' },
         },
         {
+          path: 'domains/new',
+          name: 'domain-create',
+          component: () => import('@/views/domains/DomainCreateView.vue'),
+          meta: { title: '添加自有域名' },
+        },
+        {
           path: 'links',
           name: 'links',
           component: () => import('@/views/links/LinksView.vue'),
           meta: { title: '短链' },
+        },
+        {
+          path: 'links/new',
+          name: 'link-create',
+          component: () => import('@/views/links/LinkFormView.vue'),
+          meta: { title: '创建短链' },
+        },
+        {
+          path: 'links/:id/edit',
+          name: 'link-edit',
+          component: () => import('@/views/links/LinkFormView.vue'),
+          meta: { title: '编辑短链' },
         },
         {
           path: 'stats',
@@ -70,6 +89,18 @@ const router = createRouter({
           name: 'admin-tenants',
           component: () => import('@/views/admin/AdminTenantsView.vue'),
           meta: { title: '平台管理', superAdmin: true },
+        },
+        {
+          path: 'admin/tenants/:id/tier',
+          name: 'admin-tenant-tier',
+          component: () => import('@/views/admin/AdminTenantTierView.vue'),
+          meta: { title: '调整等级', superAdmin: true },
+        },
+        {
+          path: 'admin/tenants/:id/remove-domain',
+          name: 'admin-tenant-remove-domain',
+          component: () => import('@/views/admin/AdminTenantRemoveDomainView.vue'),
+          meta: { title: '移除违规域名', superAdmin: true },
         },
       ],
     },
