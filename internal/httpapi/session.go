@@ -8,6 +8,7 @@ package httpapi
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
@@ -80,9 +81,11 @@ func (a *API) clearSessionCookies(c *gin.Context) {
 }
 
 // authenticate 认证中间件,两种认证方式归一为同一组 context 值:
-//  ① Authorization 头以 "Bearer " 开头 → JWT 解析 → 租户 → 封禁检查 → method="jwt";
-//  ② 无 Bearer → 现有会话 cookie 流程 → method="cookie";
-//  ③ 两者皆无(或解析/查找失败)→ 401 并 Abort。
+//
+//	① Authorization 头以 "Bearer " 开头 → JWT 解析 → 租户 → 封禁检查 → method="jwt";
+//	② 无 Bearer → 现有会话 cookie 流程 → method="cookie";
+//	③ 两者皆无(或解析/查找失败)→ 401 并 Abort。
+//
 // 角色一律以 DB 的 is_super_admin 为准,不信任 token 内 role 声明:
 // 防止陈旧声明(降级/提权后旧 token 仍携带旧角色)与伪造提权。
 func (a *API) authenticate() gin.HandlerFunc {
@@ -192,7 +195,8 @@ func (a *API) requireCSRF(c *gin.Context, sess *store.Session) bool {
 	if sess == nil {
 		return true
 	}
-	if c.GetHeader("X-CSRF-Token") != sess.CSRFToken {
+	// 恒定时间比较,避免通过响应耗时侧信道逐字节猜测 CSRF token。
+	if subtle.ConstantTimeCompare([]byte(c.GetHeader("X-CSRF-Token")), []byte(sess.CSRFToken)) != 1 {
 		writeErr(c, http.StatusForbidden, errCSRF, "invalid csrf token")
 		return false
 	}

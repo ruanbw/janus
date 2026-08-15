@@ -26,6 +26,21 @@ func (a *API) requireSuperadmin(c *gin.Context) (*store.Tenant, *store.Session, 
 	return t, sess, true
 }
 
+func (a *API) handleAdminListTiers(c *gin.Context) {
+	if _, _, ok := a.requireSuperadmin(c); !ok {
+		return
+	}
+	tiers, err := a.store.ListTiers(c.Request.Context())
+	if err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
+	}
+	if tiers == nil {
+		tiers = []store.Tier{}
+	}
+	writeJSON(c, http.StatusOK, tiers)
+}
+
 func (a *API) handleAdminListTenants(c *gin.Context) {
 	if _, _, ok := a.requireSuperadmin(c); !ok {
 		return
@@ -94,6 +109,7 @@ func (a *API) handleAdminPatchTenant(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
+	// 先完成全部业务校验,再进入事务写入,避免 status 已改而 tierId 校验失败等半更新状态。
 	if req.Status != nil {
 		if *req.Status != "banned" && *req.Status != "active" {
 			writeErr(c, http.StatusBadRequest, errValidation, "status 必须为 banned 或 active")
@@ -103,10 +119,6 @@ func (a *API) handleAdminPatchTenant(c *gin.Context) {
 			writeErr(c, http.StatusBadRequest, errValidation, "不能封禁自己,请使用其他超管邮箱处理")
 			return
 		}
-		if err := a.store.SetTenantStatus(c.Request.Context(), id, *req.Status); err != nil {
-			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
-			return
-		}
 	}
 	if req.TierID != nil {
 		if id == admin.ID {
@@ -114,17 +126,29 @@ func (a *API) handleAdminPatchTenant(c *gin.Context) {
 			return
 		}
 		if _, err := a.store.GetTier(c.Request.Context(), *req.TierID); err != nil {
-			writeErr(c, http.StatusBadRequest, errValidation, "tier 不存在")
-			return
-		}
-		if err := a.store.SetTenantTier(c.Request.Context(), id, *req.TierID); err != nil {
-			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+			if errors.Is(err, store.ErrNotFound) {
+				writeErr(c, http.StatusBadRequest, errValidation, "tier 不存在")
+			} else {
+				writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+			}
 			return
 		}
 	}
+	if _, err := a.store.GetTenantByID(c.Request.Context(), id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(c, http.StatusNotFound, errNotFound, "tenant not found")
+		} else {
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		}
+		return
+	}
+	if err := a.store.UpdateTenantAdmin(c.Request.Context(), id, req.Status, req.TierID); err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
+	}
 	t, err := a.store.GetTenantByID(c.Request.Context(), id)
 	if err != nil {
-		writeErr(c, http.StatusNotFound, errNotFound, "tenant not found")
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
 	writeJSON(c, http.StatusOK, t)
@@ -152,9 +176,14 @@ func (a *API) handleAdminDeleteDomain(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	if err := a.store.DetachDomain(c.Request.Context(), id); err != nil {
+	purged, err := a.store.DetachDomain(c.Request.Context(), id)
+	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
+	}
+	// 域名删除会物理清除"仅关联该域名"的已删除短链,连同其落地页文件一并清理。
+	for _, linkID := range purged {
+		a.removeLandingFiles(linkID)
 	}
 	writeNoContent(c)
 }

@@ -159,12 +159,24 @@ func (a *API) handleVerifyEmail(c *gin.Context) {
 	}
 	tenantID, err := a.store.ConsumeEmailToken(c.Request.Context(), hashToken(strings.TrimSpace(req.Token)), "verify")
 	if err != nil {
-		writeErr(c, http.StatusBadRequest, errValidation, "无效或已使用的验证 token")
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(c, http.StatusBadRequest, errValidation, "无效或已使用的验证 token")
+		} else {
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		}
 		return
 	}
 	// 已封禁租户不得凭旧验证 token 复活
 	tenant, err := a.store.GetTenantByID(c.Request.Context(), tenantID)
-	if err != nil || tenant.Status == "banned" {
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(c, http.StatusBadRequest, errValidation, "无效或已使用的验证 token")
+		} else {
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		}
+		return
+	}
+	if tenant.Status == "banned" {
 		writeErr(c, http.StatusBadRequest, errValidation, "无效或已使用的验证 token")
 		return
 	}
@@ -315,6 +327,12 @@ func (a *API) handleChangePassword(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
+	// 改密后吊销其他终端会话,保留当前会话(无会话的 Bearer 请求则吊销全部浏览器会话)。
+	if sess != nil {
+		_ = a.store.DeleteSessionsByTenantExcept(c.Request.Context(), t.ID, sess.TokenHash)
+	} else {
+		_ = a.store.DeleteSessionsByTenant(c.Request.Context(), t.ID)
+	}
 	writeNoContent(c)
 }
 
@@ -334,12 +352,14 @@ func (a *API) handleForgotPassword(c *gin.Context) {
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
 	if tenant, err := a.store.GetTenantByEmail(c.Request.Context(), email); err == nil {
+		// 等时化:账号存在与否都执行一次 bcrypt 比较,避免存在性被时序区分
+		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(email))
 		token, tokenHash := newToken()
 		if err := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "reset", a.cfg.ResetTokenTTL); err == nil {
 			_ = a.mailer.SendResetEmail(email, token)
 		}
 	} else {
-		// 等时化:邮箱不存在也执行一次 bcrypt 比较,避免存在性可被时序区分
+		// 等时化:邮箱不存在也执行一次 bcrypt 比较
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(email))
 	}
 	writeJSON(c, http.StatusAccepted, map[string]string{"status": "accepted"})
@@ -378,6 +398,8 @@ func (a *API) handleResetPassword(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
+	// 密码重置后吊销该租户全部既有会话,旧会话不得继续访问。
+	_ = a.store.DeleteSessionsByTenant(c.Request.Context(), tenantID)
 	writeNoContent(c)
 }
 

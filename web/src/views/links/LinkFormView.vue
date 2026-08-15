@@ -183,9 +183,13 @@ import type { Domain, LandingSource, Link, LinkType, RedirectStatus } from '@/ty
 const route = useRoute();
 const router = useRouter();
 
-const rawId = route.params.id;
-const linkId = typeof rawId === 'string' ? Number(rawId) : undefined;
-const isEdit = computed(() => linkId !== undefined);
+/** 仅“短链编辑”路由且 ID 为正整数时才是编辑模式;创建路由没有 id 参数,不能把 NaN 当编辑 */
+const validLinkId = computed(() => {
+  const raw = route.params.id;
+  const id = typeof raw === 'string' ? Number(raw) : Number.NaN;
+  return Number.isInteger(id) && id > 0 ? id : undefined;
+});
+const isEdit = computed(() => route.name === 'link-edit' && validLinkId.value !== undefined);
 
 const headerDescription = computed(() =>
   isEdit.value
@@ -365,10 +369,16 @@ async function loadDomains() {
 
 async function init() {
   await loadDomains();
-  if (isEdit.value && linkId !== undefined) {
+  if (route.name === 'link-edit') {
+    const id = validLinkId.value;
+    if (id === undefined) {
+      message.error('无效的短链 ID');
+      router.push({ name: 'links' });
+      return;
+    }
     loading.value = true;
     try {
-      const data = await getLink(linkId);
+      const data = await getLink(id);
       link.value = data;
       applyLink(data);
     } catch (error) {

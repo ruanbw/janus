@@ -75,10 +75,12 @@ async function onSubmit() {
   try {
     await auth.login(form.email.trim(), form.password, form.rememberMe);
     message.success('登录成功');
-    // 仅允许站内路径,防止 ?redirect= 外部地址
+    // 仅允许站内单斜杠路径;拒绝 //evil.com 这类协议相对地址
     const rawRedirect = route.query.redirect;
     const redirect =
-      typeof rawRedirect === 'string' && rawRedirect.startsWith('/') ? rawRedirect : '/domains';
+      typeof rawRedirect === 'string' && rawRedirect.startsWith('/') && !rawRedirect.startsWith('//')
+        ? rawRedirect
+        : '/domains';
     // 超管首次登录(尚无密码):先到账号设置页设置初始密码
     if (auth.tenant?.firstLoginSetup) {
       router.push('/account');

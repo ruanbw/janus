@@ -152,21 +152,19 @@ import {
 } from '@ant-design/icons-vue';
 import type { TableColumnsType, TablePaginationConfig } from 'ant-design-vue';
 
-import { listDomains } from '@/api/domains';
 import { deleteLink, listLinks, purgeLink, updateLink } from '@/api/links';
 import PageHeader from '@/components/PageHeader.vue';
 import QuotaBar from '@/components/QuotaBar.vue';
 import { LINK_STATUS, LINK_TYPE, REDIRECT_STATUS } from '@/constants/dict';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
-import type { Domain, Link, LinkStatus, LinkType, RedirectStatus } from '@/types/api';
+import type { Link, LinkStatus, LinkType, RedirectStatus } from '@/types/api';
 import { formatDateTime, truncateText } from '@/utils/format';
 
 const auth = useAuthStore();
 const router = useRouter();
 
 const links = ref<Link[]>([]);
-const domains = ref<Domain[]>([]);
 const loading = ref(false);
 const total = ref(0);
 const page = ref(1);
@@ -215,17 +213,8 @@ async function load() {
   }
 }
 
-async function loadDomains() {
-  try {
-    domains.value = await listDomains();
-  } catch {
-    // 域名列表加载失败不阻塞短链页
-  }
-}
-
 onMounted(() => {
   load();
-  loadDomains();
 });
 
 function onTableChange(p: TablePaginationConfig) {

@@ -76,6 +76,76 @@ func (s *Store) fillLinkMeta(ctx context.Context, l *Link) error {
 	return nil
 }
 
+// fillLinksMeta 批量补充一组短链的 domains/targetUrls/visits(列表页避免 N+1)。
+func (s *Store) fillLinksMeta(ctx context.Context, links []*Link) error {
+	if len(links) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(links))
+	for _, l := range links {
+		ids = append(ids, l.ID)
+	}
+
+	type domainRow struct {
+		LinkID int64  `gorm:"column:link_id"`
+		FQDN   string `gorm:"column:fqdn"`
+	}
+	var domainRows []domainRow
+	if err := s.db.WithContext(ctx).Table("link_domains ld").
+		Select("ld.link_id, d.fqdn").
+		Joins("JOIN domains d ON d.id = ld.domain_id").
+		Where("ld.link_id IN ?", ids).
+		Order("ld.link_id, d.id").
+		Scan(&domainRows).Error; err != nil {
+		return err
+	}
+	domainMap := make(map[int64][]string, len(links))
+	for _, row := range domainRows {
+		domainMap[row.LinkID] = append(domainMap[row.LinkID], row.FQDN)
+	}
+
+	type targetRow struct {
+		LinkID int64  `gorm:"column:link_id"`
+		URL    string `gorm:"column:url"`
+	}
+	var targetRows []targetRow
+	if err := s.db.WithContext(ctx).Table("link_targets").
+		Select("link_id, url").
+		Where("link_id IN ?", ids).
+		Order("link_id, position").
+		Scan(&targetRows).Error; err != nil {
+		return err
+	}
+	targetMap := make(map[int64][]string, len(links))
+	for _, row := range targetRows {
+		targetMap[row.LinkID] = append(targetMap[row.LinkID], row.URL)
+	}
+
+	type visitRow struct {
+		LinkID int64 `gorm:"column:link_id"`
+		Count  int64 `gorm:"column:count"`
+	}
+	var visitRows []visitRow
+	if err := s.db.WithContext(ctx).Table("visits").
+		Select("link_id, count(*) AS count").
+		Where("link_id IN ?", ids).
+		Group("link_id").
+		Scan(&visitRows).Error; err != nil {
+		return err
+	}
+	visitMap := make(map[int64]int64, len(visitRows))
+	for _, row := range visitRows {
+		visitMap[row.LinkID] = row.Count
+	}
+
+	for _, l := range links {
+		l.Domains = domainMap[l.ID]
+		l.TargetURLs = targetMap[l.ID]
+		l.Visits = visitMap[l.ID]
+	}
+	return nil
+}
+
 func (s *Store) linkDomainFQDNs(ctx context.Context, linkID int64) ([]string, error) {
 	var out []string
 	err := s.db.WithContext(ctx).Table("link_domains ld").
@@ -152,10 +222,8 @@ func (s *Store) ListLinksByTenant(ctx context.Context, tenantID int64, page, pag
 		Limit(pageSize).Offset((page - 1) * pageSize).Find(&out).Error; err != nil {
 		return nil, 0, err
 	}
-	for _, l := range out {
-		if err := s.fillLinkMeta(ctx, l); err != nil {
-			return nil, 0, err
-		}
+	if err := s.fillLinksMeta(ctx, out); err != nil {
+		return nil, 0, err
 	}
 	return out, int(total), nil
 }
@@ -300,8 +368,10 @@ func (s *Store) ResolveLink(ctx context.Context, domainID int64, code string) (*
 		 FROM link_domains ld
 		 JOIN links l ON l.id = ld.link_id
 		 JOIN domains d ON d.id = ld.domain_id
+		 JOIN tenants t ON t.id = d.tenant_id AND t.id = l.tenant_id
 		 WHERE ld.domain_id = ? AND ld.code = ?
-		   AND l.deleted_at IS NULL AND l.status = 'enabled' AND d.status = 'active'`,
+		   AND l.deleted_at IS NULL AND l.status = 'enabled'
+		   AND d.status = 'active' AND t.status = 'active'`,
 		domainID, code).Scan(&row)
 	if res.Error != nil {
 		return nil, nil, res.Error

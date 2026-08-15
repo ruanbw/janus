@@ -231,3 +231,70 @@ func TestVerifyEmailDoesNotUnban(t *testing.T) {
 		}
 	}
 }
+
+// TestAdminBanStopsSelfDomain 封禁后,租户自有域名既不能获得新证书授权,
+// 已存在的短链跳转也必须立即未命中(issue 08:封禁后其域名不再服务)。
+func TestAdminBanStopsSelfDomain(t *testing.T) {
+	env := testutil.Setup(t)
+	admin := superadminClient(t, env)
+	c := loggedInTenant(t, env, "alice")
+	d := addDomain(t, c, "localhost")
+	link := createLink(t, c, map[string]any{
+		"targetUrls": []string{"https://a.example.com"},
+		"domainIds":  []int64{d.ID},
+	})
+
+	// 封禁前:自有域名授权与跳转都正常
+	resp := get(t, env, "/internal/caddy/authorize?domain=localhost")
+	assertStatus(t, resp, http.StatusOK)
+	resp = redirectGet(t, env, "localhost", "/"+link.Code)
+	assertStatus(t, resp, http.StatusFound)
+	_ = resp.Body.Close()
+
+	resp = admin.patch("/api/admin/tenants/"+strconv.FormatInt(tenantIDOf(t, c), 10), map[string]any{"status": "banned"})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	// 封禁后:自有域名不再被授权签发,且既有跳转 404
+	resp = get(t, env, "/internal/caddy/authorize?domain=localhost")
+	assertStatus(t, resp, http.StatusForbidden)
+	resp = redirectGet(t, env, "localhost", "/"+link.Code)
+	assertStatus(t, resp, http.StatusNotFound)
+}
+
+// TestAdminPatchValidatesBeforeWrite 同一请求中 tierId 非法时,status 也不能被半更新。
+func TestAdminPatchValidatesBeforeWrite(t *testing.T) {
+	env := testutil.Setup(t)
+	admin := superadminClient(t, env)
+	c := loggedInTenant(t, env, "alice")
+	id := tenantIDOf(t, c)
+
+	resp := admin.patch("/api/admin/tenants/"+strconv.FormatInt(id, 10), map[string]any{
+		"status": "banned", "tierId": 99999,
+	})
+	assertStatus(t, resp, http.StatusBadRequest)
+
+	resp = admin.get("/api/admin/tenants/" + strconv.FormatInt(id, 10))
+	assertStatus(t, resp, http.StatusOK)
+	tenant := decodeBody[store.Tenant](t, resp)
+	if tenant.Status != "active" {
+		t.Fatalf("status = %s, want active(非法 tierId 不应触发半更新)", tenant.Status)
+	}
+}
+
+func TestAdminListTiers(t *testing.T) {
+	env := testutil.Setup(t)
+	admin := superadminClient(t, env)
+	alice := loggedInTenant(t, env, "alice")
+
+	resp := admin.get("/api/admin/tiers")
+	assertStatus(t, resp, http.StatusOK)
+	tiers := decodeBody[[]store.Tier](t, resp)
+	if len(tiers) == 0 || tiers[0].Name != "free" {
+		t.Fatalf("tiers = %+v, want seeded free tier", tiers)
+	}
+
+	resp = alice.get("/api/admin/tiers")
+	assertStatus(t, resp, http.StatusForbidden)
+	_ = resp.Body.Close()
+}

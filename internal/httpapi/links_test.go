@@ -76,7 +76,7 @@ func TestCreateLinkAutoCodeAndRedirect(t *testing.T) {
 
 	link := createLink(t, c, map[string]any{
 		"targetUrls": []string{"https://example.com/landing?utm=x"},
-		"domainIds": ids[:1],
+		"domainIds":  ids[:1],
 	})
 	if len(link.Code) != 6 {
 		t.Errorf("auto code length = %d, want 6", len(link.Code))
@@ -499,4 +499,25 @@ func TestVisitCleanup(t *testing.T) {
 		}
 		return n == 0
 	})
+}
+
+// TestPatchRejectsEmptyDomainIDs 编辑时清空全部关联域名会让短链永久无法访问,
+// 与创建语义一致,应返回 400。
+func TestPatchRejectsEmptyDomainIDs(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	localID := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"targetUrls": []string{"https://a.example.com"},
+		"domainIds":  []int64{localID},
+	})
+
+	resp := c.patch("/api/links/"+strconv.FormatInt(link.ID, 10), map[string]any{"domainIds": []int64{}})
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
+
+	// 关联未被清空,短链仍可跳转
+	resp = redirectGet(t, env, "localhost", "/"+link.Code)
+	assertStatus(t, resp, http.StatusFound)
 }

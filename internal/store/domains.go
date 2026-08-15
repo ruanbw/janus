@@ -147,17 +147,23 @@ func (s *Store) CountNonDeletedLinksOnDomain(ctx context.Context, domainID int64
 }
 
 // DetachDomain 删除域名:清空该域名全部关联;对"仅关联该域名"且已逻辑删除的短链做物理清除(连同访问记录)。
+// 返回被物理清除的短链 ID,调用方可据此清理落地页文件目录。
 // 调用方须先确认无未删除短链关联(CountNonDeletedLinksOnDomain == 0)。
-func (s *Store) DetachDomain(ctx context.Context, domainID int64) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+func (s *Store) DetachDomain(ctx context.Context, domainID int64) ([]int64, error) {
+	var purged []int64
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 该域名上"已逻辑删除"的短链,若其关联数(全部域名)为 1(即仅此域名),物理删除
-		if err := tx.Exec(`DELETE FROM links WHERE id IN (
-			SELECT l.id FROM links l
+		if err := tx.Raw(`SELECT l.id FROM links l
 			JOIN link_domains ld ON ld.link_id = l.id AND ld.domain_id = ?
 			WHERE l.deleted_at IS NOT NULL
-			  AND (SELECT count(*) FROM link_domains WHERE link_id = l.id) = 1
-		)`, domainID).Error; err != nil {
+			  AND (SELECT count(*) FROM link_domains WHERE link_id = l.id) = 1`,
+			domainID).Scan(&purged).Error; err != nil {
 			return err
+		}
+		if len(purged) > 0 {
+			if err := tx.Exec(`DELETE FROM links WHERE id = ANY($1)`, purged).Error; err != nil {
+				return err
+			}
 		}
 		if err := tx.Where("domain_id = ?", domainID).Delete(&LinkDomain{}).Error; err != nil {
 			return err
@@ -167,6 +173,10 @@ func (s *Store) DetachDomain(ctx context.Context, domainID int64) error {
 		}
 		return tx.Delete(&Domain{}, domainID).Error
 	})
+	if err != nil {
+		return nil, err
+	}
+	return purged, nil
 }
 
 // DomainFQDNExists 判断 fqdn 是否已存在(用于注册 slug 与域名冲突校验)。

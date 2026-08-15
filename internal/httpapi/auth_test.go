@@ -391,3 +391,30 @@ func TestResetTokenConcurrentConsume(t *testing.T) {
 		t.Fatalf("consumes = %d success / %d rejected, want 1/%d", ok, rejected, n-1)
 	}
 }
+
+func TestChangePasswordRevokesOtherSessions(t *testing.T) {
+	env := testutil.Setup(t)
+	register(t, env, "alice")
+	verifyLastEmail(t, env)
+
+	c1 := newClient(env)
+	resp := c1.post("/api/auth/login", map[string]string{"email": "alice@example.com", "password": "password123"})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+	c2 := newClient(env)
+	resp = c2.post("/api/auth/login", map[string]string{"email": "alice@example.com", "password": "password123"})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	resp = c1.post("/api/auth/change-password", map[string]string{"oldPassword": "password123", "newPassword": "newpass456"})
+	assertStatus(t, resp, http.StatusNoContent)
+	_ = resp.Body.Close()
+
+	// 当前终端保留,其他终端立即失效
+	resp = c1.get("/api/auth/me")
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+	resp = c2.get("/api/auth/me")
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+}

@@ -73,7 +73,7 @@ import { message } from 'ant-design-vue';
 import { ArrowLeftOutlined } from '@ant-design/icons-vue';
 import type { Rule } from 'ant-design-vue/es/form';
 
-import { listTenants, updateTenant } from '@/api/admin';
+import { getTenant, listTiers, updateTenant } from '@/api/admin';
 import PageHeader from '@/components/PageHeader.vue';
 import { ApiError } from '@/types/api';
 import type { Tenant, Tier } from '@/types/api';
@@ -83,8 +83,8 @@ const router = useRouter();
 
 const tenantId = Number(route.params.id);
 
-const tenants = ref<Tenant[]>([]);
 const tenant = ref<Tenant | null>(null);
+const tiers = ref<Tier[]>([]);
 const loading = ref(true);
 const submitting = ref(false);
 
@@ -94,19 +94,15 @@ const rules: Record<string, Rule[]> = {
   tierId: [{ required: true, message: '请选择调整后的等级' }],
 };
 
-/** 等级选项:从租户列表收集去重(契约无独立等级列表端点) */
-const tierOptions = computed(() => {
-  const map = new Map<number, Tier>();
-  for (const t of tenants.value) {
-    if (t.tier) map.set(t.tier.id, t.tier);
-  }
-  return [...map.values()].map((tier) => ({
+/** 等级选项:直接使用平台全部等级,避免只显示“已有租户占用”的等级 */
+const tierOptions = computed(() =>
+  tiers.value.map((tier) => ({
     value: tier.id,
     label: `${tier.name}(短链 ${tier.maxLinks} / 域名 ${tier.maxDomains})`,
     maxLinks: tier.maxLinks,
     maxDomains: tier.maxDomains,
-  }));
-});
+  })),
+);
 
 const selectedTier = computed(() =>
   tierOptions.value.find((o) => o.value === form.tierId),
@@ -119,14 +115,12 @@ function goBack() {
 async function load() {
   loading.value = true;
   try {
-    tenants.value = await listTenants();
-    const found = tenants.value.find((t) => t.id === tenantId);
-    if (!found) {
-      message.error('租户不存在或已被删除');
-      goBack();
-      return;
-    }
+    const [found, availableTiers] = await Promise.all([
+      getTenant(tenantId),
+      listTiers(),
+    ]);
     tenant.value = found;
+    tiers.value = availableTiers;
     form.tierId = found.tier?.id;
   } catch (error) {
     if (error instanceof ApiError) {

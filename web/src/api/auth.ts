@@ -1,5 +1,5 @@
 // 认证 API(后台,会话鉴权)
-import { del, get, post } from '@/utils/request';
+import { get, post } from '@/utils/request';
 
 import type { Tenant } from '@/types/api';
 
@@ -22,9 +22,9 @@ export function login(data: {
   return post<Tenant>('/auth/login', data);
 }
 
-/** 登出(需 X-CSRF-Token) */
+/** 登出(需 X-CSRF-Token;契约与后端路由均为 POST) */
 export function logout(): Promise<void> {
-  return del<void>('/auth/logout');
+  return post<void>('/auth/logout');
 }
 
 /** 当前租户信息 */

@@ -185,7 +185,11 @@ func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*s
 }
 
 // validateLinkDomains 校验域名归属与激活状态,返回去重后的 domainID 列表。
+// 创建与编辑都要求至少保留一个关联域名;传空数组意味着短链将无法通过任何域名访问。
 func (a *API) validateLinkDomains(c *gin.Context, tenantID int64, ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, apiErr{http.StatusBadRequest, errValidation, "至少关联一个域名", nil}
+	}
 	seen := map[int64]bool{}
 	var out []int64
 	for _, id := range ids {

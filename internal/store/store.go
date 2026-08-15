@@ -179,6 +179,24 @@ func (s *Store) SetTenantTier(ctx context.Context, id, tierID int64) error {
 	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Update("tier_id", tierID).Error
 }
 
+// UpdateTenantAdmin 平台管理端更新租户状态与/或等级;两个字段在同一事务中生效,
+// 避免其中一个写入失败时出现半更新状态。调用方须先完成权限与业务校验。
+func (s *Store) UpdateTenantAdmin(ctx context.Context, id int64, status *string, tierID *int64) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if status != nil {
+			if err := tx.Model(&Tenant{}).Where("id = ?", id).Update("status", *status).Error; err != nil {
+				return err
+			}
+		}
+		if tierID != nil {
+			if err := tx.Model(&Tenant{}).Where("id = ?", id).Update("tier_id", *tierID).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func (s *Store) SetTenantCodeLength(ctx context.Context, id int64, length int) error {
 	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Update("code_length", length).Error
 }
@@ -253,6 +271,18 @@ func (s *Store) GetSessionByTokenHash(ctx context.Context, tokenHash string) (*S
 
 func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
 	return s.db.WithContext(ctx).Where("token_hash = ?", tokenHash).Delete(&Session{}).Error
+}
+
+// DeleteSessionsByTenant 删除租户的全部会话(密码重置后强制所有终端重新登录)。
+func (s *Store) DeleteSessionsByTenant(ctx context.Context, tenantID int64) error {
+	return s.db.WithContext(ctx).Where("tenant_id = ?", tenantID).Delete(&Session{}).Error
+}
+
+// DeleteSessionsByTenantExcept 删除租户除指定会话外的全部会话(改密后保留当前终端)。
+func (s *Store) DeleteSessionsByTenantExcept(ctx context.Context, tenantID int64, keepTokenHash string) error {
+	return s.db.WithContext(ctx).
+		Where("tenant_id = ? AND token_hash <> ?", tenantID, keepTokenHash).
+		Delete(&Session{}).Error
 }
 
 // DeleteExpiredSessions 惰性清理过期会话。

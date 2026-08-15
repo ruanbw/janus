@@ -134,6 +134,7 @@ func New(d Deps) http.Handler {
 	prot.GET("/config", a.handleGetConfig)
 	// 08:平台管理(超管;tenant 角色由 authorize 直接 403,requireSuperadmin 保留作纵深防御)
 	prot.GET("/admin/tenants", a.handleAdminListTenants)
+	prot.GET("/admin/tiers", a.handleAdminListTiers)
 	prot.GET("/admin/tenants/:id", a.handleAdminGetTenant)
 	prot.PATCH("/admin/tenants/:id", a.handleAdminPatchTenant)
 	prot.DELETE("/admin/domains/:id", a.handleAdminDeleteDomain)
@@ -182,11 +183,7 @@ func (a *API) spaMiddleware() gin.HandlerFunc {
 
 // isPrivateAddr 判定来源地址是否为内网/回环地址(授权端点"仅内网可达")。
 func isPrivateAddr(remote string) bool {
-	host, _, err := net.SplitHostPort(remote)
-	if err != nil {
-		host = remote
-	}
-	ip := net.ParseIP(host)
+	ip := net.ParseIP(remoteHostOnly(remote))
 	if ip == nil {
 		return false
 	}

@@ -104,6 +104,7 @@
 ### 平台管理(后台,超管)
 | 方法 | 路径 | 请求 | 成功 | 说明 |
 | --- | --- | --- | --- | --- |
+| GET | /api/admin/tiers | - | 200 [tier] | 全部等级(供调整等级页选择;非超管 403) |
 | GET | /api/admin/tenants | - | 200 [tenant] | 含用量;非超管 403 |
 | GET | /api/admin/tenants/{id} | - | 200 tenant | 详情 |
 | PATCH | /api/admin/tenants/{id} | `{status?: "banned"\|"active", tierId?}` | 200 | 封禁/解封、调等级 |

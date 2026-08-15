@@ -11,6 +11,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -381,4 +383,32 @@ func TestLandingSwitchAndPurge(t *testing.T) {
 	assertStatus(t, resp, http.StatusNoContent)
 	resp = redirectGet(t, env, "localhost", "/kpage")
 	assertStatus(t, resp, http.StatusNotFound)
+}
+
+// TestDomainDeleteRemovesPurgedLandingFiles 删除域名会物理清除仅关联该域名的
+// 已逻辑删除短链,其上传落地页文件也必须一并清理,避免磁盘泄漏。
+func TestDomainDeleteRemovesPurgedLandingFiles(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	d := addDomain(t, c, "localhost")
+	link := createLandingLink(t, c, d.ID, "kpage", "upload", "")
+	resp := uploadZip(t, c, link.ID, makeZip(t, map[string]string{"index.html": "<html>UP</html>"}))
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	dir := filepath.Join(env.Cfg.LandingUploadDir, strconv.FormatInt(link.ID, 10))
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("landing dir before delete: %v", err)
+	}
+
+	resp = c.del("/api/links/" + strconv.FormatInt(link.ID, 10))
+	assertStatus(t, resp, http.StatusNoContent)
+	_ = resp.Body.Close()
+	resp = c.del("/api/domains/" + strconv.FormatInt(d.ID, 10))
+	assertStatus(t, resp, http.StatusNoContent)
+	_ = resp.Body.Close()
+
+	if _, err := os.Stat(dir); os.IsNotExist(err) == false {
+		t.Fatalf("landing dir after domain delete = %v, want removed", err)
+	}
 }

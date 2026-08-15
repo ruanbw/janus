@@ -70,27 +70,28 @@ func (a *API) removeLandingFiles(linkID int64) {
 }
 
 // resolveLandingLink 按 Host+code 命中启用、未删除、landing 型短链;其余 ErrNotFound。
-func (a *API) resolveLandingLink(c *gin.Context, code string) (*store.Link, error) {
+// 同时返回命中的域名(SDK 注入 canonical FQDN,避免信任任意 Host 头)。
+func (a *API) resolveLandingLink(c *gin.Context, code string) (*store.Link, *store.Domain, error) {
 	if code == "" || strings.Contains(code, "/") {
-		return nil, store.ErrNotFound
+		return nil, nil, store.ErrNotFound
 	}
 	d := a.resolveDomainByHost(c)
 	if d == nil {
-		return nil, store.ErrNotFound
+		return nil, nil, store.ErrNotFound
 	}
-	link, _, err := a.store.ResolveLink(c.Request.Context(), d.ID, code)
+	link, resolved, err := a.store.ResolveLink(c.Request.Context(), d.ID, code)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if link.LinkType != store.LinkTypeLanding {
-		return nil, store.ErrNotFound
+		return nil, nil, store.ErrNotFound
 	}
-	return link, nil
+	return link, resolved, nil
 }
 
 // handleLandingClick GET /{code}/click — 点击计数 +1(不记 Visit)并 302 到轮询目标。
 func (a *API) handleLandingClick(c *gin.Context, code string) {
-	link, err := a.resolveLandingLink(c, code)
+	link, _, err := a.resolveLandingLink(c, code)
 	if err != nil {
 		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
@@ -139,7 +140,7 @@ const landingSDKTemplate = `/* CLOAK 落地页 SDK:绑定按钮点击 → 平台
 
 // handleLandingSDK GET /{code}/sdk.js — 生成内嵌点击端点绝对地址的 SDK。
 func (a *API) handleLandingSDK(c *gin.Context, code string) {
-	link, err := a.resolveLandingLink(c, code)
+	link, domain, err := a.resolveLandingLink(c, code)
 	if err != nil {
 		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
@@ -151,7 +152,9 @@ func (a *API) handleLandingSDK(c *gin.Context, code string) {
 	} else if c.Request.TLS == nil {
 		proto = "http"
 	}
-	clickURL := proto + "://" + c.Request.Host + "/" + link.Code + "/click"
+	// 使用数据库中命中的 FQDN 而不是请求 Host:Host 可被客户端任意构造,
+	// 直接拼进 JS 字符串会形成响应注入面。
+	clickURL := proto + "://" + domain.FQDN + "/" + link.Code + "/click"
 	js := strings.ReplaceAll(landingSDKTemplate, "__CLICK_URL__", clickURL)
 	c.Header("Content-Type", "application/javascript; charset=utf-8")
 	c.Header("Cache-Control", "public, max-age=300")
@@ -161,7 +164,7 @@ func (a *API) handleLandingSDK(c *gin.Context, code string) {
 // handleLandingFile GET /{code}/<path> — 上传落地页静态资源;
 // rel 为 ""(即请求 /{code}/)时服务根 index.html。
 func (a *API) handleLandingFile(c *gin.Context, code, rel string) {
-	link, err := a.resolveLandingLink(c, code)
+	link, _, err := a.resolveLandingLink(c, code)
 	if err != nil || link.LandingSource != store.LandingSourceUpload {
 		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
@@ -338,6 +341,11 @@ func (a *API) installLandingZip(linkID int64, raw []byte) error {
 		}
 		if !allowedLandingExt(e.rel) {
 			return zipErr{"不允许的文件类型:" + e.rel}
+		}
+		// 先按 uint64 比较再转 int64:恶意 zip 可把 UncompressedSize64 声明为
+		// 接近 MaxUint64,直接转 int64 会溢出为负数并绕过总大小检查。
+		if e.f.UncompressedSize64 > uint64(a.cfg.LandingMaxZipBytes) {
+			return zipErr{"解压后总大小超过上限"}
 		}
 		total += int64(e.f.UncompressedSize64)
 		if total > a.cfg.LandingMaxZipBytes {

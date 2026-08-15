@@ -104,6 +104,13 @@ func (a *API) handleCreateDomain(c *gin.Context) {
 			"域名数量已达上限", map[string]any{"usage": usage})
 		return
 	}
+	// 先做 DNS 校验再落库:避免校验/状态更新失败时留下"幽灵"域名记录,
+	// 导致租户看到域名被占用却无法重试。worker 后续仍会按队列重新校验。
+	okDNS, err := a.dns.Check(ctx, fqdn)
+	if err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
+	}
 	d, err := a.store.CreateDomain(ctx, t.ID, fqdn, "self", desc)
 	if err != nil {
 		if store.IsUniqueViolation(err) {
@@ -113,14 +120,9 @@ func (a *API) handleCreateDomain(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	// 立即 DNS 校验(真实代码路径,读 /etc/hosts;dev 下 hosts 指向 127.0.0.1 即通过)
-	okDNS, err := a.dns.Check(ctx, fqdn)
-	if err != nil {
-		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
-		return
-	}
 	if okDNS {
 		if err := a.store.SetDomainActive(ctx, d.ID); err != nil {
+			_ = a.store.DeleteDomain(ctx, d.ID)
 			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 			return
 		}
@@ -128,6 +130,7 @@ func (a *API) handleCreateDomain(c *gin.Context) {
 	} else {
 		// 未生效:进入重试队列(pending,worker 每 5 分钟重试,最长 72h)
 		if err := a.store.MarkDomainDNSChecked(ctx, d.ID); err != nil {
+			_ = a.store.DeleteDomain(ctx, d.ID)
 			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 			return
 		}
@@ -299,9 +302,14 @@ func (a *API) handleDeleteDomain(c *gin.Context) {
 			map[string]any{"links": n})
 		return
 	}
-	if err := a.store.DetachDomain(c.Request.Context(), id); err != nil {
+	purged, err := a.store.DetachDomain(c.Request.Context(), id)
+	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
+	}
+	// 域名删除会物理清除"仅关联该域名"的已删除短链,连同其落地页文件一并清理。
+	for _, linkID := range purged {
+		a.removeLandingFiles(linkID)
 	}
 	writeNoContent(c)
 }

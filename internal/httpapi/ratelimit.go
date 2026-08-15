@@ -62,6 +62,8 @@ func newRateLimiter(limit int, window time.Duration) *rateLimiter {
 }
 
 // Allow 对 key 计数;未超限返回 true,超限返回 false。
+// 计数器 map 严格限制在 maxRateKeys 以内:满载且无过期条目时拒绝新 key,
+// 防止海量伪造来源撑爆内存(固定窗口计数器的有界退化,而非无界增长)。
 func (l *rateLimiter) Allow(key string) bool {
 	if l == nil || l.limit <= 0 {
 		return true
@@ -75,6 +77,9 @@ func (l *rateLimiter) Allow(key string) bool {
 		// 顺带在 map 偏大时淘汰过期条目,避免无限增长。
 		if len(l.buckets) >= maxRateKeys {
 			l.purgeExpired(now)
+		}
+		if len(l.buckets) >= maxRateKeys {
+			return false
 		}
 		l.buckets[key] = &rateWindow{start: now, count: 1}
 		return true
@@ -92,19 +97,41 @@ func (l *rateLimiter) purgeExpired(now time.Time) {
 	}
 }
 
-// clientIP 解析请求来源 IP:优先取 X-Forwarded-For 首段(部署前置 Caddy 转发),
-// 否则取 RemoteAddr。IPv6 去端口后原样返回(可被 [] 包裹)。
-func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
-			return first
+// remoteHostOnly 去掉 RemoteAddr 的端口,返回可用于 net.ParseIP 的主机部分。
+func remoteHostOnly(remote string) string {
+	if host, _, err := net.SplitHostPort(remote); err == nil {
+		return host
+	}
+	if ip := net.ParseIP(strings.Trim(remote, "[]")); ip != nil {
+		return ip.String()
+	}
+	return remote
+}
+
+// forwardedClientIP 仅在直连来源是内网/回环(即部署前置 Caddy/本机代理)时,
+// 才信任 X-Forwarded-For 首段;公网直连时忽略该头,防止客户端伪造来源 IP
+// 绕过限流或污染访问统计。首段必须是合法 IP,否则回退 RemoteAddr。
+func forwardedClientIP(r *http.Request) string {
+	peer := net.ParseIP(remoteHostOnly(r.RemoteAddr))
+	if peer == nil || (!peer.IsLoopback() && !peer.IsPrivate()) {
+		return ""
+	}
+	for _, part := range strings.Split(r.Header.Get("X-Forwarded-For"), ",") {
+		first := strings.TrimSpace(part)
+		if ip := net.ParseIP(first); ip != nil {
+			return ip.String()
 		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	return ""
+}
+
+// clientIP 解析请求来源 IP:内网反代场景取可信的 X-Forwarded-For 首段,
+// 否则取 RemoteAddr。
+func clientIP(r *http.Request) string {
+	if ip := forwardedClientIP(r); ip != "" {
+		return ip
 	}
-	return host
+	return remoteHostOnly(r.RemoteAddr)
 }
 
 // authRateLimit 注册端点限流:超限 429。

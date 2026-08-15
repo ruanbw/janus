@@ -1,1 +1,0 @@
-import{Q as t,S as e,T as r}from"./index-CCSZGBZS.js";function i(){return t("/admin/tenants")}function o(n){return t(`/admin/tenants/${n}`)}function u(n,a){return e(`/admin/tenants/${n}`,a)}function m(n){return r(`/admin/domains/${n}`)}export{o as g,i as l,m as r,u};
