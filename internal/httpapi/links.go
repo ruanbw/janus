@@ -68,6 +68,36 @@ type createLinkReq struct {
 	TargetURLs     []string        `json:"targetUrls"`
 	DomainIDs      []int64         `json:"domainIds"`
 	RedirectStatus *RedirectStatus `json:"redirectStatus"`
+	LinkType       string          `json:"linkType"`
+	LandingSource  string          `json:"landingSource"`
+	LandingURL     string          `json:"landingUrl"`
+}
+
+// normalizeLanding 校验并归一化落地页字段(16):返回 linkType/landingSource/landingURL。
+func normalizeLandingFields(linkType, landingSource, landingURL string) (string, string, string, error) {
+	if linkType == "" {
+		linkType = store.LinkTypeRedirect
+	}
+	if landingSource == "" {
+		landingSource = store.LandingSourceURL
+	}
+	if linkType != store.LinkTypeRedirect && linkType != store.LinkTypeLanding {
+		return "", "", "", errors.New("linkType 必须为 redirect 或 landing")
+	}
+	if landingSource != store.LandingSourceURL && landingSource != store.LandingSourceUpload {
+		return "", "", "", errors.New("landingSource 必须为 url 或 upload")
+	}
+	switch {
+	case linkType == store.LinkTypeRedirect:
+		landingSource, landingURL = store.LandingSourceURL, ""
+	case landingSource == store.LandingSourceUpload:
+		landingURL = ""
+	default: // landing + url
+		if !validTargetURL(landingURL) {
+			return "", "", "", errors.New("落地页型短链(url 来源)必须填写合法的落地页地址")
+		}
+	}
+	return linkType, landingSource, landingURL, nil
 }
 
 func (a *API) handleCreateLink(c *gin.Context) {
@@ -88,7 +118,7 @@ func (a *API) handleCreateLink(c *gin.Context) {
 		writeAPIError(c, err)
 		return
 	}
-	writeJSON(c, http.StatusCreated, link)
+	writeJSON(c, http.StatusCreated, a.withLandingUploaded(link))
 }
 
 // createLink 供后台短链创建共用。
@@ -102,6 +132,10 @@ func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*s
 			return nil, apiErr{http.StatusBadRequest, errValidation, "redirectStatus 必须为 301 或 302", nil}
 		}
 		redirectStatus = store.RedirectStatus(*req.RedirectStatus)
+	}
+	linkType, landingSource, landingURL, err := normalizeLandingFields(req.LinkType, req.LandingSource, req.LandingURL)
+	if err != nil {
+		return nil, apiErr{http.StatusBadRequest, errValidation, err.Error(), nil}
 	}
 	if len(req.DomainIDs) == 0 {
 		return nil, apiErr{http.StatusBadRequest, errValidation, "至少关联一个域名", nil}
@@ -126,7 +160,7 @@ func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*s
 			return nil, apiErr{http.StatusBadRequest, errValidation,
 				"短码非法(字符集不含 0/O/1/l/I,长度 1-64)", nil}
 		}
-		link, err := a.store.CreateLink(c.Request.Context(), t.ID, req.Code, req.TargetURLs, redirectStatus, domainIDs)
+		link, err := a.store.CreateLink(c.Request.Context(), t.ID, req.Code, req.TargetURLs, redirectStatus, linkType, landingSource, landingURL, domainIDs)
 		if err != nil {
 			if store.IsUniqueViolation(err) {
 				return nil, apiErr{http.StatusConflict, errConflict, "同一域名下短码已存在", nil}
@@ -138,7 +172,7 @@ func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*s
 	// 自动生成短码:随机生成直到无冲突(生成失败重试 10 次)
 	for i := 0; i < 10; i++ {
 		code := domain.GenerateCode(t.CodeLength)
-		link, err := a.store.CreateLink(c.Request.Context(), t.ID, code, req.TargetURLs, redirectStatus, domainIDs)
+		link, err := a.store.CreateLink(c.Request.Context(), t.ID, code, req.TargetURLs, redirectStatus, linkType, landingSource, landingURL, domainIDs)
 		if err == nil {
 			return link, nil
 		}
@@ -200,6 +234,9 @@ func (a *API) handleListLinks(c *gin.Context) {
 	if items == nil {
 		items = []*store.Link{}
 	}
+	for _, l := range items {
+		a.withLandingUploaded(l)
+	}
 	writeJSON(c, http.StatusOK, map[string]any{"items": items, "total": total})
 }
 
@@ -218,13 +255,16 @@ func (a *API) handleGetLink(c *gin.Context) {
 		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
-	writeJSON(c, http.StatusOK, link)
+	writeJSON(c, http.StatusOK, a.withLandingUploaded(link))
 }
 
 type patchLinkReq struct {
 	TargetURLs     *[]string       `json:"targetUrls"`
 	DomainIDs      *[]int64        `json:"domainIds"`
 	RedirectStatus *RedirectStatus `json:"redirectStatus"`
+	LinkType       *string         `json:"linkType"`
+	LandingSource  *string         `json:"landingSource"`
+	LandingURL     *string         `json:"landingUrl"`
 	Status         *string         `json:"status"`
 }
 
@@ -246,7 +286,28 @@ func (a *API) handlePatchLink(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
-	upd := store.LinkUpdate{}
+	// 落地页字段组合校验(16):按当前值叠加请求值算出有效组合
+	cur, err := a.store.GetLinkByID(c.Request.Context(), t.ID, id)
+	if err != nil {
+		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
+		return
+	}
+	linkType, landingSource, landingURL := cur.LinkType, cur.LandingSource, cur.LandingURL
+	if req.LinkType != nil {
+		linkType = *req.LinkType
+	}
+	if req.LandingSource != nil {
+		landingSource = *req.LandingSource
+	}
+	if req.LandingURL != nil {
+		landingURL = *req.LandingURL
+	}
+	linkType, landingSource, landingURL, nerr := normalizeLandingFields(linkType, landingSource, landingURL)
+	if nerr != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, nerr.Error())
+		return
+	}
+	upd := store.LinkUpdate{LinkType: &linkType, LandingSource: &landingSource, LandingURL: &landingURL}
 	if req.TargetURLs != nil {
 		if err := validTargetURLs(*req.TargetURLs); err != nil {
 			writeErr(c, http.StatusBadRequest, errValidation, err.Error())
@@ -290,7 +351,11 @@ func (a *API) handlePatchLink(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeJSON(c, http.StatusOK, link)
+	// 切到 redirect 型或 url 来源时删除已上传落地页文件(16)
+	if link.LinkType == store.LinkTypeRedirect || link.LandingSource == store.LandingSourceURL {
+		a.removeLandingFiles(id)
+	}
+	writeJSON(c, http.StatusOK, a.withLandingUploaded(link))
 }
 
 func (a *API) handleDeleteLink(c *gin.Context) {
@@ -330,6 +395,7 @@ func (a *API) handlePurgeLink(c *gin.Context) {
 		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
+	a.removeLandingFiles(id) // 彻底删除连同落地页文件(16)
 	writeNoContent(c)
 }
 
@@ -376,7 +442,7 @@ func (a *API) handleLinkStats(c *gin.Context) {
 		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
-	writeJSON(c, http.StatusOK, map[string]any{"visits": link.Visits})
+	writeJSON(c, http.StatusOK, map[string]any{"visits": link.Visits, "clicks": link.Clicks})
 }
 
 // ---------- 错误封装 ----------

@@ -39,8 +39,8 @@ type API struct {
 	mailer       mailer.Mailer
 	cfg          config.Config
 	dns          *domain.DNSChecker
-	registerRate *rateLimiter  // POST /api/auth/register
-	authRate     *rateLimiter  // login/verify-email/forgot/reset
+	registerRate *rateLimiter   // POST /api/auth/register
+	authRate     *rateLimiter   // login/verify-email/forgot/reset
 	rbacEnforcer *rbac.Enforcer // Casbin RBAC 授权(enforcer 线程安全,authorize 中间件使用)
 	jwtMgr       *jwt.Manager   // Bearer JWT 校验(authenticate 中间件使用)
 }
@@ -80,6 +80,8 @@ func New(d Deps) http.Handler {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	// 16:落地页上传托管用 /{code}/ 尾斜杠布局,关闭 gin 自动尾斜杠重定向
+	r.RedirectTrailingSlash = false
 	r.Use(a.panicRecoverAndLog(), a.spaMiddleware())
 
 	// 健康检查(docker compose healthcheck)
@@ -123,6 +125,8 @@ func New(d Deps) http.Handler {
 	prot.POST("/links/:id/purge", a.handlePurgeLink)
 	prot.GET("/links/:id/visits", a.handleListVisits)
 	prot.GET("/links/:id/stats", a.handleLinkStats)
+	// 16:落地页上传(zip 替换式)
+	prot.POST("/links/:id/landing", a.handleUploadLanding)
 	// 06:租户设置
 	prot.GET("/me", a.handleGetMe)
 	prot.PATCH("/me", a.handlePatchMe)
@@ -136,6 +140,10 @@ func New(d Deps) http.Handler {
 
 	// 跳转(公开):路径首段为短码,由 Host 决定域名(在受保护组外注册)
 	r.GET("/:code", a.handleRedirect)
+	// 16:落地页型短链二级路径(点击端点/每短链 SDK/上传落地页静态服务)。
+	// gin 路由树不支持 /:code 与 /:code/... 子路由并存,统一由 NoRoute 兜底分发;
+	// 关闭尾斜杠重定向,避免 gin 把 /{code}/ 重定向回 /{code} 造成环。
+	r.NoRoute(a.handleLandingFallback)
 
 	return r
 }

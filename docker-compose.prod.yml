@@ -43,6 +43,10 @@ services:
       CLOAK_DNS_MAX_AGE: "${CLOAK_DNS_MAX_AGE:-72h}"
       CLOAK_VISIT_RETENTION: "${CLOAK_VISIT_RETENTION:-2160h}"
       CLOAK_VISIT_CLEANUP_INTERVAL: "${CLOAK_VISIT_CLEANUP_INTERVAL:-24h}"
+      # 上传落地页:容器内固定目录,由 uploads 卷持久化
+      CLOAK_LANDING_UPLOAD_DIR: "/app/uploads"
+      CLOAK_LANDING_MAX_ZIP_BYTES: "${CLOAK_LANDING_MAX_ZIP_BYTES:-10485760}"
+      CLOAK_LANDING_MAX_FILES: "${CLOAK_LANDING_MAX_FILES:-500}"
       # 邮件:SMTP 凭据来自 .env(未配置时用控制台 mailer)
       CLOAK_PUBLIC_BASE_URL: "https://${CLOAK_PLATFORM_DOMAIN:?}"
       CLOAK_SMTP_HOST: "${CLOAK_SMTP_HOST:-}"
@@ -50,6 +54,8 @@ services:
       CLOAK_SMTP_USERNAME: "${CLOAK_SMTP_USERNAME:-}"
       CLOAK_SMTP_PASSWORD: "${CLOAK_SMTP_PASSWORD:-}"
       CLOAK_SMTP_FROM: "${CLOAK_SMTP_FROM:-}"
+    volumes:
+      - uploads:/app/uploads
     depends_on:
       postgres:
         condition: service_healthy
@@ -85,3 +91,4 @@ volumes:
   pgdata:
   caddy_data:
   caddy_config:
+  uploads:

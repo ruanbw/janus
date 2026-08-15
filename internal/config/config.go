@@ -29,6 +29,10 @@ type Config struct {
 	VisitRetention    time.Duration // 访问记录保留时长
 	VisitCleanupEvery time.Duration // 访问记录清理任务间隔
 
+	LandingUploadDir   string // 上传落地页(zip 解压)存放目录(16)
+	LandingMaxZipBytes int64  // 落地页压缩包解压后总大小上限(16)
+	LandingMaxFiles    int    // 落地页压缩包文件数上限(16)
+
 	MigrationsDir string // SQL 迁移文件目录
 
 	// SMTP 邮件(可选):配置后启用真实邮件发送,否则控制台 mailer(spec 决策 #3)
@@ -85,6 +89,10 @@ func Load() Config {
 		DNSMaxAge:         getdur("CLOAK_DNS_MAX_AGE", 72*time.Hour),
 		VisitRetention:    getdur("CLOAK_VISIT_RETENTION", 90*24*time.Hour),
 		VisitCleanupEvery: getdur("CLOAK_VISIT_CLEANUP_INTERVAL", 24*time.Hour),
+
+		LandingUploadDir:   getenv("CLOAK_LANDING_UPLOAD_DIR", "uploads"),
+		LandingMaxZipBytes: int64(getint("CLOAK_LANDING_MAX_ZIP_BYTES", 10*1024*1024)),
+		LandingMaxFiles:    getint("CLOAK_LANDING_MAX_FILES", 500),
 
 		MigrationsDir: getenv("CLOAK_MIGRATIONS_DIR", "migrations"),
 
