@@ -105,6 +105,8 @@ func setup(t *testing.T, rc *httpapi.RateLimitConfig) *Env {
 		SessionTTLShort:   24 * time.Hour,
 		VerifyTokenTTL:    24 * time.Hour,
 		ResetTokenTTL:     time.Hour,
+		JWTSecret:         "test-jwt-secret",
+		JWTTTL:            24 * time.Hour,
 		DNSRetryInterval:  50 * time.Millisecond,
 		DNSMaxAge:         72 * time.Hour,
 		VisitRetention:    90 * 24 * time.Hour,

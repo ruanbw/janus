@@ -21,6 +21,8 @@ type Config struct {
 	SessionTTLShort time.Duration // rememberMe=false 时更短的会话有效期
 	VerifyTokenTTL  time.Duration // 邮箱验证 token 有效期
 	ResetTokenTTL   time.Duration // 密码重置 token 有效期
+	JWTSecret       string        // JWT 签名密钥(生产必填;留空则每次启动随机生成,重启后已签发 token 失效)
+	JWTTTL          time.Duration // JWT 访问 token 有效期(API Bearer 认证)
 
 	DNSRetryInterval  time.Duration // DNS 校验重试间隔
 	DNSMaxAge         time.Duration // DNS 校验最长重试时长(超时置 failed)
@@ -76,6 +78,8 @@ func Load() Config {
 		SessionTTLShort: getdur("CLOAK_SESSION_TTL_SHORT", 24*time.Hour),
 		VerifyTokenTTL:  getdur("CLOAK_VERIFY_TOKEN_TTL", 24*time.Hour),
 		ResetTokenTTL:   getdur("CLOAK_RESET_TOKEN_TTL", time.Hour),
+		JWTSecret:       os.Getenv("CLOAK_JWT_SECRET"),
+		JWTTTL:          getdur("CLOAK_JWT_TTL", 24*time.Hour),
 
 		DNSRetryInterval:  getdur("CLOAK_DNS_RETRY_INTERVAL", 5*time.Minute),
 		DNSMaxAge:         getdur("CLOAK_DNS_MAX_AGE", 72*time.Hour),

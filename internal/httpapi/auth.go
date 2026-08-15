@@ -380,3 +380,74 @@ func (a *API) handleResetPassword(c *gin.Context) {
 	}
 	writeNoContent(c)
 }
+
+// ---------- API Bearer(JWT)token 端点 ----------
+
+type tokenReq struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// tokenResp 契约:签发成功返回 accessToken / tokenType / expiresIn(秒),不写 cookie。
+type tokenResp struct {
+	AccessToken string `json:"accessToken"`
+	TokenType   string `json:"tokenType"`
+	ExpiresIn   int64  `json:"expiresIn"`
+}
+
+// handleToken 签发 API Bearer JWT:校验逻辑与 handleLogin 完全一致
+// (邮箱小写、pending→401、banned→403、错误凭据→401 等时化 dummy bcrypt),
+// 成功后按租户 IsSuperAdmin 计算角色并用 CLOAK_JWT_SECRET/JWTTTL 签发 HS256 JWT。
+func (a *API) handleToken(c *gin.Context) {
+	if !a.rateLimit(c, a.authRate) {
+		return
+	}
+	var req tokenReq
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
+		return
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	tenant, err := a.store.GetTenantByEmail(c.Request.Context(), email)
+	if err != nil {
+		// 等时化:账号不存在也执行一次 bcrypt 比较
+		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(req.Password))
+		writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
+		return
+	}
+	switch tenant.Status {
+	case "pending":
+		writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱未验证,请查收验证邮件")
+		return
+	case "banned":
+		writeErr(c, http.StatusForbidden, errForbidden, "账号已被封禁")
+		return
+	}
+	if !tenant.FirstLoginSetup {
+		pwHash, err := a.store.TenantPasswordHash(c.Request.Context(), tenant.ID)
+		if err != nil || pwHash == nil {
+			writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
+			return
+		}
+		if bcrypt.CompareHashAndPassword([]byte(*pwHash), []byte(req.Password)) != nil {
+			writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
+			return
+		}
+	}
+	role := "tenant"
+	if tenant.IsSuperAdmin {
+		role = "superadmin"
+	}
+	// 复用 server 构建的 jwtMgr(密钥回退逻辑一致:CLOAK_JWT_SECRET 为空时用启动期随机密钥,
+	// 与 authenticate 的校验密钥保持一致,避免签发的 token 被 401 拒绝)。
+	token, err := a.jwtMgr.Issue(tenant.ID, role)
+	if err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
+	}
+	writeJSON(c, http.StatusOK, tokenResp{
+		AccessToken: token,
+		TokenType:   "Bearer",
+		ExpiresIn:   int64(a.cfg.JWTTTL.Seconds()),
+	})
+}

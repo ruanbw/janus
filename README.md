@@ -68,6 +68,7 @@ CLOAK 是一个自托管的多租户短链服务:租户管理自己的域名与�
 
 **安全**
 - 会话 cookie(HTTP-only)+ CSRF 双提交 token;注册/登录/忘记密码限流;目标 URL 拒绝 CRLF 防 header 注入;Caddy 授权端点仅内网可达,未激活域名拒绝签发证书。
+- API 支持 Bearer JWT 认证(Casbin RBAC 按角色×路径×方法授权,见 10.API 概览「授权模型」)。
 
 > 术语(租户、短链、短码、目标 URL、域名、激活、访问、证书、后台等)以 [`CONTEXT.md`](CONTEXT.md) 词汇表为准。
 
@@ -291,6 +292,8 @@ cp .env.example .env   # 可选;compose 会读取 .env 覆盖默认值
 | `CLOAK_PUBLIC_BASE_URL` | `https://app.cloak.test` | 邮件验证/重置链接前缀 |
 | `CLOAK_SMTP_*` | 空 | 配置后走真实 SMTP,否则控制台 mailer(见 8.9) |
 | `CLOAK_SESSION_TTL` / `CLOAK_SESSION_TTL_SHORT` | `720h` / `24h` | 记住我 30 天 / 24 小时 |
+| `CLOAK_JWT_SECRET` | 空 | JWT 签名密钥(API Bearer 认证):生产必须配置强随机值;留空则每次启动随机生成,重启后已签发 token 失效 |
+| `CLOAK_JWT_TTL` | `24h` | JWT 访问 token 有效期(过期后需重新调用 POST /api/auth/token 获取) |
 | `CLOAK_VERIFY_TOKEN_TTL` / `CLOAK_RESET_TOKEN_TTL` | `24h` / `1h` | 验证/重置 token 有效期 |
 | `CLOAK_DNS_RETRY_INTERVAL` / `CLOAK_DNS_MAX_AGE` | `5m` / `72h` | DNS 重试间隔 / 最长重试时长 |
 | `CLOAK_VISIT_RETENTION` / `CLOAK_VISIT_CLEANUP_INTERVAL` | `2160h` / `24h` | 访问记录保留 / 清理间隔 |
@@ -381,6 +384,19 @@ curl -sk -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/login" \
   -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"password123","rememberMe":true}'
 # → 200;cookie 文件里应有 cloak_session 与 cloak_csrf
+
+# 4.1 API Bearer JWT(脚本/CLI 调用,免 cookie/CSRF):
+#     用同一账号调 POST /api/auth/token 换 accessToken,后续请求带 Authorization 头即可。
+TOKEN=$(curl -sk -X POST "$BASE/api/auth/token" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"password123"}' \
+  | grep -o '"accessToken":"[^"]*"' | cut -d'"' -f4)
+curl -sk "$BASE/api/auth/me" -H "Authorization: Bearer $TOKEN"
+# → 200,返回当前租户信息
+# Bearer 写操作无需 X-CSRF-Token 头(header 认证免疫 CSRF):
+curl -sk -X POST "$BASE/api/domains" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"fqdn":"links.example.test"}'
+# → 201
 
 # 5. 写方法需要 CSRF 双提交 token(从 cookie 读取)
 CSRF=$(awk '$6=="cloak_csrf"{print $7}' "$JAR")
@@ -701,6 +717,7 @@ docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
 **认证方式**
 
 - 后台 API:会话 cookie `cloak_session`(HTTP-only / Secure / SameSite=Lax);写方法需在请求头附 `X-CSRF-Token`(值来自 `cloak_csrf` cookie,双提交 token)。
+- API 认证(脚本/CLI):`POST /api/auth/token` 签发 `accessToken`,后续请求带 `Authorization: Bearer <accessToken>`(header 认证免疫 CSRF)。
 - 跳转路径:`GET /{code}`,由 Host 决定域名,无需鉴权。
 - 内部端点:`GET /internal/caddy/authorize?domain=<fqdn>`,仅内网可达。
 
@@ -708,12 +725,18 @@ docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
 
 | 分组 | 端点 |
 | --- | --- |
-| 认证 | `POST /api/auth/register`、`verify-email`、`login`、`logout`、`GET /api/auth/me`、`POST /api/auth/change-password`、`forgot-password`、`reset-password` |
+| 认证 | `POST /api/auth/register`、`verify-email`、`login`、`token`(API Bearer JWT 签发)、`logout`、`GET /api/auth/me`、`POST /api/auth/change-password`、`forgot-password`、`reset-password` |
 | 域名 | `GET/POST /api/domains`、`GET /api/domains/{id}`、`POST /api/domains/{id}/recheck`、`PATCH /api/domains/{id}`、`DELETE /api/domains/{id}` |
 | 短链 | `GET/POST /api/links`、`GET/PATCH/DELETE /api/links/{id}`、`POST /api/links/{id}/purge`、`GET /api/links/{id}/visits`、`GET /api/links/{id}/stats` |
 | 租户设置 | `GET/PATCH /api/me` |
 | 平台管理 | `GET /api/admin/tenants`、`GET/PATCH /api/admin/tenants/{id}`、`DELETE /api/admin/domains/{id}` |
 | 跳转 | `GET /{code}`(公开) |
+
+**授权模型(RBAC)**
+
+- 角色两档:`tenant`(普通租户,按显式路由矩阵放行)/ `superadmin`(平台超管,`/api/*` 全通)。
+- Casbin 策略在 `internal/rbac/rbac.go` 的 `policyText`(内存装载,不落盘);按 (角色, HTTP 方法, 路径) 三元组判权。
+- **新增受保护路由必须同步在 `policyText` 中追加对应策略**,否则即使登录也会被授权中间件 403 拒绝。
 
 **统一错误响应**
 
