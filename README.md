@@ -297,6 +297,9 @@ cp .env.example .env   # 可选;compose 会读取 .env 覆盖默认值
 | `CLOAK_VERIFY_TOKEN_TTL` / `CLOAK_RESET_TOKEN_TTL` | `24h` / `1h` | 验证/重置 token 有效期 |
 | `CLOAK_DNS_RETRY_INTERVAL` / `CLOAK_DNS_MAX_AGE` | `5m` / `72h` | DNS 重试间隔 / 最长重试时长 |
 | `CLOAK_VISIT_RETENTION` / `CLOAK_VISIT_CLEANUP_INTERVAL` | `2160h` / `24h` | 访问记录保留 / 清理间隔 |
+| `CLOAK_LANDING_UPLOAD_DIR` | `uploads` | 上传落地页(压缩包解压)存放目录,生产挂持久卷 |
+| `CLOAK_LANDING_MAX_ZIP_BYTES` | `10485760` | 落地页压缩包解压后总大小上限(字节) |
+| `CLOAK_LANDING_MAX_FILES` | `500` | 落地页压缩包文件数上限 |
 
 > ⚠️ `.env` 已在 `.gitignore` 中,不要提交(里面可能含真实 SMTP 凭据)。
 
