@@ -31,6 +31,13 @@
           <span class="summary-unit">次</span>
         </div>
         <div class="summary-item">
+          <span class="summary-label">点击数</span>
+          <span class="summary-value">
+            {{ selectedLink.linkType === 'landing' ? selectedLink.clicks : '—' }}
+          </span>
+          <span v-if="selectedLink.linkType === 'landing'" class="summary-unit">次</span>
+        </div>
+        <div class="summary-item">
           <span class="summary-label">目标 URL</span>
           <a-tooltip v-if="selectedLink.targetUrls.length > 0">
             <template #title>

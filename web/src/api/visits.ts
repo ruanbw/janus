@@ -16,7 +16,7 @@ export function listVisits(
   return get<PageResult<Visit>>(`/links/${linkId}/visits`, { ...query });
 }
 
-/** 某条短链的访问数 */
-export function getLinkStats(linkId: number): Promise<{ visits: number }> {
-  return get<{ visits: number }>(`/links/${linkId}/stats`);
+/** 某条短链的访问数与点击数 */
+export function getLinkStats(linkId: number): Promise<{ visits: number; clicks: number }> {
+  return get<{ visits: number; clicks: number }>(`/links/${linkId}/stats`);
 }

@@ -13,6 +13,10 @@ export type DomainOrigin = 'self' | 'platform';
 export type CertStatus = 'pending' | 'issued' | 'failed';
 export type LinkStatus = 'enabled' | 'disabled';
 export type RedirectStatus = '302' | '301';
+/** 短链类型:跳转型 redirect / 落地页型 landing(默认 redirect) */
+export type LinkType = 'redirect' | 'landing';
+/** 落地页来源:url 地址 / upload 上传压缩包(默认 url,仅 landing 型有意义) */
+export type LandingSource = 'url' | 'upload';
 
 /** 等级:决定租户的短链与域名数量上限 */
 export interface Tier {
@@ -78,11 +82,21 @@ export interface Link {
   /** 目标 URL 列表(至少 1 个,顺序即轮询顺序) */
   targetUrls: string[];
   redirectStatus: RedirectStatus;
+  /** 短链类型(创建时选定、可修改) */
+  linkType: LinkType;
+  /** 落地页来源(仅 landing 型有意义) */
+  landingSource: LandingSource;
+  /** 落地页地址(仅 landing+url 来源非空) */
+  landingUrl: string;
   status: LinkStatus;
   /** 关联域名列表 */
   domains: string[];
   /** 访问数 */
   visits: number;
+  /** 点击数(仅 landing 型增长,redirect 型恒 0) */
+  clicks: number;
+  /** landing+upload 来源且已成功上传 zip 时为 true */
+  landingUploaded: boolean;
   createdAt: string;
 }
 

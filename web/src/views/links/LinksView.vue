@@ -35,6 +35,11 @@
             </div>
           </div>
         </template>
+        <template v-else-if="column.key === 'linkType'">
+          <a-tag :color="LINK_TYPE[record.linkType as LinkType].color">
+            {{ LINK_TYPE[record.linkType as LinkType].label }}
+          </a-tag>
+        </template>
         <template v-else-if="column.key === 'targetUrls'">
           <a-tooltip v-if="record.targetUrls.length > 0">
             <template #title>
@@ -49,6 +54,22 @@
             </span>
           </a-tooltip>
           <span v-else class="target-cell">-</span>
+        </template>
+        <template v-else-if="column.key === 'landing'">
+          <template v-if="record.linkType === 'landing'">
+            <a-tooltip
+              v-if="record.landingSource === 'url'"
+              :title="record.landingUrl || ''"
+            >
+              <span class="landing-cell">
+                {{ record.landingUrl ? truncateText(record.landingUrl, 28) : '-' }}
+              </span>
+            </a-tooltip>
+            <a-tag v-else :color="record.landingUploaded ? 'success' : 'default'">
+              {{ record.landingUploaded ? '已上传' : '未上传' }}
+            </a-tag>
+          </template>
+          <span v-else class="landing-cell">—</span>
         </template>
         <template v-else-if="column.key === 'redirectStatus'">
           <a-tag :color="REDIRECT_STATUS[record.redirectStatus as RedirectStatus].color">
@@ -65,6 +86,9 @@
             {{ record.visits }}
             <EyeOutlined class="visits-icon" />
           </a>
+        </template>
+        <template v-else-if="column.key === 'clicks'">
+          <span>{{ record.linkType === 'landing' ? record.clicks : '—' }}</span>
         </template>
         <template v-else-if="column.key === 'createdAt'">
           {{ formatDateTime(record.createdAt) }}
@@ -139,10 +163,10 @@ import { listDomains } from '@/api/domains';
 import { deleteLink, listLinks, purgeLink, updateLink } from '@/api/links';
 import PageHeader from '@/components/PageHeader.vue';
 import QuotaBar from '@/components/QuotaBar.vue';
-import { LINK_STATUS, REDIRECT_STATUS } from '@/constants/dict';
+import { LINK_STATUS, LINK_TYPE, REDIRECT_STATUS } from '@/constants/dict';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
-import type { Domain, Link, LinkStatus, RedirectStatus } from '@/types/api';
+import type { Domain, Link, LinkStatus, LinkType, RedirectStatus } from '@/types/api';
 import { formatDateTime, truncateText } from '@/utils/format';
 
 import LinkFormModal from './LinkFormModal.vue';
@@ -163,11 +187,14 @@ const editingLink = ref<Link | null>(null);
 const usage = computed(() => auth.config?.usage);
 
 const columns: TableColumnsType = [
-  { title: '链接', key: 'code', dataIndex: 'code', width: 260 },
+  { title: '链接', key: 'code', dataIndex: 'code', width: 240 },
+  { title: '类型', key: 'linkType', dataIndex: 'linkType', width: 80 },
   { title: '目标 URL', key: 'targetUrls', dataIndex: 'targetUrls' },
+  { title: '落地页', key: 'landing', width: 170 },
   { title: '重定向', key: 'redirectStatus', dataIndex: 'redirectStatus', width: 130 },
   { title: '状态', key: 'status', dataIndex: 'status', width: 90 },
-  { title: '访问数', key: 'visits', dataIndex: 'visits', width: 100 },
+  { title: '访问数', key: 'visits', dataIndex: 'visits', width: 90 },
+  { title: '点击', key: 'clicks', dataIndex: 'clicks', width: 80 },
   { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 200 },
   { title: '操作', key: 'action', width: 330 },
 ];
@@ -327,6 +354,11 @@ async function copyShortLink(link: Link, fqdn: string) {
   margin-right: 4px;
   color: #8b98a5;
   font-size: 12px;
+}
+
+.landing-cell {
+  color: #334155;
+  word-break: break-all;
 }
 
 .target-more {

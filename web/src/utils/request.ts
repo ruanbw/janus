@@ -127,6 +127,14 @@ export function post<T>(url: string, data?: unknown): Promise<T> {
   return request<T>({ method: 'POST', url, data });
 }
 
+/**
+ * multipart 上传:data 传 FormData,不按 JSON 序列化、不显式设置 Content-Type
+ * (由浏览器自动补 multipart/form-data boundary;请求拦截器仍会为写方法附加 X-CSRF-Token)。
+ */
+export function upload<T>(url: string, formData: FormData): Promise<T> {
+  return request<T>({ method: 'POST', url, data: formData });
+}
+
 /** PATCH */
 export function patch<T>(url: string, data?: unknown): Promise<T> {
   return request<T>({ method: 'PATCH', url, data });

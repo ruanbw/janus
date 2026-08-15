@@ -1,7 +1,14 @@
 // 短链 API(后台,会话鉴权)
-import { del, get, patch, post } from '@/utils/request';
+import { del, get, patch, post, upload } from '@/utils/request';
 
-import type { Link, LinkStatus, PageResult, RedirectStatus } from '@/types/api';
+import type {
+  LandingSource,
+  Link,
+  LinkStatus,
+  LinkType,
+  PageResult,
+  RedirectStatus,
+} from '@/types/api';
 
 export interface LinkListQuery {
   page?: number;
@@ -11,6 +18,7 @@ export interface LinkListQuery {
 /**
  * 归一化短链响应:契约定义 redirectStatus 为 "301"|"302" 字符串,当前后端以数字(301/302)
  * 序列化;domains 在后端极端情况下可能为 null。此处统一转为契约形状,页面无需再兜底。
+ * 落地页相关新字段在后端尚未回传时给出契约默认值。
  */
 function normalizeLink(link: Link): Link {
   return {
@@ -18,10 +26,15 @@ function normalizeLink(link: Link): Link {
     domains: Array.isArray(link.domains) ? link.domains : [],
     targetUrls: Array.isArray(link.targetUrls) ? link.targetUrls : [],
     redirectStatus: String(link.redirectStatus) as RedirectStatus,
+    linkType: link.linkType || 'redirect',
+    landingSource: link.landingSource || 'url',
+    landingUrl: link.landingUrl || '',
+    clicks: typeof link.clicks === 'number' ? link.clicks : 0,
+    landingUploaded: link.landingUploaded === true,
   };
 }
 
-/** 短链列表(分页,含 visits 访问数;默认不含逻辑删除项) */
+/** 短链列表(分页,含 visits/clicks 计数;默认不含逻辑删除项) */
 export async function listLinks(query: LinkListQuery = {}): Promise<PageResult<Link>> {
   const result = await get<PageResult<Link>>('/links', { ...query });
   return { ...result, items: result.items.map(normalizeLink) };
@@ -33,16 +46,19 @@ export function createLink(data: {
   targetUrls: string[];
   domainIds: number[];
   redirectStatus?: RedirectStatus;
+  linkType?: LinkType;
+  landingSource?: LandingSource;
+  landingUrl?: string;
 }): Promise<Link> {
   return post<Link>('/links', data).then(normalizeLink);
 }
 
 /** 短链详情 */
 export function getLink(id: number): Promise<Link> {
-  return get<Link>(`/links/${id}`).then(normalizeLink);
+  return get<Link>('/links/' + id).then(normalizeLink);
 }
 
-/** 编辑:目标 URL / 关联域名 / 重定向方式 / 状态 */
+/** 编辑:目标 URL / 关联域名 / 重定向方式 / 类型 / 落地页来源与地址 / 状态 */
 export function updateLink(
   id: number,
   data: {
@@ -50,17 +66,27 @@ export function updateLink(
     domainIds?: number[];
     redirectStatus?: RedirectStatus;
     status?: LinkStatus;
+    linkType?: LinkType;
+    landingSource?: LandingSource;
+    landingUrl?: string;
   },
 ): Promise<Link> {
-  return patch<Link>(`/links/${id}`, data).then(normalizeLink);
+  return patch<Link>('/links/' + id, data).then(normalizeLink);
+}
+
+/** 上传落地页 zip(multipart,字段 file,替换式;成功后 landingSource=upload、landingUploaded=true) */
+export function uploadLanding(id: number, file: File): Promise<Link> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return upload<Link>('/links/' + id + '/landing', formData).then(normalizeLink);
 }
 
 /** 逻辑删除(记录与访问信息保留) */
 export function deleteLink(id: number): Promise<void> {
-  return del<void>(`/links/${id}`);
+  return del<void>('/links/' + id);
 }
 
 /** 彻底删除(物理删除,含访问记录) */
 export function purgeLink(id: number): Promise<void> {
-  return post<void>(`/links/${id}/purge`);
+  return post<void>('/links/' + id + '/purge');
 }

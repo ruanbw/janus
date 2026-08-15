@@ -3,7 +3,9 @@ import type {
   CertStatus,
   DomainOrigin,
   DomainStatus,
+  LandingSource,
   LinkStatus,
+  LinkType,
   RedirectStatus,
   TenantStatus,
 } from '@/types/api';
@@ -40,6 +42,16 @@ export const LINK_STATUS: Record<LinkStatus, DictItem> = {
 export const REDIRECT_STATUS: Record<RedirectStatus, DictItem> = {
   '302': { label: '临时重定向', color: 'blue' },
   '301': { label: '永久重定向', color: 'orange' },
+};
+
+export const LINK_TYPE: Record<LinkType, DictItem> = {
+  redirect: { label: '跳转', color: 'blue' },
+  landing: { label: '落地页', color: 'purple' },
+};
+
+export const LANDING_SOURCE: Record<LandingSource, DictItem> = {
+  url: { label: 'URL 地址', color: 'blue' },
+  upload: { label: '上传压缩包', color: 'geekblue' },
 };
 
 export const TENANT_STATUS: Record<TenantStatus, DictItem> = {
