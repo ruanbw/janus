@@ -89,15 +89,6 @@ CREATE TABLE email_tokens (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE api_keys (
-    id         BIGSERIAL PRIMARY KEY,
-    tenant_id  BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    name       TEXT NOT NULL,
-    key_hash   TEXT NOT NULL UNIQUE,     -- SHA-256(key),明文仅生成时展示一次
-    revoked_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 -- 种子数据:免费档(短链 100 / 域名 10);新租户默认免费档
 INSERT INTO tiers (name, max_links, max_domains) VALUES ('free', 100, 10)
 ON CONFLICT (name) DO NOTHING;

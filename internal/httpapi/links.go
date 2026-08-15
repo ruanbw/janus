@@ -78,7 +78,7 @@ func (a *API) handleCreateLink(c *gin.Context) {
 	writeJSON(c, http.StatusCreated, link)
 }
 
-// createLink 供后台与公开 API 共用(同一规则)。
+// createLink 供后台短链创建共用。
 func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*store.Link, error) {
 	if !validTargetURL(req.TargetURL) {
 		return nil, apiErr{http.StatusBadRequest, errValidation, "目标 URL 非法(不能包含控制字符)", nil}

@@ -1,5 +1,5 @@
-// Package httpapi 实现全部 HTTP 端点(后台会话 API、公开 Bearer API、
-// Caddy 授权内部端点与短链跳转路由)。Web 框架:Gin(路由/中间件/JSON 响应)。
+// Package httpapi 实现全部 HTTP 端点(后台会话 API、Caddy 授权内部端点
+// 与短链跳转路由)。Web 框架:Gin(路由/中间件/JSON 响应)。
 package httpapi
 
 import (
@@ -98,11 +98,6 @@ func New(d Deps) http.Handler {
 	// 跳转(公开):路径首段为短码,由 Host 决定域名
 	r.GET("/:code", a.handleRedirect)
 
-	// API Key(会话)——09
-	r.GET("/api/api-keys", a.handleListAPIKeys)
-	r.POST("/api/api-keys", a.handleCreateAPIKey)
-	r.DELETE("/api/api-keys/:id", a.handleDeleteAPIKey)
-
 	// 租户设置(会话)——06
 	r.GET("/api/me", a.handleGetMe)
 	r.PATCH("/api/me", a.handlePatchMe)
@@ -115,12 +110,6 @@ func New(d Deps) http.Handler {
 	r.GET("/api/admin/tenants/:id", a.handleAdminGetTenant)
 	r.PATCH("/api/admin/tenants/:id", a.handleAdminPatchTenant)
 	r.DELETE("/api/admin/domains/:id", a.handleAdminDeleteDomain)
-
-	// 公开 API(Bearer)——09
-	r.GET("/api/v1/links", a.handleV1ListLinks)
-	r.POST("/api/v1/links", a.handleV1CreateLink)
-	r.GET("/api/v1/links/:id", a.handleV1GetLink)
-	r.DELETE("/api/v1/links/:id", a.handleV1DeleteLink)
 
 	return r
 }

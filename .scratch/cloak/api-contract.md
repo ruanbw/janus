@@ -1,6 +1,6 @@
-# CLOAK API 契约(v1,对齐 spec 决策 #10/#11)
+# CLOAK API 契约(v1)
 
-后端、后台前端、公开 API 均以实现此契约为准。所有请求/响应为 JSON。
+后端、后台前端均以实现此契约为准。所有请求/响应为 JSON。
 
 统一错误响应:
 ```json
@@ -11,7 +11,6 @@
 ## 认证方式
 
 - **后台 API(管理端)**:会话 cookie `cloak_session`(HTTP-only / Secure / SameSite),CSRF 用双提交 token 请求头 `X-CSRF-Token`。未登录访问受保护端点 → 401。
-- **公开 API**:请求头 `Authorization: Bearer <apiKey>`。无效/已吊销 → 401。
 - **跳转路径**:`GET /{code}`(路径首段为短码),由 Host 决定域名,无需鉴权。
 - **内部端点**:`GET /internal/caddy/authorize?domain=<fqdn>`,仅内网可达;放行 200,拒绝 403。
 
@@ -32,7 +31,6 @@
 - `config`: `{ serverIp, platformDomain, usage }`(`serverIp` 为 `CLOAK_SERVER_PUBLIC_IP`,DNS 校验指向地址;`usage` 为当前租户配额用量,按租户返回)
 - `link`: `{ id, code, targetUrl, redirectStatus, status, domains: [fqdn...], visits, createdAt }`(列表默认不含逻辑删除项)
 - `visit`: `{ id, linkId, domain, ip, userAgent, referer, createdAt }`(`ip` 为访问者 IP:部署前置 Caddy 时取 `X-Forwarded-For` 首段,否则取 `RemoteAddr`;旧记录为空字符串)
-- `apiKey`: `{ id, name, createdAt, key? }`(`key` 明文仅在创建响应中出现一次)
 
 ## 端点
 
@@ -70,13 +68,6 @@
 | GET | /api/links/{id}/visits | query `page,pageSize` | 200 {items, total} | 访问列表 |
 | GET | /api/links/{id}/stats | - | 200 {visits} | 访问数 |
 
-### API Key(后台,会话)
-| 方法 | 路径 | 请求 | 成功 | 说明 |
-| --- | --- | --- | --- | --- |
-| GET | /api/api-keys | - | 200 [apiKey] | |
-| POST | /api/api-keys | `{name}` | 201 apiKey | 响应含明文 `key`,仅此一次 |
-| DELETE | /api/api-keys/{id} | - | 204 | |
-
 ### 租户设置(后台,会话)
 | 方法 | 路径 | 请求 | 成功 | 说明 |
 | --- | --- | --- | --- | --- |
@@ -91,14 +82,6 @@
 | GET | /api/admin/tenants/{id} | - | 200 tenant | 详情 |
 | PATCH | /api/admin/tenants/{id} | `{status?: "banned"\|"active", tierId?}` | 200 | 封禁/解封、调等级 |
 | DELETE | /api/admin/domains/{id} | - | 204 | 平台强删违规域名(解除其短链关联) |
-
-### 公开 API(Bearer)
-| 方法 | 路径 | 请求 | 成功 | 说明 |
-| --- | --- | --- | --- | --- |
-| GET | /api/v1/links | - | 200 {items, total} | 自己租户的短链 |
-| POST | /api/v1/links | `{code?, targetUrl, domainIds[], redirectStatus?}` | 201 link | 同后台创建规则 |
-| GET | /api/v1/links/{id} | - | 200 link | |
-| DELETE | /api/v1/links/{id} | - | 204 | 逻辑删除 |
 
 ### 跳转(公开)
 | 方法 | 路径 | 说明 |

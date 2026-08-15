@@ -200,7 +200,7 @@ func (e *Env) LastToken(t *testing.T) string {
 func truncateAll(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
-		TRUNCATE sessions, email_tokens, api_keys, visits, link_domains, links, domains, tenants, tiers
+		TRUNCATE sessions, email_tokens, visits, link_domains, links, domains, tenants, tiers
 		RESTART IDENTITY CASCADE`)
 	if err != nil {
 		t.Fatalf("truncate: %v", err)

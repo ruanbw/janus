@@ -66,9 +66,6 @@ CLOAK 是一个自托管的多租户短链服务:租户管理自己的域名与�
 **平台管理(超管)**
 - 查看全部租户、封禁/解封、调整等级、强删违规域名。
 
-**公开 API**
-- Bearer/API Key 鉴权,管理端可生成/吊销;MVP 提供短链增删查。
-
 **安全**
 - 会话 cookie(HTTP-only)+ CSRF 双提交 token;注册/登录/忘记密码限流;目标 URL 拒绝 CRLF 防 header 注入;Caddy 授权端点仅内网可达,未激活域名拒绝签发证书。
 
@@ -704,7 +701,6 @@ docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
 **认证方式**
 
 - 后台 API:会话 cookie `cloak_session`(HTTP-only / Secure / SameSite=Lax);写方法需在请求头附 `X-CSRF-Token`(值来自 `cloak_csrf` cookie,双提交 token)。
-- 公开 API:`Authorization: Bearer <apiKey>`。
 - 跳转路径:`GET /{code}`,由 Host 决定域名,无需鉴权。
 - 内部端点:`GET /internal/caddy/authorize?domain=<fqdn>`,仅内网可达。
 
@@ -715,10 +711,8 @@ docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
 | 认证 | `POST /api/auth/register`、`verify-email`、`login`、`logout`、`GET /api/auth/me`、`POST /api/auth/change-password`、`forgot-password`、`reset-password` |
 | 域名 | `GET/POST /api/domains`、`GET /api/domains/{id}`、`POST /api/domains/{id}/recheck`、`PATCH /api/domains/{id}`、`DELETE /api/domains/{id}` |
 | 短链 | `GET/POST /api/links`、`GET/PATCH/DELETE /api/links/{id}`、`POST /api/links/{id}/purge`、`GET /api/links/{id}/visits`、`GET /api/links/{id}/stats` |
-| API Key | `GET/POST /api/api-keys`、`DELETE /api/api-keys/{id}` |
 | 租户设置 | `GET/PATCH /api/me` |
 | 平台管理 | `GET /api/admin/tenants`、`GET/PATCH /api/admin/tenants/{id}`、`DELETE /api/admin/domains/{id}` |
-| 公开 API | `GET/POST /api/v1/links`、`GET/DELETE /api/v1/links/{id}` |
 | 跳转 | `GET /{code}`(公开) |
 
 **统一错误响应**

@@ -31,13 +31,6 @@
           </a-menu-item>
         </a-menu-item-group>
 
-        <a-menu-item-group v-if="!collapsed" title="开发者">
-          <a-menu-item key="/api-keys">
-            <KeyOutlined />
-            <span>API Key</span>
-          </a-menu-item>
-        </a-menu-item-group>
-
         <a-menu-item-group v-if="!collapsed" title="系统">
           <a-menu-item key="/account">
             <SettingOutlined />
@@ -115,7 +108,6 @@ import {
   CrownOutlined,
   DownOutlined,
   GlobalOutlined,
-  KeyOutlined,
   LinkOutlined,
   LogoutOutlined,
   MenuFoldOutlined,

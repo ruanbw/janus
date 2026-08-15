@@ -97,14 +97,6 @@ export interface Visit {
   createdAt: string;
 }
 
-/** API Key(列表与创建响应;key 明文仅创建响应中出现一次) */
-export interface ApiKey {
-  id: number;
-  name: string;
-  createdAt: string;
-  key?: string;
-}
-
 /** 分页响应 */
 export interface PageResult<T> {
   items: T[];

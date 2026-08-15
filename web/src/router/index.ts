@@ -60,12 +60,6 @@ const router = createRouter({
           meta: { title: '统计' },
         },
         {
-          path: 'api-keys',
-          name: 'api-keys',
-          component: () => import('@/views/apikeys/ApiKeysView.vue'),
-          meta: { title: 'API Key' },
-        },
-        {
           path: 'account',
           name: 'account',
           component: () => import('@/views/account/AccountView.vue'),
