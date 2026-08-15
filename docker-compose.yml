@@ -36,9 +36,12 @@ services:
       - NO_PROXY=host.docker.internal,localhost,127.0.0.1,.cloak.test
       - no_proxy=host.docker.internal,localhost,127.0.0.1,.cloak.test
     ports:
-      # 本机已有其他服务占用 80/443/8080(如 nginx),开发环境映射到 8443;
-      # 生产部署按 15-prod-deploy 使用标准 80/443 映射
-      - "127.0.0.1:8443:443"
+      # 无端口访问:SwitchHosts 把 *.cloak.test 指向 127.0.0.1 后,浏览器默认走
+      # 443(https)与 80(http);80 上 Caddy 自动 308 跳转 https。
+      # 注意:flow-filtering 的 openresty 容器也绑定宿主 80/443/8080,
+      # 开发时才启动它,与本服务同时运行会冲突,注意错开。
+      - "127.0.0.1:443:443"
+      - "127.0.0.1:80:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
