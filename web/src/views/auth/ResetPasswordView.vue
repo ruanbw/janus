@@ -3,50 +3,52 @@
     <template #title>重置密码</template>
     <template #subtitle>设置你的新密码</template>
 
-    <a-result v-if="done" status="success" title="密码已重置" sub-title="请使用新密码登录">
+    <AppResult v-if="done" status="success" title="密码已重置" sub-title="请使用新密码登录">
       <template #extra>
-        <a-button type="primary" @click="router.push('/login')">前往登录</a-button>
+        <AppButton type="primary" @click="router.push('/login')">前往登录</AppButton>
       </template>
-    </a-result>
+    </AppResult>
 
-    <a-form v-else :model="form" :rules="rules" layout="vertical" @finish="onSubmit">
-      <a-form-item label="新密码" name="newPassword">
-        <a-input-password
-          v-model:value="form.newPassword"
+    <AppForm v-else :model="form" :rules="rules" @finish="onSubmit">
+      <AppFormItem label="新密码" name="newPassword">
+        <AppInput
+          v-model="form.newPassword"
+          type="password"
           placeholder="至少 8 位"
           autocomplete="new-password"
           size="large"
         >
-          <template #prefix><LockOutlined class="input-icon" /></template>
-        </a-input-password>
-      </a-form-item>
-      <a-form-item label="确认新密码" name="confirmPassword">
-        <a-input-password
-          v-model:value="form.confirmPassword"
+          <template #prefix><Lock :size="16" /></template>
+        </AppInput>
+      </AppFormItem>
+      <AppFormItem label="确认新密码" name="confirmPassword">
+        <AppInput
+          v-model="form.confirmPassword"
+          type="password"
           placeholder="再次输入新密码"
           autocomplete="new-password"
           size="large"
         >
-          <template #prefix><LockOutlined class="input-icon" /></template>
-        </a-input-password>
-      </a-form-item>
-      <a-button type="primary" html-type="submit" block size="large" :loading="submitting">
+          <template #prefix><Lock :size="16" /></template>
+        </AppInput>
+      </AppFormItem>
+      <AppButton type="primary" html-type="submit" block size="large" :loading="submitting">
         重置密码
-      </a-button>
-    </a-form>
+      </AppButton>
+    </AppForm>
   </AuthShell>
 </template>
 
 <script setup lang="ts">
 import { reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { message } from 'ant-design-vue';
-import { LockOutlined } from '@ant-design/icons-vue';
-import type { Rule } from 'ant-design-vue/es/form';
+import { Lock } from '@lucide/vue';
+import type { FormRule } from '@/components/ui/types';
 
 import { resetPassword } from '@/api/auth';
 import AuthShell from '@/components/AuthShell.vue';
 import { ApiError } from '@/types/api';
+import { message } from '@/utils/toast';
 
 const route = useRoute();
 const router = useRouter();
@@ -55,7 +57,7 @@ const submitting = ref(false);
 const done = ref(false);
 const form = reactive({ newPassword: '', confirmPassword: '' });
 
-const rules: Record<string, Rule[]> = {
+const rules: Record<string, FormRule[]> = {
   newPassword: [
     { required: true, message: '请输入新密码' },
     { min: 8, message: '密码至少 8 位' },
@@ -63,7 +65,7 @@ const rules: Record<string, Rule[]> = {
   confirmPassword: [
     { required: true, message: '请再次输入新密码' },
     {
-      validator: (_rule, value: string) => {
+      validator: (_rule, value) => {
         if (!value || value === form.newPassword) return Promise.resolve();
         return Promise.reject(new Error('两次输入的密码不一致'));
       },
@@ -89,9 +91,3 @@ async function onSubmit() {
   }
 }
 </script>
-
-<style scoped>
-.input-icon {
-  color: #8b98a5;
-}
-</style>

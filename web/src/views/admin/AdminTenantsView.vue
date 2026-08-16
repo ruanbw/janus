@@ -5,125 +5,119 @@
       description="查看所有租户、封禁/解封账号、调整等级,并移除违规域名"
     >
       <template #actions>
-        <a-button :loading="loading" @click="load">
-          <template #icon><ReloadOutlined /></template>
+        <AppButton :loading="loading" @click="load">
+          <template #icon><RefreshCw :size="15" /></template>
           刷新
-        </a-button>
+        </AppButton>
       </template>
     </PageHeader>
 
     <!-- 概览统计 -->
-    <div class="stat-strip">
-      <div class="stat-card">
-        <span class="stat-label">租户总数</span>
-        <span class="stat-value">{{ tenants.length }}</span>
+    <div class="mb-5 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+      <div class="rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong">
+        <span class="text-xs text-ink-faint">租户总数</span>
+        <span class="mt-1.5 block text-2xl font-bold leading-none tabular-nums text-ink">{{ tenants.length }}</span>
       </div>
-      <div class="stat-card">
-        <span class="stat-label">正常</span>
-        <span class="stat-value stat-ok">{{ statusCount('active') }}</span>
+      <div class="rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong">
+        <span class="text-xs text-ink-faint">正常</span>
+        <span class="mt-1.5 block text-2xl font-bold leading-none tabular-nums text-ok">{{ statusCount('active') }}</span>
       </div>
-      <div class="stat-card">
-        <span class="stat-label">待验证</span>
-        <span class="stat-value stat-pending">{{ statusCount('pending') }}</span>
+      <div class="rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong">
+        <span class="text-xs text-ink-faint">待验证</span>
+        <span class="mt-1.5 block text-2xl font-bold leading-none tabular-nums text-warn">{{ statusCount('pending') }}</span>
       </div>
-      <div class="stat-card">
-        <span class="stat-label">已封禁</span>
-        <span class="stat-value stat-banned">{{ statusCount('banned') }}</span>
+      <div class="rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong">
+        <span class="text-xs text-ink-faint">已封禁</span>
+        <span class="mt-1.5 block text-2xl font-bold leading-none tabular-nums text-err">{{ statusCount('banned') }}</span>
       </div>
     </div>
 
-    <a-table
+    <AppTable
       :columns="columns"
       :data-source="tenants"
       :loading="loading"
       row-key="id"
       :pagination="false"
     >
-      <template #bodyCell="{ column, record }">
+      <template #cell="{ column, record }">
         <template v-if="column.key === 'email'">
-          <a-space :size="8">
+          <span class="inline-flex items-center gap-2">
             <span>{{ record.email }}</span>
-            <a-tag v-if="record.isSuperAdmin" color="gold">平台管理员</a-tag>
-          </a-space>
+            <AppTag v-if="record.isSuperAdmin" color="gold">平台管理员</AppTag>
+          </span>
         </template>
         <template v-else-if="column.key === 'status'">
-          <a-tag :color="TENANT_STATUS[record.status as TenantStatus].color">
+          <AppTag :color="TENANT_STATUS[record.status as TenantStatus].color">
             {{ TENANT_STATUS[record.status as TenantStatus].label }}
-          </a-tag>
+          </AppTag>
         </template>
         <template v-else-if="column.key === 'tier'">
-          <a-tag color="cyan">{{ record.tier?.name ?? '-' }}</a-tag>
+          <AppTag color="cyan">{{ record.tier?.name ?? '-' }}</AppTag>
         </template>
         <template v-else-if="column.key === 'usage'">
-          <span class="usage-text">
+          <span class="tabular-nums text-ink-soft">
             短链 {{ record.usage?.links ?? 0 }}/{{ record.usage?.maxLinks ?? '-' }} ·
             域名 {{ record.usage?.domains ?? 0 }}/{{ record.usage?.maxDomains ?? '-' }}
           </span>
         </template>
         <template v-else-if="column.key === 'createdAt'">
-          {{ formatDateTime(record.createdAt) }}
+          {{ formatDateTime(record.createdAt as string) }}
         </template>
         <template v-else-if="column.key === 'action'">
-          <a-space :size="4">
-            <a-tooltip v-if="record.isSuperAdmin" title="平台管理员账号不可封禁">
-              <a-button size="small" danger disabled>
-                <template #icon><StopOutlined /></template>
+          <AppSpace :size="4">
+            <AppTooltip v-if="record.isSuperAdmin" title="平台管理员账号不可封禁">
+              <AppButton size="small" danger disabled>
+                <template #icon><CircleStop :size="13" /></template>
                 封禁
-              </a-button>
-            </a-tooltip>
-            <a-button
+              </AppButton>
+            </AppTooltip>
+            <AppButton
               v-else-if="record.status === 'active'"
               size="small"
               danger
-              @click="onToggleBan(record, 'banned')"
+              @click="onToggleBan(record as Tenant, 'banned')"
             >
-              <template #icon><StopOutlined /></template>
+              <template #icon><CircleStop :size="13" /></template>
               封禁
-            </a-button>
-            <a-button
+            </AppButton>
+            <AppButton
               v-else-if="record.status === 'banned'"
               size="small"
-              type="primary"
-              ghost
-              @click="onToggleBan(record, 'active')"
+              type="ghost"
+              @click="onToggleBan(record as Tenant, 'active')"
             >
-              <template #icon><PlayCircleOutlined /></template>
+              <template #icon><CirclePlay :size="13" /></template>
               解封
-            </a-button>
-            <a-button size="small" @click="openTierModal(record)">
-              <template #icon><SwapOutlined /></template>
+            </AppButton>
+            <AppButton size="small" @click="openTierModal(record as Tenant)">
+              <template #icon><ArrowRightLeft :size="13" /></template>
               调整等级
-            </a-button>
-            <a-button size="small" type="text" danger @click="openRemoveDomain(record)">
-              <template #icon><DeleteOutlined /></template>
+            </AppButton>
+            <AppButton size="small" type="text" danger @click="openRemoveDomain(record as Tenant)">
+              <template #icon><Trash2 :size="13" /></template>
               移除域名
-            </a-button>
-          </a-space>
+            </AppButton>
+          </AppSpace>
         </template>
       </template>
-    </a-table>
+    </AppTable>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { Modal, message } from 'ant-design-vue';
-import {
-  DeleteOutlined,
-  PlayCircleOutlined,
-  ReloadOutlined,
-  StopOutlined,
-  SwapOutlined,
-} from '@ant-design/icons-vue';
-import type { TableColumnsType } from 'ant-design-vue';
+import { ArrowRightLeft, CirclePlay, CircleStop, RefreshCw, Trash2 } from '@lucide/vue';
 
 import { listTenants, updateTenant } from '@/api/admin';
 import PageHeader from '@/components/PageHeader.vue';
+import { confirm } from '@/components/ui/confirm';
+import type { TableColumn } from '@/components/ui/types';
 import { TENANT_STATUS } from '@/constants/dict';
 import { ApiError } from '@/types/api';
 import type { Tenant, TenantStatus } from '@/types/api';
 import { formatDateTime } from '@/utils/format';
+import { message } from '@/utils/toast';
 
 const router = useRouter();
 
@@ -134,7 +128,7 @@ function statusCount(status: TenantStatus): number {
   return tenants.value.filter((t) => t.status === status).length;
 }
 
-const columns: TableColumnsType = [
+const columns: TableColumn[] = [
   { title: '邮箱', key: 'email', dataIndex: 'email' },
   { title: '前缀', key: 'slug', dataIndex: 'slug', width: 120 },
   { title: '状态', key: 'status', dataIndex: 'status', width: 100 },
@@ -165,19 +159,19 @@ onMounted(load);
 
 function onToggleBan(record: Tenant, status: 'banned' | 'active') {
   const label = status === 'banned' ? '封禁' : '解封';
-  Modal.confirm({
-    title: `${label}租户 ${record.email}?`,
+  confirm({
+    title: label + '租户 ' + record.email + '?',
     content:
       status === 'banned'
         ? '封禁后该租户将无法登录,其域名下的短码将不再放行。'
         : '解封后该租户可恢复正常使用。',
     okText: label,
-    okButtonProps: status === 'banned' ? { danger: true } : undefined,
+    danger: status === 'banned',
     cancelText: '取消',
     onOk: async () => {
       try {
         await updateTenant(record.id, { status });
-        message.success(`租户已${label}`);
+        message.success('租户已' + label);
         await load();
       } catch (error) {
         if (error instanceof ApiError) message.error(error.message);
@@ -195,58 +189,3 @@ function openRemoveDomain(record: Tenant) {
   router.push({ name: 'admin-tenant-remove-domain', params: { id: String(record.id) } });
 }
 </script>
-
-<style scoped>
-.stat-strip {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin-bottom: 20px;
-}
-
-@media (min-width: 992px) {
-  .stat-strip {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}
-
-.stat-card {
-  background: #f8fafc;
-  border: 1px solid #e6ebf1;
-  border-radius: 10px;
-  padding: 14px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.stat-label {
-  font-size: 12px;
-  color: #8b98a5;
-}
-
-.stat-value {
-  font-size: 22px;
-  font-weight: 700;
-  color: #0f172a;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-}
-
-.stat-ok {
-  color: #16a34a;
-}
-
-.stat-pending {
-  color: #d97706;
-}
-
-.stat-banned {
-  color: #dc2626;
-}
-
-.usage-text {
-  font-variant-numeric: tabular-nums;
-  color: #334155;
-}
-</style>

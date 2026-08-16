@@ -1,13 +1,13 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
-import Antd from 'ant-design-vue';
 
-import 'ant-design-vue/dist/reset.css';
-import '@/styles/global.css';
+import '@/styles/main.css';
 
 import App from './App.vue';
 import router from './router';
+import UI from '@/components/ui';
 import { useAuthStore } from '@/stores/auth';
+import { useThemeStore } from '@/stores/theme';
 import { setUnauthorizedHandler } from '@/utils/request';
 
 const app = createApp(App);
@@ -15,7 +15,10 @@ const pinia = createPinia();
 
 app.use(pinia);
 app.use(router);
-app.use(Antd);
+app.use(UI);
+
+// 首帧前应用主题,避免深浅色闪变
+useThemeStore(pinia).apply();
 
 // 401 → 清理登录态并回登录页(保留原路径,与路由守卫的 ?redirect= 衔接)。
 // 路由未就绪时(首屏守卫内的会话探测)由守卫自行重定向,这里跳过避免重复导航。

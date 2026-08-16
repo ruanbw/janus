@@ -1,0 +1,175 @@
+@import 'tailwindcss';
+
+/* 深色模式:html.dark 类驱动(class strategy) */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============ CLOAK 设计令牌 ============
+   品牌:极光靛蓝(indigo)主色 + 青(cyan)点缀
+   语义色通过 CSS 变量随明暗主题切换,经 @theme inline 映射为
+   bg-surface / text-ink / border-line 等工具类 */
+
+@theme {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono:
+    ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* 品牌色板:靛蓝紫 */
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+  --color-brand-950: #1e1b4b;
+
+  /* 点缀色:青 */
+  --color-accent-300: #67e8f9;
+  --color-accent-400: #22d3ee;
+  --color-accent-500: #06b6d4;
+  --color-accent-600: #0891b2;
+}
+
+/* 明暗主题 CSS 变量 */
+:root {
+  --surface: #ffffff;
+  --surface-muted: #f4f6fb;
+  --surface-strong: #e9edf6;
+  --ink: #0f172a;
+  --ink-soft: #475569;
+  --ink-faint: #94a3b8;
+  --line: #e5e8f2;
+  --line-strong: #d4d9e8;
+  --ok: #16a34a;
+  --warn: #d97706;
+  --err: #dc2626;
+  --info: #0284c7;
+  --sidebar-bg: #0c0f17;
+  --sidebar-bg-deep: #080b11;
+  --sidebar-ink: rgba(203, 213, 225, 0.72);
+  --sidebar-ink-active: #ffffff;
+  color-scheme: light;
+}
+
+.dark {
+  --surface: #10141d;
+  --surface-muted: #151b28;
+  --surface-strong: #1c2333;
+  --ink: #e6eaf2;
+  --ink-soft: #a3adc2;
+  --ink-faint: #6b7690;
+  --line: #242c3e;
+  --line-strong: #303a52;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --err: #f87171;
+  --info: #38bdf8;
+  --sidebar-bg: #070a10;
+  --sidebar-bg-deep: #04060a;
+  --sidebar-ink: rgba(203, 213, 225, 0.62);
+  --sidebar-ink-active: #ffffff;
+  color-scheme: dark;
+}
+
+/* 语义色 → 工具类(bg-surface / text-ink / border-line / text-ok …) */
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-strong: var(--surface-strong);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-err: var(--err);
+  --color-info: var(--info);
+}
+
+/* ============ 全局基础 ============ */
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  background: var(--surface-muted);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  transition:
+    background-color 0.25s ease,
+    color 0.25s ease;
+}
+
+/* 等宽字体工具类(短码、密钥、域名等场景) */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-faint);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 表单控件统一焦点环 */
+.app-field:focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 1px;
+}
+
+/* 表单校验错误态:由 AppFormItem 注入 data-invalid 到字段包装层 */
+[data-invalid='true'] .app-field {
+  border-color: var(--err);
+}
+
+[data-invalid='true'] .app-field:focus,
+[data-invalid='true'] .app-field:focus-visible {
+  outline-color: var(--err);
+}
+
+/* 页面切换过渡 */
+.page-enter-active,
+.page-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.page-leave-to {
+  opacity: 0;
+}
+
+/* 表格表头加粗 */
+.app-table thead th {
+  font-weight: 600;
+}

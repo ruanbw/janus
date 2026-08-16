@@ -2,90 +2,98 @@
   <div>
     <PageHeader title="短链" description="创建与管理短链;同一短码可在不同域名下指向不同目标">
       <template #actions>
-        <a-button type="primary" @click="openCreate">
-          <template #icon><PlusOutlined /></template>
+        <AppButton type="primary" @click="openCreate">
+          <template #icon><Plus :size="15" /></template>
           创建短链
-        </a-button>
+        </AppButton>
       </template>
     </PageHeader>
 
     <QuotaBar :links-used="usage?.links" :links-max="usage?.maxLinks" />
 
-    <a-table
+    <AppTable
       :columns="columns"
       :data-source="links"
       :loading="loading"
       row-key="id"
       :pagination="pagination"
+      :scroll="{ x: 1300 }"
       @change="onTableChange"
     >
-      <template #bodyCell="{ column, record }">
+      <template #cell="{ column, record }">
         <template v-if="column.key === 'code'">
-          <div class="code-cell">
-            <div class="domain-links">
-              <a-tooltip
-                v-for="fqdn in record.domains"
-                :key="fqdn"
-                title="点击复制"
+          <div class="flex min-w-0 flex-col items-start gap-0.5">
+            <AppTooltip
+              v-for="fqdn in record.domains"
+              :key="fqdn"
+              title="点击复制"
+            >
+              <span
+                class="mono inline-block max-w-full cursor-pointer truncate text-xs text-brand-600 hover:underline dark:text-brand-400"
+                @click="copyShortLink(record, fqdn)"
               >
-                <span class="domain-link mono" @click="copyShortLink(record, fqdn)">
-                  https://{{ fqdn }}/{{ record.code }}
-                </span>
-              </a-tooltip>
-            </div>
+                https://{{ fqdn }}/{{ record.code }}
+              </span>
+            </AppTooltip>
           </div>
         </template>
         <template v-else-if="column.key === 'linkType'">
-          <a-tag :color="LINK_TYPE[record.linkType as LinkType].color">
+          <AppTag :color="LINK_TYPE[record.linkType as LinkType].color">
             {{ LINK_TYPE[record.linkType as LinkType].label }}
-          </a-tag>
+          </AppTag>
         </template>
         <template v-else-if="column.key === 'targetUrls'">
-          <a-tooltip v-if="record.targetUrls.length > 0">
+          <AppTooltip v-if="record.targetUrls.length > 0" placement="top">
             <template #title>
-              <div v-for="(url, i) in record.targetUrls" :key="i">{{ url }}</div>
+              <div v-for="(url, i) in record.targetUrls" :key="i" class="max-w-xs break-all">{{ url }}</div>
             </template>
-            <span class="target-cell">
-              <LinkOutlined class="target-icon" />
-              {{ truncateText(record.targetUrls[0], 40) }}
-              <span v-if="record.targetUrls.length > 1" class="target-more">
+            <span class="inline-flex min-w-0 max-w-full items-center gap-1.5 text-[13px] text-ink">
+              <Link2 :size="13" class="shrink-0 text-ink-faint" />
+              <span class="truncate">{{ truncateText(record.targetUrls[0], 40) }}</span>
+              <span
+                v-if="record.targetUrls.length > 1"
+                class="shrink-0 rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-medium text-brand-600 dark:bg-brand-500/15 dark:text-brand-300"
+              >
                 +{{ record.targetUrls.length - 1 }}
               </span>
             </span>
-          </a-tooltip>
-          <span v-else class="target-cell">-</span>
+          </AppTooltip>
+          <span v-else class="text-ink-faint">-</span>
         </template>
         <template v-else-if="column.key === 'landing'">
           <template v-if="record.linkType === 'landing'">
-            <a-tooltip
+            <AppTooltip
               v-if="record.landingSource === 'url'"
               :title="record.landingUrl || ''"
             >
-              <span class="landing-cell">
+              <span class="block max-w-full truncate text-[13px] text-ink-soft">
                 {{ record.landingUrl ? truncateText(record.landingUrl, 28) : '-' }}
               </span>
-            </a-tooltip>
-            <a-tag v-else :color="record.landingUploaded ? 'success' : 'default'">
+            </AppTooltip>
+            <AppTag v-else :color="record.landingUploaded ? 'success' : 'default'">
               {{ record.landingUploaded ? '已上传' : '未上传' }}
-            </a-tag>
+            </AppTag>
           </template>
-          <span v-else class="landing-cell">—</span>
+          <span v-else class="text-ink-faint">—</span>
         </template>
         <template v-else-if="column.key === 'redirectStatus'">
-          <a-tag :color="REDIRECT_STATUS[record.redirectStatus as RedirectStatus].color">
+          <AppTag :color="REDIRECT_STATUS[record.redirectStatus as RedirectStatus].color">
             {{ REDIRECT_STATUS[record.redirectStatus as RedirectStatus].label }}
-          </a-tag>
+          </AppTag>
         </template>
         <template v-else-if="column.key === 'status'">
-          <a-tag :color="LINK_STATUS[record.status as LinkStatus].color">
+          <AppTag :color="LINK_STATUS[record.status as LinkStatus].color">
             {{ LINK_STATUS[record.status as LinkStatus].label }}
-          </a-tag>
+          </AppTag>
         </template>
         <template v-else-if="column.key === 'visits'">
-          <a class="visits-link" @click="goStats(record)">
+          <span
+            class="inline-flex cursor-pointer items-center gap-1.5 font-semibold text-brand-600 hover:underline dark:text-brand-400"
+            @click="goStats(record)"
+          >
             {{ record.visits }}
-            <EyeOutlined class="visits-icon" />
-          </a>
+            <Eye :size="13" class="text-ink-faint" />
+          </span>
         </template>
         <template v-else-if="column.key === 'clicks'">
           <span>{{ record.linkType === 'landing' ? record.clicks : '—' }}</span>
@@ -94,72 +102,64 @@
           {{ formatDateTime(record.createdAt) }}
         </template>
         <template v-else-if="column.key === 'action'">
-          <a-space :size="4">
-            <a-button size="small" type="text" @click="openEdit(record)">
-              <template #icon><EditOutlined /></template>
+          <div class="flex items-center gap-1">
+            <AppButton size="small" type="text" @click="openEdit(record)">
+              <template #icon><Pencil :size="13" /></template>
               编辑
-            </a-button>
-            <a-button
+            </AppButton>
+            <AppButton
               v-if="record.status === 'enabled'"
               size="small"
               type="text"
               danger
               @click="onToggleStatus(record)"
             >
-              <template #icon><StopOutlined /></template>
+              <template #icon><CircleStop :size="13" /></template>
               停用
-            </a-button>
-            <a-button v-else size="small" type="text" @click="onToggleStatus(record)">
-              <template #icon><PlayCircleOutlined /></template>
+            </AppButton>
+            <AppButton v-else size="small" type="text" @click="onToggleStatus(record)">
+              <template #icon><CirclePlay :size="13" /></template>
               启用
-            </a-button>
-            <a-button size="small" type="text" danger @click="onDelete(record)">
-              <template #icon><DeleteOutlined /></template>
+            </AppButton>
+            <AppButton size="small" type="text" danger @click="onDelete(record)">
+              <template #icon><Trash2 :size="13" /></template>
               删除
-            </a-button>
-            <a-popconfirm
+            </AppButton>
+            <AppPopconfirm
               title="彻底删除将物理删除该短链及其全部访问记录,且不可恢复。确定继续?"
               ok-text="彻底删除"
-              :ok-button-props="{ danger: true }"
               cancel-text="取消"
+              danger
               @confirm="onPurge(record)"
             >
-              <a-button size="small" type="text" danger>
-                <template #icon><ExclamationCircleOutlined /></template>
+              <AppButton size="small" type="text" danger>
+                <template #icon><CircleAlert :size="13" /></template>
                 彻底删除
-              </a-button>
-            </a-popconfirm>
-          </a-space>
+              </AppButton>
+            </AppPopconfirm>
+          </div>
         </template>
       </template>
-    </a-table>
+    </AppTable>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { Modal, message } from 'ant-design-vue';
-import {
-  DeleteOutlined,
-  EditOutlined,
-  ExclamationCircleOutlined,
-  EyeOutlined,
-  LinkOutlined,
-  PlayCircleOutlined,
-  PlusOutlined,
-  StopOutlined,
-} from '@ant-design/icons-vue';
-import type { TableColumnsType, TablePaginationConfig } from 'ant-design-vue';
+import { CircleAlert, CirclePlay, CircleStop, Eye, Link2, Pencil, Plus, Trash2 } from '@lucide/vue';
+import type { TableColumn, TablePaginationConfig } from '@/components/ui/types';
 
 import { deleteLink, listLinks, purgeLink, updateLink } from '@/api/links';
 import PageHeader from '@/components/PageHeader.vue';
 import QuotaBar from '@/components/QuotaBar.vue';
+import { confirm } from '@/components/ui/confirm';
 import { LINK_STATUS, LINK_TYPE, REDIRECT_STATUS } from '@/constants/dict';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
 import type { Link, LinkStatus, LinkType, RedirectStatus } from '@/types/api';
 import { formatDateTime, truncateText } from '@/utils/format';
+import { message } from '@/utils/toast';
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -172,10 +172,10 @@ const pageSize = ref(10);
 
 const usage = computed(() => auth.config?.usage);
 
-const columns: TableColumnsType = [
+const columns: TableColumn[] = [
   { title: '链接', key: 'code', dataIndex: 'code', width: 240 },
   { title: '类型', key: 'linkType', dataIndex: 'linkType', width: 80 },
-  { title: '目标 URL', key: 'targetUrls', dataIndex: 'targetUrls' },
+  { title: '目标 URL', key: 'targetUrls', dataIndex: 'targetUrls', ellipsis: true },
   { title: '落地页', key: 'landing', width: 170 },
   { title: '重定向', key: 'redirectStatus', dataIndex: 'redirectStatus', width: 130 },
   { title: '状态', key: 'status', dataIndex: 'status', width: 90 },
@@ -190,7 +190,7 @@ const pagination = computed<TablePaginationConfig>(() => ({
   pageSize: pageSize.value,
   total: total.value,
   showSizeChanger: true,
-  showTotal: (t) => `共 ${t} 条`,
+  showTotal: (t) => '共 ' + t + ' 条',
 }));
 
 async function load() {
@@ -236,7 +236,7 @@ async function onToggleStatus(link: Link) {
   const label = next === 'disabled' ? '停用' : '启用';
   try {
     await updateLink(link.id, { status: next });
-    message.success(`短链「${link.code}」已${label}`);
+    message.success('短链「' + link.code + '」已' + label);
     await load();
   } catch (error) {
     if (error instanceof ApiError) message.error(error.message);
@@ -245,11 +245,12 @@ async function onToggleStatus(link: Link) {
 }
 
 function onDelete(link: Link) {
-  Modal.confirm({
-    title: `删除短链「${link.code}」?`,
+  confirm({
+    title: '删除短链「' + link.code + '」?',
     content: '删除为逻辑删除:记录、关联与访问信息保留,但「域名/短码」将不再命中。',
     okText: '删除',
     cancelText: '取消',
+    danger: true,
     onOk: async () => {
       try {
         await deleteLink(link.id);
@@ -280,83 +281,12 @@ function goStats(link: Link) {
 
 /** 复制"域名/短码"的完整短链(https://<域名>/<短码>)到剪贴板 */
 async function copyShortLink(link: Link, fqdn: string) {
-  const url = `https://${fqdn}/${link.code}`;
+  const url = 'https://' + fqdn + '/' + link.code;
   try {
     await navigator.clipboard.writeText(url);
-    message.success(`已复制:${url}`);
+    message.success('已复制:' + url);
   } catch {
     message.error('复制失败,请手动选择复制');
   }
 }
 </script>
-
-<style scoped>
-.code-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-}
-
-.domain-links {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 0;
-}
-
-.domain-link {
-  display: inline-block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: #1677ff;
-  cursor: pointer;
-}
-
-.domain-link:hover {
-  text-decoration: underline;
-}
-
-.target-cell {
-  color: #334155;
-}
-
-.target-icon {
-  margin-right: 4px;
-  color: #8b98a5;
-  font-size: 12px;
-}
-
-.landing-cell {
-  color: #334155;
-  word-break: break-all;
-}
-
-.target-more {
-  margin-left: 6px;
-  padding: 0 6px;
-  font-size: 12px;
-  line-height: 18px;
-  color: #1677ff;
-  background: rgba(22, 119, 255, 0.1);
-  border-radius: 9px;
-  white-space: nowrap;
-}
-
-.visits-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.visits-icon {
-  font-size: 12px;
-  color: #8b98a5;
-}
-</style>

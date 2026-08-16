@@ -1,28 +1,30 @@
 <template>
-  <div v-if="visible" class="quota-bar">
-    <div v-if="linksMax !== undefined" class="quota-row">
-      <span class="quota-label">短链配额</span>
-      <a-progress
-        class="quota-progress"
+  <div
+    v-if="visible"
+    class="mb-5 grid grid-cols-1 gap-3.5 rounded-xl border border-line bg-surface p-4 md:grid-cols-2"
+    :class="single ? 'md:grid-cols-1' : ''"
+  >
+    <div v-if="linksMax !== undefined" class="flex min-w-0 items-center gap-3">
+      <span class="w-16 shrink-0 text-[13px] text-ink-soft">短链配额</span>
+      <AppProgress
         :percent="linkPercent"
         :status="linkPercent >= 100 ? 'exception' : 'normal'"
         :show-info="false"
         :stroke-width="6"
       />
-      <span class="quota-value" :class="{ danger: linkPercent >= 100 }">
+      <span class="shrink-0 text-right text-[13px] font-semibold tabular-nums" :class="linkPercent >= 100 ? 'text-err' : 'text-ink'">
         {{ linksUsed ?? 0 }}/{{ linksMax ?? '-' }}
       </span>
     </div>
-    <div v-if="domainsMax !== undefined" class="quota-row">
-      <span class="quota-label">域名配额</span>
-      <a-progress
-        class="quota-progress"
+    <div v-if="domainsMax !== undefined" class="flex min-w-0 items-center gap-3">
+      <span class="w-16 shrink-0 text-[13px] text-ink-soft">域名配额</span>
+      <AppProgress
         :percent="domainPercent"
         :status="domainPercent >= 100 ? 'exception' : 'normal'"
         :show-info="false"
         :stroke-width="6"
       />
-      <span class="quota-value" :class="{ danger: domainPercent >= 100 }">
+      <span class="shrink-0 text-right text-[13px] font-semibold tabular-nums" :class="domainPercent >= 100 ? 'text-err' : 'text-ink'">
         {{ domainsUsed ?? 0 }}/{{ domainsMax ?? '-' }}
       </span>
     </div>
@@ -40,6 +42,7 @@ const props = defineProps<{
 }>();
 
 const visible = computed(() => props.linksMax !== undefined || props.domainsMax !== undefined);
+const single = computed(() => (props.linksMax !== undefined) !== (props.domainsMax !== undefined));
 
 function percent(used: number | undefined, max: number | undefined): number {
   if (max === undefined || max <= 0) return 0;
@@ -49,61 +52,3 @@ function percent(used: number | undefined, max: number | undefined): number {
 const linkPercent = computed(() => percent(props.linksUsed, props.linksMax));
 const domainPercent = computed(() => percent(props.domainsUsed, props.domainsMax));
 </script>
-
-<style scoped>
-.quota-bar {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 14px;
-  padding: 14px 16px;
-  margin-bottom: 20px;
-  background: #f8fafc;
-  border: 1px solid #e6ebf1;
-  border-radius: 10px;
-}
-
-@media (min-width: 768px) {
-  .quota-bar {
-    grid-template-columns: 1fr 1fr;
-  }
-}
-
-/* 仅一行配额时占满整行,避免左侧留白 */
-.quota-bar:has(> .quota-row:only-child) {
-  grid-template-columns: 1fr;
-}
-
-.quota-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.quota-label {
-  flex-shrink: 0;
-  width: 64px;
-  font-size: 13px;
-  color: #5b6b7c;
-}
-
-.quota-progress {
-  flex: 1;
-  min-width: 60px;
-  margin: 0 !important;
-}
-
-.quota-value {
-  flex-shrink: 0;
-  min-width: 52px;
-  text-align: right;
-  font-size: 13px;
-  font-weight: 600;
-  color: #0f172a;
-  font-variant-numeric: tabular-nums;
-}
-
-.quota-value.danger {
-  color: #dc2626;
-}
-</style>

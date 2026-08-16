@@ -2,172 +2,168 @@
   <div>
     <PageHeader :title="isEdit ? '编辑短链' : '创建短链'" :description="headerDescription">
       <template #actions>
-        <a-button @click="goBack">
-          <template #icon><ArrowLeftOutlined /></template>
+        <AppButton @click="goBack">
+          <template #icon><ArrowLeft :size="15" /></template>
           返回
-        </a-button>
+        </AppButton>
       </template>
     </PageHeader>
 
-    <a-card :bordered="false" class="form-card">
-      <a-spin :spinning="loading">
-        <a-form ref="formRef" :model="form" :rules="rules" layout="vertical">
-          <a-form-item name="code" label="短码" :extra="codeExtra">
-            <a-input
-              v-model:value="form.code"
+    <AppCard :bordered="false" class="form-card">
+      <AppSpin :spinning="loading">
+        <AppForm ref="formRef" :model="form as unknown as Record<string, unknown>" :rules="rules">
+          <AppFormItem name="code" label="短码" :extra="codeExtra">
+            <AppInput
+              v-model="form.code"
               placeholder="留空自动生成"
               :maxlength="SHORT_CODE_MAX_LENGTH"
               :disabled="isEdit"
             />
-          </a-form-item>
+          </AppFormItem>
 
-          <a-form-item
+          <AppFormItem
             name="linkType"
             label="短链类型"
             extra="跳转型:访问短链后立即重定向到目标 URL(支持多个按顺序轮询)。落地页型:先展示一个中间落地页(在线地址或上传的压缩包),访问者点击后才跳转,可单独统计「点击」数。"
           >
-            <a-radio-group v-model:value="form.linkType">
-              <a-radio value="redirect">跳转型</a-radio>
-              <a-radio value="landing">落地页型</a-radio>
-            </a-radio-group>
-          </a-form-item>
+            <AppRadioGroup v-model="form.linkType">
+              <AppRadio value="redirect">跳转型</AppRadio>
+              <AppRadio value="landing">落地页型</AppRadio>
+            </AppRadioGroup>
+          </AppFormItem>
 
-          <a-form-item
+          <AppFormItem
             name="targetUrls"
             label="目标 URL"
             extra="支持配置多个目标 URL,访问时按从上到下的顺序轮询分发。支持任意协议(如 https://、http://、mailto:)。每个 URL 不能包含换行/制表符等控制字符,单个最长 4096 字符。"
           >
-            <div class="target-url-list">
+            <div class="flex flex-col gap-2">
               <div
                 v-for="(_, index) in form.targetUrls"
                 :key="index"
-                class="target-url-row"
+                class="flex items-center gap-1.5"
               >
-                <a-input
-                  v-model:value="form.targetUrls[index]"
+                <AppInput
+                  v-model="form.targetUrls[index]"
                   placeholder="https://example.com/page"
                 />
-                <a-button
+                <AppButton
                   v-if="form.targetUrls.length > 1"
                   type="text"
                   danger
-                  class="target-url-remove"
+                  class="shrink-0"
                   @click="removeTargetUrl(index)"
                 >
-                  <template #icon><MinusCircleOutlined /></template>
-                </a-button>
+                  <template #icon><CircleMinus :size="15" /></template>
+                </AppButton>
               </div>
-              <a-button type="dashed" block class="target-url-add" @click="addTargetUrl">
-                <template #icon><PlusOutlined /></template>
+              <AppButton type="dashed" block @click="addTargetUrl">
+                <template #icon><Plus :size="15" /></template>
                 添加目标 URL
-              </a-button>
+              </AppButton>
             </div>
-          </a-form-item>
+          </AppFormItem>
 
           <template v-if="form.linkType === 'landing'">
-            <a-form-item
+            <AppFormItem
               name="landingSource"
               label="落地页来源"
               extra="URL 地址:落地页直接指向一个在线地址,访问时先重定向到该地址。上传压缩包:上传一个静态站点 zip(必须包含 index.html),由本服务托管,访问时直接展示。"
             >
-              <a-radio-group v-model:value="form.landingSource">
-                <a-radio value="url">URL 地址</a-radio>
-                <a-radio value="upload">上传压缩包</a-radio>
-              </a-radio-group>
-            </a-form-item>
+              <AppRadioGroup v-model="form.landingSource">
+                <AppRadio value="url">URL 地址</AppRadio>
+                <AppRadio value="upload">上传压缩包</AppRadio>
+              </AppRadioGroup>
+            </AppFormItem>
 
-            <a-form-item
+            <AppFormItem
               v-if="form.landingSource === 'url'"
               name="landingUrl"
               label="落地页地址"
               extra="访问落地页型短链时,先重定向到此地址。不能包含控制字符,最长 4096 字符。仅在「落地页来源 = URL 地址」时填写。"
             >
-              <a-input v-model:value="form.landingUrl" placeholder="https://example.com/landing" />
-            </a-form-item>
+              <AppInput v-model="form.landingUrl" placeholder="https://example.com/landing" />
+            </AppFormItem>
 
-            <a-form-item
+            <AppFormItem
               v-else
               name="landingFile"
               label="落地页压缩包"
               extra="压缩包必须包含 index.html,作为落地页入口。上传为替换式:再次上传会覆盖旧版本,成功后立即生效,无需重新创建短链。仅支持 .zip 格式。"
             >
-              <div class="landing-upload">
-                <a-space>
-                  <a-upload accept=".zip" :show-upload-list="false" :before-upload="onSelectZip">
-                    <a-button :loading="landingUploading">
-                      <template #icon><UploadOutlined /></template>
+              <div class="flex flex-col gap-2">
+                <div class="flex items-center gap-2.5">
+                  <AppUpload accept=".zip" :before-upload="onSelectZip">
+                    <AppButton :loading="landingUploading">
+                      <template #icon><Upload :size="15" /></template>
                       {{ form.landingUploaded ? '重新上传压缩包' : '选择 zip 压缩包' }}
-                    </a-button>
-                  </a-upload>
-                  <a-tag v-if="form.landingUploaded" color="success">已上传</a-tag>
-                  <a-tag v-else color="default">未上传</a-tag>
-                </a-space>
-                <div v-if="landingFile" class="landing-file-name">待上传:{{ landingFile.name }}</div>
+                    </AppButton>
+                  </AppUpload>
+                  <AppTag v-if="form.landingUploaded" color="success">已上传</AppTag>
+                  <AppTag v-else color="default">未上传</AppTag>
+                </div>
+                <div v-if="landingFile" class="break-all text-xs text-ink-soft">
+                  待上传:{{ landingFile.name }}
+                </div>
               </div>
-            </a-form-item>
+            </AppFormItem>
           </template>
 
-          <a-form-item
+          <AppFormItem
             name="domainIds"
             label="关联域名"
             extra="仅已激活(active)的域名可关联短链;待激活、校验失败、已停用的域名置灰不可选。同一条短码可在不同域名下指向不同目标,至少选择一个域名。"
           >
-            <a-select
-              v-model:value="form.domainIds"
-              mode="multiple"
+            <AppSelect
+              v-model="form.domainIds"
+              multiple
               placeholder="选择关联域名"
               :options="domainOptions"
               :max-tag-count="3"
             />
-          </a-form-item>
+          </AppFormItem>
 
-          <a-form-item
+          <AppFormItem
             v-if="form.linkType === 'redirect'"
             name="redirectStatus"
             label="重定向方式"
             extra="临时重定向(302):浏览器与搜索引擎不缓存跳转,目标变更后立即生效,适合经常调整目标的场景。永久重定向(301):浏览器与搜索引擎会缓存跳转,目标变更后旧地址可能长期命中缓存。"
           >
-            <a-radio-group v-model:value="form.redirectStatus">
-              <a-radio value="302">临时重定向(302)</a-radio>
-              <a-radio value="301">永久重定向(301)</a-radio>
-            </a-radio-group>
-          </a-form-item>
+            <AppRadioGroup v-model="form.redirectStatus">
+              <AppRadio value="302">临时重定向(302)</AppRadio>
+              <AppRadio value="301">永久重定向(301)</AppRadio>
+            </AppRadioGroup>
+          </AppFormItem>
 
-          <a-form-item
+          <AppFormItem
             v-if="isEdit"
             name="status"
             label="状态"
             extra="启用:短链正常解析并计入访问统计。停用:短链保留但访问时返回未命中(404),可随时重新启用。"
           >
-            <a-radio-group v-model:value="form.status">
-              <a-radio value="enabled">启用</a-radio>
-              <a-radio value="disabled">停用</a-radio>
-            </a-radio-group>
-          </a-form-item>
+            <AppRadioGroup v-model="form.status">
+              <AppRadio value="enabled">启用</AppRadio>
+              <AppRadio value="disabled">停用</AppRadio>
+            </AppRadioGroup>
+          </AppFormItem>
 
-          <a-form-item>
-            <a-space>
-              <a-button type="primary" :loading="submitting" @click="onSubmit">保存</a-button>
-              <a-button @click="goBack">取消</a-button>
-            </a-space>
-          </a-form-item>
-        </a-form>
-      </a-spin>
-    </a-card>
+          <AppFormItem>
+            <AppSpace>
+              <AppButton type="primary" :loading="submitting" @click="onSubmit">保存</AppButton>
+              <AppButton @click="goBack">取消</AppButton>
+            </AppSpace>
+          </AppFormItem>
+        </AppForm>
+      </AppSpin>
+    </AppCard>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { message } from 'ant-design-vue';
-import {
-  ArrowLeftOutlined,
-  MinusCircleOutlined,
-  PlusOutlined,
-  UploadOutlined,
-} from '@ant-design/icons-vue';
-import type { FormInstance, Rule } from 'ant-design-vue/es/form';
+import { ArrowLeft, CircleMinus, Plus, Upload } from '@lucide/vue';
+import type { FormRule } from '@/components/ui/types';
 
 import { listDomains } from '@/api/domains';
 import { createLink, getLink, updateLink, uploadLanding } from '@/api/links';
@@ -179,6 +175,7 @@ import {
 } from '@/constants/dict';
 import { ApiError, getQuotaUsage } from '@/types/api';
 import type { Domain, LandingSource, Link, LinkType, RedirectStatus } from '@/types/api';
+import { message } from '@/utils/toast';
 
 const route = useRoute();
 const router = useRouter();
@@ -197,7 +194,7 @@ const headerDescription = computed(() =>
     : '选择短链类型、目标与关联域名,提交后立即生效;短码可留空自动生成',
 );
 
-const formRef = ref<FormInstance>();
+const formRef = ref();
 const submitting = ref(false);
 const loading = ref(false);
 const landingFile = ref<File | null>(null);
@@ -258,18 +255,19 @@ const codeExtra = computed(() =>
 
 const hasControlChars = (value: string) => /[\u0000-\u001f\u007f]/.test(value);
 
-const rules: Record<string, Rule[]> = {
+const rules: Record<string, FormRule[]> = {
   code: [
     {
-      validator: (_rule, value: string) => {
-        if (!value) return Promise.resolve();
-        if (!SHORT_CODE_PATTERN.test(value)) {
+      validator: (_rule, value: unknown) => {
+        const v = value as string;
+        if (!v) return Promise.resolve();
+        if (!SHORT_CODE_PATTERN.test(v)) {
           return Promise.reject(new Error('短码仅允许字母与数字'));
         }
-        if (SHORT_CODE_FORBIDDEN_PATTERN.test(value)) {
+        if (SHORT_CODE_FORBIDDEN_PATTERN.test(v)) {
           return Promise.reject(new Error('短码不能包含易混淆字符 0/O/1/l/I'));
         }
-        if (value.length > SHORT_CODE_MAX_LENGTH) {
+        if (v.length > SHORT_CODE_MAX_LENGTH) {
           return Promise.reject(new Error('短码最长 ' + SHORT_CODE_MAX_LENGTH + ' 位'));
         }
         return Promise.resolve();
@@ -278,12 +276,13 @@ const rules: Record<string, Rule[]> = {
   ],
   targetUrls: [
     {
-      validator: (_rule, value: string[]) => {
+      validator: (_rule, value: unknown) => {
         if (!Array.isArray(value) || value.length === 0) {
           return Promise.reject(new Error('请至少填写一个目标 URL'));
         }
-        for (let i = 0; i < value.length; i++) {
-          const url = (value[i] ?? '').trim();
+        const urls = value as string[];
+        for (let i = 0; i < urls.length; i++) {
+          const url = (urls[i] ?? '').trim();
           if (!url) {
             return Promise.reject(new Error('第 ' + (i + 1) + ' 个目标 URL 不能为空'));
           }
@@ -300,11 +299,11 @@ const rules: Record<string, Rule[]> = {
   ],
   landingUrl: [
     {
-      validator: (_rule, value: string) => {
+      validator: (_rule, value: unknown) => {
         if (form.linkType !== 'landing' || form.landingSource !== 'url') {
           return Promise.resolve();
         }
-        const url = (value ?? '').trim();
+        const url = String(value ?? '').trim();
         if (!url) {
           return Promise.reject(new Error('请填写落地页地址'));
         }
@@ -320,8 +319,8 @@ const rules: Record<string, Rule[]> = {
   ],
   domainIds: [
     {
-      validator: (_rule, value: number[]) => {
-        if (!value || value.length === 0) {
+      validator: (_rule, value: unknown) => {
+        if (!Array.isArray(value) || value.length === 0) {
           return Promise.reject(new Error('请至少选择一个关联域名'));
         }
         return Promise.resolve();
@@ -407,7 +406,7 @@ function removeTargetUrl(index: number) {
   form.targetUrls.splice(index, 1);
 }
 
-/** 选择 zip:拦截 antd 默认上传;编辑时立即上传,创建时留待建链后上传 */
+/** 选择 zip:拦截默认上传;编辑时立即上传,创建时留待建链后上传 */
 async function onSelectZip(file: File): Promise<boolean> {
   landingFile.value = file;
   if (isEdit.value && link.value) {
@@ -518,37 +517,5 @@ function goBack() {
 <style scoped>
 .form-card {
   max-width: 640px;
-}
-
-.target-url-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.target-url-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.target-url-remove {
-  flex-shrink: 0;
-}
-
-.target-url-add {
-  width: 100%;
-}
-
-.landing-upload {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.landing-file-name {
-  font-size: 12px;
-  color: #334155;
-  word-break: break-all;
 }
 </style>

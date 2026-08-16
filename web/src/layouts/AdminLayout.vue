@@ -1,130 +1,261 @@
 <template>
-  <a-layout class="admin-layout">
-    <!-- 侧边栏 -->
-    <a-layout-sider
-      v-model:collapsed="collapsed"
-      collapsible
-      :trigger="null"
-      :width="224"
-      :collapsed-width="64"
-      theme="dark"
-      class="sider"
+  <div class="min-h-screen bg-surface-muted">
+    <!-- ================= 桌面侧边栏(≥768px) ================= -->
+    <aside
+      class="fixed inset-y-0 left-0 z-30 hidden flex-col overflow-hidden bg-[var(--sidebar-bg)] transition-[width] duration-200 md:flex"
+      :class="collapsed ? 'w-[64px]' : 'w-[224px]'"
     >
-      <div class="sider-logo" @click="router.push('/domains')">
+      <div
+        class="flex h-14 shrink-0 cursor-pointer select-none items-center justify-center gap-2.5"
+        @click="router.push('/domains')"
+      >
         <BrandMark :size="collapsed ? 30 : 32" />
-        <span v-if="!collapsed" class="sider-wordmark">CLOAK 后台</span>
+        <span v-if="!collapsed" class="text-[15px] font-bold tracking-[2px] text-white">CLOAK 后台</span>
       </div>
 
-      <a-menu theme="dark" mode="inline" :selected-keys="[activeKey]" @click="onMenuClick">
-        <a-menu-item-group v-if="!collapsed" title="管理">
-          <a-menu-item key="/domains">
-            <GlobalOutlined />
-            <span>域名</span>
-          </a-menu-item>
-          <a-menu-item key="/links">
-            <LinkOutlined />
-            <span>短链</span>
-          </a-menu-item>
-          <a-menu-item key="/stats">
-            <BarChartOutlined />
-            <span>统计</span>
-          </a-menu-item>
-        </a-menu-item-group>
+      <nav class="flex-1 overflow-y-auto px-2.5 py-2">
+        <template v-for="group in navGroups" :key="group.title">
+          <p v-if="!collapsed" class="px-2.5 pt-3 pb-1.5 text-[11px] font-medium tracking-wider text-slate-500">
+            {{ group.title }}
+          </p>
+          <button
+            v-for="item in visibleItems(group)"
+            :key="item.to"
+            type="button"
+            class="group mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors"
+            :class="
+              isActive(item.to)
+                ? 'bg-brand-600 font-medium text-white shadow-sm'
+                : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
+            "
+            :title="collapsed ? item.label : undefined"
+            @click="router.push(item.to)"
+          >
+            <component :is="item.icon" :size="16" class="shrink-0" :class="collapsed ? 'mx-auto' : ''" />
+            <span v-if="!collapsed">{{ item.label }}</span>
+          </button>
+        </template>
+      </nav>
 
-        <a-menu-item-group v-if="!collapsed" title="系统">
-          <a-menu-item key="/account">
-            <SettingOutlined />
-            <span>账号设置</span>
-          </a-menu-item>
-          <a-menu-item v-if="auth.isSuperAdmin" key="/admin/tenants">
-            <CrownOutlined />
-            <span>平台管理</span>
-          </a-menu-item>
-        </a-menu-item-group>
-      </a-menu>
+      <div class="shrink-0 pb-4 pt-2 text-center text-[11px] tracking-wider text-slate-600">
+        <span v-if="!collapsed">CLOAK v0.1</span>
+      </div>
+    </aside>
 
-      <div v-if="!collapsed" class="sider-version">CLOAK v0.1</div>
-    </a-layout-sider>
-
-    <!-- 主区域 -->
-    <a-layout class="main-area">
-      <a-layout-header class="header">
-        <div class="header-left">
-          <a-button type="text" class="collapse-btn" @click="collapsed = !collapsed">
-            <template #icon>
-              <MenuFoldOutlined v-if="!collapsed" />
-              <MenuUnfoldOutlined v-else />
-            </template>
-          </a-button>
-          <span class="header-title">{{ routeTitle }}</span>
-        </div>
-
-        <div class="header-right">
-          <a-tag v-if="auth.tenant?.tier" class="tier-tag" color="cyan">
-            等级 · {{ auth.tenant.tier.name }}
-          </a-tag>
-
-          <a-dropdown placement="bottomRight" :trigger="['click']">
-            <div class="user-chip">
-              <a-avatar :size="30" class="user-avatar">{{ avatarInitial }}</a-avatar>
-              <span class="user-email">{{ auth.tenant?.email }}</span>
-              <DownOutlined class="user-caret" />
+    <!-- ================= 移动端抽屉 ================= -->
+    <Transition name="drawer-fade">
+      <div v-if="isMobile && drawerOpen" class="fixed inset-0 z-40 md:hidden">
+        <div class="absolute inset-0 bg-black/45" @click="drawerOpen = false" />
+        <aside class="absolute inset-y-0 left-0 flex w-64 flex-col bg-[var(--sidebar-bg)] shadow-2xl">
+          <div class="flex h-14 shrink-0 items-center justify-between px-4">
+            <div class="flex cursor-pointer items-center gap-2.5" @click="go('/domains')">
+              <BrandMark :size="28" />
+              <span class="text-[15px] font-bold tracking-[2px] text-white">CLOAK 后台</span>
             </div>
-            <template #overlay>
-              <a-menu @click="onUserMenu">
-                <a-menu-item key="account">
-                  <UserOutlined />
-                  账号设置
-                </a-menu-item>
-                <a-menu-item-divider />
-                <a-menu-item key="logout" danger>
-                  <LogoutOutlined />
-                  退出登录
-                </a-menu-item>
-              </a-menu>
+            <button type="button" class="text-slate-400 hover:text-white" @click="drawerOpen = false">
+              <X :size="18" />
+            </button>
+          </div>
+          <nav class="flex-1 overflow-y-auto px-2.5 py-2">
+            <template v-for="group in navGroups" :key="group.title">
+              <p class="px-2.5 pt-3 pb-1.5 text-[11px] font-medium tracking-wider text-slate-500">{{ group.title }}</p>
+              <button
+                v-for="item in visibleItems(group)"
+                :key="item.to"
+                type="button"
+                class="mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors"
+                :class="isActive(item.to) ? 'bg-brand-600 font-medium text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'"
+                @click="go(item.to)"
+              >
+                <component :is="item.icon" :size="16" class="shrink-0" />
+                {{ item.label }}
+              </button>
             </template>
-          </a-dropdown>
-        </div>
-      </a-layout-header>
+          </nav>
+        </aside>
+      </div>
+    </Transition>
 
-      <a-layout-content class="content">
+    <!-- ================= 主区域 ================= -->
+    <div class="flex min-h-screen flex-col md:pl-[224px]" :class="collapsed ? 'md:pl-[64px]' : ''">
+      <header class="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-surface px-4 shadow-sm md:px-6">
+        <div class="flex min-w-0 items-center gap-2">
+          <button
+            type="button"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-surface-strong hover:text-ink"
+            @click="onToggleSidebar"
+          >
+            <PanelLeftClose v-if="!collapsed && !isMobile" :size="17" />
+            <PanelLeftOpen v-else-if="!isMobile" :size="17" />
+            <Menu v-else :size="17" @click="drawerOpen = true" />
+          </button>
+          <h1 class="truncate text-[15px] font-semibold text-ink">{{ routeTitle }}</h1>
+        </div>
+
+        <div class="flex shrink-0 items-center gap-2.5">
+          <AppTag v-if="auth.tenant?.tier" color="cyan">等级 · {{ auth.tenant.tier.name }}</AppTag>
+
+          <button
+            type="button"
+            class="flex h-8 w-8 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-surface-strong hover:text-ink"
+            :title="theme.isDark ? '切换到浅色模式' : '切换到深色模式'"
+            @click="theme.toggle()"
+          >
+            <Sun v-if="theme.isDark" :size="16" />
+            <Moon v-else :size="16" />
+          </button>
+
+          <DropdownMenuRoot>
+            <DropdownMenuTrigger as-child>
+              <button
+                type="button"
+                class="flex items-center gap-2 rounded-full py-1 pr-1.5 pl-1 transition-colors hover:bg-surface-strong"
+              >
+                <span class="flex h-7 w-7 items-center justify-center rounded-full bg-brand-600 text-[12px] font-semibold text-white">
+                  {{ avatarInitial }}
+                </span>
+                <span class="hidden max-w-44 truncate text-[13px] text-ink sm:block">{{ auth.tenant?.email }}</span>
+                <ChevronDown :size="12" class="text-ink-faint" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuPortal>
+              <DropdownMenuContent
+                :side-offset="6"
+                align="end"
+                class="z-[75] min-w-40 rounded-xl border border-line bg-surface p-1.5 shadow-xl"
+              >
+                <DropdownMenuItem
+                  class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-ink outline-none data-[highlighted]:bg-brand-50 data-[highlighted]:text-brand-700 dark:data-[highlighted]:bg-brand-500/15 dark:data-[highlighted]:text-brand-300"
+                  @select="go('/account')"
+                >
+                  <User :size="14" />
+                  账号设置
+                </DropdownMenuItem>
+                <DropdownMenuSeparator class="my-1 h-px bg-line" />
+                <DropdownMenuItem
+                  class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-err outline-none data-[highlighted]:bg-err/10"
+                  @select="onLogout"
+                >
+                  <LogOut :size="14" />
+                  退出登录
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenuPortal>
+          </DropdownMenuRoot>
+        </div>
+      </header>
+
+      <main class="mx-auto w-full max-w-[1440px] flex-1 px-4 py-5 md:px-6">
         <router-view v-slot="{ Component }">
           <transition name="page" mode="out-in">
             <component :is="Component" :key="route.fullPath" />
           </transition>
         </router-view>
-      </a-layout-content>
+      </main>
 
-      <a-layout-footer class="footer">CLOAK · 自托管短链服务</a-layout-footer>
-    </a-layout>
-  </a-layout>
+      <footer class="pb-5 text-center text-xs text-ink-faint">CLOAK · 自托管短链服务</footer>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
-  BarChartOutlined,
-  CrownOutlined,
-  DownOutlined,
-  GlobalOutlined,
-  LinkOutlined,
-  LogoutOutlined,
-  MenuFoldOutlined,
-  MenuUnfoldOutlined,
-  SettingOutlined,
-  UserOutlined,
-} from '@ant-design/icons-vue';
+  BarChart3,
+  ChevronDown,
+  Crown,
+  Globe,
+  Link2,
+  LogOut,
+  Menu,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+  Sun,
+  User,
+  X,
+} from '@lucide/vue';
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuPortal,
+  DropdownMenuRoot,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from 'reka-ui';
 
 import BrandMark from '@/components/BrandMark.vue';
 import { useAuthStore } from '@/stores/auth';
+import { useThemeStore } from '@/stores/theme';
+
+interface NavItem {
+  to: string;
+  label: string;
+  icon: unknown;
+  superAdmin?: boolean;
+}
+
+interface NavGroup {
+  title: string;
+  items: NavItem[];
+}
 
 const auth = useAuthStore();
+const theme = useThemeStore();
 const route = useRoute();
 const router = useRouter();
 
 const collapsed = ref(false);
-const activeKey = computed(() => route.path);
+const drawerOpen = ref(false);
+const isMobile = ref(window.matchMedia('(max-width: 767px)').matches);
+
+const mql = window.matchMedia('(max-width: 767px)');
+function onMqlChange(event: MediaQueryListEvent): void {
+  isMobile.value = event.matches;
+  if (event.matches) drawerOpen.value = false;
+}
+onMounted(() => {
+  mql.addEventListener('change', onMqlChange);
+});
+onBeforeUnmount(() => {
+  mql.removeEventListener('change', onMqlChange);
+});
+
+watch(
+  () => route.fullPath,
+  () => {
+    drawerOpen.value = false;
+  },
+);
+
+const navGroups: NavGroup[] = [
+  {
+    title: '管理',
+    items: [
+      { to: '/domains', label: '域名', icon: Globe },
+      { to: '/links', label: '短链', icon: Link2 },
+      { to: '/stats', label: '统计', icon: BarChart3 },
+    ],
+  },
+  {
+    title: '系统',
+    items: [
+      { to: '/account', label: '账号设置', icon: Settings },
+      { to: '/admin/tenants', label: '平台管理', icon: Crown, superAdmin: true },
+    ],
+  },
+];
+
+function visibleItems(group: NavGroup): NavItem[] {
+  return group.items.filter((item) => item.superAdmin !== true || auth.isSuperAdmin);
+}
+
+function isActive(to: string): boolean {
+  return route.path === to || route.path.startsWith(to + '/');
+}
+
 const routeTitle = computed(() => (route.meta.title as string | undefined) ?? 'CLOAK 后台');
 
 const avatarInitial = computed(() => {
@@ -132,171 +263,32 @@ const avatarInitial = computed(() => {
   return email.charAt(0).toUpperCase();
 });
 
-function onMenuClick({ key }: { key: string | number }) {
-  router.push(String(key));
+function onToggleSidebar(): void {
+  if (isMobile.value) {
+    drawerOpen.value = true;
+  } else {
+    collapsed.value = !collapsed.value;
+  }
 }
 
-async function onUserMenu({ key }: { key: string | number }) {
-  if (key === 'logout') {
-    await auth.logout();
-    router.push('/login');
-  } else if (key === 'account') {
-    router.push('/account');
-  }
+function go(to: string): void {
+  router.push(to);
+}
+
+async function onLogout(): Promise<void> {
+  await auth.logout();
+  router.push('/login');
 }
 </script>
 
 <style scoped>
-.admin-layout {
-  min-height: 100vh;
+.drawer-fade-enter-active,
+.drawer-fade-leave-active {
+  transition: opacity 0.2s ease;
 }
 
-/* ---------- 侧边栏 ---------- */
-.sider {
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow: auto;
-}
-
-.sider-logo {
-  height: 56px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  cursor: pointer;
-  user-select: none;
-}
-
-.sider-wordmark {
-  color: #f8fafc;
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  white-space: nowrap;
-}
-
-.sider :deep(.ant-menu) {
-  border-inline-end: none;
-}
-
-.sider-version {
-  position: absolute;
-  bottom: 14px;
-  left: 0;
-  right: 0;
-  text-align: center;
-  color: rgba(148, 163, 184, 0.45);
-  font-size: 11px;
-  letter-spacing: 1px;
-}
-
-/* ---------- 顶栏 ---------- */
-.header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: #fff;
-  border-bottom: 1px solid #e6ebf1;
-  box-shadow: 0 1px 3px rgb(15 23 42 / 4%);
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.collapse-btn {
-  color: #5b6b7c;
-}
-
-.header-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #0f172a;
-}
-
-.header-right {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.tier-tag {
-  margin-inline-end: 0;
-}
-
-.user-chip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px 4px 4px;
-  border-radius: 20px;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.user-chip:hover {
-  background: #f1f5f9;
-}
-
-.user-avatar {
-  background: #0e7490;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.user-email {
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  color: #334155;
-}
-
-.user-caret {
-  font-size: 10px;
-  color: #8b98a5;
-}
-
-/* ---------- 内容区 ---------- */
-.content {
-  margin: 20px 24px 0;
-  padding: 20px 24px 28px;
-  background: #fff;
-  border: 1px solid #e6ebf1;
-  border-radius: 12px;
-  min-height: calc(100vh - 56px - 20px - 56px);
-}
-
-.footer {
-  text-align: center;
-  padding: 14px 0;
-  color: #8b98a5;
-  font-size: 12px;
-  background: transparent;
-}
-
-/* 页面切换过渡 */
-.page-enter-active,
-.page-leave-active {
-  transition:
-    opacity 0.18s ease,
-    transform 0.18s ease;
-}
-
-.page-enter-from {
-  opacity: 0;
-  transform: translateY(6px);
-}
-
-.page-leave-to {
+.drawer-fade-enter-from,
+.drawer-fade-leave-to {
   opacity: 0;
 }
 </style>

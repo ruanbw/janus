@@ -2,65 +2,86 @@
   <div>
     <PageHeader title="统计" description="选择一条短链,查看访问记录与来源明细">
       <template #actions>
-        <a-select
-          v-model:value="selectedLinkId"
-          class="link-select"
-          placeholder="选择短链查看访问统计"
-          :options="linkOptions"
-          allow-clear
-          show-search
-          option-filter-prop="label"
-          @change="onSelectLink"
-        />
+        <div class="w-80 max-w-full">
+          <AppSelect
+            v-model="selectedLinkId"
+            placeholder="选择短链查看访问统计"
+            :options="linkOptions"
+            allow-clear
+            show-search
+            @change="onSelectLink"
+          />
+        </div>
       </template>
     </PageHeader>
 
-    <a-empty v-if="!selectedLink" description="请选择一条短链查看访问统计" class="stats-empty" />
+    <AppEmpty
+      v-if="!selectedLink"
+      description="请选择一条短链查看访问统计"
+      class="rounded-xl border border-line bg-surface py-14"
+    />
 
     <template v-else>
-      <div class="summary">
-        <div class="summary-item">
-          <span class="summary-label">短码</span>
-          <a-typography-text strong copyable class="summary-code mono">
+      <!-- 汇总卡片:短码 / 访问数 / 点击数 / 目标 URL / 状态 -->
+      <div class="mb-5 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line min-[992px]:grid-cols-4">
+        <div class="flex min-w-0 flex-col gap-1.5 bg-surface p-4">
+          <span class="text-xs text-ink-faint">短码</span>
+          <CopyText :text="selectedLink.code" class="mono text-[15px] font-semibold text-ink">
             {{ selectedLink.code }}
-          </a-typography-text>
+          </CopyText>
         </div>
-        <div class="summary-item">
-          <span class="summary-label">访问数</span>
-          <span class="summary-value">{{ selectedLink.visits }}</span>
-          <span class="summary-unit">次</span>
-        </div>
-        <div class="summary-item">
-          <span class="summary-label">点击数</span>
-          <span class="summary-value">
-            {{ selectedLink.linkType === 'landing' ? selectedLink.clicks : '—' }}
+
+        <div class="flex min-w-0 flex-col gap-1.5 bg-surface p-4">
+          <span class="text-xs text-ink-faint">访问数</span>
+          <span class="flex items-baseline gap-1.5">
+            <span class="text-[26px] font-bold leading-none text-brand-600 tabular-nums dark:text-brand-400">
+              {{ selectedLink.visits }}
+            </span>
+            <span class="text-xs text-ink-faint">次</span>
           </span>
-          <span v-if="selectedLink.linkType === 'landing'" class="summary-unit">次</span>
         </div>
-        <div class="summary-item">
-          <span class="summary-label">目标 URL</span>
-          <a-tooltip v-if="selectedLink.targetUrls.length > 0">
+
+        <div class="flex min-w-0 flex-col gap-1.5 bg-surface p-4">
+          <span class="text-xs text-ink-faint">点击数</span>
+          <span class="flex items-baseline gap-1.5">
+            <span class="text-[26px] font-bold leading-none text-brand-600 tabular-nums dark:text-brand-400">
+              {{ selectedLink.linkType === 'landing' ? selectedLink.clicks : '—' }}
+            </span>
+            <span v-if="selectedLink.linkType === 'landing'" class="text-xs text-ink-faint">次</span>
+          </span>
+        </div>
+
+        <div class="flex min-w-0 flex-col gap-1.5 bg-surface p-4">
+          <span class="text-xs text-ink-faint">目标 URL</span>
+          <AppTooltip v-if="selectedLink.targetUrls.length > 0">
             <template #title>
-              <div v-for="(url, i) in selectedLink.targetUrls" :key="i">{{ url }}</div>
+              <div v-for="(url, i) in selectedLink.targetUrls" :key="i" class="break-all">{{ url }}</div>
             </template>
-            <span class="summary-target">
-              {{ truncateText(selectedLink.targetUrls[0], 40) }}
-              <span v-if="selectedLink.targetUrls.length > 1" class="summary-target-more">
+            <span class="flex min-w-0 items-center gap-1.5">
+              <span class="truncate text-[13px] text-ink">
+                {{ truncateText(selectedLink.targetUrls[0], 40) }}
+              </span>
+              <span
+                v-if="selectedLink.targetUrls.length > 1"
+                class="shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[11px] font-medium text-brand-600 dark:bg-brand-500/15 dark:text-brand-300"
+              >
                 +{{ selectedLink.targetUrls.length - 1 }}
               </span>
             </span>
-          </a-tooltip>
-          <span v-else class="summary-target">-</span>
+          </AppTooltip>
+          <span v-else class="text-[13px] text-ink-faint">-</span>
         </div>
-        <div class="summary-item">
-          <span class="summary-label">状态</span>
-          <a-tag :color="LINK_STATUS[selectedLink.status].color">
+
+        <div class="flex min-w-0 flex-col gap-1.5 bg-surface p-4">
+          <span class="text-xs text-ink-faint">状态</span>
+          <AppTag :color="LINK_STATUS[selectedLink.status].color">
             {{ LINK_STATUS[selectedLink.status].label }}
-          </a-tag>
+          </AppTag>
         </div>
       </div>
 
-      <a-table
+      <!-- 访问明细 -->
+      <AppTable
         :columns="columns"
         :data-source="visits"
         :loading="visitsLoading"
@@ -69,34 +90,39 @@
         :scroll="{ x: 940 }"
         @change="onTableChange"
       >
-        <template #bodyCell="{ column, record }">
+        <template #cell="{ column, record }">
           <template v-if="column.key === 'createdAt'">
             {{ formatDateTime(record.createdAt) }}
           </template>
           <template v-else-if="column.key === 'ip'">
-            <span class="ua-muted mono">{{ record.ip || '-' }}</span>
+            <span class="mono text-[13px] text-ink-faint">{{ record.ip || '-' }}</span>
           </template>
           <template v-else-if="column.key === 'deviceKind'">
-            <a-tag :color="parseDevice(record.userAgent).kindColor">
+            <AppTag :color="parseDevice(record.userAgent).kindColor">
               {{ parseDevice(record.userAgent).kind }}
-            </a-tag>
+            </AppTag>
           </template>
           <template v-else-if="column.key === 'device'">
-            <a-tooltip placement="top" :title="record.userAgent || '未知'">
-              <span class="ua-cell">{{ parseDevice(record.userAgent).device }}</span>
-            </a-tooltip>
+            <AppTooltip placement="top" :title="record.userAgent || '未知'">
+              <span class="inline-block max-w-full truncate align-bottom text-[13px] text-ink">
+                {{ parseDevice(record.userAgent).device }}
+              </span>
+            </AppTooltip>
           </template>
           <template v-else-if="column.key === 'osBrowser'">
-            <span class="ua-muted ua-cell">{{ parseDevice(record.userAgent).osBrowser }}</span>
+            <span class="inline-block max-w-full truncate align-bottom text-[13px] text-ink-faint">
+              {{ parseDevice(record.userAgent).osBrowser }}
+            </span>
           </template>
           <template v-else-if="column.key === 'referer'">
-            <a-tooltip :title="record.referer || '直接访问'">
-              <span>{{ record.referer ? truncateText(record.referer, 40) : '直接访问' }}</span>
-            </a-tooltip>
+            <AppTooltip :title="record.referer || '直接访问'">
+              <span class="inline-block max-w-full truncate align-bottom text-[13px] text-ink">
+                {{ record.referer ? truncateText(record.referer, 40) : '直接访问' }}
+              </span>
+            </AppTooltip>
           </template>
-
         </template>
-      </a-table>
+      </AppTable>
     </template>
   </div>
 </template>
@@ -104,9 +130,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
 import { useRoute } from 'vue-router';
-import { message } from 'ant-design-vue';
+import { message } from '@/utils/toast';
 import { UAParser } from 'ua-parser-js';
-import type { TableColumnsType, TablePaginationConfig } from 'ant-design-vue';
+import type { TableColumn, TablePaginationConfig } from '@/components/ui/types';
 
 import { getLink, listLinks } from '@/api/links';
 import { listVisits } from '@/api/visits';
@@ -135,11 +161,11 @@ const pageSize = ref(10);
 const linkOptions = computed(() =>
   links.value.map((l) => ({
     value: l.id,
-    label: `${l.code}(${l.visits} 次访问)`,
+    label: l.code + '(' + l.visits + ' 次访问)',
   })),
 );
 
-const columns: TableColumnsType = [
+const columns: TableColumn[] = [
   { title: '访问时间', key: 'createdAt', dataIndex: 'createdAt', width: 180 },
   { title: '访问IP', key: 'ip', dataIndex: 'ip', width: 130 },
   { title: '设备类型', key: 'deviceKind', width: 100 },
@@ -187,7 +213,7 @@ const pagination = computed<TablePaginationConfig>(() => ({
   pageSize: pageSize.value,
   total: total.value,
   showSizeChanger: true,
-  showTotal: (t) => `共 ${t} 条`,
+  showTotal: (t) => '共 ' + t + ' 条',
 }));
 
 async function loadLinks() {
@@ -253,93 +279,3 @@ function onTableChange(p: TablePaginationConfig) {
   loadVisits();
 }
 </script>
-
-<style scoped>
-.link-select {
-  width: 320px;
-  max-width: 100%;
-}
-
-.stats-empty {
-  padding: 48px 0;
-}
-
-.summary {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1px;
-  background: #e6ebf1;
-  border: 1px solid #e6ebf1;
-  border-radius: 10px;
-  overflow: hidden;
-  margin-bottom: 20px;
-}
-
-@media (min-width: 992px) {
-  .summary {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}
-
-.summary-item {
-  background: #f8fafc;
-  padding: 14px 18px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.summary-label {
-  font-size: 12px;
-  color: #8b98a5;
-}
-
-.summary-code {
-  font-size: 15px;
-}
-
-.summary-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: #0e7490;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.2;
-}
-
-.summary-unit {
-  font-size: 12px;
-  color: #8b98a5;
-}
-
-.summary-target {
-  font-size: 13px;
-  color: #334155;
-  word-break: break-all;
-}
-
-.summary-target-more {
-  margin-left: 6px;
-  padding: 0 6px;
-  font-size: 12px;
-  line-height: 18px;
-  color: #1677ff;
-  background: rgba(22, 119, 255, 0.1);
-  border-radius: 9px;
-  white-space: nowrap;
-}
-
-.ua-muted {
-  color: #5b6b7c;
-  font-size: 13px;
-}
-
-.ua-cell {
-  display: inline-block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  vertical-align: bottom;
-}
-</style>

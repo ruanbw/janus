@@ -3,39 +3,39 @@
     <template #title>登录后台</template>
     <template #subtitle>管理你的域名、短链与访问统计</template>
 
-    <a-form :model="form" :rules="rules" layout="vertical" @finish="onSubmit">
-      <a-form-item label="邮箱" name="email">
-        <a-input
-          v-model:value="form.email"
-          placeholder="you@example.com"
-          autocomplete="email"
-          size="large"
-        >
-          <template #prefix><MailOutlined class="input-icon" /></template>
-        </a-input>
-      </a-form-item>
-      <a-form-item label="密码" name="password">
-        <a-input-password
-          v-model:value="form.password"
+    <AppForm :model="form" :rules="rules" @finish="onSubmit">
+      <AppFormItem label="邮箱" name="email">
+        <AppInput v-model="form.email" placeholder="you@example.com" autocomplete="email" size="large">
+          <template #prefix><Mail :size="16" /></template>
+        </AppInput>
+      </AppFormItem>
+      <AppFormItem label="密码" name="password">
+        <AppInput
+          v-model="form.password"
+          type="password"
           placeholder="请输入密码"
           autocomplete="current-password"
           size="large"
         >
-          <template #prefix><LockOutlined class="input-icon" /></template>
-        </a-input-password>
-      </a-form-item>
-      <div class="form-options">
-        <a-checkbox v-model:checked="form.rememberMe">记住我(会话保持 30 天)</a-checkbox>
-        <router-link to="/forgot-password" class="forgot-link">忘记密码</router-link>
+          <template #prefix><Lock :size="16" /></template>
+        </AppInput>
+      </AppFormItem>
+      <div class="form-options mb-5 flex items-center justify-between">
+        <AppCheckbox v-model="form.rememberMe">记住我(会话保持 30 天)</AppCheckbox>
+        <router-link to="/forgot-password" class="text-[13px] font-medium text-brand-600 transition-colors hover:text-brand-500">
+          忘记密码
+        </router-link>
       </div>
-      <a-button type="primary" html-type="submit" block size="large" :loading="submitting">
+      <AppButton type="primary" html-type="submit" block size="large" :loading="submitting">
         登录
-      </a-button>
-    </a-form>
+      </AppButton>
+    </AppForm>
 
-    <div class="auth-footer-links">
+    <div class="auth-footer-links mt-6 text-center text-[13px] text-ink-faint">
       还没有账号?
-      <router-link to="/register">注册新租户</router-link>
+      <router-link to="/register" class="font-medium text-brand-600 transition-colors hover:text-brand-500">
+        注册新租户
+      </router-link>
     </div>
   </AuthShell>
 </template>
@@ -43,13 +43,13 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { message } from 'ant-design-vue';
-import { LockOutlined, MailOutlined } from '@ant-design/icons-vue';
-import type { Rule } from 'ant-design-vue/es/form';
+import { Lock, Mail } from '@lucide/vue';
+import type { FormRule } from '@/components/ui/types';
 
 import AuthShell from '@/components/AuthShell.vue';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
+import { message } from '@/utils/toast';
 
 const auth = useAuthStore();
 const route = useRoute();
@@ -62,7 +62,7 @@ const form = reactive({
   rememberMe: true,
 });
 
-const rules: Record<string, Rule[]> = {
+const rules: Record<string, FormRule[]> = {
   email: [
     { required: true, message: '请输入邮箱' },
     { type: 'email', message: '邮箱格式不正确' },
@@ -103,27 +103,3 @@ async function onSubmit() {
   }
 }
 </script>
-
-<style scoped>
-.input-icon {
-  color: #8b98a5;
-}
-
-.form-options {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 20px;
-}
-
-.forgot-link {
-  font-size: 13px;
-}
-
-.auth-footer-links {
-  margin-top: 24px;
-  text-align: center;
-  font-size: 13px;
-  color: #8b98a5;
-}
-</style>

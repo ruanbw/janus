@@ -5,78 +5,77 @@
       description="修改租户等级将立即调整其短链与自有域名的配额上限,请确认后再保存"
     >
       <template #actions>
-        <a-button @click="goBack">
-          <template #icon><ArrowLeftOutlined /></template>
+        <AppButton @click="goBack">
+          <template #icon><ArrowLeft :size="15" /></template>
           返回
-        </a-button>
+        </AppButton>
       </template>
     </PageHeader>
 
-    <a-form
+    <AppForm
       :model="form"
       :rules="rules"
-      layout="vertical"
-      class="tier-form"
+      class="max-w-[640px]"
       @finish="onSubmit"
     >
-      <a-form-item
+      <AppFormItem
         label="租户邮箱"
         extra="本次要调整等级的租户,仅用于确认操作对象,不可修改"
       >
         <span class="mono">{{ tenant?.email ?? '—' }}</span>
-      </a-form-item>
+      </AppFormItem>
 
-      <a-form-item
+      <AppFormItem
         label="当前等级"
         extra="该租户当前生效的等级,保存后将被下方所选等级替换"
       >
-        <a-tag v-if="tenant" color="cyan">{{ tenant.tier?.name ?? '-' }}</a-tag>
+        <AppTag v-if="tenant" color="cyan">{{ tenant.tier?.name ?? '-' }}</AppTag>
         <span v-else>—</span>
-      </a-form-item>
+      </AppFormItem>
 
-      <a-form-item
+      <AppFormItem
         name="tierId"
         label="调整后等级"
         extra="等级决定租户的配额上限(短链与自有域名数量),调整后立即生效。若租户现有用量已超过新等级上限,后续新增短链/域名将被拒绝,已有资源不受影响。"
       >
-        <a-select
-          v-model:value="form.tierId"
+        <AppSelect
+          v-model="form.tierId"
           :options="tierOptions"
           placeholder="请选择等级"
           :loading="loading"
         />
-      </a-form-item>
+      </AppFormItem>
 
-      <a-alert
+      <AppAlert
         v-if="selectedTier"
         type="info"
         show-icon
-        :message="`该等级配额:短链 ${selectedTier.maxLinks} 条 / 自有域名 ${selectedTier.maxDomains} 个。调整后立即生效,若现有用量超过新上限,后续新增将被拒绝。`"
+        :message="quotaMessage"
       />
 
-      <a-form-item>
-        <a-space>
-          <a-button type="primary" html-type="submit" :loading="submitting" :disabled="loading">
+      <AppFormItem>
+        <AppSpace>
+          <AppButton type="primary" html-type="submit" :loading="submitting" :disabled="loading">
             保存
-          </a-button>
-          <a-button @click="goBack">取消</a-button>
-        </a-space>
-      </a-form-item>
-    </a-form>
+          </AppButton>
+          <AppButton @click="goBack">取消</AppButton>
+        </AppSpace>
+      </AppFormItem>
+    </AppForm>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { message } from 'ant-design-vue';
-import { ArrowLeftOutlined } from '@ant-design/icons-vue';
-import type { Rule } from 'ant-design-vue/es/form';
+import { ArrowLeft } from '@lucide/vue';
 
 import { getTenant, listTiers, updateTenant } from '@/api/admin';
 import PageHeader from '@/components/PageHeader.vue';
+import type { FormRule } from '@/components/ui/types';
 import { ApiError } from '@/types/api';
 import type { Tenant, Tier } from '@/types/api';
+import { message } from '@/utils/toast';
 
 const route = useRoute();
 const router = useRouter();
@@ -90,7 +89,7 @@ const submitting = ref(false);
 
 const form = reactive<{ tierId: number | undefined }>({ tierId: undefined });
 
-const rules: Record<string, Rule[]> = {
+const rules: Record<string, FormRule[]> = {
   tierId: [{ required: true, message: '请选择调整后的等级' }],
 };
 
@@ -98,7 +97,7 @@ const rules: Record<string, Rule[]> = {
 const tierOptions = computed(() =>
   tiers.value.map((tier) => ({
     value: tier.id,
-    label: `${tier.name}(短链 ${tier.maxLinks} / 域名 ${tier.maxDomains})`,
+    label: tier.name + '(短链 ' + tier.maxLinks + ' / 域名 ' + tier.maxDomains + ')',
     maxLinks: tier.maxLinks,
     maxDomains: tier.maxDomains,
   })),
@@ -107,6 +106,18 @@ const tierOptions = computed(() =>
 const selectedTier = computed(() =>
   tierOptions.value.find((o) => o.value === form.tierId),
 );
+
+const quotaMessage = computed(() => {
+  const tier = selectedTier.value;
+  if (!tier) return '';
+  return (
+    '该等级配额:短链 ' +
+    tier.maxLinks +
+    ' 条 / 自有域名 ' +
+    tier.maxDomains +
+    ' 个。调整后立即生效,若现有用量超过新上限,后续新增将被拒绝。'
+  );
+});
 
 function goBack() {
   router.push({ name: 'admin-tenants' });
@@ -158,9 +169,3 @@ async function onSubmit() {
   }
 }
 </script>
-
-<style scoped>
-.tier-form {
-  max-width: 640px;
-}
-</style>

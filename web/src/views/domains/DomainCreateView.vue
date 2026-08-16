@@ -5,41 +5,47 @@
       description="将自有域名的 DNS 指向本服务器后,系统会自动进行 DNS 校验并签发证书"
     >
       <template #actions>
-        <a-button @click="goBack">
-          <template #icon><ArrowLeftOutlined /></template>
+        <AppButton @click="goBack">
+          <template #icon><ArrowLeft :size="15" /></template>
           返回
-        </a-button>
+        </AppButton>
       </template>
     </PageHeader>
 
-    <div class="form-container">
-      <a-form ref="formRef" :model="formState" :rules="createRules" layout="vertical">
-        <a-form-item name="fqdn" label="域名" :extra="fqdnExtra">
-          <a-input v-model:value="formState.fqdn" placeholder="例如 links.example.com" @press-enter="onSubmit" />
-        </a-form-item>
-        <a-form-item
+    <div class="max-w-[640px]">
+      <AppForm
+        ref="formRef"
+        :model="formState as unknown as Record<string, unknown>"
+        :rules="createRules"
+      >
+        <AppFormItem name="fqdn" label="域名" :extra="fqdnExtra">
+          <AppInput
+            v-model="formState.fqdn"
+            placeholder="例如 links.example.com"
+            @press-enter="onSubmit"
+          />
+        </AppFormItem>
+        <AppFormItem
           name="description"
           label="描述"
           extra="可选,用于备注该域名的用途,便于在列表中区分;最长 200 字"
         >
-          <a-textarea
-            v-model:value="formState.description"
+          <AppTextarea
+            v-model="formState.description"
             placeholder="例如:生产环境主站,用于产品文档"
             :maxlength="200"
             :rows="2"
             show-count
           />
-        </a-form-item>
-        <a-alert
-          class="form-alert"
+        </AppFormItem>
+        <AppAlert
+          class="mb-5"
           type="warning"
           show-icon
           message="添加前请确认 DNS 已指向本服务器,否则域名将停留在「待激活」并在 72 小时后标记为「校验失败」。"
         />
-        <a-form-item>
-          <a-button type="primary" :loading="submitting" @click="onSubmit">添加</a-button>
-        </a-form-item>
-      </a-form>
+        <AppButton type="primary" :loading="submitting" @click="onSubmit">添加</AppButton>
+      </AppForm>
     </div>
   </div>
 </template>
@@ -47,12 +53,12 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { message } from 'ant-design-vue';
-import { ArrowLeftOutlined } from '@ant-design/icons-vue';
-import type { Rule } from 'ant-design-vue/es/form';
+import { ArrowLeft } from '@lucide/vue';
 
 import { createDomain } from '@/api/domains';
 import PageHeader from '@/components/PageHeader.vue';
+import type { FormRule } from '@/components/ui/types';
+import { message } from '@/utils/toast';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError, getQuotaUsage } from '@/types/api';
 
@@ -78,13 +84,13 @@ function isValidFQDN(s: string): boolean {
   });
 }
 
-const createRules: Record<string, Rule[]> = {
+const createRules: Record<string, FormRule[]> = {
   fqdn: [
     { required: true, message: '请输入域名' },
     {
-      validator: (_rule, value: string) => {
+      validator: (_rule, value: unknown) => {
         if (!value) return Promise.resolve();
-        return isValidFQDN(value)
+        return isValidFQDN(value as string)
           ? Promise.resolve()
           : Promise.reject(new Error('域名格式非法:仅支持字母、数字、连字符,标签不能以连字符开头或结尾,如 links.example.com'));
       },
@@ -146,17 +152,3 @@ async function onSubmit() {
 }
 </script>
 
-<style scoped>
-.form-container {
-  max-width: 640px;
-}
-
-/* extra 说明为多行文本,保留换行 */
-.form-container :deep(.ant-form-item-extra) {
-  white-space: pre-line;
-}
-
-.form-alert {
-  margin-bottom: 24px;
-}
-</style>

@@ -1,12 +1,13 @@
 # CLOAK 后台管理界面(web/)
 
-CLOAK 短链服务的后台管理界面:基于 Vue 3 + TypeScript + Vite + Ant Design Vue 的单页应用(SPA),采用 Vben Admin 的工程形态(目录分层、Pinia 状态、路由守卫、Axios 封装),消费 Go 后端 RESTful API。
+CLOAK 短链服务的后台管理界面:基于 Vue 3 + TypeScript + Vite + Tailwind CSS 4 + Reka UI(无头组件)的单页应用(SPA),采用 Vben Admin 的工程形态(目录分层、Pinia 状态、路由守卫、Axios 封装),消费 Go 后端 RESTful API。
 
 ## 技术栈
 
 - Vue 3.5 + TypeScript + Vite 6
-- Ant Design Vue 4(组件库)
-- Pinia(状态)、Vue Router 4(路由)、Axios(请求)
+- Tailwind CSS 4(样式与设计令牌,支持深色模式)+ Reka UI(无头交互组件:Select/Dropdown/AlertDialog/Tooltip/Popover 等)
+- @lucide/vue(图标)、Pinia(状态)、Vue Router 4(路由)、Axios(请求)
+- 自研轻量组件库 src/components/ui/:AppButton/AppForm/AppTable 等(全局注册,见 UI_KIT.md)
 
 ## 本地开发
 
@@ -23,6 +24,11 @@ pnpm dev        # http://localhost:5173,/api 代理到 http://localhost:8081
 ```bash
 pnpm build      # 产物输出到 dist/,生产环境经 go:embed 内嵌进 Go 二进制
 ```
+
+## 开发约定
+
+- UI 组件库契约见 web/UI_KIT.md(组件 props、表单/表格/确认框/toast API、图标映射、设计令牌)。
+- 深色模式:html.dark 由 src/stores/theme.ts 控制并持久化到 localStorage(cloak-theme)。
 
 ## 认证与请求约定
 

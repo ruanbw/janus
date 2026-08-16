@@ -2,113 +2,110 @@
   <div>
     <PageHeader title="域名" description="管理自有域名与平台默认域名;DNS 指向本服务器后自动校验并签发证书">
       <template #actions>
-        <a-button type="primary" @click="openCreate">
-          <template #icon><PlusOutlined /></template>
+        <AppButton type="primary" @click="openCreate">
+          <template #icon><Plus :size="15" /></template>
           添加自有域名
-        </a-button>
+        </AppButton>
       </template>
     </PageHeader>
 
     <QuotaBar :domains-used="usage?.domains" :domains-max="usage?.maxDomains" />
 
-    <a-table
+    <AppTable
       :columns="columns"
-      :data-source="domains"
+      :data-source="tableData"
       :loading="loading"
       row-key="id"
       :pagination="false"
     >
-      <template #bodyCell="{ column, record }">
+      <template #cell="{ column, record }">
         <template v-if="column.key === 'fqdn'">
-          <a-typography-text copyable class="fqdn mono">{{ record.fqdn }}</a-typography-text>
+          <CopyText :text="toDomain(record).fqdn">
+            <span class="mono text-[13px]">{{ toDomain(record).fqdn }}</span>
+          </CopyText>
         </template>
         <template v-else-if="column.key === 'description'">
-          {{ record.description || '-' }}
+          {{ toDomain(record).description || '-' }}
         </template>
         <template v-else-if="column.key === 'origin'">
-          <a-tag :color="DOMAIN_ORIGIN[record.origin as DomainOrigin].color">
-            {{ DOMAIN_ORIGIN[record.origin as DomainOrigin].label }}
-          </a-tag>
+          <AppTag :color="DOMAIN_ORIGIN[toDomain(record).origin].color">
+            {{ DOMAIN_ORIGIN[toDomain(record).origin].label }}
+          </AppTag>
         </template>
         <template v-else-if="column.key === 'status'">
-          <a-tag :color="DOMAIN_STATUS[record.status as DomainStatus].color">
-            {{ DOMAIN_STATUS[record.status as DomainStatus].label }}
-          </a-tag>
+          <AppTag :color="DOMAIN_STATUS[toDomain(record).status].color">
+            {{ DOMAIN_STATUS[toDomain(record).status].label }}
+          </AppTag>
         </template>
         <template v-else-if="column.key === 'certStatus'">
-          <a-tag :color="CERT_STATUS[record.certStatus as CertStatus].color">
-            {{ CERT_STATUS[record.certStatus as CertStatus].label }}
-          </a-tag>
+          <AppTag :color="CERT_STATUS[toDomain(record).certStatus].color">
+            {{ CERT_STATUS[toDomain(record).certStatus].label }}
+          </AppTag>
         </template>
         <template v-else-if="column.key === 'activatedAt'">
-          {{ formatDateTime(record.activatedAt) }}
+          {{ formatDateTime(toDomain(record).activatedAt) }}
         </template>
         <template v-else-if="column.key === 'createdAt'">
-          {{ formatDateTime(record.createdAt) }}
+          {{ formatDateTime(toDomain(record).createdAt) }}
         </template>
         <template v-else-if="column.key === 'action'">
-          <a-space :size="4">
-            <a-button size="small" type="text" @click="onRecheck(record)">
-              <template #icon><SyncOutlined /></template>
+          <AppSpace :size="4">
+            <AppButton size="small" type="text" @click="onRecheck(toDomain(record))">
+              <template #icon><RefreshCw :size="13" /></template>
               手动重检
-            </a-button>
-            <a-button
-              v-if="record.status !== 'stopped'"
+            </AppButton>
+            <AppButton
+              v-if="toDomain(record).status !== 'stopped'"
               size="small"
               type="text"
               danger
-              @click="onToggleStatus(record, 'stopped')"
+              @click="onToggleStatus(toDomain(record), 'stopped')"
             >
-              <template #icon><StopOutlined /></template>
+              <template #icon><CircleStop :size="13" /></template>
               停用
-            </a-button>
-            <a-button v-else size="small" type="text" @click="onToggleStatus(record, 'active')">
-              <template #icon><PlayCircleOutlined /></template>
+            </AppButton>
+            <AppButton v-else size="small" type="text" @click="onToggleStatus(toDomain(record), 'active')">
+              <template #icon><CirclePlay :size="13" /></template>
               恢复
-            </a-button>
-            <a-button
-              v-if="record.origin === 'self'"
+            </AppButton>
+            <AppButton
+              v-if="toDomain(record).origin === 'self'"
               size="small"
               type="text"
               danger
-              @click="onDelete(record)"
+              @click="onDelete(toDomain(record))"
             >
-              <template #icon><DeleteOutlined /></template>
+              <template #icon><Trash2 :size="13" /></template>
               删除
-            </a-button>
-            <a-tooltip v-else title="平台默认域名不可删除,可停用">
-              <a-button size="small" type="text" disabled>
-                <template #icon><DeleteOutlined /></template>
+            </AppButton>
+            <AppTooltip v-else title="平台默认域名不可删除,可停用">
+              <AppButton size="small" type="text" disabled>
+                <template #icon><Trash2 :size="13" /></template>
                 删除
-              </a-button>
-            </a-tooltip>
-          </a-space>
+              </AppButton>
+            </AppTooltip>
+          </AppSpace>
         </template>
       </template>
-    </a-table>
+    </AppTable>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { Modal, message } from 'ant-design-vue';
-import {
-  DeleteOutlined,
-  PlayCircleOutlined,
-  PlusOutlined,
-  StopOutlined,
-  SyncOutlined,
-} from '@ant-design/icons-vue';
-import type { TableColumnsType } from 'ant-design-vue';
+import { CirclePlay, CircleStop, Plus, RefreshCw, Trash2 } from '@lucide/vue';
 
 import { deleteDomain, listDomains, recheckDomain, updateDomainStatus } from '@/api/domains';
 import PageHeader from '@/components/PageHeader.vue';
 import QuotaBar from '@/components/QuotaBar.vue';
+import { confirm } from '@/components/ui/confirm';
+import type { TableColumn } from '@/components/ui/types';
+import { message } from '@/utils/toast';
 import { CERT_STATUS, DOMAIN_ORIGIN, DOMAIN_STATUS } from '@/constants/dict';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
-import type { CertStatus, Domain, DomainOrigin, DomainStatus } from '@/types/api';
+import type { Domain, DomainStatus } from '@/types/api';
 import { formatDateTime } from '@/utils/format';
 
 const router = useRouter();
@@ -119,7 +116,14 @@ const loading = ref(false);
 
 const usage = computed(() => auth.config?.usage);
 
-const columns: TableColumnsType = [
+/** AppTable 槽位 record 为 Record<string, unknown>,转换为领域类型以访问字段 */
+function toDomain(r: Record<string, unknown>): Domain {
+  return r as unknown as Domain;
+}
+
+const tableData = computed(() => domains.value as unknown as Record<string, unknown>[]);
+
+const columns: TableColumn[] = [
   { title: '域名', key: 'fqdn', dataIndex: 'fqdn' },
   { title: '描述', key: 'description', dataIndex: 'description', width: 200, ellipsis: true },
   { title: '来源', key: 'origin', dataIndex: 'origin', width: 140 },
@@ -171,14 +175,14 @@ async function onRecheck(domain: Domain) {
 
 async function onToggleStatus(domain: Domain, status: DomainStatus) {
   const label = status === 'stopped' ? '停用' : '恢复';
-  Modal.confirm({
+  confirm({
     title: label + '域名 ' + domain.fqdn + '?',
     content:
       status === 'stopped'
         ? '停用后,该域名下的所有短码将立即未命中(404)。'
         : '恢复后,该域名下的短链将重新可访问(自有域名恢复前会重新校验 DNS)。',
     okText: label,
-    okButtonProps: status === 'stopped' ? { danger: true } : undefined,
+    danger: status === 'stopped',
     cancelText: '取消',
     onOk: async () => {
       try {
@@ -194,11 +198,11 @@ async function onToggleStatus(domain: Domain, status: DomainStatus) {
 }
 
 function onDelete(domain: Domain) {
-  Modal.confirm({
+  confirm({
     title: '删除域名 ' + domain.fqdn + '?',
     content: '删除为物理删除。若该域名下仍有关联的未删除短链,将被拒绝(409);请先清空关联。',
     okText: '删除',
-    okButtonProps: { danger: true },
+    danger: true,
     cancelText: '取消',
     onOk: async () => {
       try {
@@ -220,9 +224,3 @@ function onDelete(domain: Domain) {
   });
 }
 </script>
-
-<style scoped>
-.fqdn {
-  font-size: 13px;
-}
-</style>

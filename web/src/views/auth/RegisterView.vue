@@ -3,62 +3,61 @@
     <template #title>注册新租户</template>
     <template #subtitle>
       注册后将自动获得平台默认域名
-      <span class="slug-chip mono">{{ slugHint }}</span>
+      <span class="slug-chip mono ml-1 inline-block rounded-md border border-brand-200 bg-brand-50 px-1.5 py-px align-middle text-[12.5px] text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300">{{ slugHint }}</span>
     </template>
 
-    <a-form :model="form" :rules="rules" layout="vertical" @finish="onSubmit">
-      <a-form-item label="邮箱" name="email">
-        <a-input
-          v-model:value="form.email"
-          placeholder="you@example.com"
-          autocomplete="email"
-          size="large"
-        >
-          <template #prefix><MailOutlined class="input-icon" /></template>
-        </a-input>
-      </a-form-item>
-      <a-form-item label="密码" name="password">
-        <a-input-password
-          v-model:value="form.password"
+    <AppForm :model="form" :rules="rules" @finish="onSubmit">
+      <AppFormItem label="邮箱" name="email">
+        <AppInput v-model="form.email" placeholder="you@example.com" autocomplete="email" size="large">
+          <template #prefix><Mail :size="16" /></template>
+        </AppInput>
+      </AppFormItem>
+      <AppFormItem label="密码" name="password">
+        <AppInput
+          v-model="form.password"
+          type="password"
           placeholder="至少 8 位"
           autocomplete="new-password"
           size="large"
         >
-          <template #prefix><LockOutlined class="input-icon" /></template>
-        </a-input-password>
-      </a-form-item>
-      <a-form-item label="确认密码" name="confirmPassword">
-        <a-input-password
-          v-model:value="form.confirmPassword"
+          <template #prefix><Lock :size="16" /></template>
+        </AppInput>
+      </AppFormItem>
+      <AppFormItem label="确认密码" name="confirmPassword">
+        <AppInput
+          v-model="form.confirmPassword"
+          type="password"
           placeholder="再次输入密码"
           autocomplete="new-password"
           size="large"
         >
-          <template #prefix><LockOutlined class="input-icon" /></template>
-        </a-input-password>
-      </a-form-item>
-      <a-form-item
+          <template #prefix><Lock :size="16" /></template>
+        </AppInput>
+      </AppFormItem>
+      <AppFormItem
         label="前缀"
         name="slug"
         extra="小写字母或数字开头/结尾,可包含连字符;将用于生成你的平台默认域名"
       >
-        <a-input
-          v-model:value="form.slug"
+        <AppInput
+          v-model="form.slug"
           placeholder="例如 mybrand"
           :maxlength="SLUG_MAX_LENGTH"
           size="large"
         >
-          <template #prefix><GlobalOutlined class="input-icon" /></template>
-        </a-input>
-      </a-form-item>
-      <a-button type="primary" html-type="submit" block size="large" :loading="submitting">
+          <template #prefix><Globe :size="16" /></template>
+        </AppInput>
+      </AppFormItem>
+      <AppButton type="primary" html-type="submit" block size="large" :loading="submitting">
         注册
-      </a-button>
-    </a-form>
+      </AppButton>
+    </AppForm>
 
-    <div class="auth-footer-links">
+    <div class="auth-footer-links mt-6 text-center text-[13px] text-ink-faint">
       已有账号?
-      <router-link to="/login">直接登录</router-link>
+      <router-link to="/login" class="font-medium text-brand-600 transition-colors hover:text-brand-500">
+        直接登录
+      </router-link>
     </div>
   </AuthShell>
 </template>
@@ -66,14 +65,14 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { message } from 'ant-design-vue';
-import { GlobalOutlined, LockOutlined, MailOutlined } from '@ant-design/icons-vue';
-import type { Rule } from 'ant-design-vue/es/form';
+import { Globe, Lock, Mail } from '@lucide/vue';
+import type { FormRule } from '@/components/ui/types';
 
 import { register } from '@/api/auth';
 import AuthShell from '@/components/AuthShell.vue';
 import { SLUG_MAX_LENGTH, SLUG_PATTERN } from '@/constants/dict';
 import { ApiError } from '@/types/api';
+import { message } from '@/utils/toast';
 
 const router = useRouter();
 const submitting = ref(false);
@@ -89,10 +88,10 @@ const form = reactive({
 
 const slugHint = computed(() => {
   const slug = form.slug.trim();
-  return slug ? `${slug}.${PLATFORM_DOMAIN}` : `<前缀>.${PLATFORM_DOMAIN}`;
+  return slug ? slug + '.' + PLATFORM_DOMAIN : '<前缀>.' + PLATFORM_DOMAIN;
 });
 
-const rules: Record<string, Rule[]> = {
+const rules: Record<string, FormRule[]> = {
   email: [
     { required: true, message: '请输入邮箱' },
     { type: 'email', message: '邮箱格式不正确' },
@@ -104,7 +103,7 @@ const rules: Record<string, Rule[]> = {
   confirmPassword: [
     { required: true, message: '请再次输入密码' },
     {
-      validator: (_rule, value: string) => {
+      validator: (_rule, value) => {
         if (!value || value === form.password) return Promise.resolve();
         return Promise.reject(new Error('两次输入的密码不一致'));
       },
@@ -143,27 +142,3 @@ async function onSubmit() {
   }
 }
 </script>
-
-<style scoped>
-.input-icon {
-  color: #8b98a5;
-}
-
-.slug-chip {
-  display: inline-block;
-  margin-left: 4px;
-  padding: 1px 8px;
-  border-radius: 5px;
-  background: #f0f9fb;
-  border: 1px solid #c9e4ec;
-  color: #0e7490;
-  font-size: 12.5px;
-}
-
-.auth-footer-links {
-  margin-top: 24px;
-  text-align: center;
-  font-size: 13px;
-  color: #8b98a5;
-}
-</style>
