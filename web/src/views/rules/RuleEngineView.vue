@@ -1231,6 +1231,7 @@ import {
   X,
 } from '@lucide/vue';
 import { message } from '@/utils/toast';
+import { UAParser } from 'ua-parser-js';
 
 // ==================== 常量与 18 个判定字段 ====================
 export type TabType = 'rules' | 'editor' | 'simulator' | 'lists';
@@ -1508,8 +1509,8 @@ const rules = ref<RuleItem[]>([
     conditionSummary: 'IP 段 ∈ 名单 内部测试网段',
     action: '放行',
     destination: '目标池 · 直达',
-    hits24h: 412,
-    hitRate: 0.3,
+    hits24h: 0,
+    hitRate: 0,
     enabled: true,
     conditionGroups: [
       {
@@ -1535,8 +1536,8 @@ const rules = ref<RuleItem[]>([
     conditionSummary: '国家 ∈ [US, CA, GB, AU, DE] · 设备类型 = 移动 · 系统 = iOS / Android',
     action: '放行',
     destination: '目标池 A',
-    hits24h: 52411,
-    hitRate: 40.8,
+    hits24h: 0,
+    hitRate: 0,
     enabled: true,
     conditionGroups: [
       {
@@ -1564,8 +1565,8 @@ const rules = ref<RuleItem[]>([
     conditionSummary: 'UA 匹配 bot|spider|crawler|facebookexternalhit · IP 段 ∈ 名单 审查爬虫段',
     action: '直接 404',
     destination: '—',
-    hits24h: 3592,
-    hitRate: 2.8,
+    hits24h: 0,
+    hitRate: 0,
     enabled: true,
     conditionGroups: [
       {
@@ -1592,8 +1593,8 @@ const rules = ref<RuleItem[]>([
     conditionSummary: 'IP 属性 ∈ 代理 / VPN / 机房 · 国家 ∉ 名单 目标放行国家',
     action: '限流 + 计数',
     destination: '风控观察',
-    hits24h: 1174,
-    hitRate: 0.9,
+    hits24h: 0,
+    hitRate: 0,
     enabled: true,
     conditionGroups: [
       {
@@ -1620,8 +1621,8 @@ const rules = ref<RuleItem[]>([
     conditionSummary: '语言 = pt-BR / pt-PT · 设备类型 ≠ 爬虫',
     action: '放行',
     destination: '目标池 B',
-    hits24h: 28603,
-    hitRate: 22.3,
+    hits24h: 0,
+    hitRate: 0,
     enabled: true,
     conditionGroups: [
       {
@@ -1649,7 +1650,7 @@ const rules = ref<RuleItem[]>([
     action: '放行',
     destination: '目标池 A',
     hits24h: 0,
-    hitRate: 0.0,
+    hitRate: 0,
     enabled: false,
     conditionGroups: [
       {
@@ -1675,8 +1676,8 @@ const rules = ref<RuleItem[]>([
     conditionSummary: '单 IP 10 分钟内访问 > 20 次 · 命中名单 高频可疑',
     action: '限流',
     destination: '429 · 计数',
-    hits24h: 967,
-    hitRate: 0.8,
+    hits24h: 0,
+    hitRate: 0,
     enabled: true,
     conditionGroups: [
       {
@@ -1702,8 +1703,8 @@ const rules = ref<RuleItem[]>([
     conditionSummary: '所有未命中前面规则的访问',
     action: '白标页',
     destination: '白标 · 品牌页',
-    hits24h: 8431,
-    hitRate: 6.6,
+    hits24h: 0,
+    hitRate: 0,
     enabled: true,
     conditionGroups: [
       {
@@ -1817,8 +1818,8 @@ const editingRule = reactive<RuleItem>({
   conditionSummary: '国家 ∈ [US, CA, GB, AU, DE] · 设备类型 = 移动 · 系统 = iOS / Android',
   action: '放行',
   destination: '目标池 A',
-  hits24h: 52411,
-  hitRate: 40.8,
+  hits24h: 0,
+  hitRate: 0,
   enabled: true,
   conditionGroups: [
     {
@@ -2162,17 +2163,152 @@ function runSimulation() {
   isSimulating.value = true;
   setTimeout(() => {
     isSimulating.value = false;
-    message.success('规则链模拟求值完成');
 
-    // 简单根据 UA 或 IP 重新演算状态
-    if (simInput.ua.toLowerCase().includes('facebookexternalhit') || simInput.ua.toLowerCase().includes('bot')) {
-      applyBotResult();
-    } else if (simInput.ip.startsWith('52.') || simInput.ip.startsWith('3.') || simInput.ua.toLowerCase().includes('windows')) {
-      applyDatacenterResult();
-    } else {
-      applyMobileResult();
+    // 1. 使用 UAParser 解析真实访客环境
+    const parser = new UAParser(simInput.ua);
+    const os = parser.getOS();
+    const browser = parser.getBrowser();
+    const device = parser.getDevice();
+
+    const uaLower = simInput.ua.toLowerCase();
+    const isBot = /bot|crawl|spider|facebookexternalhit|curl|wget|python|bytespider|googlebot/i.test(uaLower) || (device.type as string | undefined) === 'bot';
+    const isMobile = device.type === 'mobile' || /iphone|android|mobile/i.test(uaLower);
+    const isTablet = device.type === 'tablet' || /ipad/i.test(uaLower);
+
+    const devTypeLabel = isBot ? '爬虫 / 机器人' : (isMobile ? '移动' : (isTablet ? '平板' : '桌面'));
+    const osName = os.name || (isMobile ? (/iphone|ipad/i.test(uaLower) ? 'iOS' : 'Android') : 'Windows');
+    const browserName = browser.name || (isBot ? 'Robot/Crawler' : 'Browser');
+
+    // 解析国家
+    let countryCode = 'US';
+    let countryName = 'US / 美国';
+    if (/pt/i.test(simInput.lang)) { countryCode = 'BR'; countryName = 'BR / 巴西'; }
+    else if (/de/i.test(simInput.lang)) { countryCode = 'DE'; countryName = 'DE / 德国'; }
+    else if (/zh/i.test(simInput.lang)) { countryCode = 'CN'; countryName = 'CN / 中国'; }
+    else if (/gb/i.test(simInput.lang) || /uk/i.test(simInput.lang)) { countryCode = 'GB'; countryName = 'GB / 英国'; }
+
+    const isDatacenter = simInput.ip.startsWith('52.') || simInput.ip.startsWith('54.') || simInput.ip.startsWith('3.') || simInput.ip.startsWith('34.') || simInput.ip.startsWith('157.240.');
+
+    simProfile.devType = devTypeLabel;
+    simProfile.os = osName + (os.version ? ' ' + os.version : '');
+    simProfile.browser = browserName + (browser.version ? ' ' + browser.version : '');
+    simProfile.devModel = device.model || (isMobile ? '移动手机' : 'PC 桌面');
+    simProfile.country = countryName;
+    simProfile.lang = simInput.lang.split(',')[0] || 'en-US';
+    simProfile.ipAttr = isBot ? '审查抓取节点' : (isDatacenter ? '机房 / 数据中心' : '住宅 / 移动宽带');
+    simProfile.asn = isDatacenter ? 'AS16509 (Cloud/DC)' : (isBot ? 'AS32934 (Crawler)' : 'AS28573 (Telecom)');
+    simProfile.riskScore = isBot ? 98 : (isDatacenter ? 78 : 12);
+
+    // 2. 按优先级升序求值启用的规则
+    const activeRules = rules.value.filter((r) => r.enabled).sort((a, b) => a.priority - b.priority);
+    const traceSteps: TraceStep[] = [];
+    let matchedRule: RuleItem | null = null;
+
+    for (const rule of activeRules) {
+      if (matchedRule) {
+        traceSteps.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          status: 'skip',
+          statusText: '已跳过',
+          badgeClass: 'badge-neutral',
+          whyText: '首条命中即裁决 (First-Match-Wins)，后续规则不再求值',
+        });
+        continue;
+      }
+
+      // 求值该规则的条件组
+      const groupResults = rule.conditionGroups.map((cg) => {
+        return cg.conditions.map((c) => {
+          let hit = false;
+          let factText = '';
+          const val = (c.value || '').toLowerCase();
+          if (c.field === 'ip') {
+            hit = val.includes('l-01')
+              ? simInput.ip.startsWith('10.') || simInput.ip.startsWith('192.') || simInput.ip === '127.0.0.1'
+              : simInput.ip.includes(val);
+            factText = `IP ${simInput.ip} ${hit ? '符合' : '不符合'} ${c.value}`;
+          } else if (c.field === 'devtype') {
+            hit = (val.includes('移动') && isMobile) || (val.includes('桌面') && !isMobile && !isBot) || (val.includes('爬虫') && isBot);
+            factText = `设备类型 = ${devTypeLabel} (${hit ? '匹配' : '不匹配'})`;
+          } else if (c.field === 'os') {
+            hit = val.split(/[,|\s]+/).some((x) => x && osName.toLowerCase().includes(x));
+            factText = `系统 = ${osName} (${hit ? '属于' : '不属于'} ${c.value})`;
+          } else if (c.field === 'browser') {
+            hit = browserName.toLowerCase().includes(val);
+            factText = `浏览器 = ${browserName} (${hit ? '匹配' : '不匹配'})`;
+          } else if (c.field === 'country') {
+            hit = val.toUpperCase().includes(countryCode);
+            factText = `国家 = ${countryCode} (${hit ? '属于' : '不属于'} ${c.value})`;
+          } else if (c.field === 'lang') {
+            hit = simInput.lang.toLowerCase().includes(val);
+            factText = `语言 = ${simProfile.lang} (${hit ? '匹配' : '不匹配'})`;
+          } else {
+            hit = !isBot;
+            factText = `${c.field} 判定: ${hit ? '满足' : '未满足'}`;
+          }
+          return { hit, text: factText };
+        });
+      });
+
+      const isAnd = rule.logic !== '任一满足';
+      const ruleMatched = isAnd
+        ? groupResults.every((g) => g.every((c) => c.hit))
+        : groupResults.some((g) => g.some((c) => c.hit));
+
+      const facts: TraceFact[] = groupResults.flat();
+
+      if (ruleMatched) {
+        matchedRule = rule;
+        rule.hits24h = (rule.hits24h || 0) + 1;
+        const isBlock = rule.action.includes('拦截') || rule.action.includes('404') || rule.action.includes('限流');
+        traceSteps.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          status: isBlock ? 'block' : 'hit',
+          statusText: '命中 · 裁决',
+          badgeClass: isBlock ? 'badge-danger' : 'badge-ok',
+          facts,
+          whyText: `全部条件满足，执行裁决动作：${rule.action} → ${rule.destination}`,
+          latency: '0.3ms',
+        });
+      } else {
+        traceSteps.push({
+          ruleId: rule.id,
+          ruleName: rule.name,
+          status: 'skip',
+          statusText: '未命中',
+          badgeClass: 'badge-neutral',
+          facts,
+          whyText: '条件不满足，继续求值下一条规则',
+          latency: '0.2ms',
+        });
+      }
     }
-  }, 420);
+
+    simTraceSteps.value = traceSteps;
+
+    if (matchedRule) {
+      const isBlock = matchedRule.action.includes('拦截') || matchedRule.action.includes('404') || matchedRule.action.includes('限流');
+      simVerdict.title = `命中 ${matchedRule.id} · ${matchedRule.action}`;
+      simVerdict.badgeClass = isBlock ? 'badge-danger' : 'badge-ok';
+      simVerdict.accentColor = isBlock ? 'var(--danger)' : 'var(--accent)';
+      simVerdict.cardStyle = isBlock
+        ? 'background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 30%, transparent);'
+        : 'background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, transparent);';
+      simVerdict.actionText = `${matchedRule.action} → ${matchedRule.destination}`;
+      simVerdict.detailText = `依据规则「${matchedRule.name}」判定，端到端执行耗时 0.4ms`;
+    } else {
+      simVerdict.title = '无规则命中 · 无规则兜底';
+      simVerdict.badgeClass = 'badge-neutral';
+      simVerdict.accentColor = 'var(--muted)';
+      simVerdict.cardStyle = '';
+      simVerdict.actionText = '无规则兜底 → 目标池 A';
+      simVerdict.detailText = '所有启用规则均未命中，执行短链默认兜底动作放行至主目标池';
+    }
+
+    message.success('规则链模拟求值完成');
+  }, 350);
 }
 
 function loadSampleBot() {
@@ -2180,90 +2316,8 @@ function loadSampleBot() {
   simInput.ip = '157.240.1.35';
   simInput.ua = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
   simInput.lang = 'en-US,en;q=0.9';
-
-  simProfile.ipRange = '157.240.0.0/16';
-  simProfile.ipAttr = 'Meta 机房审查段 · 官方';
-  simProfile.asn = 'AS32934';
-  simProfile.isp = 'Facebook Inc.';
-  simProfile.country = 'US / CA';
-  simProfile.region = 'Menlo Park';
-  simProfile.devType = '爬虫 / 机器人';
-  simProfile.devAttr = 'Headless 抓取环境';
-  simProfile.os = 'Linux';
-  simProfile.osAttr = '服务器端';
-  simProfile.devModel = '虚拟化节点';
-  simProfile.modelAttr = '未知移动设备';
-  simProfile.browser = 'facebookexternalhit 1.1';
-  simProfile.browserAttr = '审查代理 Bot';
-  simProfile.lang = 'en-US';
-  simProfile.langAttr = '系统默认';
-  simProfile.tz = 'America/Los_Angeles';
-  simProfile.tzOffset = '-08:00 GMT';
-  simProfile.screen = '0 × 0';
-  simProfile.screenAttr = '无实体屏幕';
-  simProfile.ref = '无 (Direct 爬取)';
-  simProfile.refAttr = '审查机器人抓取';
-  simProfile.canvas = 'e8d2…41aa';
-  simProfile.riskScore = 98;
-
-  applyBotResult();
-  message.info('已载入示例：Meta 审查爬虫');
-}
-
-function applyBotResult() {
-  simVerdict.title = '命中 R-002 · 拦截 404';
-  simVerdict.badgeClass = 'badge-danger';
-  simVerdict.accentColor = 'var(--danger)';
-  simVerdict.cardStyle = 'background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 30%, transparent);';
-  simVerdict.actionText = '拦截 → 直接 404 Not Found';
-  simVerdict.detailText = 'HTTP 404 Not Found · 伪装不存在，未向审查员暴露任何落地页链路';
-
-  simTraceSteps.value = [
-    {
-      ruleId: 'R-006',
-      ruleName: '内部测试强制放行',
-      status: 'skip',
-      statusText: '未命中',
-      badgeClass: 'badge-neutral',
-      whyText: 'IP 157.240.1.35 不在 L-01 内网白名单中',
-      latency: '0.1ms',
-    },
-    {
-      ruleId: 'R-001',
-      ruleName: '目标市场 · 移动端放行',
-      status: 'skip',
-      statusText: '未命中',
-      badgeClass: 'badge-neutral',
-      facts: [
-        { text: '国家 = US', hit: true },
-        { text: '设备类型 = 爬虫 (≠ 移动)', hit: false },
-        { text: '系统 = Linux (≠ iOS/Android)', hit: false },
-      ],
-      whyText: '未满足移动端与真实操作系统条件',
-      latency: '0.3ms',
-    },
-    {
-      ruleId: 'R-002',
-      ruleName: '拦截 · 平台审查爬虫',
-      status: 'block',
-      statusText: '命中拦截',
-      badgeClass: 'badge-danger',
-      facts: [
-        { text: 'UA 匹配 facebookexternalhit', hit: true },
-        { text: 'IP 段 ∈ 名单 L-02 平台审查爬虫段', hit: true },
-      ],
-      whyText: '命中高危平台审核爬虫特征，立即熔断终止',
-      latency: '0.3ms',
-    },
-    {
-      ruleId: 'R-003',
-      ruleName: '拦截 · 代理与机房出口',
-      status: 'skip',
-      statusText: '已跳过',
-      badgeClass: 'badge-neutral',
-      whyText: '首条命中即裁决，后续规则不再求值',
-    },
-  ];
+  runSimulation();
+  message.info('已载入示例并开始求值：Meta 审查爬虫');
 }
 
 function loadSampleDatacenter() {
@@ -2271,208 +2325,17 @@ function loadSampleDatacenter() {
   simInput.ip = '52.95.245.14';
   simInput.ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
   simInput.lang = 'de-DE,de;q=0.9,en;q=0.8';
-
-  simProfile.ipRange = '52.95.240.0/20';
-  simProfile.ipAttr = 'AWS 数据中心机房';
-  simProfile.asn = 'AS16509';
-  simProfile.isp = 'AMAZON-02';
-  simProfile.country = 'DE / HE';
-  simProfile.region = 'Frankfurt';
-  simProfile.devType = '桌面 / 机房节点';
-  simProfile.devAttr = '标准键鼠环境';
-  simProfile.os = 'Windows 10';
-  simProfile.osAttr = '通用 x64 桌面';
-  simProfile.devModel = 'PC 桌面';
-  simProfile.modelAttr = '虚拟化环境';
-  simProfile.browser = 'Chrome 131.0';
-  simProfile.browserAttr = '正常 Chrome';
-  simProfile.lang = 'de-DE';
-  simProfile.langAttr = '与 IP 匹配';
-  simProfile.tz = 'Europe/Berlin';
-  simProfile.tzOffset = '+01:00 GMT';
-  simProfile.screen = '1920 × 1080';
-  simProfile.screenAttr = '标准全高清';
-  simProfile.ref = 'Direct (直接访问)';
-  simProfile.refAttr = '无前置点击参数';
-  simProfile.canvas = '3c9a…77f0';
-  simProfile.riskScore = 85;
-
-  applyDatacenterResult();
-  message.info('已载入示例：AWS 机房与代理 IP');
-}
-
-function applyDatacenterResult() {
-  simVerdict.title = '命中 R-003 · 限流 429';
-  simVerdict.badgeClass = 'badge-warn';
-  simVerdict.accentColor = 'var(--warn)';
-  simVerdict.cardStyle = 'background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 30%, transparent);';
-  simVerdict.actionText = '限流 + 计数 → 风控观察池';
-  simVerdict.detailText = 'HTTP 429 Too Many Requests · 触发反刷风控并累积进入候选黑名单';
-
-  simTraceSteps.value = [
-    {
-      ruleId: 'R-006',
-      ruleName: '内部测试强制放行',
-      status: 'skip',
-      statusText: '未命中',
-      badgeClass: 'badge-neutral',
-      whyText: 'IP 52.95.245.14 不在 L-01 内部名单',
-      latency: '0.1ms',
-    },
-    {
-      ruleId: 'R-001',
-      ruleName: '目标市场 · 移动端放行',
-      status: 'skip',
-      statusText: '未命中',
-      badgeClass: 'badge-neutral',
-      facts: [
-        { text: '国家 = DE (在放行名单)', hit: true },
-        { text: '设备类型 = 桌面 (≠ 移动)', hit: false },
-        { text: '系统 = Windows (≠ 移动系统)', hit: false },
-      ],
-      whyText: '非移动端受众，跳过此规则',
-      latency: '0.2ms',
-    },
-    {
-      ruleId: 'R-002',
-      ruleName: '拦截 · 平台审查爬虫',
-      status: 'skip',
-      statusText: '未命中',
-      badgeClass: 'badge-neutral',
-      whyText: 'UA 未命中审查机器人特征',
-      latency: '0.2ms',
-    },
-    {
-      ruleId: 'R-003',
-      ruleName: '拦截 · 代理与机房出口',
-      status: 'block',
-      statusText: '命中限流',
-      badgeClass: 'badge-warn',
-      facts: [
-        { text: 'IP 属性 ∈ AWS 机房出口', hit: true },
-        { text: '命中名单 L-03 代理出口', hit: true },
-      ],
-      whyText: '命中数据中心/机房出口情报，触发限流观察策略',
-      latency: '0.4ms',
-    },
-    {
-      ruleId: 'R-004',
-      ruleName: '语言分流',
-      status: 'skip',
-      statusText: '已跳过',
-      badgeClass: 'badge-neutral',
-      whyText: '首条命中即裁决，后续规则不再求值',
-    },
-  ];
+  runSimulation();
+  message.info('已载入示例并开始求值：AWS 机房 IP');
 }
 
 function loadSampleMobile() {
   simInput.url = 'https://go.northwind-media.com/vip-access?ttclid=9d1f2a7c';
-  simInput.ip = '202.159.44.7';
+  simInput.ip = '189.45.71.13';
   simInput.ua = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1';
   simInput.lang = 'pt-BR,pt;q=0.9,en-US;q=0.8';
-
-  simProfile.ipRange = '202.159.44.0/24';
-  simProfile.ipAttr = '住宅 · 非代理';
-  simProfile.asn = 'AS28573';
-  simProfile.isp = 'Claro NXT Telecom';
-  simProfile.country = 'BR / SP';
-  simProfile.region = 'São Paulo';
-  simProfile.devType = '移动';
-  simProfile.devAttr = '触屏 · 高 DPR';
-  simProfile.os = 'iOS 18.1';
-  simProfile.osAttr = '非越狱系统';
-  simProfile.devModel = 'iPhone 15';
-  simProfile.modelAttr = '在白名单内';
-  simProfile.browser = 'Mobile Safari 18.1';
-  simProfile.browserAttr = '正常浏览器';
-  simProfile.lang = 'pt-BR';
-  simProfile.langAttr = '与 IP 匹配';
-  simProfile.tz = 'America/Sao_Paulo';
-  simProfile.tzOffset = '-03:00 GMT';
-  simProfile.screen = '393 × 852';
-  simProfile.screenAttr = '标准视口';
-  simProfile.ref = 'facebook.com';
-  simProfile.refAttr = 'ttclid 广告点击参数有效';
-  simProfile.canvas = 'a3f1…9c22';
-  simProfile.riskScore = 12;
-
-  applyMobileResult();
-  message.info('已载入示例：正常海外移动访客');
-}
-
-function applyMobileResult() {
-  simVerdict.title = '命中 R-004 · 放行';
-  simVerdict.badgeClass = 'badge-ok';
-  simVerdict.accentColor = 'var(--accent)';
-  simVerdict.cardStyle = 'background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, transparent);';
-  simVerdict.actionText = '放行 → 目标池 B · 第 1 个出口';
-  simVerdict.detailText = '302 → https://northwind-media.com/landing/pt-special-offer';
-
-  simTraceSteps.value = [
-    {
-      ruleId: 'R-006',
-      ruleName: '内部测试强制放行',
-      status: 'skip',
-      statusText: '未命中',
-      badgeClass: 'badge-neutral',
-      whyText: 'IP 202.159.44.7 不在 L-01 内部名单中',
-      latency: '0.2ms',
-    },
-    {
-      ruleId: 'R-001',
-      ruleName: '目标市场 · 移动端放行',
-      status: 'skip',
-      statusText: '未命中',
-      badgeClass: 'badge-neutral',
-      facts: [
-        { text: '国家 BR ∉ [US, CA, GB, AU, DE]', hit: false },
-        { text: '设备类型 = 移动', hit: true },
-        { text: '系统 = iOS 18.1', hit: true },
-      ],
-      whyText: '巴西国家代码不在此规则允许的核心放行列表内',
-      latency: '0.3ms',
-    },
-    {
-      ruleId: 'R-002',
-      ruleName: '拦截 · 平台审查爬虫',
-      status: 'skip',
-      statusText: '未命中',
-      badgeClass: 'badge-neutral',
-      whyText: '未匹配任何审查爬虫特征',
-      latency: '0.2ms',
-    },
-    {
-      ruleId: 'R-003',
-      ruleName: '拦截 · 代理与机房出口',
-      status: 'skip',
-      statusText: '未命中',
-      badgeClass: 'badge-neutral',
-      whyText: '住宅 IP 非机房代理',
-      latency: '0.3ms',
-    },
-    {
-      ruleId: 'R-004',
-      ruleName: '语言分流 · 葡语市场',
-      status: 'hit',
-      statusText: '命中',
-      badgeClass: 'badge-ok',
-      facts: [
-        { text: '语言 = pt-BR', hit: true },
-        { text: '设备类型 = 移动 (≠ 爬虫)', hit: true },
-      ],
-      whyText: '语言头与真实移动属性完全符合，放行至葡语主落地页',
-      latency: '0.4ms',
-    },
-    {
-      ruleId: 'R-005',
-      ruleName: '设备型号白名单',
-      status: 'skip',
-      statusText: '已跳过',
-      badgeClass: 'badge-neutral',
-      whyText: '首条命中即裁决 (First-Match-Wins)，后续规则不再求值',
-    },
-  ];
+  runSimulation();
+  message.info('已载入示例并开始求值：巴西真实移动访客');
 }
 
 // ==================== 名单库展开与操作 ====================
