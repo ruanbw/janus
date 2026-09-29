@@ -803,6 +803,36 @@ body {
   white-space: nowrap;
 }
 
+/* ─── 表格右侧固定列 (Sticky Actions Column) ────────────────────────── */
+/* 横向滚动时把操作列钉在右侧。padding / vertical-align 继续沿用 .tbl 的既有声明。 */
+.tbl .col-actions {
+  position: sticky;
+  right: 0;
+  background: var(--surface);
+  /* border-collapse: collapse 下 sticky 单元格的 border 不会跟随滚动,
+     故左侧分隔线改用 box-shadow 绘制。 */
+  box-shadow: -1px 0 0 var(--border);
+}
+
+/* 表头必须盖在数据行之上(2 > 1),否则滚动时会被首行单元格压住 */
+.tbl thead th.col-actions {
+  z-index: 2;
+  background: color-mix(in srgb, var(--fg) 2%, var(--surface));
+}
+
+.tbl td.col-actions {
+  z-index: 1;
+}
+
+/* 固定列是不透明底,必须逐个状态跟随所在行的背景,否则滚动时会露出下层内容 */
+.tbl tbody tr:hover .col-actions {
+  background: var(--fg-soft);
+}
+
+.tbl tbody tr[aria-selected='true'] .col-actions {
+  background: var(--accent-soft);
+}
+
 /* ─── 搜索工具栏与过滤器 (Toolbar & Filters) ────────────────────────── */
 .toolbar {
   display: flex;
