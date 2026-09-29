@@ -4,14 +4,14 @@ import tailwindcss from '@tailwindcss/vite';
 import vue from '@vitejs/plugin-vue';
 import { defineConfig, loadEnv } from 'vite';
 
-// Vite 配置:本地开发 dev server 5173,/api 代理到 Go 后端(本机 8081,非 8080)。
+// Vite 配置:本地开发 dev server 5173,/api 代理到 Go 后端(本机 8080)。
 // 支持两种访问入口:
 //   - http://localhost:5173(localhost 直连)
 //   - http://<域名>:5173(如 app.cloak.test,经 SwitchHosts/hosts 指向 127.0.0.1;
 //     需 server.allowedHosts 放行,见下方 VITE_PLATFORM_DOMAIN)
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const proxyTarget = env.VITE_PROXY_TARGET || 'http://localhost:8081';
+  const proxyTarget = env.VITE_PROXY_TARGET || 'http://localhost:8080';
   const platformDomain = env.VITE_PLATFORM_DOMAIN || 'cloak.test';
 
   return {

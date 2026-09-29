@@ -13,11 +13,11 @@ CLOAK 短链服务的后台管理界面:基于 Vue 3 + TypeScript + Vite + Tailw
 
 ```bash
 pnpm install
-pnpm dev        # http://localhost:5173,/api 代理到 http://localhost:8081
+pnpm dev        # http://localhost:5173,/api 代理到 http://localhost:8080
 # 域名入口(SwitchHosts 配置后):http://app.cloak.test:5173(vite.config.ts 已放行)
 ```
 
-环境要求:Postgres 与 Caddy 由 `docker compose up -d` 提供;Go 后端在终端启动并监听 `http://localhost:8081`(见仓库根 README §5.6:`CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8081 go run ./cmd/cloak`;本机 8080 被 nginx 占用)。
+环境要求:Postgres 与 Caddy 由 `docker compose up -d` 提供;Go 后端在终端启动并监听 `http://localhost:8080`(见仓库根 README §5.6:`CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak`)。
 
 ## 构建
 

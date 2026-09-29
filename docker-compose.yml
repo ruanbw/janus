@@ -1,9 +1,9 @@
 # CLOAK 开发环境编排:只跑基础设施(Postgres + Caddy 反代)。
 # Go 后端与前端在终端直接启动,便于调试:
 #   docker compose up -d                     # 启动 postgres + caddy
-#   CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8081 go run ./cmd/cloak   # 后端
-#   cd web && pnpm dev                       # 前端(代理 /api 到 127.0.0.1:8081)
-# Caddy 通过 host.docker.internal 反代宿主机上的后端(:8081),授权端点直连同一地址。
+#   CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak   # 后端
+#   cd web && pnpm dev                       # 前端(代理 /api 到 127.0.0.1:8080)
+# Caddy 通过 host.docker.internal 反代宿主机上的后端(:8080),授权端点直连同一地址。
 # 需用户手动步骤:
 #   1. /etc/hosts 添加(需 sudo):127.0.0.1 app.cloak.test <测试租户子域>.cloak.test
 #   2. 信任 Caddy 本地 CA 根证书:

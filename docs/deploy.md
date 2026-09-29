@@ -1,6 +1,6 @@
 # CLOAK 生产部署指南
 
-自托管、多租户短链服务。单台服务器:Go 后端(RESTful API)+ Postgres + Caddy 前置(on-demand TLS,Let's Encrypt 自动签发/续期)。前端构建产物由前端开发流程产出后经 `go:embed` 内嵌进 Go 二进制(见 ADR-0003;当前版本前端以独立 SPA 在 `web/` 构建,`go:embed` 集成见后端实现)。
+自托管、多租户短链服务。单台服务器:Go 后端(RESTful API)+ Postgres + nginx(前端静态服务)+ Caddy 前置(on-demand TLS,Let's Encrypt 自动签发/续期)。前后端分离(见 ADR-0006):前端为独立构建的 nginx 服务,后端镜像内无任何前端文件,两者独立发版;生产环境为多容器编排,不存在单二进制部署形态。
 
 ## 1. 前置条件
 
@@ -58,7 +58,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 | 维度 | 开发 | 生产 |
 | --- | --- | --- |
 | 编排 | 基础设施 Docker(`docker compose up -d`:postgres + caddy);后端/前端终端启动(`go run` + `pnpm dev`,见根 README §5) | `docker compose -f docker-compose.prod.yml up -d`(全部容器化) |
-| 端口 | 后端 8081;Caddy 映射宿主 443/80(无端口访问) | 标准 80/443;后端不暴露公网 |
+| 端口 | 后端 8080;Caddy 映射宿主 443/80(无端口访问) | 标准 80/443;后端不暴露公网 |
 | DNS | SwitchHosts 把 `app.cloak.test` 与测试租户子域指向 127.0.0.1(`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 读 /etc/hosts 走真实代码路径) | 真实 DNS 泛解析 `*.<平台域名>` |
 | 证书 | Caddy 本地 CA(`tls internal` + `on_demand_tls`),`caddy trust` 信任根证书 | Let's Encrypt(ACME 自动签发/续期) |
 | 邮件 | 控制台假 mailer(验证/重置链接打印在后端日志) | 真实 SMTP(部署者提供凭据;mailer 可插拔,见 spec 决策 #3) |

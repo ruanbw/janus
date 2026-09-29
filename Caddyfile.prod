@@ -1,7 +1,11 @@
-# CLOAK 生产 Caddy 配置:on-demand TLS + Let's Encrypt(ADR-0002、spec 决策 #8、ADR-0004)
+# CLOAK 生产 Caddy 配置:on-demand TLS + Let's Encrypt(ADR-0002、spec 决策 #8、ADR-0004、ADR-0006)
 # ⚠️ Caddy 站点地址不支持环境变量占位符:把下面的 example.com 全部替换为你的平台域名
 #    (与 .env 的 CLOAK_PLATFORM_DOMAIN 保持一致),再挂载到 Caddy 容器。
 # 开发版见 Caddyfile(本地 CA)。
+#
+# 前后端分离(ADR-0006):Caddy 只做 TLS + 按路径分流,自身不托管任何文件。
+#   /api、/internal、/healthz → backend(Go 后端)
+#   其余                    → web(nginx 静态服务,只含前端构建产物)
 {
 	# ACME 账户邮箱(Let's Encrypt 到期提醒;可选)。
 	# 注意:CLOAK_ACME_EMAIL 为空时,email 指令会让 Caddy 启动失败
@@ -15,15 +19,40 @@
 	}
 }
 
+# 后台域名分流规则在两个站点间复用(app 后台域名与裸平台域名行为一致)
+(console) {
+	handle /api/* {
+		reverse_proxy backend:8080
+	}
+	handle /internal/* {
+		reverse_proxy backend:8080
+	}
+	handle /healthz {
+		reverse_proxy backend:8080
+	}
+	handle {
+		reverse_proxy web:80
+	}
+}
+
 # 裸平台域名:承载后台(授权端点对裸平台域名始终放行)
 example.com {
 	tls {
 		on_demand
 	}
-	reverse_proxy backend:8080
+	import console
 }
 
-# 全部租户子域(泛域名匹配;依赖 DNS 上 *.<平台域名> → 本服务器)
+# 后台专用域名 app.<平台域名>
+app.example.com {
+	tls {
+		on_demand
+	}
+	import console
+}
+
+# 全部租户子域(泛域名匹配;依赖 DNS 上 *.<平台域名> → 本服务器):
+# 短链跳转与落地页是后端业务逻辑,整站反代到 Go 后端
 *.example.com {
 	tls {
 		on_demand

@@ -2,9 +2,9 @@
 
 CLOAK 是一个自托管的多租户短链服务:租户管理自己的域名与短链,系统为每个已激活域名自动签发并续期 HTTPS 证书,并把「域名/短码」的访问重定向到目标 URL。
 
-- **单服务器部署**:Go 后端(Gin RESTful API + GORM ORM + 内嵌前端)+ PostgreSQL + Caddy(on-demand TLS,Let's Encrypt 自动签发/续期)。
+- **单服务器部署**:Go 后端(Gin RESTful API + GORM ORM)+ nginx(前端静态服务)+ PostgreSQL + Caddy(on-demand TLS,Let's Encrypt 自动签发/续期)。
 - **多租户隔离**:租户之间的域名与短链完全隔离;部署者拥有平台管理员角色,可治理全平台。
-- **单二进制交付**:前端构建产物(`web/dist`)经 `go:embed` 内嵌进 Go 二进制,镜像即服务。
+- **前后端分离**:前端独立构建为 nginx 镜像,后端镜像内无任何前端文件;两者独立构建、独立发版(ADR-0006)。改前端不需要重新打包后端。
 
 本文档覆盖:**开发环境测试**(第 4~7 节)与**生产部署**(第 8~10 节)的完整流程。更简洁的部署速览见 [`docs/deploy.md`](docs/deploy.md)。
 
@@ -86,18 +86,21 @@ CLOAK 是一个自托管的多租户短链服务:租户管理自己的域名与�
               └───────┬───────────┬──────┘
                       │           │
               平台域名/后台    *.<平台域名> 租户子域
-              (SPA + API)    (短链跳转)
+              (nginx + /api)  (短链跳转)
                       │           │
               ┌───────┴───────────┴──────┐
-              │  Go 后端 (单二进制)       │
-              │  /api/*  REST API        │
-              │  /{code}  跳转路由        │
-              │  /internal/caddy/authorize│
-              │  内嵌前端 (go:embed)      │
-              │  后台 worker:            │
-              │   DNS 重试/证书探活/清理  │
-              └───────────┬──────────────┘
-                          │
+              │  Caddy: TLS + 路径分流    │
+              └───────┬───────────┬──────┘
+                      │           │
+          ┌───────────▼──┐   ┌────▼─────────────────┐
+          │ nginx (web)  │   │  Go 后端 (backend)   │
+          │ /            │   │  /api/*  REST API    │
+          │ SPA + 静态资源│   │  /{code}  跳转路由   │
+          │              │   │  /internal/caddy/... │
+          │              │   │  后台 worker:        │
+          │              │   │   DNS 重试/证书探活   │
+          └──────────────┘   └────┬─────────────────┘
+                                  │
                  ┌────────┴────────┐
                  │  PostgreSQL 16  │
                  └─────────────────┘
@@ -105,7 +108,7 @@ CLOAK 是一个自托管的多租户短链服务:租户管理自己的域名与�
 
 - **Go 后端**:`cmd/cloak` 启动 → 加载配置 → 连接 Postgres → 执行迁移 → 初始化超管 → 启动后台任务 → HTTP 服务。所有环境差异由环境变量承载(见 [spec 决策 #14](.scratch/cloak/spec.md))。
 - **Caddy**:TLS 终止与证书生命周期交给 Caddy on-demand TLS。收到陌生域名的首个 TLS 握手时,向应用内部授权端点(`/internal/caddy/authorize`)询问该域名是否已激活,是则自动签发并续期 Let's Encrypt 证书(ADR-0002)。
-- **前端**:Vue 3 + TypeScript + Vite + Ant Design Vue 的 SPA,构建产物 `web/dist` 经 `go:embed` 内嵌进 Go 二进制(ADR-0003)。后台域名(裸平台域名或 `app.<平台域名>`)下非 API 路径由 Go 直接服务 SPA(含 history 路由回退)。
+- **前端**:Vue 3 + TypeScript + Vite + Ant Design Vue 的 SPA,独立构建为 nginx 镜像(ADR-0003、ADR-0006)。平台后台域名下由 nginx 提供静态资源与 history 路由回退,`/api` 由 Caddy 分流到 Go 后端。
 
 ---
 
@@ -126,10 +129,10 @@ CLOAK 是一个自托管的多租户短链服务:租户管理自己的域名与�
 ├── migrations/                 # SQL 迁移(启动时自动执行)
 ├── web/                        # 前端 SPA(见 web/README.md)
 │   ├── src/                    # Vue 源码
-│   ├── dist/                   # 构建产物(入库,go:embed 使用)
-│   └── embed.go                # go:embed 内嵌 dist
+│   └── dist/                   # 构建产物(不入库,镜像构建期生成)
 ├── docker/
-│   └── Dockerfile              # 多阶段构建,单二进制 + 迁移文件
+│   ├── Dockerfile              # 多阶段构建:backend(Go)与 web(nginx)两个独立目标
+│   └── nginx.conf              # 前端静态服务配置(SPA 回退 + 资源强缓存)
 ├── docker-compose.yml          # 开发环境编排
 ├── docker-compose.prod.yml     # 生产环境编排
 ├── Caddyfile                   # 开发 Caddy 配置(本地 CA)
@@ -171,10 +174,10 @@ docker compose up -d
 | 服务 | 容器内 | 宿主机映射 | 说明 |
 | --- | --- | --- | --- |
 | `postgres` | 5432 | `127.0.0.1:5432` | PostgreSQL 16,开发凭据 `cloak/cloak` |
-| `caddy` | 443 | `127.0.0.1:443` / `127.0.0.1:80` | HTTPS 入口,on-demand TLS + 本地 CA;反代到宿主机 `:8081` 的后端(`host.docker.internal`) |
+| `caddy` | 443 | `127.0.0.1:443` / `127.0.0.1:80` | HTTPS 入口,on-demand TLS + 本地 CA;反代到宿主机 `:8080` 的后端(`host.docker.internal`) |
 
 > Caddy 映射宿主 **443**(https 无端口访问)与 **80**(Caddy 自动 308 跳 https)。
-> 无端口访问依赖 SwitchHosts 把 `*.cloak.test` 指向 127.0.0.1;后端在终端监听 **8081**(见 5.6)。
+> 无端口访问依赖 SwitchHosts 把 `*.cloak.test` 指向 127.0.0.1;后端在终端监听 **8080**(见 5.6)。
 > 注意:flow-filtering 项目的 openresty 容器绑定宿主 80/443/8080,开发时才启动它,与本服务错开。
 
 ### 5.2 配置本地域名解析(SwitchHosts / `/etc/hosts`)
@@ -197,7 +200,7 @@ sudo sh -c 'echo "127.0.0.1 app.cloak.test" >> /etc/hosts'
 sudo sh -c 'echo "127.0.0.1 alice.cloak.test bob.cloak.test" >> /etc/hosts'
 ```
 
-- `app.cloak.test` 承载后台(SPA + API),域名入口两种方式都可用:`http://app.cloak.test:5173`(Vite Dev Server,热更新)与 `https://app.cloak.test`(Caddy + Go 内嵌产物,验证域名/TLS 形态,见 5.4)。
+- `app.cloak.test` 承载后台(SPA + API),域名入口两种方式都可用:`http://app.cloak.test:5173`(Vite Dev Server,热更新)与 `https://app.cloak.test`(Caddy → Vite Dev Server,验证域名/TLS 形态,见 5.4)。
 - `<slug>.cloak.test` 是租户的**平台默认域名**,用于验证短链跳转。
 - 测试**自有域名**时,同样把它加进 hosts(如 `127.0.0.1 links.example.test`);`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 的 DNS 校验会读取 hosts,走真实代码路径(spec 决策 #14)。
 
@@ -228,20 +231,20 @@ sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keyc
 
 | 入口 | 地址 | 说明 |
 | --- | --- | --- |
-| 前端/后台(localhost) | `http://localhost:5173` | Vite Dev Server,热更新;`/api` 代理到 8081 |
+| 前端/后台(localhost) | `http://localhost:5173` | Vite Dev Server,热更新;`/api` 代理到 8080 |
 | 前端/后台(域名) | `http://app.cloak.test:5173` | 同上,经 SwitchHosts 域名访问(需 5.2 hosts) |
-| 后台(域名 + HTTPS) | `https://app.cloak.test` | Caddy → Go 内嵌产物,验证域名/TLS/证书形态;前端改动需先 `pnpm build`(见 8.5) |
+| 后台(域名 + HTTPS) | `https://app.cloak.test` | Caddy → Vite Dev Server,验证域名/TLS/证书形态;前端改动即时热更新,无需打包 |
 | 健康检查 | `https://app.cloak.test/healthz` | 期望 `{"status":"ok"}` |
-| 后端 API(直连) | `http://127.0.0.1:8081` | 绕过 Caddy/Vite,开发调试用 |
+| 后端 API(直连) | `http://127.0.0.1:8080` | 绕过 Caddy/Vite,开发调试用 |
 
 ### 5.5 前端本地开发(热更新)
 
-后端按 5.6 在终端跑着,前端用 Vite Dev Server(自带 `/api` 代理到 `http://localhost:8081`):
+后端按 5.6 在终端跑着,前端用 Vite Dev Server(自带 `/api` 代理到 `http://localhost:8080`):
 
 ```bash
 cd web
 pnpm install        # 首次
-pnpm dev            # http://localhost:5173,/api 代理到后端 8081
+pnpm dev            # http://localhost:5173,/api 代理到后端 8080
 ```
 
 - 浏览器访问 `http://localhost:5173` 或域名入口 `http://app.cloak.test:5173`(见 5.2),`/api/*` 自动代理到 Go 后端,`Set-Cookie` 透传(会话/CSRF cookie 正常)。
@@ -255,19 +258,19 @@ pnpm dev            # http://localhost:5173,/api 代理到后端 8081
 
 ```bash
 # 前提:Postgres 已启动(5.1);在仓库根目录执行
-CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8081 go run ./cmd/cloak
+CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak
 ```
 
-- `CLOAK_COOKIE_SECURE=false`:开发走 http(Vite Dev Server / 直连 8081),Secure cookie 不生效;
-- `CLOAK_ADDR=:8081`:与前端代理、Caddy 反代保持一致(本机 8080 常被 nginx 占用);
+- `CLOAK_COOKIE_SECURE=false`:开发走 http(Vite Dev Server / 直连 8080),Secure cookie 不生效;
+- `CLOAK_ADDR=:8080`:与前端代理、Caddy 反代、生产 compose 保持一致;仅在 8080 被占用时用环境变量改端口,并同步修改 Vite 的 `VITE_PROXY_TARGET` 与 Caddy 反代地址;
 - 其余配置用代码默认值即可:数据库 `postgres://cloak:cloak@localhost:5432/cloak`、平台域名 `cloak.test`、公网 IP `127.0.0.1`、控制台 mailer(见 6.4);
-- 需要覆盖时用环境变量,例如 `CLOAK_SUPERADMIN_EMAIL=admin@example.com CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8081 go run ./cmd/cloak`;
+- 需要覆盖时用环境变量,例如 `CLOAK_SUPERADMIN_EMAIL=admin@example.com CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak`;
 - 完整变量见 [.env.example](.env.example) 与 `internal/config/config.go`。`go run` 不会自动读取 `.env`(那是 compose 的行为),需要覆盖时在命令行 export。
 
 启动后验证:
 
 ```bash
-curl -s http://127.0.0.1:8081/healthz        # → {"status":"ok"}
+curl -s http://127.0.0.1:8080/healthz        # → {"status":"ok"}
 curl -sk https://app.cloak.test/healthz # 经 Caddy 走通全链路
 ```
 
@@ -335,10 +338,11 @@ CLOAK_TEST_DATABASE_URL='postgres://cloak:cloak@localhost:5432/other_test?sslmod
 ```bash
 cd web
 pnpm type-check     # vue-tsc --noEmit,类型检查
-pnpm build          # 产物输出到 web/dist(生产镜像经 go:embed 使用)
+pnpm build          # 产物输出到 web/dist(仅本地产物预览用,镜像构建期会自行重建)
 ```
 
-- `web/dist` 已入库(`git` 可见),这是单二进制部署的前提——改完前端源码后必须重新 `pnpm build` 并把新的 `dist` 提交,否则 Docker 镜像内嵌的是旧产物。
+- `web/dist` **不入库**(`.gitignore` 已覆盖)。生产镜像在构建期自行执行 `pnpm install && pnpm build`,因此改前端只需重建 `web` 镜像,无需提交产物、无需重打后端。
+- 开发时用 `pnpm dev`(5173)即可热更新看到效果,完全不需要 `pnpm build`。
 - 前端没有单元测试框架;质量保障靠 `pnpm type-check` + 构建 + 6.3/6.4 端到端验证。
 
 ### 6.3 端到端手动验证(浏览器)
@@ -353,7 +357,7 @@ pnpm build          # 产物输出到 web/dist(生产镜像经 go:embed 使用)
 6. 浏览器访问 `https://alice.cloak.test/<短码>`(需 hosts 已加 `alice.cloak.test`),应 302 跳到目标地址;「统计」页能看到该短链访问数 +1。
 7. 尝试访问不存在的短码,应 404。
 8. (可选)添加自有域名:hosts 里加 `127.0.0.1 links.example.test`,后台添加后自动激活并签发证书;停用/恢复/删除流程各走一遍。
-9. (可选)设置 `CLOAK_SUPERADMIN_EMAIL`(如 `CLOAK_SUPERADMIN_EMAIL=admin@example.com CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8081 go run ./cmd/cloak`)重启后端,用该邮箱登录,首次登录引导设置密码,进入平台管理页查看租户列表。
+9. (可选)设置 `CLOAK_SUPERADMIN_EMAIL`(如 `CLOAK_SUPERADMIN_EMAIL=admin@example.com CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak`)重启后端,用该邮箱登录,首次登录引导设置密码,进入平台管理页查看租户列表。
 
 ### 6.4 端到端验证(curl)
 
@@ -446,7 +450,7 @@ docker compose up -d
 | 维度 | 开发 | 生产 |
 | --- | --- | --- |
 | 编排 | 基础设施 Docker(`docker compose up -d`:postgres + caddy);后端/前端终端启动(`go run` + `pnpm dev`) | `docker compose -f docker-compose.prod.yml up -d`(全部容器化) |
-| 端口 | 后端 8081;Caddy 映射宿主 443/80 | 标准 80/443;后端不暴露公网 |
+| 端口 | 后端 8080;Caddy 映射宿主 443/80 | 标准 80/443;后端不暴露公网 |
 | 域名解析 | `/etc/hosts` 把 `app.cloak.test` 与测试子域指向 `127.0.0.1`(`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 读 hosts 走真实代码路径) | 真实 DNS 泛解析 `*.<平台域名>` |
 | 证书 | Caddy 本地 CA(`tls internal` + `on_demand_tls`),`caddy trust` 信任根证书 | Let's Encrypt(ACME 自动签发/续期) |
 | 邮件 | 控制台假 mailer(验证/重置链接打印在后端日志) | 真实 SMTP(部署者提供凭据;mailer 可插拔) |
@@ -525,20 +529,24 @@ grep -n "YOUR-DOMAIN" Caddyfile.prod                      # 确认替换
 
 > `Caddyfile.prod` 随仓库版本管理,请用你自己的域名提交这份修改,不要在生产服务器上只改不提交。
 
-### 8.5 准备前端产物(如需改动)
+### 8.5 前端构建说明(前后端分离)
 
-生产镜像构建时直接用仓库里的 `web/dist`(经 `go:embed` 编进二进制)。**如果前端源码有改动,先重新构建并提交 dist,再构建镜像**:
+前端为独立镜像(ADR-0006),`docker/Dockerfile` 的 `web` 目标会在构建期自行执行 `pnpm install && pnpm build`,**无需任何手工准备步骤,也不需要提交 `web/dist`**。
 
 ```bash
-cd web
-pnpm install
-pnpm build      # 更新 web/dist
-cd ..
-git add web/dist web/index.html web/public
-git commit -m "build: 更新前端产物"
+# 首次/全部重建
+docker compose -f docker-compose.prod.yml build
+
+# 只改了前端 → 只重建前端镜像,后端镜像与后端二进制均不受影响
+docker compose -f docker-compose.prod.yml build web
+docker compose -f docker-compose.prod.yml up -d web
+
+# 只改了后端 → 只重建后端镜像
+docker compose -f docker-compose.prod.yml build backend
+docker compose -f docker-compose.prod.yml up -d backend
 ```
 
-不改前端则跳过此步。
+本地想预览构建产物可在 `web/` 下执行 `pnpm build`,产物输出到 `web/dist`(已被 `.gitignore` 忽略,不会被提交)。
 
 ### 8.6 启动部署
 
@@ -660,7 +668,7 @@ docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
 
 ### 8.12 安全建议
 
-- 服务器只开放 **80/443**;生产 compose 中后端不映射宿主机端口,不要手动暴露 8081。
+- 服务器只开放 **80/443**;生产 compose 中后端不映射宿主机端口,不要手动暴露 8080。
 - `CLOAK_COOKIE_SECURE` 生产必须为 `true`(compose 已强制)。
 - `.env` 文件权限 `chmod 600`,不要提交、不要进镜像(`.dockerignore` 已排除)。
 - 使用强数据库密码与 SMTP 凭据。
@@ -687,7 +695,7 @@ docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
 | 浏览器/curl 报证书不受信任 | 未信任本地 CA:执行 5.3;或把 `certs/caddy-root.pem` 导入钥匙串并信任 |
 | `curl: (60) SSL certificate problem` | 同上;临时排查可用 `-k` |
 | 域名访问 Vite 返回 403 | Vite 的 Host 校验未放行:确认 `web/.env.development` 的 `VITE_PLATFORM_DOMAIN` 与访问域名一致(默认已放行 `.cloak.test`,见 5.2 提示) |
-| Caddy 502 Bad Gateway | 后端没在终端启动:确认已执行 5.6 的 `go run` 且监听 8081(`curl -s http://127.0.0.1:8081/healthz`) |
+| Caddy 502 Bad Gateway | 后端没在终端启动:确认已执行 5.6 的 `go run` 且监听 8080(`curl -s http://127.0.0.1:8080/healthz`) |
 | 注册返回 409 | 邮箱/slug 已被占用(开发库有历史数据):换 slug,或 6.5 重置 |
 | 自有域名一直 `pending` | hosts 未加该域名/未指向 127.0.0.1;或未到 5 分钟重试周期,可在后台点「重新校验」 |
 | 域名 `failed` | 72 小时未通过校验;检查 hosts、`CLOAK_SERVER_PUBLIC_IP` |
@@ -696,7 +704,7 @@ docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
 | 后端启动失败/连不上数据库 | 确认 Postgres 已启动(`docker compose up -d postgres`、`docker compose ps`);检查 5.6 的启动命令与 `CLOAK_DATABASE_URL` |
 | 修改 Go 代码不生效 | 在启动后端的终端 `Ctrl+C` 后重新 `go run`;开发环境后端不在 Docker 里(见 5.6) |
 | 修改前端不生效 | Vite Dev Server 用 5.5;若看的是 Caddy 上的旧页面,需 `pnpm build` 后重建镜像 |
-| 8080/443/80 被占用 | 开发 compose 中 Caddy 占用 80/443;openresty(flow-filtering)也绑定 80/443,不要同时启动 |
+| 80/443 被占用 | 开发 compose 中 Caddy 占用 80/443;openresty(flow-filtering)也绑定 80/443,不要同时启动。后端 8080 若被占用,改 `CLOAK_ADDR` 并同步 Vite 代理与 Caddy 反代地址 |
 
 ### 生产环境
 

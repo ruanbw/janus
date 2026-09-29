@@ -10,12 +10,9 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-
-	webui "cloak/web"
 
 	"cloak/internal/config"
 	"cloak/internal/domain"
@@ -82,7 +79,7 @@ func New(d Deps) http.Handler {
 	r := gin.New()
 	// 16:落地页上传托管用 /{code}/ 尾斜杠布局,关闭 gin 自动尾斜杠重定向
 	r.RedirectTrailingSlash = false
-	r.Use(a.panicRecoverAndLog(), a.spaMiddleware())
+	r.Use(a.panicRecoverAndLog())
 
 	// 健康检查(docker compose healthcheck)
 	r.GET("/healthz", func(c *gin.Context) {
@@ -160,23 +157,6 @@ func (a *API) panicRecoverAndLog() gin.HandlerFunc {
 			}
 			log.Printf("%s %s -> %d (%s)", c.Request.Method, c.Request.URL.Path, c.Writer.Status(), time.Since(start))
 		}()
-		c.Next()
-	}
-}
-
-// spaMiddleware 后台域名 SPA 分流:平台后台域名(裸平台域名 / app.<平台域名>)下,
-// 除 API、内部端点与健康检查外的一切 GET 请求交给内嵌 SPA(单二进制部署,spec 决策 #1)。
-// Gin 只有 "/:code" 等精确路由,多段路径(assets、/admin/tenants 等)必须在此分流。
-func (a *API) spaMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if c.Request.Method == http.MethodGet && !strings.HasPrefix(c.Request.URL.Path, "/api/") &&
-			!strings.HasPrefix(c.Request.URL.Path, "/internal/") && c.Request.URL.Path != "/healthz" {
-			if h := hostOnly(c.Request.Host); h == a.cfg.PlatformDomain || h == "app."+a.cfg.PlatformDomain {
-				webui.Handler().ServeHTTP(c.Writer, c.Request)
-				c.Abort()
-				return
-			}
-		}
 		c.Next()
 	}
 }

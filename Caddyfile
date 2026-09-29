@@ -1,30 +1,58 @@
 # CLOAK Caddy 配置:on-demand TLS + 本地 CA(开发) / Let's Encrypt(生产)
 # 授权端点询问 Go 后端:放行 active 租户域名,拒绝未授权域名(ADR-0002、spec 决策 #8)。
 # 平台默认域名按子域逐个签发(ADR-0004)。
-# 开发环境:Go 后端在宿主机终端启动(CLOAK_ADDR=:8081),Caddy 经 host.docker.internal 反代;
+# 开发环境:Go 后端在宿主机终端启动(CLOAK_ADDR=:8080),Caddy 经 host.docker.internal 反代;
 # 生产环境改为 Let's Encrypt:删除 local_certs,并在各站点 tls 指令去掉 internal,后端在 compose 网络内(backend:8080)。
 # 注意:Caddy 2.11+ 全局选项名为 on_demand_tls(旧版为 on_demand),子选项仅 ask/permission;
 # 签发频率限流由 ask 端点(授权端点)与应用侧控制。
+#
+# 前后端分离(ADR-0006),与生产同构:
+#   /api、/internal、/healthz → Go 后端(:8080)
+#   其余                    → Vite dev server(:5173),改前端即时热更新,无需任何打包
 {
 	# 本地 CA:开发环境证书签发器(spike 01 验证 tls internal + on_demand 组合);
 	# 生产改为 Let's Encrypt:删除 local_certs,并在各站点 tls 指令去掉 internal。
 	local_certs
 
 	on_demand_tls {
-		ask http://host.docker.internal:8081/internal/caddy/authorize
+		ask http://host.docker.internal:8080/internal/caddy/authorize
+	}
+}
+
+# 后台域名分流规则(app 后台域名与裸平台域名行为一致)
+(console) {
+	handle /api/* {
+		reverse_proxy host.docker.internal:8080
+	}
+	handle /internal/* {
+		reverse_proxy host.docker.internal:8080
+	}
+	handle /healthz {
+		reverse_proxy host.docker.internal:8080
+	}
+	handle {
+		# Vite dev server:Caddy 默认透传原始 Host 头,配合 vite.config.ts 的
+		# server.allowedHosts 放行;WebSocket(HMR)由 reverse_proxy 自动upgrade。
+		reverse_proxy host.docker.internal:5173
 	}
 }
 
 # 裸平台域名:承载后台
 cloak.test {
 	tls internal
-	reverse_proxy host.docker.internal:8081
+	import console
 }
 
-# 平台后台域名与全部租户子域(泛域名匹配)
+# 后台专用域名 app.<平台域名>
+app.cloak.test {
+	tls internal
+	import console
+}
+
+# 全部租户子域(泛域名匹配):短链跳转与落地页是后端业务逻辑,整站反代
 *.cloak.test {
 	tls internal {
 		on_demand
 	}
-	reverse_proxy host.docker.internal:8081
+	reverse_proxy host.docker.internal:8080
 }

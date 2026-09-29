@@ -25,12 +25,8 @@ docker-compose.prod.yml
 Caddyfile
 Caddyfile.prod
 
-# 前端源码/依赖:镜像只需要 web/dist(go:embed 编译进二进制)与 web/embed.go
-web/*
-!web/embed.go
-!web/dist
-!web/dist/**
-
 # 依赖与临时产物
 node_modules
 **/node_modules
+web/node_modules
+web/dist

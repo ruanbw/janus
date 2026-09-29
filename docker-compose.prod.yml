@@ -1,4 +1,5 @@
-# CLOAK 生产环境编排:Postgres + Go 后端 + Caddy(on-demand TLS,Let's Encrypt)
+# CLOAK 生产环境编排:Postgres + Go 后端 + 前端静态服务(nginx)+ Caddy(on-demand TLS,Let's Encrypt)
+# 前后端分离(ADR-0006):backend 与 web 是两个独立构建目标、独立镜像、独立发版。
 # 使用:cp .env.example .env 并填入生产值,然后 docker compose -f docker-compose.prod.yml up -d
 # 详细说明与上线检查清单见 docs/deploy.md
 
@@ -22,6 +23,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      target: backend
     environment:
       CLOAK_ADDR: ":8080"
       CLOAK_DATABASE_URL: "postgres://${CLOAK_DB_USER:-cloak}:${CLOAK_DB_PASSWORD:?}@postgres:5432/${CLOAK_DB_NAME:-cloak}?sslmode=disable"
@@ -67,6 +69,20 @@ services:
       retries: 3
       start_period: 20s
 
+  # 前端静态服务:仅 nginx + 构建产物,无任何后端代码(ADR-0006)。
+  # 前端改版只重建本服务(docker compose build web),不触碰 backend。
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: web
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/index.html"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
   caddy:
     image: caddy:2
     environment:
@@ -85,6 +101,7 @@ services:
       - caddy_config:/config
     depends_on:
       - backend
+      - web
     restart: unless-stopped
 
 volumes:
