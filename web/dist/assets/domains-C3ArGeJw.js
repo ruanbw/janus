@@ -1,0 +1,1 @@
+import{$ as o,a0 as n,a1 as e,a2 as s}from"./index-BaZSIovi.js";function r(){return o("/domains")}function u(a){return n("/domains",a)}function c(a){return n(`/domains/${a}/recheck`)}function m(a,t){return e(`/domains/${a}`,{status:t})}function d(a){return s(`/domains/${a}`)}export{u as c,d,r as l,c as r,m as u};
