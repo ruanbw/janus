@@ -7,22 +7,26 @@ import (
 )
 
 type Visit struct {
-	ID           int64     `json:"id" gorm:"primaryKey"`
-	LinkID       int64     `json:"linkId" gorm:"column:link_id"`
-	DomainID     int64     `json:"-" gorm:"column:domain_id"`
-	Domain       string    `json:"domain" gorm:"->"` // 只读字段,查询时 join 填充
-	IP           string    `json:"ip"`
-	UserAgent    string    `json:"userAgent" gorm:"column:user_agent"`
-	Referer      string    `json:"referer"`
-	Action       string    `json:"action"`
-	Outcome      string    `json:"outcome"`
-	Reason       string    `json:"reason"`
-	TargetURL    string    `json:"targetUrl" gorm:"column:target_url"`
-	Country      string    `json:"country"`
-	IsDatacenter bool      `json:"isDatacenter" gorm:"column:is_datacenter"`
-	ASN          string    `json:"asn"`
-	Lang         string    `json:"lang"`
-	CreatedAt    time.Time `json:"createdAt" gorm:"column:created_at"`
+	ID           int64  `json:"id" gorm:"primaryKey"`
+	LinkID       int64  `json:"linkId" gorm:"column:link_id"`
+	DomainID     int64  `json:"-" gorm:"column:domain_id"`
+	Domain       string `json:"domain" gorm:"->"` // 只读字段,查询时 join 填充
+	IP           string `json:"ip"`
+	UserAgent    string `json:"userAgent" gorm:"column:user_agent"`
+	Referer      string `json:"referer"`
+	Action       string `json:"action"`
+	Outcome      string `json:"outcome"`
+	Reason       string `json:"reason"`
+	TargetURL    string `json:"targetUrl" gorm:"column:target_url"`
+	Country      string `json:"country"`
+	IsDatacenter bool   `json:"isDatacenter" gorm:"column:is_datacenter"`
+	ASN          string `json:"asn"`
+	Lang         string `json:"lang"`
+	// RuleID / RuleAction 是本次访问的规则裁决结果(spec D8):无规则参与时为空。
+	// RuleID 可空是因为规则被删后 ON DELETE SET NULL,历史明细保留但不再指向任何规则。
+	RuleID     *int64    `json:"ruleId" gorm:"column:rule_id"`
+	RuleAction string    `json:"ruleAction" gorm:"column:rule_action"`
+	CreatedAt  time.Time `json:"createdAt" gorm:"column:created_at"`
 }
 
 // 访问动作:一次 visits 行代表"触发了什么动作"。
@@ -47,6 +51,10 @@ const (
 	VisitReasonLinkDeleted    = "link_deleted"    // 短码命中但短链已逻辑删除
 	VisitReasonNoTarget       = "no_target"       // PickTarget 失败(目标 URL 列表为空)
 	VisitReasonLandingMissing = "landing_missing" // landing+upload 来源但托管文件缺失
+	// 规则裁决导致的失败(spec D4):这两种失败一定带 rule_id / rule_action。
+	// 与上面四种"短链自身不可用"分开——后者排在规则之前,明细里没有规则字段。
+	VisitReasonRuleBlocked   = "rule_blocked"   // 规则裁决 notfound → 404
+	VisitReasonRuleThrottled = "rule_throttled" // 规则裁决 throttle → 429
 )
 
 // visitCountActions 计入访问量的动作集合(关键不变式的一半:click 排除在外;
@@ -90,6 +98,10 @@ type VisitRecord struct {
 	Reason    string
 	TargetURL string
 	Lang      string
+	// RuleID / RuleAction:本次命中的规则与它的裁决(无规则参与时留空)。
+	// 命中不写任何计数表(spec D9),只多写这两列——明细是这次裁决唯一留痕的地方。
+	RuleID     *int64
+	RuleAction string
 }
 
 // InsertVisit 记录一次访问/点击动作(含访问者 IP)。
@@ -100,6 +112,7 @@ func (s *Store) InsertVisit(ctx context.Context, rec VisitRecord) error {
 		UserAgent: rec.UserAgent, Referer: rec.Referer,
 		Action: rec.Action, Outcome: rec.Outcome, Reason: rec.Reason,
 		TargetURL: rec.TargetURL, Lang: rec.Lang,
+		RuleID: rec.RuleID, RuleAction: rec.RuleAction,
 	}
 	return s.db.WithContext(ctx).Create(&v).Error
 }
@@ -137,7 +150,8 @@ func (s *Store) ListVisitsByLink(ctx context.Context, linkID int64, action strin
 	var out []*Visit
 	err := itemQ.
 		Select("v.id, v.link_id, d.fqdn AS domain, v.ip, v.user_agent, v.referer, " +
-			"v.action, v.outcome, v.reason, v.target_url, v.country, v.is_datacenter, v.asn, v.lang, v.created_at").
+			"v.action, v.outcome, v.reason, v.target_url, v.country, v.is_datacenter, v.asn, v.lang, " +
+			"v.rule_id, v.rule_action, v.created_at").
 		Joins("JOIN domains d ON d.id = v.domain_id").
 		Order("v.id DESC").
 		Limit(pageSize).Offset((page - 1) * pageSize).Scan(&out).Error

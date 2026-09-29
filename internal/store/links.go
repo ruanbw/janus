@@ -11,21 +11,25 @@ import (
 )
 
 type Link struct {
-	ID              int64          `json:"id" gorm:"primaryKey"`
-	TenantID        int64          `json:"-" gorm:"column:tenant_id"`
-	Code            string         `json:"code"`
-	TargetURLs      []string       `json:"targetUrls" gorm:"-"`
-	RedirectStatus  RedirectStatus `json:"redirectStatus" gorm:"column:redirect_status"`
-	LinkType        string         `json:"linkType" gorm:"column:link_type"`
-	LandingSource   string         `json:"landingSource" gorm:"column:landing_source"`
-	LandingURL      string         `json:"landingUrl" gorm:"column:landing_url"`
-	Status          string         `json:"status"`
-	Clicks          int64          `json:"clicks" gorm:"column:clicks"`
-	DeletedAt       *time.Time     `json:"-" gorm:"column:deleted_at"`
-	Domains         []string       `json:"domains" gorm:"-"`
-	Visits          int64          `json:"visits" gorm:"-"`
-	LandingUploaded bool           `json:"landingUploaded" gorm:"-"`
-	CreatedAt       time.Time      `json:"createdAt" gorm:"column:created_at"`
+	ID             int64          `json:"id" gorm:"primaryKey"`
+	TenantID       int64          `json:"-" gorm:"column:tenant_id"`
+	Code           string         `json:"code"`
+	TargetURLs     []string       `json:"targetUrls" gorm:"-"`
+	RedirectStatus RedirectStatus `json:"redirectStatus" gorm:"column:redirect_status"`
+	LinkType       string         `json:"linkType" gorm:"column:link_type"`
+	LandingSource  string         `json:"landingSource" gorm:"column:landing_source"`
+	LandingURL     string         `json:"landingUrl" gorm:"column:landing_url"`
+	Status         string         `json:"status"`
+	Clicks         int64          `json:"clicks" gorm:"column:clicks"`
+	DeletedAt      *time.Time     `json:"-" gorm:"column:deleted_at"`
+	Domains        []string       `json:"domains" gorm:"-"`
+	Visits         int64          `json:"visits" gorm:"-"`
+	// RuleCount / RuleNames 是"适用规则"的投影(全局规则 + 显式关联的规则),查询后填充。
+	// 关联只存在规则一侧(spec D1),这里是按短链反查同一份数据,不存在第二份规则列表。
+	RuleCount       int64     `json:"ruleCount" gorm:"-"`
+	RuleNames       []string  `json:"ruleNames" gorm:"-"`
+	LandingUploaded bool      `json:"landingUploaded" gorm:"-"`
+	CreatedAt       time.Time `json:"createdAt" gorm:"column:created_at"`
 }
 
 // 短链类型(16):redirect 访问即跳转目标;landing 访问先到落地页、按钮点击后到目标。
@@ -56,7 +60,11 @@ type LinkTarget struct {
 	Position int
 }
 
-// fillLinkMeta 补充 domains(fqdn 列表)、targetUrls 与 visits 计数。
+// maxLinkRuleNames 短链列表里直接展示的规则名上限(超出由界面走 +K)。
+// 计数 RuleCount 始终是全量,只有名字截断——"N 条"与 "+K"都需要真实总数。
+const maxLinkRuleNames = 3
+
+// fillLinkMeta 补充 domains(fqdn 列表)、targetUrls、visits 计数与适用规则。
 func (s *Store) fillLinkMeta(ctx context.Context, l *Link) error {
 	domains, err := s.linkDomainFQDNs(ctx, l.ID)
 	if err != nil {
@@ -73,7 +81,7 @@ func (s *Store) fillLinkMeta(ctx context.Context, l *Link) error {
 		return err
 	}
 	l.Visits = n
-	return nil
+	return s.fillLinkRuleMeta(ctx, []*Link{l})
 }
 
 // fillLinksMeta 批量补充一组短链的 domains/targetUrls/visits(列表页避免 N+1)。
@@ -143,6 +151,54 @@ func (s *Store) fillLinksMeta(ctx context.Context, links []*Link) error {
 		l.Domains = domainMap[l.ID]
 		l.TargetURLs = targetMap[l.ID]
 		l.Visits = visitMap[l.ID]
+	}
+	if err := s.fillLinkRuleMeta(ctx, links); err != nil {
+		return err
+	}
+	return nil
+}
+
+// fillLinkRuleMeta 批量补充一组短链的适用规则(避免 N+1,整页一条 SQL)。
+//
+// "适用"= 该租户全部 scope=global 的规则 ∪ 与本短链显式关联的 scope=links 规则,
+// 与求值侧 Snapshot.applies 同一套口径(spec D1)。按 priority 升序取前 maxLinkRuleNames 个
+// 名字:界面按徽标展示,排序与求值顺序一致,租户看到的先后就是真实的求值先后。
+// 停用规则同样列出("适用"与"启用"是两件事)。
+func (s *Store) fillLinkRuleMeta(ctx context.Context, links []*Link) error {
+	if len(links) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(links))
+	for _, l := range links {
+		ids = append(ids, l.ID)
+	}
+	type row struct {
+		LinkID int64  `gorm:"column:link_id"`
+		RuleID int64  `gorm:"column:rule_id"`
+		Name   string `gorm:"column:name"`
+	}
+	var rows []row
+	// 关联表与规则表各 join 一次:rl 侧的 link_id 已按短链过滤,rl.link_id IS NOT NULL
+	// 即"显式关联";全局规则不走关联表(LEFT JOIN 后该列为空)。
+	if err := s.db.WithContext(ctx).Table("links l").
+		Select("l.id AS link_id, r.id AS rule_id, r.name").
+		Joins("JOIN rules r ON r.tenant_id = l.tenant_id").
+		Joins("LEFT JOIN rule_links rl ON rl.rule_id = r.id AND rl.link_id = l.id").
+		Where("l.id IN ? AND (r.scope = ? OR rl.link_id IS NOT NULL)", ids, RuleScopeGlobal).
+		Order("r.priority, r.id").Scan(&rows).Error; err != nil {
+		return err
+	}
+	nameMap := make(map[int64][]string, len(links))
+	countMap := make(map[int64]int64, len(links))
+	for _, row := range rows {
+		countMap[row.LinkID]++
+		if n := len(nameMap[row.LinkID]); n < maxLinkRuleNames {
+			nameMap[row.LinkID] = append(nameMap[row.LinkID], row.Name)
+		}
+	}
+	for _, l := range links {
+		l.RuleCount = countMap[l.ID]
+		l.RuleNames = nameMap[l.ID]
 	}
 	return nil
 }
@@ -316,6 +372,12 @@ func (s *Store) SoftDeleteLink(ctx context.Context, tenantID, id int64) error {
 }
 
 // PurgeLink 物理删除短链(连同关联与访问记录)。
+// PurgeLink 物理删除短链(关联、目标、访问明细随库内 CASCADE 消失)。
+//
+// 这里**刻意不**失效租户的规则快照:快照里残留的 linkID 永远不会被命中
+// (id 来自 BIGSERIAL 且不复用,求值又排在短链可用性之后),加了纯属写放大。
+// ⚠️ 这个判断依赖「短链 id 不可复用」这个前提。若将来改成按租户分段分配、
+// 或引入 id 回收复用,本函数与 PurgeLinks 必须同时调用 ruleCache.Invalidate(tenantID)。
 func (s *Store) PurgeLink(ctx context.Context, tenantID, id int64) error {
 	res := s.db.WithContext(ctx).Where("id = ? AND tenant_id = ?", id, tenantID).Delete(&Link{})
 	if res.Error != nil {
