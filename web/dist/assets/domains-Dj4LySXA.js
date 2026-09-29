@@ -1,1 +1,0 @@
-import{V as o,W as a,Y as e,Z as s}from"./index-BA4epFvl.js";function r(){return o("/domains")}function u(n){return a("/domains",n)}function c(n){return a(`/domains/${n}/recheck`)}function m(n,t){return e(`/domains/${n}`,{status:t})}function d(n){return s(`/domains/${n}`)}export{u as c,d,r as l,c as r,m as u};
