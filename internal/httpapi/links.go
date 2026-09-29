@@ -509,8 +509,15 @@ func (a *API) handleListVisits(c *gin.Context) {
 		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
+	// action 可选过滤(redirect / landing_view / click),省略则不过滤;
+	// 非法值 400,避免拼错参数时静默返回全量明细
+	action := c.Request.URL.Query().Get("action")
+	if !store.ValidVisitAction(action) {
+		writeErr(c, http.StatusBadRequest, errValidation, "action 必须为 redirect / landing_view / click")
+		return
+	}
 	page, pageSize := pageParams(c)
-	items, total, err := a.store.ListVisitsByLink(c.Request.Context(), id, page, pageSize)
+	items, total, err := a.store.ListVisitsByLink(c.Request.Context(), id, action, page, pageSize)
 	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return

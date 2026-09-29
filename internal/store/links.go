@@ -126,9 +126,10 @@ func (s *Store) fillLinksMeta(ctx context.Context, links []*Link) error {
 		Count  int64 `gorm:"column:count"`
 	}
 	var visitRows []visitRow
+	// 访问量口径必须与 CountVisitsByLink 完全一致:排除 click 行与失败行
 	if err := s.db.WithContext(ctx).Table("visits").
 		Select("link_id, count(*) AS count").
-		Where("link_id IN ?", ids).
+		Where("link_id IN ? AND action IN ? AND outcome = ?", ids, visitCountActions, VisitOutcomeSuccess).
 		Group("link_id").
 		Scan(&visitRows).Error; err != nil {
 		return err
@@ -380,64 +381,119 @@ func (s *Store) CountActiveLinks(ctx context.Context, tenantID int64) (int, erro
 	return int(n), nil
 }
 
+// lookupRow 跳转/落地路由的命中行(短链 + 域名 + deleted_at)。
+type lookupRow struct {
+	LinkID          int64
+	LinkTenantID    int64
+	Code            string
+	RedirectStatus  RedirectStatus
+	LinkType        string
+	LandingSource   string
+	LandingURL      string
+	LinkStatus      string
+	LinkDeletedAt   *time.Time
+	LinkCreatedAt   time.Time
+	DomainID        int64
+	DomainTenantID  int64
+	FQDN            string
+	Description     string
+	Origin          string
+	DomainStatus    string
+	CertStatus      string
+	ActivatedAt     *time.Time
+	DomainCreatedAt time.Time
+}
+
+// link 把命中行装配为 Link(含轮询目标列表)。
+func (r lookupRow) link(targets []string) *Link {
+	return &Link{
+		ID: r.LinkID, TenantID: r.LinkTenantID, Code: r.Code,
+		RedirectStatus: r.RedirectStatus, LinkType: r.LinkType,
+		LandingSource: r.LandingSource, LandingURL: r.LandingURL,
+		Status: r.LinkStatus, DeletedAt: r.LinkDeletedAt,
+		CreatedAt: r.LinkCreatedAt, TargetURLs: targets,
+	}
+}
+
+// domain 把命中行装配为 Domain。
+func (r lookupRow) domain() *Domain {
+	return &Domain{
+		ID: r.DomainID, TenantID: r.DomainTenantID, FQDN: r.FQDN, Description: r.Description,
+		Origin: r.Origin, Status: r.DomainStatus, CertStatus: r.CertStatus,
+		ActivatedAt: r.ActivatedAt, CreatedAt: r.DomainCreatedAt,
+	}
+}
+
+// lookupLink 按 域名 + 短码 命中一行(ResolveLink 与 LookupLinkForVisit 共用,避免两份 SQL 漂移)。
+// strict=true 追加 "短链未删除且启用" 条件;strict=false 只要求短码命中(调用方自行判定不可用原因)。
+// 两种口径都保留 d.status='active' 与租户 active:这两种失败无法归属到具体短链,不计明细。
+func (s *Store) lookupLink(ctx context.Context, domainID int64, code string, strict bool) (lookupRow, error) {
+	linkCond := ""
+	if strict {
+		linkCond = "AND l.deleted_at IS NULL AND l.status = 'enabled'"
+	}
+	var row lookupRow
+	// linkCond 只由上面两个常量分支拼接,不拼接任何外部输入。
+	sql := `SELECT l.id AS link_id, l.tenant_id AS link_tenant_id, l.code,
+	        l.redirect_status, l.link_type, l.landing_source, l.landing_url,
+	        l.status AS link_status, l.deleted_at AS link_deleted_at, l.created_at AS link_created_at,
+	        d.id AS domain_id, d.tenant_id AS domain_tenant_id, d.fqdn, d.description,
+	        d.origin, d.status AS domain_status, d.cert_status, d.activated_at,
+	        d.created_at AS domain_created_at
+	     FROM link_domains ld
+	     JOIN links l ON l.id = ld.link_id
+	     JOIN domains d ON d.id = ld.domain_id
+	     JOIN tenants t ON t.id = d.tenant_id AND t.id = l.tenant_id
+	     WHERE ld.domain_id = ? AND ld.code = ? ` + linkCond + `
+	       AND d.status = 'active' AND t.status = 'active'`
+	res := s.db.WithContext(ctx).Raw(sql, domainID, code).Scan(&row)
+	if res.Error != nil {
+		return lookupRow{}, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return lookupRow{}, ErrNotFound
+	}
+	return row, nil
+}
+
 // ResolveLink 跳转/落地路由:在 active 域名下按短码命中未删除、启用的短链。
 // 不推进轮询计数(选目标用 PickTarget);未命中返回 ErrNotFound。
 func (s *Store) ResolveLink(ctx context.Context, domainID int64, code string) (*Link, *Domain, error) {
-	var row struct {
-		LinkID          int64
-		LinkTenantID    int64
-		Code            string
-		RedirectStatus  RedirectStatus
-		LinkType        string
-		LandingSource   string
-		LandingURL      string
-		LinkStatus      string
-		LinkCreatedAt   time.Time
-		DomainID        int64
-		DomainTenantID  int64
-		FQDN            string
-		Description     string
-		Origin          string
-		DomainStatus    string
-		CertStatus      string
-		ActivatedAt     *time.Time
-		DomainCreatedAt time.Time
-	}
-	res := s.db.WithContext(ctx).Raw(
-		`SELECT l.id AS link_id, l.tenant_id AS link_tenant_id, l.code,
-		        l.redirect_status, l.link_type, l.landing_source, l.landing_url,
-		        l.status AS link_status, l.created_at AS link_created_at,
-		        d.id AS domain_id, d.tenant_id AS domain_tenant_id, d.fqdn, d.description,
-		        d.origin, d.status AS domain_status, d.cert_status, d.activated_at,
-		        d.created_at AS domain_created_at
-		 FROM link_domains ld
-		 JOIN links l ON l.id = ld.link_id
-		 JOIN domains d ON d.id = ld.domain_id
-		 JOIN tenants t ON t.id = d.tenant_id AND t.id = l.tenant_id
-		 WHERE ld.domain_id = ? AND ld.code = ?
-		   AND l.deleted_at IS NULL AND l.status = 'enabled'
-		   AND d.status = 'active' AND t.status = 'active'`,
-		domainID, code).Scan(&row)
-	if res.Error != nil {
-		return nil, nil, res.Error
-	}
-	if res.RowsAffected == 0 {
-		return nil, nil, ErrNotFound
+	row, err := s.lookupLink(ctx, domainID, code, true)
+	if err != nil {
+		return nil, nil, err
 	}
 	targets, err := s.linkTargetURLs(ctx, row.LinkID)
 	if err != nil {
 		return nil, nil, err
 	}
-	return &Link{
-			ID: row.LinkID, TenantID: row.LinkTenantID, Code: row.Code,
-			RedirectStatus: row.RedirectStatus, LinkType: row.LinkType,
-			LandingSource: row.LandingSource, LandingURL: row.LandingURL,
-			Status: row.LinkStatus, CreatedAt: row.LinkCreatedAt, TargetURLs: targets,
-		}, &Domain{
-			ID: row.DomainID, TenantID: row.DomainTenantID, FQDN: row.FQDN, Description: row.Description,
-			Origin: row.Origin, Status: row.DomainStatus, CertStatus: row.CertStatus,
-			ActivatedAt: row.ActivatedAt, CreatedAt: row.DomainCreatedAt,
-		}, nil
+	return row.link(targets), row.domain(), nil
+}
+
+// LookupLinkForVisit 供"记访问明细"使用的宽松命中:短码命中即返回,
+// 短链是否可用交给调用方按 reason 判定(便于把 link_disabled / link_deleted 这类
+// 可归属到该短链的失败也落一行明细)。
+// 返回值:未命中返回 ErrNotFound(此时不得记任何行);
+// 命中但不可用时 reason 为 VisitReasonLinkDeleted / VisitReasonLinkDisabled;
+// 可用时 reason 为空串。不推进轮询计数(选目标用 PickTarget)。
+func (s *Store) LookupLinkForVisit(ctx context.Context, domainID int64, code string) (*Link, *Domain, string, error) {
+	row, err := s.lookupLink(ctx, domainID, code, false)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	// 逻辑删除优先于停用:删除后短链已不可见,归属也随记录保留而继续
+	reason := ""
+	switch {
+	case row.LinkDeletedAt != nil:
+		reason = VisitReasonLinkDeleted
+	case row.LinkStatus != "enabled":
+		reason = VisitReasonLinkDisabled
+	}
+	targets, err := s.linkTargetURLs(ctx, row.LinkID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return row.link(targets), row.domain(), reason, nil
 }
 
 // PickTarget 轮询选一个目标 URL(rr_index 自增);无目标返回 ErrNotFound。

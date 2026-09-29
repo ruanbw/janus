@@ -32,8 +32,8 @@
 - `domain`: `{ id, fqdn, description, origin, status, certStatus, activatedAt, createdAt }`(`description` 为创建时填写的备注,可空,最长 200 字)
 - `config`: `{ serverIp, platformDomain, usage }`(`serverIp` 为 `CLOAK_SERVER_PUBLIC_IP`,DNS 校验指向地址;`usage` 为当前租户配额用量,按租户返回)
 - `link`: `{ id, code, targetUrls: string[], redirectStatus, linkType, landingSource, landingUrl, status, domains: [fqdn...], visits, clicks, landingUploaded, createdAt }`(列表默认不含逻辑删除项)
-  - `landingUrl`:仅 landing+url 来源非空;`clicks`:点击计数,仅 landing 型增长(redirect 型恒 0);`landingUploaded`:landing+upload 来源且已成功上传 zip 时为 true
-- `visit`: `{ id, linkId, domain, ip, userAgent, referer, createdAt }`(`ip` 为访问者 IP:部署前置 Caddy 时取 `X-Forwarded-For` 首段,否则取 `RemoteAddr`;旧记录为空字符串)
+  - `landingUrl`:仅 landing+url 来源非空;`clicks`:点击计数,仅 landing 型增长(redirect 型恒 0);`landingUploaded`:landing+upload 来源且已成功上传 zip 时为 true;`visits`:只统计**成功**的跳转/落地页视图(点击行与失败行均不计入)
+- `visit`: `{ id, linkId, domain, ip, userAgent, referer, action, outcome, reason, targetUrl, country, isDatacenter, asn, lang, createdAt }`(`ip` 为访问者 IP:部署前置 Caddy 时取 `X-Forwarded-For` 首段,否则取 `RemoteAddr`;旧记录为空字符串。`action` 为 `redirect`(跳转)| `landing_view`(落地页)| `click`(点击),`outcome` 为 `success` | `failed`,`failed` 时 `reason` 为 `link_disabled` | `link_deleted` | `no_target` | `landing_missing`;`targetUrl` 为本次动作最终抵达的地址;`country` / `isDatacenter` / `asn` 为地理占位,当前恒为空;`lang` 取 `Accept-Language` 首标签)
 
 ## 端点
 
@@ -71,7 +71,7 @@
 | POST | /api/links/{id}/purge | - | 204 | 物理删除(含访问记录与落地页文件) |
 | POST | /api/links/batch-delete | `{ids: number[]}` | 200 {deleted} | 批量逻辑删除(等价逐条 DELETE,`deleted_at` 置位,记录/关联/访问明细保留);400 ids 为空/数量 > 200/含 ≤ 0 的 id;不属于本租户、已删除或不存在的 id 静默跳过(幂等),`deleted` 为实际置位行数;需 X-CSRF-Token |
 | POST | /api/links/batch-purge | `{ids: number[]}` | 200 {deleted} | 批量物理删除(连同 visits/link_targets/link_domains 走库内 ON DELETE CASCADE,并清理各短链落地页文件);400 条件同上;跨租户/不存在的 id 静默跳过(幂等),`deleted` 为实际删除行数(已逻辑删除的行同样被物理清除);需 X-CSRF-Token |
-| GET | /api/links/{id}/visits | query `page,pageSize` | 200 {items, total} | 访问列表 |
+| GET | /api/links/{id}/visits | query `page,pageSize,action?` | 200 {items, total} | 访问明细列表(含跳转/落地页/点击三类动作);`action` 可选 `redirect` / `landing_view` / `click`,省略则不过滤,非法值 400 |
 | GET | /api/links/{id}/stats | - | 200 {visits, clicks} | 访问数与点击数 |
 
 > 目标 URL 支持多个;跳转命中后默认按轮询(round-robin)在 `targetUrls` 中选择一个作为重定向目的地。

@@ -130,7 +130,7 @@ func TestLandingClickCountsAndRoundRobin(t *testing.T) {
 	lid := localhostDomainID(t, c)
 	link := createLandingLink(t, c, lid, "kpage", "url", "https://page.example.com/lp")
 
-	// 点击端点:轮询目标、clicks+1、不记 Visit
+	// 点击端点:轮询目标、clicks+1、落一行 action=click 明细(不计入访问量)
 	resp := redirectGet(t, env, "localhost", "/kpage/click")
 	assertStatus(t, resp, http.StatusFound)
 	if loc := resp.Header.Get("Location"); loc != "https://t1.example.com" {
@@ -208,12 +208,10 @@ func TestLandingUploadFlow(t *testing.T) {
 	if link.LandingUploaded {
 		t.Errorf("landingUploaded = true before upload")
 	}
-	// 未上传:访问裸短码 302 到 /kpage/,但静态目录 404
+	// 未上传:托管文件不存在,访问裸短码 404(记一行 failed/landing_missing,见 0007 ADR),
+	// 静态目录同样 404
 	resp := redirectGet(t, env, "localhost", "/kpage")
-	assertStatus(t, resp, http.StatusFound)
-	if loc := resp.Header.Get("Location"); loc != "/kpage/" {
-		t.Errorf("Location = %q", loc)
-	}
+	assertStatus(t, resp, http.StatusNotFound)
 	resp = redirectGet(t, env, "localhost", "/kpage/")
 	assertStatus(t, resp, http.StatusNotFound)
 
@@ -279,7 +277,7 @@ func TestLandingZipValidation(t *testing.T) {
 			link := createLandingLink(t, c, lid, code, "upload", "")
 			resp := uploadZip(t, c, link.ID, tc.z)
 			assertStatus(t, resp, http.StatusBadRequest)
-			// 校验失败不产生文件(静态路径 404,且不记 Visit)
+			// 校验失败不产生文件(静态路径 404,且不产生成功的访问明细)
 			resp = redirectGet(t, env, "localhost", "/"+code+"/")
 			assertStatus(t, resp, http.StatusNotFound)
 			st := linkStats(t, c, link.ID)

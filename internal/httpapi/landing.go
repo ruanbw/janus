@@ -70,7 +70,7 @@ func (a *API) removeLandingFiles(linkID int64) {
 }
 
 // resolveLandingLink 按 Host+code 命中启用、未删除、landing 型短链;其余 ErrNotFound。
-// 同时返回命中的域名(SDK 注入 canonical FQDN,避免信任任意 Host 头)。
+// 同时返回命中的域名(SDK 注入 canonical FQDN,避免信任任意 Host 头;点击明细也用它取 domain_id)。
 func (a *API) resolveLandingLink(c *gin.Context, code string) (*store.Link, *store.Domain, error) {
 	if code == "" || strings.Contains(code, "/") {
 		return nil, nil, store.ErrNotFound
@@ -89,19 +89,28 @@ func (a *API) resolveLandingLink(c *gin.Context, code string) (*store.Link, *sto
 	return link, resolved, nil
 }
 
-// handleLandingClick GET /{code}/click — 点击计数 +1(不记 Visit)并 302 到轮询目标。
+// handleLandingClick GET /{code}/click — 点击计数 +1、落一行 action=click 明细,
+// 并 302 到轮询目标。计数放在选到目标之后:选不到目标的失败点击不应计入点击数。
 func (a *API) handleLandingClick(c *gin.Context, code string) {
-	link, _, err := a.resolveLandingLink(c, code)
+	link, d, err := a.resolveLandingLink(c, code)
 	if err != nil {
+		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		return
+	}
+	targetURL, err := a.store.PickTarget(c.Request.Context(), link.ID)
+	if err != nil {
+		a.recordVisit(c, store.VisitRecord{
+			LinkID: link.ID, DomainID: d.ID,
+			Action: store.VisitActionClick, Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonNoTarget,
+		})
 		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
 	}
 	_ = a.store.IncrementClicks(c.Request.Context(), link.ID) // 计数失败不阻断跳转
-	targetURL, err := a.store.PickTarget(c.Request.Context(), link.ID)
-	if err != nil {
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
-		return
-	}
+	a.recordVisit(c, store.VisitRecord{
+		LinkID: link.ID, DomainID: d.ID,
+		Action: store.VisitActionClick, Outcome: store.VisitOutcomeSuccess, TargetURL: targetURL,
+	})
 	c.Redirect(http.StatusFound, targetURL) // 点击跳转固定 302
 }
 

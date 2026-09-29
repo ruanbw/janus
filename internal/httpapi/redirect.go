@@ -2,7 +2,8 @@ package httpapi
 
 // 05 — 跳转路由:GET /{code},由 Host 决定域名;命中 → 记 Visit → 302/301(Location=轮询目标);
 // 16 — 落地页型:记 Visit → 固定 302 → landingUrl 或 /{code}/。
-// 未命中/停用/逻辑删除/域名停用 → 404。
+// 未命中(域名不解析/短码不存在)→ 404 且不记;命中但不可用(停用/逻辑删除/无目标/落地页文件缺失)
+// → 404 并记一行 outcome=failed 的明细(可归属到该短链的失败不丢)。
 
 import (
 	"net"
@@ -45,33 +46,64 @@ func (a *API) handleRedirect(c *gin.Context) {
 		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
 	}
-	link, _, err := a.store.ResolveLink(c.Request.Context(), d.ID, code)
+	// 宽松命中:短链不可用时也返回它,由本函数把"为什么不可用"记进明细
+	link, _, reason, err := a.store.LookupLinkForVisit(c.Request.Context(), d.ID, code)
 	if err != nil {
+		// 未命中(短码不存在):无法归属到任何短链,不记明细
 		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
 	}
-	// 落地页型(16):记一次 Visit(落地页视图)→ 固定 302 到落地页
+	// 动作按短链类型确定:跳转型记 redirect,落地页型记 landing_view
+	action := store.VisitActionRedirect
 	if link.LinkType == store.LinkTypeLanding {
-		// 统计失败不阻断跳转
-		_ = a.store.InsertVisit(c.Request.Context(), link.ID, d.ID, clientIP(c.Request), c.Request.UserAgent(), c.Request.Referer())
+		action = store.VisitActionLandingView
+	}
+	if reason != "" {
+		a.recordVisit(c, store.VisitRecord{
+			LinkID: link.ID, DomainID: d.ID,
+			Action: action, Outcome: store.VisitOutcomeFailed, Reason: reason,
+		})
+		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		return
+	}
+	// 落地页型(16):记一次落地页视图 → 固定 302 到落地页
+	if link.LinkType == store.LinkTypeLanding {
 		dest := link.LandingURL
 		if link.LandingSource == store.LandingSourceUpload {
+			// upload 来源的目标是"短码/"路径下的托管文件;文件缺失时 404 比跳到空页面好,
+			// 并把失败落一行明细,避免租户以为落地页还在正常收流量
+			if !a.landingUploaded(link.ID) {
+				a.recordVisit(c, store.VisitRecord{
+					LinkID: link.ID, DomainID: d.ID,
+					Action: action, Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonLandingMissing,
+				})
+				writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+				return
+			}
 			dest = "/" + code + "/"
 		}
+		a.recordVisit(c, store.VisitRecord{
+			LinkID: link.ID, DomainID: d.ID,
+			Action: action, Outcome: store.VisitOutcomeSuccess, TargetURL: dest,
+		})
 		c.Redirect(http.StatusFound, dest)
 		return
 	}
-	// 跳转型:先选目标(无目标视为未命中,不记 Visit,维持原语义)
+	// 跳转型:先选目标(无目标即失败,落一行明细)
 	targetURL, err := a.store.PickTarget(c.Request.Context(), link.ID)
 	if err != nil {
+		a.recordVisit(c, store.VisitRecord{
+			LinkID: link.ID, DomainID: d.ID,
+			Action: action, Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonNoTarget,
+		})
 		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
 		return
 	}
-	// 记录访问(短链、域名、IP、UA、来源、时间)
-	if err := a.store.InsertVisit(c.Request.Context(), link.ID, d.ID, clientIP(c.Request), c.Request.UserAgent(), c.Request.Referer()); err != nil {
-		// 统计失败不阻断跳转
-		_ = err
-	}
+	// 记录访问(短链、域名、IP、UA、来源、动作、结果、目标、时间);统计失败不阻断跳转
+	a.recordVisit(c, store.VisitRecord{
+		LinkID: link.ID, DomainID: d.ID,
+		Action: action, Outcome: store.VisitOutcomeSuccess, TargetURL: targetURL,
+	})
 	status := http.StatusFound // 302
 	if link.RedirectStatus == store.RedirectStatus301 {
 		status = http.StatusMovedPermanently
