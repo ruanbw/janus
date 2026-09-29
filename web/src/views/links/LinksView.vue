@@ -1,358 +1,648 @@
 <template>
-  <div class="flex flex-col gap-5">
-    <!-- 顶栏说明与模式状态 -->
+  <div class="flex flex-col gap-5 pb-10" data-od-id="links-view">
+    <!-- ==================== 顶栏说明与状态 ==================== -->
     <header class="panel" data-od-id="topbar-link-management">
       <div class="panel-hd">
         <div>
-          <div class="eyebrow">CLOAK / 短链与目标</div>
+          <div class="eyebrow">CLOAK / 短链管理</div>
           <h1 class="text-xl font-bold tracking-tight text-ink md:text-2xl mt-0.5">短链与目标</h1>
           <p class="topbar-sub">
-            短链是投放入口与规则的绑定点：绑哪几条规则、放行到哪个目标池、如何剥离来源、如何回传转化。
+            短链是访问入口与路由分发的绑定点：承载域名、短码识别、跳转分流与落地页托管。
           </p>
         </div>
         <div class="btn-row">
-          <span class="badge badge-neutral" :title="isLiveBackend ? '生产后端' : '本页面支持真实后端与原型演示数据'">
-            <span class="dot" :class="isLiveBackend ? 'dot-live text-accent' : 'bg-muted'"></span>
-            {{ isLiveBackend ? '已连接生产服务' : '原型演示数据' }}
+          <span class="badge badge-neutral" :title="`当前短链用量：${usage?.links ?? total} / ${usage?.maxLinks ?? '不限'}`">
+            <span class="dot dot-live" style="color: var(--accent)"></span>
+            已连接服务
           </span>
         </div>
       </div>
     </header>
 
-    <!-- 顶层选项卡 -->
-    <section class="panel" data-od-id="lm-tabs">
-      <div class="tabs" role="tablist" id="lmTabs">
-        <button
-          role="tab"
-          :aria-selected="currentTab === 'links'"
-          @click="switchTab('links')"
-        >
-          短链列表
-        </button>
-        <button
-          role="tab"
-          :aria-selected="currentTab === 'edit'"
-          @click="switchTab('edit')"
-        >
-          短链编辑
-        </button>
-        <button
-          role="tab"
-          :aria-selected="currentTab === 'domains'"
-          @click="switchTab('domains')"
-          id="domains"
-        >
-          域名池
-        </button>
+    <!-- ==================== 配额条与 4 个 KPI 指标 ==================== -->
+    <QuotaBar :links-used="usage?.links" :links-max="usage?.maxLinks" />
+
+    <section class="kpi-grid" data-od-id="links-kpi">
+      <!-- KPI 1: 短链配额 -->
+      <div class="kpi">
+        <div class="kpi-k">短链配额使用</div>
+        <div class="kpi-v">
+          {{ usage?.links ?? total }}
+          <span class="text-[14px] text-muted font-normal">/ {{ usage?.maxLinks ?? '不限' }}</span>
+        </div>
+        <div class="kpi-sub">
+          已用 {{ quotaPercent }}% · 剩余 {{ remainingQuota }}
+        </div>
+      </div>
+
+      <!-- KPI 2: 活跃短链 -->
+      <div class="kpi">
+        <div class="kpi-k">活跃服务中</div>
+        <div class="kpi-v">
+          {{ activeLinksCount }}<span class="text-[14px] text-muted font-normal"> 条</span>
+        </div>
+        <div class="kpi-sub">
+          <span class="dot dot-live" style="display: inline-block; color: var(--accent)"></span>
+          已启用短链正常对外重定向
+        </div>
+      </div>
+
+      <!-- KPI 3: 累计访问 -->
+      <div class="kpi">
+        <div class="kpi-k">本页累计访问量</div>
+        <div class="kpi-v">
+          {{ totalVisits.toLocaleString() }}<span class="text-[14px] text-muted font-normal"> 次</span>
+        </div>
+        <div class="kpi-sub">包含跳转型与落地页访问统计</div>
+      </div>
+
+      <!-- KPI 4: 落地页转化与 CTR -->
+      <div class="kpi">
+        <div class="kpi-k">落地页点击转化</div>
+        <div class="kpi-v">
+          {{ totalClicks.toLocaleString() }}<span class="text-[14px] text-muted font-normal"> 次</span>
+        </div>
+        <div class="kpi-sub">落地页综合转化率 {{ overallCtr }}</div>
       </div>
     </section>
 
-    <!-- ==================== Tab 1: 短链列表 ==================== -->
-    <section v-show="currentTab === 'links'" data-tabpanel="links" data-od-id="link-list">
-      <div class="panel">
-        <div class="panel-hd">
-          <div>
-            <h2>短链列表</h2>
-            <p>每条短链绑定一组按优先级排序的规则；未命中任何规则时执行「无规则兜底」。</p>
-          </div>
-          <div class="btn-row">
-            <button class="btn btn-sm" @click="showBatchModal = true">
-              <Upload :size="13" />
-              批量导入
-            </button>
-            <button class="btn btn-sm" @click="exportCsv">
-              <FileDown :size="13" />
-              导出 CSV
-            </button>
-            <button class="btn btn-sm btn-primary" id="newLink" @click="openCreate">
-              <Plus :size="14" />
-              新建短链
-            </button>
-          </div>
+    <!-- ==================== 短链列表主面板 ==================== -->
+    <section class="panel" data-od-id="link-list">
+      <div class="panel-hd">
+        <div>
+          <h2>短链列表</h2>
+          <p>管理租户名下的短链，支持类型过滤、状态切换与出口多目标轮询配置。</p>
         </div>
+        <div class="btn-row">
+          <button
+            type="button"
+            class="btn btn-sm"
+            :disabled="loading"
+            title="刷新短链列表"
+            @click="loadData"
+          >
+            <RefreshCw :size="13" :class="loading ? 'animate-spin' : ''" />
+            刷新
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm"
+            @click="openBatchModal"
+          >
+            <Upload :size="13" />
+            批量导入
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm"
+            :disabled="links.length === 0"
+            @click="exportCsv"
+          >
+            <FileDown :size="13" />
+            导出 CSV
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-primary"
+            id="newLink"
+            @click="openCreateDrawer"
+          >
+            <Plus :size="14" />
+            新建短链
+          </button>
+        </div>
+      </div>
 
-        <div class="panel-bd" style="padding-bottom: 0">
-          <div class="toolbar">
+      <!-- 搜索与筛选工具栏 -->
+      <div class="panel-bd" style="padding-bottom: 0">
+        <div class="toolbar">
+          <div class="relative grow min-w-[200px]">
             <input
               v-model="keyword"
-              class="input grow"
+              class="input w-full pl-8"
               id="linkSearch"
-              placeholder="搜索短码或域名…"
+              placeholder="搜索短码、域名或目标 URL…"
               aria-label="搜索短链"
             />
-            <select
-              v-model="typeFilter"
-              class="select"
-              id="typeFilter"
-              aria-label="按类型过滤"
-            >
-              <option value="all">全部类型</option>
-              <option value="redirect">跳转型</option>
-              <option value="landing">落地页型</option>
-            </select>
-            <select
-              v-model="statusFilter"
-              class="select"
-              id="linkStatus"
-              aria-label="按状态过滤"
-            >
-              <option value="all">全部状态</option>
-              <option value="enabled">已启用</option>
-              <option value="disabled">已停用</option>
-            </select>
+            <Search
+              :size="14"
+              class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
+            />
           </div>
+          <select
+            v-model="typeFilter"
+            class="select"
+            id="typeFilter"
+            aria-label="按类型过滤"
+          >
+            <option value="all">全部类型</option>
+            <option value="redirect">跳转型 (redirect)</option>
+            <option value="landing">落地页型 (landing)</option>
+          </select>
+          <select
+            v-model="statusFilter"
+            class="select"
+            id="linkStatus"
+            aria-label="按状态过滤"
+          >
+            <option value="all">全部状态</option>
+            <option value="enabled">已启用 (enabled)</option>
+            <option value="disabled">已停用 (disabled)</option>
+          </select>
+          <button
+            v-if="hasActiveFilter"
+            type="button"
+            class="btn btn-sm btn-ghost text-muted hover:text-fg"
+            @click="resetFilters"
+          >
+            <X :size="13" />
+            清空过滤
+          </button>
         </div>
+      </div>
 
-        <div class="tbl-wrap">
-          <table class="tbl" id="linkTable">
-            <thead>
-              <tr>
-                <th>短码</th>
-                <th>域名</th>
-                <th>类型</th>
-                <th>绑定规则</th>
-                <th>默认去向</th>
-                <th class="num">目标数</th>
-                <th class="num">24h 访问</th>
-                <th class="num">转化</th>
-                <th class="num">CTR</th>
-                <th>状态</th>
-                <th>启用</th>
-                <th class="shrink">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="link in filteredLinks"
-                :key="link.id"
-                :data-status="link.status === 'enabled' ? 'on' : 'off'"
-              >
-                <!-- 短码 (带复制与编辑) -->
-                <td class="shrink">
-                  <div class="row" style="gap: 6px; flex-wrap: nowrap">
-                    <a
-                      class="linkish mono font-semibold"
-                      href="#"
-                      :title="'点击编辑 ' + link.code"
-                      @click.prevent="openEditTab(link)"
-                    >
-                      {{ link.code }}
-                    </a>
-                    <button
-                      type="button"
-                      class="icon-btn text-muted hover:text-fg"
-                      style="width: 22px; height: 22px; border: none; background: transparent; padding: 0"
-                      :title="'复制完整短链: https://' + getLinkDomain(link) + '/' + link.code"
-                      @click.stop="copyLinkUrl(link)"
-                    >
-                      <Copy :size="12" />
-                    </button>
-                  </div>
-                </td>
+      <!-- 表格数据区 -->
+      <div class="tbl-wrap">
+        <table class="tbl" id="linkTable">
+          <thead>
+            <tr>
+              <th class="shrink">短码</th>
+              <th class="shrink">承载域名</th>
+              <th class="shrink">类型</th>
+              <th>出口目标 URL</th>
+              <th class="num">24h 访问</th>
+              <th class="num">转化点击</th>
+              <th class="num">CTR</th>
+              <th class="shrink">状态</th>
+              <th class="shrink">启用</th>
+              <th class="shrink">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- 加载态 -->
+            <tr v-if="loading && links.length === 0">
+              <td colspan="10" class="empty">
+                <div class="flex items-center justify-center gap-2 text-muted py-6">
+                  <RefreshCw class="animate-spin" :size="16" />
+                  正在加载短链数据...
+                </div>
+              </td>
+            </tr>
 
-                <!-- 域名 -->
-                <td class="shrink mono tiny muted">
-                  {{ getLinkDomain(link) }}
-                </td>
-
-                <!-- 类型 -->
-                <td class="shrink">
-                  <span class="badge badge-neutral">
-                    {{ link.linkType === 'landing' ? '落地页型' : '跳转型' }}
-                  </span>
-                </td>
-
-                <!-- 绑定规则 -->
-                <td class="shrink mono tiny">
-                  {{ getLinkRuleStr(link) }}
-                </td>
-
-                <!-- 默认去向 -->
-                <td class="shrink tiny">
-                  {{ getTargetPoolName(link) }}
-                </td>
-
-                <!-- 目标数 -->
-                <td class="num">
-                  {{ link.targetUrls?.length || 1 }}
-                </td>
-
-                <!-- 24h 访问 -->
-                <td class="num">
-                  {{ (link.visits || 0).toLocaleString() }}
-                </td>
-
-                <!-- 转化 -->
-                <td class="num">
-                  {{ (link.clicks || 0).toLocaleString() }}
-                </td>
-
-                <!-- CTR -->
-                <td class="num">
-                  {{ getLinkCtr(link) }}
-                </td>
-
-                <!-- 状态 -->
-                <td class="shrink">
-                  <span
-                    :class="
-                      link.status === 'enabled'
-                        ? 'badge badge-ok'
-                        : link.code === 'black-friday'
-                          ? 'badge badge-warn'
-                          : 'badge badge-neutral'
-                    "
+            <!-- 空状态 -->
+            <tr v-else-if="filteredLinks.length === 0">
+              <td colspan="10" class="py-8">
+                <AppEmpty
+                  :description="links.length === 0 ? '暂无短链记录，请点击下方按钮创建第一条短链' : '未找到符合当前筛选条件的短链记录'"
+                />
+                <div class="flex justify-center mt-3">
+                  <button
+                    v-if="links.length === 0"
+                    type="button"
+                    class="btn btn-sm btn-primary"
+                    @click="openCreateDrawer"
                   >
-                    {{
-                      link.status === 'enabled'
-                        ? '启用'
-                        : link.code === 'black-friday'
-                          ? '已排期'
-                          : '已停用'
-                    }}
+                    <Plus :size="14" />
+                    新建短链
+                  </button>
+                  <button
+                    v-else
+                    type="button"
+                    class="btn btn-sm"
+                    @click="resetFilters"
+                  >
+                    重置过滤条件
+                  </button>
+                </div>
+              </td>
+            </tr>
+
+            <!-- 列表行 -->
+            <tr
+              v-for="link in filteredLinks"
+              :key="link.id"
+              :data-status="link.status === 'enabled' ? 'on' : 'off'"
+            >
+              <!-- 短码 -->
+              <td class="shrink">
+                <div class="row items-center" style="gap: 6px; flex-wrap: nowrap">
+                  <button
+                    type="button"
+                    class="linkish mono font-semibold text-left"
+                    :title="'点击编辑 ' + link.code"
+                    @click="openEditDrawer(link)"
+                  >
+                    {{ link.code }}
+                  </button>
+                  <button
+                    type="button"
+                    class="icon-btn text-muted hover:text-fg"
+                    style="width: 22px; height: 22px; border: none; background: transparent; padding: 0"
+                    title="复制完整短链 URL"
+                    @click.stop="copyLinkUrl(link)"
+                  >
+                    <Copy :size="12" />
+                  </button>
+                  <a
+                    :href="'https://' + getPrimaryDomain(link) + '/' + link.code"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="icon-btn text-muted hover:text-fg inline-flex items-center justify-center"
+                    style="width: 22px; height: 22px; border: none; background: transparent; padding: 0"
+                    title="在新标签页测试访问短链"
+                    @click.stop
+                  >
+                    <ExternalLink :size="12" />
+                  </a>
+                </div>
+              </td>
+
+              <!-- 承载域名 -->
+              <td class="shrink mono tiny muted">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <span>{{ getPrimaryDomain(link) }}</span>
+                  <span
+                    v-if="link.domains && link.domains.length > 1"
+                    class="badge badge-neutral micro"
+                    :title="link.domains.join(', ')"
+                  >
+                    +{{ link.domains.length - 1 }}
                   </span>
-                </td>
+                </div>
+              </td>
 
-                <!-- 启用 Switch -->
-                <td class="shrink">
-                  <label class="switch">
-                    <input
-                      type="checkbox"
-                      :checked="link.status === 'enabled'"
-                      :aria-label="'启用短链 ' + link.code"
-                      @change="onToggleLinkStatus(link)"
-                    />
-                    <i></i>
-                  </label>
-                </td>
+              <!-- 类型 -->
+              <td class="shrink">
+                <span v-if="link.linkType === 'landing'" class="badge badge-neutral">
+                  落地页型
+                </span>
+                <span v-else class="badge badge-neutral">
+                  跳转型 · {{ link.redirectStatus || '302' }}
+                </span>
+              </td>
 
-                <!-- 操作按钮 -->
-                <td class="shrink">
-                  <div class="row" style="gap: 4px; flex-wrap: nowrap">
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-ghost"
-                      @click="openEditTab(link)"
-                    >
-                      <Pencil :size="12" />
-                      编辑
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-ghost text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
-                      @click="handleDeleteLink(link)"
-                      title="逻辑删除"
-                    >
-                      <Trash2 :size="12" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
+              <!-- 目标 URL -->
+              <td>
+                <div class="flex items-center gap-1.5 min-w-0 max-w-md">
+                  <span class="mono tiny truncate" :title="link.targetUrls?.[0] || '—'">
+                    {{ formatTargetDisplay(link.targetUrls) }}
+                  </span>
+                  <span
+                    v-if="link.targetUrls && link.targetUrls.length > 1"
+                    class="badge badge-neutral micro shrink-0"
+                    :title="`多目标轮询 (${link.targetUrls.length} 个出口):\n` + link.targetUrls.join('\n')"
+                  >
+                    +{{ link.targetUrls.length - 1 }} 轮询
+                  </span>
+                </div>
+              </td>
 
-              <tr v-if="filteredLinks.length === 0">
-                <td colspan="12" class="empty">
-                  未找到符合条件的短链记录
-                </td>
-              </tr>
-            </tbody>
-          </table>
+              <!-- 24h 访问 -->
+              <td class="num">
+                {{ (link.visits || 0).toLocaleString() }}
+              </td>
+
+              <!-- 转化点击 -->
+              <td class="num">
+                {{ link.linkType === 'landing' ? (link.clicks || 0).toLocaleString() : '—' }}
+              </td>
+
+              <!-- CTR -->
+              <td class="num">
+                {{ getLinkCtr(link) }}
+              </td>
+
+              <!-- 状态 -->
+              <td class="shrink">
+                <span :class="link.status === 'enabled' ? 'badge badge-ok' : 'badge badge-neutral'">
+                  {{ link.status === 'enabled' ? '已启用' : '已停用' }}
+                </span>
+              </td>
+
+              <!-- 启用 Switch -->
+              <td class="shrink">
+                <label class="switch">
+                  <input
+                    type="checkbox"
+                    :checked="link.status === 'enabled'"
+                    :disabled="statusUpdatingId === link.id"
+                    :aria-label="'启用短链 ' + link.code"
+                    @change="onToggleLinkStatus(link)"
+                  />
+                  <i></i>
+                </label>
+              </td>
+
+              <!-- 操作 -->
+              <td class="shrink">
+                <div class="row" style="gap: 4px; flex-wrap: nowrap">
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-ghost"
+                    title="编辑短链"
+                    @click="openEditDrawer(link)"
+                  >
+                    <Pencil :size="12" />
+                    编辑
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-ghost text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                    title="逻辑删除（保留记录与历史数据）"
+                    @click="handleDeleteLink(link)"
+                  >
+                    <Trash2 :size="12" />
+                    删除
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-ghost text-xs text-red-600 hover:text-red-700 opacity-60 hover:opacity-100"
+                    title="彻底清除（物理删除全部数据）"
+                    @click="handlePurgeLink(link)"
+                  >
+                    彻底删除
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 底栏与真实分页 -->
+      <div class="panel-ft row-between flex-wrap gap-3">
+        <div class="row tiny muted" style="gap: 12px">
+          <span>共 <strong class="text-ink font-mono">{{ total }}</strong> 条短链</span>
+          <span>配额使用 <strong class="text-ink font-mono">{{ usage?.links ?? total }}</strong> / {{ usage?.maxLinks ?? '不限' }}</span>
         </div>
-
-        <div class="panel-ft row-between">
-          <span>共 {{ filteredLinks.length }} 条 · 配额使用 {{ usage?.links ?? links.length }} / {{ usage?.maxLinks ?? '5,000' }}</span>
-          <span class="mono">规则未命中时 → 无规则兜底 = 目标池 A</span>
+        <div class="row" style="gap: 10px">
+          <div class="row tiny muted" style="gap: 6px">
+            <span>每页</span>
+            <select
+              v-model.number="pageSize"
+              class="select"
+              style="min-height: 28px; padding: 2px 20px 2px 8px; font-size: 12px"
+              @change="onPageSizeChange"
+            >
+              <option :value="10">10</option>
+              <option :value="20">20</option>
+              <option :value="50">50</option>
+              <option :value="100">100</option>
+            </select>
+            <span>条</span>
+          </div>
+          <div class="row" style="gap: 6px">
+            <button
+              type="button"
+              class="btn btn-sm"
+              :disabled="page <= 1 || loading"
+              @click="goToPage(page - 1)"
+            >
+              上一页
+            </button>
+            <span class="mono tiny muted self-center px-1">
+              {{ page }} / {{ totalPages }}
+            </span>
+            <button
+              type="button"
+              class="btn btn-sm"
+              :disabled="page >= totalPages || loading"
+              @click="goToPage(page + 1)"
+            >
+              下一页
+            </button>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- ==================== Tab 2: 短链编辑 ==================== -->
-    <section v-show="currentTab === 'edit'" data-tabpanel="edit" data-od-id="link-editor">
-      <div class="two-col">
-        <!-- 左栏：表单主配置区 -->
-        <div class="stack">
+    <!-- ==================== 侧边抽屉: 新建 / 编辑短链 ==================== -->
+    <Transition name="drawer-backdrop">
+      <div
+        v-if="drawerVisible"
+        class="fixed inset-0 z-40 bg-black/45 backdrop-blur-xs"
+        @click="closeDrawer"
+      />
+    </Transition>
+
+    <Transition name="drawer-slide">
+      <div
+        v-if="drawerVisible"
+        class="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-line bg-surface shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+      >
+        <!-- 抽屉头部 -->
+        <div class="panel-hd shrink-0">
+          <div>
+            <div class="eyebrow">{{ isEdit ? '短链配置 / 编辑' : '短链配置 / 新建' }}</div>
+            <h2 class="text-base font-bold tracking-tight text-ink mt-0.5">
+              {{ isEdit ? `编辑短链 · ${form.code}` : '新建短链' }}
+            </h2>
+            <p class="text-xs text-muted">
+              {{ isEdit ? '更新出口目标、落地页设置及出站处理参数' : '配置短码、承载域名、分发目标与行为参数' }}
+            </p>
+          </div>
+          <div class="row" style="gap: 8px">
+            <span class="badge badge-neutral mono">
+              {{ isEdit ? `ID · ${editingLinkId}` : 'NEW' }}
+            </span>
+            <button
+              type="button"
+              class="icon-btn text-muted hover:text-fg"
+              title="关闭抽屉"
+              @click="closeDrawer"
+            >
+              <X :size="16" />
+            </button>
+          </div>
+        </div>
+
+        <!-- 抽屉主体表单 (滚动区) -->
+        <div class="flex-1 overflow-y-auto p-5 space-y-5">
           <!-- 模块 1: 基本设置 -->
           <div class="panel">
             <div class="panel-hd">
               <div>
-                <h2>短链编辑</h2>
-                <p>
-                  当前编辑：<span class="mono font-semibold text-fg">{{ form.code || '新建短链' }}</span> ·
-                  {{ form.domainFqdn || currentDomainFqdn }}
-                </p>
+                <h3 class="text-sm font-semibold">基本信息</h3>
+                <p>短链的公开标识短码与行为类型</p>
               </div>
-              <span class="badge badge-neutral mono">ID · {{ editingLinkId || 'NEW' }}</span>
             </div>
             <div class="panel-bd stack">
               <div class="form-grid">
                 <div class="field">
-                  <label for="lCode">短码</label>
+                  <label for="drawerCode">短码</label>
                   <input
                     v-model="form.code"
                     class="input mono"
-                    id="lCode"
+                    id="drawerCode"
                     placeholder="留空自动生成短码"
-                    :disabled="isExistingSavedLink"
+                    :disabled="isEdit"
                   />
-                  <span class="hint">同一域名下不可重复{{ isExistingSavedLink ? '（保存后短码不可更改）' : '' }}</span>
+                  <span class="hint">
+                    同一域名下短码不可重复{{ isEdit ? '（创建后短码不可更改）' : '' }}
+                  </span>
                 </div>
+
                 <div class="field">
-                  <label for="lDomain">承载域名</label>
+                  <label for="drawerDomain">承载域名</label>
                   <select
-                    v-model="form.domainId"
+                    v-model="primaryDomainId"
                     class="select"
-                    id="lDomain"
-                    @change="onDomainChange"
+                    id="drawerDomain"
+                    @change="onPrimaryDomainSelectChange"
                   >
+                    <option v-if="domains.length === 0" :value="0" disabled>
+                      正在加载域名...
+                    </option>
                     <option
                       v-for="d in domains"
                       :key="d.id"
                       :value="d.id"
+                      :disabled="d.status !== 'active'"
                     >
-                      {{ d.fqdn }} ({{ d.origin === 'self' ? '自有' : '默认' }})
+                      {{ d.fqdn }} ({{ d.origin === 'self' ? '自有' : '默认' }}){{ d.status !== 'active' ? ' - ' + (DOMAIN_STATUS_NOTE[d.status] || '未激活') : '' }}
                     </option>
                   </select>
+                  <span class="hint">仅已激活 (active) 域名可承载短链访问</span>
                 </div>
+
+                <!-- 多域名复选绑定 -->
+                <div v-if="domains.length > 1" class="field span-2">
+                  <label>关联承载域名（可多选）</label>
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-2.5 rounded border border-line bg-surface-muted/50 max-h-32 overflow-y-auto">
+                    <label
+                      v-for="d in domains"
+                      :key="d.id"
+                      class="flex items-center gap-2 text-xs cursor-pointer select-none"
+                      :class="d.status !== 'active' ? 'opacity-50' : ''"
+                    >
+                      <input
+                        type="checkbox"
+                        :value="d.id"
+                        v-model="form.domainIds"
+                        :disabled="d.status !== 'active'"
+                      />
+                      <span class="mono truncate">{{ d.fqdn }}</span>
+                      <span class="badge badge-neutral micro shrink-0">
+                        {{ d.origin === 'self' ? '自有' : '默认' }}
+                      </span>
+                    </label>
+                  </div>
+                </div>
+
                 <div class="field span-2">
                   <label>短链类型</label>
-                  <div class="segmented" id="typeSeg" style="align-self: start">
+                  <div class="segmented" style="align-self: start">
                     <button
                       type="button"
                       :aria-pressed="form.linkType === 'redirect'"
                       @click="form.linkType = 'redirect'"
                     >
-                      跳转型 · 访问即跳转
+                      跳转型 · 访问即重定向
                     </button>
                     <button
                       type="button"
                       :aria-pressed="form.linkType === 'landing'"
                       @click="form.linkType = 'landing'"
                     >
-                      落地页型 · 先到中间页
+                      落地页型 · 先到落地页
                     </button>
                   </div>
                 </div>
-                <div class="field">
-                  <label for="lStatus">重定向类型</label>
-                  <select v-model="form.redirectStatus" class="select" id="lStatus">
-                    <option value="302">302 · 临时（推荐，投放用）</option>
-                    <option value="301">301 · 永久（会缓存）</option>
+
+                <div v-if="form.linkType === 'redirect'" class="field span-2">
+                  <label for="drawerRedirectStatus">重定向状态码</label>
+                  <select v-model="form.redirectStatus" class="select" id="drawerRedirectStatus">
+                    <option value="302">302 · 临时重定向（推荐，不缓存目标地址）</option>
+                    <option value="301">301 · 永久重定向（浏览器与搜索引擎长期缓存）</option>
                   </select>
                 </div>
-                <div class="field">
-                  <label for="lCap">排期</label>
-                  <input v-model="form.schedule" class="input mono" id="lCap" />
-                  <span class="hint">到期后自动停止访问并返回 410</span>
+
+                <div v-if="isEdit" class="field span-2">
+                  <label>短链状态</label>
+                  <div class="segmented" style="align-self: start">
+                    <button
+                      type="button"
+                      :aria-pressed="form.status === 'enabled'"
+                      @click="form.status = 'enabled'"
+                    >
+                      正常启用
+                    </button>
+                    <button
+                      type="button"
+                      :aria-pressed="form.status === 'disabled'"
+                      @click="form.status = 'disabled'"
+                    >
+                      暂停停用 (返回 404)
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- 模块 2: 落地页设置 (仅落地页型生效) -->
-          <div v-show="form.linkType === 'landing'" class="panel" id="landingBox">
+          <!-- 模块 2: 目标 URL 列表 (多目标动态管理) -->
+          <div class="panel">
             <div class="panel-hd">
               <div>
-                <h2>落地页设置</h2>
-                <p>仅落地页型生效。</p>
+                <h3 class="text-sm font-semibold">目标 URL (出口)</h3>
+                <p>短链的最终目的地。配置多个目标时，系统将按顺序轮询（Round-Robin）选择出口。</p>
+              </div>
+              <button type="button" class="btn btn-sm" @click="addTargetUrl">
+                <Plus :size="13" /> 添加目标
+              </button>
+            </div>
+            <div class="panel-bd stack-sm">
+              <div
+                v-for="(target, idx) in form.targetUrls"
+                :key="idx"
+                class="flex items-center gap-2"
+              >
+                <span class="mono micro muted w-6 text-right shrink-0">#{{ idx + 1 }}</span>
+                <input
+                  v-model="form.targetUrls[idx]"
+                  class="input mono grow"
+                  placeholder="https://example.com/dest"
+                />
+                <button
+                  type="button"
+                  class="icon-btn text-muted hover:text-fg"
+                  :disabled="idx === 0"
+                  title="上移（提高轮询次序）"
+                  @click="moveTargetUp(idx)"
+                >
+                  <ArrowUp :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="icon-btn text-muted hover:text-fg"
+                  :disabled="idx === form.targetUrls.length - 1"
+                  title="下移（延后轮询次序）"
+                  @click="moveTargetDown(idx)"
+                >
+                  <ArrowDown :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="icon-btn text-red-500 hover:text-red-600"
+                  :disabled="form.targetUrls.length <= 1"
+                  title="移除该目标"
+                  @click="removeTargetUrl(idx)"
+                >
+                  <Trash2 :size="14" />
+                </button>
+              </div>
+              <p class="hint">开放重定向支持任意合法协议 URL（如 https://、http:// 或自定义 scheme）</p>
+            </div>
+          </div>
+
+          <!-- 模块 3: 落地页设置 (仅落地页型显示) -->
+          <div v-show="form.linkType === 'landing'" class="panel">
+            <div class="panel-hd">
+              <div>
+                <h3 class="text-sm font-semibold">落地页设置</h3>
+                <p>访问者访问短链时先到达落地页，落地页内按钮经平台 JS SDK 回传点击并跳转至目标 URL。</p>
               </div>
             </div>
             <div class="panel-bd stack">
@@ -362,39 +652,40 @@
                   <div class="segmented" style="align-self: start">
                     <button
                       type="button"
-                      :aria-pressed="form.landingSource === 'upload'"
-                      @click="form.landingSource = 'upload'"
-                    >
-                      上传压缩包（含 index.html）
-                    </button>
-                    <button
-                      type="button"
                       :aria-pressed="form.landingSource === 'url'"
                       @click="form.landingSource = 'url'"
                     >
                       填写落地页 URL
                     </button>
+                    <button
+                      type="button"
+                      :aria-pressed="form.landingSource === 'upload'"
+                      @click="form.landingSource = 'upload'"
+                    >
+                      上传静态 ZIP 包
+                    </button>
                   </div>
                 </div>
 
+                <!-- 来源: URL -->
                 <div v-if="form.landingSource === 'url'" class="field span-2">
-                  <label for="lLanding">落地页地址</label>
+                  <label for="drawerLandingUrl">落地页地址 (URL)</label>
                   <input
                     v-model="form.landingUrl"
                     class="input mono"
-                    id="lLanding"
-                    placeholder="https://go.northwind-media.com/vip-access/"
+                    id="drawerLandingUrl"
+                    placeholder="https://yourbrand.com/landing-page"
                   />
-                  <span class="hint">按钮点击经平台 JS SDK 回传，计入本短链点击与转化</span>
+                  <span class="hint">访问短链时将先重定向至此地址；落地页按钮经 JS SDK 触发转化回传</span>
                 </div>
 
+                <!-- 来源: Upload -->
                 <div v-else class="field span-2">
-                  <label for="lLpFile">已上传文件</label>
+                  <label>静态落地页压缩包</label>
                   <div class="row" style="gap: 8px">
                     <input
                       v-model="landingFileSummary"
-                      class="input mono grow"
-                      id="lLpFile"
+                      class="input mono grow text-xs"
                       readonly
                     />
                     <input
@@ -414,573 +705,108 @@
                       {{ uploadingZip ? '上传中...' : '选择 ZIP' }}
                     </button>
                   </div>
-                  <span class="hint">平台托管在「短码/」路径下，上传前请确保根目录包含 index.html</span>
+                  <span class="hint">平台直接托管在「短码/」路径下，压缩包根目录下必须包含 index.html</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- 模块 3: 规则绑定 -->
+          <!-- 模块 4: 出站参数处理 -->
           <div class="panel">
             <div class="panel-hd">
               <div>
-                <h2>规则绑定</h2>
-                <p>被绑定的规则只会在这条短链上生效。顺序即优先级，与规则引擎内的优先级独立。</p>
+                <h3 class="text-sm font-semibold">出站处理配置</h3>
+                <p>控制短链重定向时携带与剥离的参数特征</p>
               </div>
-              <router-link class="btn btn-sm" to="/rules">到规则引擎新建 →</router-link>
             </div>
-            <div class="panel-bd stack">
-              <!-- 有序规则列表 -->
-              <div id="boundList" class="stack-sm">
-                <div
-                  v-for="(b, idx) in boundRules"
-                  :key="b.id"
-                  class="row-between"
-                  style="padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface)"
-                >
-                  <div class="row" style="gap: 9px; flex-wrap: nowrap; min-width: 0">
-                    <span class="mono micro muted">#{{ idx + 1 }}</span>
-                    <span class="mono micro font-semibold">{{ b.id }}</span>
-                    <span style="font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">
-                      {{ b.name }}
-                    </span>
-                  </div>
-                  <div class="row" style="gap: 8px; flex: none">
-                    <span class="badge badge-ok">{{ b.action }}</span>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-ghost"
-                      :disabled="idx === 0"
-                      @click="moveRuleUp(idx)"
-                      aria-label="上移"
-                      title="上移"
-                    >
-                      <ArrowUp :size="13" />
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-ghost"
-                      :disabled="idx === boundRules.length - 1"
-                      @click="moveRuleDown(idx)"
-                      aria-label="下移"
-                      title="下移"
-                    >
-                      <ArrowDown :size="13" />
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-ghost text-red-500 hover:text-red-600"
-                      @click="removeBoundRule(idx)"
-                      aria-label="解绑"
-                    >
-                      移除
-                    </button>
-                  </div>
-                </div>
-
-                <div v-if="boundRules.length === 0" class="empty">
-                  尚未绑定任何规则——所有访问将直接走「无规则兜底」。
-                </div>
-              </div>
-
-              <!-- 添加规则到本短链 -->
-              <div class="field" style="max-width: 480px">
-                <label for="addRule">添加规则到本短链</label>
-                <div class="row" style="gap: 8px; flex-wrap: nowrap">
-                  <select
-                    v-model="selectedRuleToAdd"
-                    class="select"
-                    id="addRule"
-                    style="flex: 1"
-                  >
-                    <option value="">选择规则…</option>
-                    <option
-                      v-for="cat in CATALOG_RULES"
-                      :key="cat.id"
-                      :value="cat.id"
-                    >
-                      {{ cat.id }} {{ cat.name }}
-                    </option>
-                  </select>
-                  <button
-                    type="button"
-                    class="btn"
-                    id="bindBtn"
-                    @click="bindSelectedRule"
-                  >
-                    绑定
-                  </button>
-                </div>
+            <div class="panel-bd stack-sm">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label class="flex items-center gap-2.5 text-xs cursor-pointer select-none">
+                  <span class="switch">
+                    <input type="checkbox" v-model="outbound.stripReferer" />
+                    <i></i>
+                  </span>
+                  <span>剥离 Referer（不向目标站泄露来源）</span>
+                </label>
+                <label class="flex items-center gap-2.5 text-xs cursor-pointer select-none">
+                  <span class="switch">
+                    <input type="checkbox" v-model="outbound.passParams" />
+                    <i></i>
+                  </span>
+                  <span>透传查询参数（继承 UTM 与广告 ID）</span>
+                </label>
+                <label class="flex items-center gap-2.5 text-xs cursor-pointer select-none">
+                  <span class="switch">
+                    <input type="checkbox" v-model="outbound.hideTarget" />
+                    <i></i>
+                  </span>
+                  <span>隐藏真实目标（Location 外不留痕迹）</span>
+                </label>
+                <label class="flex items-center gap-2.5 text-xs cursor-pointer select-none">
+                  <span class="switch">
+                    <input type="checkbox" v-model="outbound.randomDelay" />
+                    <i></i>
+                  </span>
+                  <span>加随机微延迟 0–300ms（弱化时序指纹）</span>
+                </label>
               </div>
             </div>
           </div>
 
-          <!-- 模块 4: 目标池 -->
+          <!-- 模块 5: 短链地址预览 -->
           <div class="panel">
             <div class="panel-hd">
               <div>
-                <h2>目标池</h2>
-                <p>放行后按权重选择出口。同一目标池可被多条规则复用。</p>
+                <h3 class="text-sm font-semibold">短链地址预览</h3>
+                <p>生成并核对对外分发的短链 URL</p>
               </div>
               <button
                 type="button"
                 class="btn btn-sm"
-                id="addTarget"
-                @click="addTarget"
+                @click="copyPreviewUrl"
               >
-                + 添加出口
+                <Copy :size="13" /> 复制短链
               </button>
             </div>
-            <div class="tbl-wrap">
-              <table class="tbl" id="targetTbl">
-                <thead>
-                  <tr>
-                    <th>目标 URL</th>
-                    <th>归属池</th>
-                    <th class="num">权重</th>
-                    <th>状态</th>
-                    <th class="num">24h 出口</th>
-                    <th class="shrink">操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(t, idx) in targets" :key="idx">
-                    <td>
-                      <input
-                        v-if="t.editing"
-                        v-model="t.url"
-                        class="input mono"
-                        style="min-height: 30px"
-                        placeholder="https://example.com/dest"
-                      />
-                      <span v-else class="mono tiny break-all">{{ t.url }}</span>
-                    </td>
-                    <td>
-                      <select
-                        v-if="t.editing"
-                        v-model="t.pool"
-                        class="select"
-                        style="min-height: 30px; width: 105px; padding: 2px 22px 2px 8px; font-size: 12px"
-                      >
-                        <option value="目标池 A">目标池 A</option>
-                        <option value="目标池 B">目标池 B</option>
-                      </select>
-                      <span v-else class="badge badge-neutral">{{ t.pool }}</span>
-                    </td>
-                    <td class="num">
-                      <input
-                        v-if="t.editing"
-                        v-model.number="t.weight"
-                        type="number"
-                        min="1"
-                        max="100"
-                        class="input num"
-                        style="min-height: 30px; width: 62px; padding: 2px 6px"
-                      />
-                      <span v-else>{{ t.weight }}</span>
-                    </td>
-                    <td>
-                      <span
-                        :class="
-                          t.health === '健康'
-                            ? 'badge badge-ok'
-                            : t.health.includes('慢')
-                              ? 'badge badge-warn'
-                              : 'badge badge-neutral'
-                        "
-                      >
-                        {{ t.health }}
-                      </span>
-                    </td>
-                    <td class="num">
-                      {{ (t.visits24h || 0).toLocaleString() }}
-                    </td>
-                    <td class="shrink">
-                      <div class="row" style="gap: 4px; flex-wrap: nowrap">
-                        <button
-                          type="button"
-                          class="btn btn-sm"
-                          @click="t.editing = !t.editing"
-                        >
-                          {{ t.editing ? '完成' : '编辑' }}
-                        </button>
-                        <button
-                          v-if="targets.length > 1"
-                          type="button"
-                          class="btn btn-sm btn-ghost text-red-500 hover:text-red-600"
-                          @click="removeTarget(idx)"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="panel-ft">
-              无规则兜底：<b>目标池 A</b> · 当所有绑定规则都未命中时，访问者直接进入该池。
-            </div>
-          </div>
-
-          <!-- 模块 5: 出站与回传 -->
-          <div class="panel">
-            <div class="panel-hd">
-              <div>
-                <h2>出站与回传</h2>
-                <p>控制跳转时携带什么、剥掉什么，以及转化事件送回哪个广告平台。</p>
-              </div>
-            </div>
             <div class="panel-bd">
-              <div class="form-grid">
-                <div class="field span-2">
-                  <label>出站处理</label>
-                  <div class="row" style="gap: 16px">
-                    <label class="row tiny select-none cursor-pointer" style="gap: 6px">
-                      <span class="switch">
-                        <input type="checkbox" v-model="outbound.stripReferer" />
-                        <i></i>
-                      </span>
-                      剥离 Referer（不把广告平台来源带给目标站）
-                    </label>
-                    <label class="row tiny select-none cursor-pointer" style="gap: 6px">
-                      <span class="switch">
-                        <input type="checkbox" v-model="outbound.hideTarget" />
-                        <i></i>
-                      </span>
-                      隐藏真实目标（Location 之外不留痕）
-                    </label>
-                    <label class="row tiny select-none cursor-pointer" style="gap: 6px">
-                      <span class="switch">
-                        <input type="checkbox" v-model="outbound.passUtm" />
-                        <i></i>
-                      </span>
-                      透传 UTM / ttclid / fbclid 参数
-                    </label>
-                    <label class="row tiny select-none cursor-pointer" style="gap: 6px">
-                      <span class="switch">
-                        <input type="checkbox" v-model="outbound.randomDelay" />
-                        <i></i>
-                      </span>
-                      加随机延迟 0–800ms（弱化时序特征）
-                    </label>
-                    <label class="row tiny select-none cursor-pointer" style="gap: 6px">
-                      <span class="switch">
-                        <input type="checkbox" v-model="outbound.guestIdWithoutCookie" />
-                        <i></i>
-                      </span>
-                      无 Cookie 时下发一次性访客 ID
-                    </label>
-                  </div>
-                </div>
-
-                <div class="field span-2">
-                  <label>转化事件回传</label>
-                  <div class="row" style="gap: 16px">
-                    <label class="row tiny select-none cursor-pointer" style="gap: 6px">
-                      <span class="switch">
-                        <input type="checkbox" v-model="postback.tiktokEvents" />
-                        <i></i>
-                      </span>
-                      TikTok Events API · Pixel ID <span class="mono">C1A9…7Q</span>
-                    </label>
-                    <label class="row tiny select-none cursor-pointer" style="gap: 6px">
-                      <span class="switch">
-                        <input type="checkbox" v-model="postback.metaCapi" />
-                        <i></i>
-                      </span>
-                      Meta Conversions API · Pixel <span class="mono">8842…1</span>
-                    </label>
-                    <label class="row tiny select-none cursor-pointer" style="gap: 6px">
-                      <span class="switch">
-                        <input type="checkbox" v-model="postback.googleEnhanced" />
-                        <i></i>
-                      </span>
-                      Google Ads Enhanced Conversions
-                    </label>
-                    <label class="row tiny select-none cursor-pointer" style="gap: 6px">
-                      <span class="switch">
-                        <input type="checkbox" v-model="postback.googleOffline" />
-                        <i></i>
-                      </span>
-                      Google Ads Offline Conversion
-                    </label>
-                  </div>
-                </div>
-
-                <div class="field">
-                  <label for="lEvents">回传事件</label>
-                  <input
-                    v-model="postback.events"
-                    class="input mono"
-                    id="lEvents"
-                    placeholder="ViewContent, Click, AddToCart, Purchase"
-                  />
-                </div>
-                <div class="field">
-                  <label for="lApi">回调地址（转化发生时）</label>
-                  <input
-                    v-model="postback.webhookUrl"
-                    class="input mono"
-                    id="lApi"
-                    placeholder="https://api.northwind-media.com/conv"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 右栏：访问路径预览与健康检查（Sticky 悬浮） -->
-        <div class="stack" style="position: sticky; top: 84px">
-          <!-- 卡片 1: 访问路径预览 -->
-          <div class="panel">
-            <div class="panel-hd">
-              <div>
-                <h2 style="font-size: 15px">访问路径预览</h2>
-                <p>按当前配置，一个访客会发生什么。</p>
-              </div>
-            </div>
-            <div class="panel-bd stack-sm">
-              <div class="trace-step" style="border: 0; padding: 0; grid-template-columns: minmax(0, 1fr)">
-                <div class="mono tiny" style="color: var(--accent)">
-                  {{ traceStep1 }}
-                </div>
-              </div>
-              <div class="trace-step" style="border: 0; padding: 0; grid-template-columns: minmax(0, 1fr)">
-                <div class="tiny muted">
-                  {{ traceStep2 }}
-                </div>
-              </div>
-              <div class="trace-step" style="border: 0; padding: 0; grid-template-columns: minmax(0, 1fr)">
-                <div class="tiny muted">
-                  {{ traceStep3 }}
-                </div>
-              </div>
-              <div class="trace-step" style="border: 0; padding: 0; grid-template-columns: minmax(0, 1fr)">
-                <div class="tiny muted">
-                  {{ traceStep4 }}
-                </div>
-              </div>
-              <div class="trace-step" style="border: 0; padding: 0; grid-template-columns: minmax(0, 1fr)">
-                <div class="tiny muted">
-                  {{ traceStep5 }}
-                </div>
-              </div>
-              <div class="trace-step" style="border: 0; padding: 0; grid-template-columns: minmax(0, 1fr)">
-                <div class="tiny muted">
-                  {{ traceStep6 }}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 卡片 2: 健康检查 -->
-          <div class="panel">
-            <div class="panel-hd">
-              <div>
-                <h2 style="font-size: 15px">健康检查</h2>
-              </div>
-            </div>
-            <div class="panel-bd stack-sm">
-              <div class="row-between tiny">
-                <span class="muted">目标可达性</span>
-                <span class="badge badge-ok">{{ healthyTargetsCount }} / {{ targets.length }} 正常</span>
-              </div>
-              <div class="row-between tiny">
-                <span class="muted">证书剩余</span>
-                <span class="mono">{{ certRemainingDays }}</span>
-              </div>
-              <div class="row-between tiny">
-                <span class="muted">最近拦截率</span>
-                <span class="mono">5.8%</span>
-              </div>
-              <div class="row-between tiny">
-                <span class="muted">可疑目标告警</span>
-                <span :class="targetAlertCount > 0 ? 'badge badge-warn' : 'badge badge-ok'">
-                  {{ targetAlertCount > 0 ? `${targetAlertCount} 条待处理` : '0 条告警' }}
+              <div class="p-3 bg-surface-muted rounded border border-line mono text-xs break-all text-ink font-semibold flex items-center justify-between gap-2">
+                <span>{{ previewUrl }}</span>
+                <span class="badge badge-neutral micro shrink-0">
+                  {{ form.linkType === 'landing' ? '落地页型' : '跳转型' }}
                 </span>
               </div>
             </div>
-            <div class="panel-ft row" style="gap: 8px">
-              <button
-                type="button"
-                class="btn btn-sm btn-primary"
-                id="saveLink"
-                :disabled="saving"
-                style="flex: 1"
-                @click="handleSaveLink"
-              >
-                {{ isSavedRecently ? '已保存 ✓' : (saving ? '保存中...' : '保存') }}
-              </button>
-              <button
-                type="button"
-                class="btn btn-sm"
-                style="flex: 1"
-                @click="copyCurrentLink"
-              >
-                复制短链
-              </button>
-            </div>
+          </div>
+        </div>
+
+        <!-- 抽屉底栏 -->
+        <div class="panel-ft row-between shrink-0 bg-surface">
+          <span class="tiny text-muted">
+            目标出口数：{{ validTargetsCount }} 个 · 绑定域名：{{ form.domainIds.length }} 个
+          </span>
+          <div class="row" style="gap: 8px">
+            <button
+              type="button"
+              class="btn btn-sm"
+              :disabled="saving"
+              @click="closeDrawer"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm btn-primary"
+              :disabled="saving"
+              @click="handleSaveLink"
+            >
+              {{ saving ? '保存中...' : (isEdit ? '保存修改' : '确认创建') }}
+            </button>
           </div>
         </div>
       </div>
-    </section>
+    </Transition>
 
-    <!-- ==================== Tab 3: 域名池 ==================== -->
-    <section v-show="currentTab === 'domains'" data-tabpanel="domains" data-od-id="domain-pool">
-      <div class="panel">
-        <div class="panel-hd">
-          <div>
-            <h2>域名池</h2>
-            <p>短链可绑定多个域名，同一短码在不同域名下可指向不同目标。域名被封或失效时可快速切换。</p>
-          </div>
-          <button
-            type="button"
-            class="btn btn-sm btn-primary"
-            @click="showAddDomainModal = true"
-          >
-            + 添加自有域名
-          </button>
-        </div>
-
-        <div class="tbl-wrap">
-          <table class="tbl">
-            <thead>
-              <tr>
-                <th>域名</th>
-                <th>来源</th>
-                <th>激活</th>
-                <th>证书</th>
-                <th class="num">短链 / 有效</th>
-                <th class="num">24h 访问</th>
-                <th class="num">可用率</th>
-                <th class="shrink">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="d in domains" :key="d.id">
-                <!-- 域名 -->
-                <td class="mono font-semibold" style="font-size: 12.5px">
-                  {{ d.fqdn }}
-                </td>
-
-                <!-- 来源 -->
-                <td>
-                  <span class="badge badge-neutral">
-                    {{ d.origin === 'self' ? '自有域名' : '平台默认域名' }}
-                  </span>
-                </td>
-
-                <!-- 激活 -->
-                <td>
-                  <span
-                    :class="
-                      d.status === 'active'
-                        ? 'badge badge-ok'
-                        : d.status === 'stopped'
-                          ? 'badge badge-neutral'
-                          : 'badge badge-warn'
-                    "
-                  >
-                    {{
-                      d.status === 'active'
-                        ? '已激活'
-                        : d.status === 'stopped'
-                          ? '已停用'
-                          : '待验证'
-                    }}
-                  </span>
-                </td>
-
-                <!-- 证书 -->
-                <td class="shrink">
-                  <span
-                    :class="
-                      d.certStatus === 'issued'
-                        ? 'badge badge-ok'
-                        : d.certStatus === 'pending'
-                          ? 'badge badge-warn'
-                          : 'badge badge-neutral'
-                    "
-                  >
-                    {{
-                      d.certStatus === 'issued'
-                        ? '已签发'
-                        : d.certStatus === 'pending'
-                          ? '签发中'
-                          : d.certStatus === 'failed'
-                            ? '签发异常'
-                            : '—'
-                    }}
-                  </span>
-                </td>
-
-                <!-- 短链 / 有效 -->
-                <td class="num">
-                  {{ getDomainLinkStats(d) }}
-                </td>
-
-                <!-- 24h 访问 -->
-                <td class="num">
-                  {{ getDomainVisitsFormatted(d) }}
-                </td>
-
-                <!-- 可用率 -->
-                <td class="num">
-                  {{ d.status === 'active' ? '99.98%' : '—' }}
-                </td>
-
-                <!-- 操作 -->
-                <td class="shrink">
-                  <div class="row" style="gap: 4px; flex-wrap: nowrap">
-                    <button
-                      type="button"
-                      class="btn btn-sm"
-                      @click="handleRecheckDomain(d)"
-                      title="手动重新校验 DNS 与证书"
-                    >
-                      重检
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm"
-                      v-if="d.status !== 'stopped'"
-                      @click="handleToggleDomainStatus(d, 'stopped')"
-                    >
-                      停用
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm"
-                      v-else
-                      @click="handleToggleDomainStatus(d, 'active')"
-                    >
-                      恢复
-                    </button>
-                    <button
-                      v-if="d.origin === 'self'"
-                      type="button"
-                      class="btn btn-sm btn-ghost text-red-500 hover:text-red-600"
-                      @click="handleDeleteDomain(d)"
-                    >
-                      删除
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="panel-ft row-between">
-          <span>域名配额 {{ usage?.domains ?? domains.length }} / {{ usage?.maxDomains ?? 10 }} · 平台默认域名不计入配额</span>
-          <span class="mono">失效切换：健康检查每 60s，失败域名自动降权 10 分钟</span>
-        </div>
-      </div>
-    </section>
-
-    <!-- ==================== 模态框: 批量导入 ==================== -->
+    <!-- ==================== 模态框: 批量导入短链 ==================== -->
     <div
       v-if="showBatchModal"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4"
@@ -1007,8 +833,9 @@
                 v-for="d in domains"
                 :key="d.id"
                 :value="d.id"
+                :disabled="d.status !== 'active'"
               >
-                {{ d.fqdn }}
+                {{ d.fqdn }} ({{ d.origin === 'self' ? '自有' : '默认' }}){{ d.status !== 'active' ? ' - ' + (DOMAIN_STATUS_NOTE[d.status] || '未激活') : '' }}
               </option>
             </select>
           </div>
@@ -1019,9 +846,9 @@
               class="textarea mono"
               id="batchInput"
               rows="6"
-              placeholder="vip-deal https://example.com/vip&#10;blackfriday https://example.com/bf"
+              placeholder="deal-a https://example.com/target-a&#10;deal-b https://example.com/target-b&#10;https://example.com/target-c"
             ></textarea>
-            <span class="hint">每行一条，短码与 URL 用空格分隔</span>
+            <span class="hint">每行一条，短码与 URL 用空格分隔；若只有 URL 则由后端自动生成短码</span>
           </div>
         </div>
         <div class="panel-ft row-between">
@@ -1030,6 +857,7 @@
             <button
               type="button"
               class="btn btn-sm"
+              :disabled="batchImporting"
               @click="showBatchModal = false"
             >
               取消
@@ -1046,114 +874,45 @@
         </div>
       </div>
     </div>
-
-    <!-- ==================== 模态框: 添加自有域名 ==================== -->
-    <div
-      v-if="showAddDomainModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4"
-    >
-      <div class="panel w-full max-w-md shadow-2xl">
-        <div class="panel-hd">
-          <div>
-            <h2 class="text-base font-bold">添加自有域名</h2>
-            <p>需先在 DNS 服务商将该域名的 A/CNAME 解析指向本服务器。</p>
-          </div>
-          <button
-            type="button"
-            class="icon-btn text-muted hover:text-fg"
-            @click="showAddDomainModal = false"
-          >
-            <X :size="15" />
-          </button>
-        </div>
-        <div class="panel-bd stack">
-          <div class="field">
-            <label for="newFqdn">域名 (FQDN)</label>
-            <input
-              v-model="newDomainFqdn"
-              class="input mono"
-              id="newFqdn"
-              placeholder="e.g. go.yourbrand.com"
-            />
-            <span class="hint">全限定域名，不带 http:// 与尾部斜杠</span>
-          </div>
-          <div class="field">
-            <label for="newDesc">备注描述 (可选)</label>
-            <input
-              v-model="newDomainDesc"
-              class="input"
-              id="newDesc"
-              placeholder="如：北美投放主域名"
-            />
-          </div>
-        </div>
-        <div class="panel-ft row-between">
-          <router-link
-            to="/domains/new"
-            class="linkish tiny text-muted"
-            @click="showAddDomainModal = false"
-          >
-            前往完整向导 →
-          </router-link>
-          <div class="row" style="gap: 8px">
-            <button
-              type="button"
-              class="btn btn-sm"
-              @click="showAddDomainModal = false"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              class="btn btn-sm btn-primary"
-              :disabled="addingDomain || !newDomainFqdn.trim()"
-              @click="handleCreateDomain"
-            >
-              {{ addingDomain ? '添加中...' : '确认添加' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { useRoute } from 'vue-router';
 import dayjs from 'dayjs';
 import {
   ArrowDown,
   ArrowUp,
   Copy,
+  ExternalLink,
   FileDown,
   Pencil,
   Plus,
+  RefreshCw,
+  Search,
   Trash2,
   Upload,
   X,
 } from '@lucide/vue';
 
-import {
-  createDomain,
-  deleteDomain,
-  listDomains,
-  recheckDomain,
-  updateDomainStatus,
-} from '@/api/domains';
+import { listDomains } from '@/api/domains';
 import {
   createLink,
   deleteLink,
+  getLink,
   listLinks,
+  purgeLink,
   updateLink,
   uploadLanding,
 } from '@/api/links';
+import QuotaBar from '@/components/QuotaBar.vue';
+import AppEmpty from '@/components/ui/AppEmpty.vue';
 import { confirm } from '@/components/ui/confirm';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
 import type {
   Domain,
-  DomainStatus,
   LandingSource,
   Link,
   LinkStatus,
@@ -1164,309 +923,73 @@ import { formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 
 const route = useRoute();
-const router = useRouter();
 const auth = useAuthStore();
 
-// ==================== 原型静态/演示数据兜底 ====================
-const DEMO_DOMAINS: Domain[] = [
-  {
-    id: 1,
-    fqdn: 'go.northwind-media.com',
-    description: '主投放域名',
-    origin: 'self',
-    status: 'active',
-    certStatus: 'issued',
-    activatedAt: '2025-10-01T00:00:00Z',
-    createdAt: '2025-10-01T00:00:00Z',
-  },
-  {
-    id: 2,
-    fqdn: 'eu.northwind-media.com',
-    description: '欧洲区投放域名',
-    origin: 'self',
-    status: 'active',
-    certStatus: 'issued',
-    activatedAt: '2025-10-05T00:00:00Z',
-    createdAt: '2025-10-05T00:00:00Z',
-  },
-  {
-    id: 3,
-    fqdn: 'bl.northwind-media.com',
-    description: '黑五专属域名',
-    origin: 'self',
-    status: 'active',
-    certStatus: 'issued',
-    activatedAt: '2025-10-15T00:00:00Z',
-    createdAt: '2025-10-15T00:00:00Z',
-  },
-  {
-    id: 4,
-    fqdn: 'nwmedia.cloak.link',
-    description: '平台默认域名',
-    origin: 'platform',
-    status: 'active',
-    certStatus: 'issued',
-    activatedAt: '2025-09-20T00:00:00Z',
-    createdAt: '2025-09-20T00:00:00Z',
-  },
-  {
-    id: 5,
-    fqdn: 'old.northwind-media.com',
-    description: '已停用旧域名',
-    origin: 'self',
-    status: 'stopped',
-    certStatus: 'issued',
-    activatedAt: '2025-08-01T00:00:00Z',
-    createdAt: '2025-08-01T00:00:00Z',
-  },
-  {
-    id: 6,
-    fqdn: 'shop.northwind-media.com',
-    description: '待验证电商域名',
-    origin: 'self',
-    status: 'pending',
-    certStatus: 'pending',
-    activatedAt: '',
-    createdAt: '2025-11-27T00:00:00Z',
-  },
-];
-
-const DEMO_LINKS: Link[] = [
-  {
-    id: 1042,
-    code: 'vip-access',
-    targetUrls: [
-      'https://northwind-media.com/landing/vip-access',
-      'https://secure-checkout.net/offer/9f2a',
-      'https://northwind-media.com/pt/acesso',
-    ],
-    redirectStatus: '302',
-    linkType: 'redirect',
-    landingSource: 'url',
-    landingUrl: '',
-    status: 'enabled',
-    domains: ['go.northwind-media.com'],
-    visits: 48206,
-    clicks: 3842,
-    landingUploaded: false,
-    createdAt: '2025-11-20T10:00:00Z',
-  },
-  {
-    id: 1043,
-    code: 'tiktok-9d1',
-    targetUrls: ['https://shop.northwind-media.com/prod/9d1'],
-    redirectStatus: '302',
-    linkType: 'landing',
-    landingSource: 'upload',
-    landingUrl: 'https://go.northwind-media.com/tiktok-9d1/',
-    status: 'enabled',
-    domains: ['go.northwind-media.com'],
-    visits: 31884,
-    clicks: 2106,
-    landingUploaded: true,
-    createdAt: '2025-11-22T14:30:00Z',
-  },
-  {
-    id: 1044,
-    code: 'fb-ck7',
-    targetUrls: [
-      'https://northwind-media.com/pt/acesso',
-      'https://acesso-vip.com.br/entrada',
-    ],
-    redirectStatus: '302',
-    linkType: 'landing',
-    landingSource: 'url',
-    landingUrl: 'https://go.northwind-media.com/fb-ck7/',
-    status: 'enabled',
-    domains: ['go.northwind-media.com'],
-    visits: 19442,
-    clicks: 1530,
-    landingUploaded: false,
-    createdAt: '2025-11-23T09:15:00Z',
-  },
-  {
-    id: 1045,
-    code: 'promo-eu',
-    targetUrls: ['https://eu.northwind-media.com/special'],
-    redirectStatus: '302',
-    linkType: 'redirect',
-    landingSource: 'url',
-    landingUrl: '',
-    status: 'enabled',
-    domains: ['eu.northwind-media.com'],
-    visits: 8127,
-    clicks: 311,
-    landingUploaded: false,
-    createdAt: '2025-11-24T16:00:00Z',
-  },
-  {
-    id: 1046,
-    code: 'black-friday',
-    targetUrls: [
-      'https://bl.northwind-media.com/sale',
-      'https://backup.northwind-media.com/sale',
-    ],
-    redirectStatus: '302',
-    linkType: 'redirect',
-    landingSource: 'url',
-    landingUrl: '',
-    status: 'enabled',
-    domains: ['bl.northwind-media.com'],
-    visits: 0,
-    clicks: 0,
-    landingUploaded: false,
-    createdAt: '2025-11-25T11:00:00Z',
-  },
-  {
-    id: 1047,
-    code: 'legacy-cp',
-    targetUrls: ['https://old.northwind-media.com/landing'],
-    redirectStatus: '301',
-    linkType: 'redirect',
-    landingSource: 'url',
-    landingUrl: '',
-    status: 'disabled',
-    domains: ['old.northwind-media.com'],
-    visits: 640,
-    clicks: 12,
-    landingUploaded: false,
-    createdAt: '2025-10-10T08:00:00Z',
-  },
-  {
-    id: 1048,
-    code: 'whitelist-test',
-    targetUrls: ['https://qa.northwind-media.com/test-pass'],
-    redirectStatus: '302',
-    linkType: 'redirect',
-    landingSource: 'url',
-    landingUrl: '',
-    status: 'enabled',
-    domains: ['qa.northwind-media.com'],
-    visits: 412,
-    clicks: 36,
-    landingUploaded: false,
-    createdAt: '2025-11-26T18:20:00Z',
-  },
-];
-
-interface BoundRule {
-  id: string;
-  name: string;
-  action: string;
-}
-
-const CATALOG_RULES: BoundRule[] = [
-  { id: 'R-001', name: '目标市场 · 移动端放行', action: '放行 → 目标池 A' },
-  { id: 'R-002', name: '拦截 · 平台审查爬虫', action: '白标页' },
-  { id: 'R-003', name: '拦截 · 代理与机房出口', action: '404 兜底' },
-  { id: 'R-004', name: '语言分流 · 葡语市场', action: '放行 → 目标池 B' },
-  { id: 'R-005', name: '设备型号白名单（已停用）', action: '放行 → 目标池 A' },
-  { id: 'R-006', name: '内部测试强制放行', action: '放行 → 目标池 A' },
-  { id: 'R-007', name: '频次风控 · 单 IP 限流', action: '限流拦截' },
-  { id: 'R-008', name: '兜底 · 品牌白标页', action: '白标页' },
-];
-
-const linkRulesMap: Record<string, string> = {
-  'vip-access': 'R-001 / R-004 / R-008',
-  'tiktok-9d1': 'R-001',
-  'fb-ck7': 'R-004',
-  'promo-eu': '（未绑定）',
-  'black-friday': 'R-001 / R-007',
-  'legacy-cp': 'R-002 / R-003',
-  'whitelist-test': 'R-006',
+const DOMAIN_STATUS_NOTE: Record<string, string> = {
+  pending: 'DNS 待验证',
+  active: '已激活',
+  failed: '校验失败',
+  stopped: '已停用',
 };
 
-interface TargetEntry {
-  url: string;
-  pool: string;
-  weight: number;
-  health: string;
-  visits24h: number;
-  editing?: boolean;
-}
-
-// ==================== 响应式状态 ====================
-const currentTab = ref<'links' | 'edit' | 'domains'>('links');
-const isLiveBackend = ref(false);
-
+// ==================== 响应式基础数据 ====================
 const links = ref<Link[]>([]);
 const domains = ref<Domain[]>([]);
 const loading = ref(false);
 const total = ref(0);
+const page = ref(1);
+const pageSize = ref(20);
 
 const keyword = ref('');
 const typeFilter = ref<string>('all');
 const statusFilter = ref<string>('all');
+const statusUpdatingId = ref<number | null>(null);
 
+// ==================== 计算用量与 KPI ====================
 const usage = computed(() => auth.config?.usage);
 
-// 编辑器状态
-const editingLinkId = ref<number | null>(1042);
-const isExistingSavedLink = computed(() => editingLinkId.value !== null && editingLinkId.value > 0);
-const saving = ref(false);
-const isSavedRecently = ref(false);
-const uploadingZip = ref(false);
-const landingFileInput = ref<HTMLInputElement | null>(null);
-const landingFileSummary = ref('vip-access-v7.zip · 412 KB · 上传于 2025-11-28');
-
-const form = reactive({
-  code: 'vip-access',
-  domainId: 1,
-  domainFqdn: 'go.northwind-media.com',
-  linkType: 'redirect' as LinkType,
-  redirectStatus: '302' as RedirectStatus,
-  schedule: '2026-01-01 → 长期',
-  landingSource: 'url' as LandingSource,
-  landingUrl: 'https://go.northwind-media.com/vip-access/',
-  status: 'enabled' as LinkStatus,
+const quotaPercent = computed(() => {
+  const max = usage.value?.maxLinks;
+  if (!max || max <= 0) return 0;
+  const used = usage.value?.links ?? total.value;
+  return Math.min(100, Math.round((used / max) * 100));
 });
 
-const boundRules = ref<BoundRule[]>([
-  { id: 'R-001', name: '目标市场 · 移动端放行', action: '放行 → 目标池 A' },
-  { id: 'R-004', name: '语言分流 · 葡语市场', action: '放行 → 目标池 B' },
-  { id: 'R-008', name: '兜底 · 品牌白标页', action: '白标页' },
-]);
-const selectedRuleToAdd = ref('');
-
-const targets = ref<TargetEntry[]>([
-  { url: 'https://northwind-media.com/landing/vip-access', pool: '目标池 A', weight: 5, health: '健康', visits24h: 28410 },
-  { url: 'https://secure-checkout.net/offer/9f2a', pool: '目标池 A', weight: 3, health: '健康', visits24h: 14602 },
-  { url: 'https://northwind-media.com/pt/acesso', pool: '目标池 B', weight: 1, health: '响应慢 · 412ms', visits24h: 12880 },
-  { url: 'https://acesso-vip.com.br/entrada', pool: '目标池 B', weight: 1, health: '健康', visits24h: 5723 },
-]);
-
-const outbound = reactive({
-  stripReferer: true,
-  hideTarget: true,
-  passUtm: false,
-  randomDelay: true,
-  guestIdWithoutCookie: true,
+const remainingQuota = computed(() => {
+  const max = usage.value?.maxLinks;
+  if (!max) return '不限';
+  const rem = max - (usage.value?.links ?? total.value);
+  return rem > 0 ? `${rem} 条` : '已耗尽';
 });
 
-const postback = reactive({
-  tiktokEvents: true,
-  metaCapi: true,
-  googleEnhanced: true,
-  googleOffline: false,
-  events: 'ViewContent, Click, AddToCart, Purchase',
-  webhookUrl: 'https://api.northwind-media.com/conv',
+const activeLinksCount = computed(() => {
+  return links.value.filter((l) => l.status === 'enabled').length;
 });
 
-// 模态框状态
-const showBatchModal = ref(false);
-const batchText = ref('');
-const batchDomainId = ref<number | undefined>(undefined);
-const batchImporting = ref(false);
+const totalVisits = computed(() => {
+  return links.value.reduce((acc, l) => acc + (l.visits || 0), 0);
+});
 
-const showAddDomainModal = ref(false);
-const newDomainFqdn = ref('');
-const newDomainDesc = ref('');
-const addingDomain = ref(false);
+const totalClicks = computed(() => {
+  return links.value.reduce((acc, l) => acc + (l.linkType === 'landing' ? l.clicks || 0 : 0), 0);
+});
 
-// ==================== 计算属性 ====================
-const currentDomainFqdn = computed(() => {
-  const d = domains.value.find((item) => item.id === form.domainId);
-  return d?.fqdn || form.domainFqdn || domains.value[0]?.fqdn || 'go.northwind-media.com';
+const overallCtr = computed(() => {
+  const landingVisits = links.value
+    .filter((l) => l.linkType === 'landing')
+    .reduce((acc, l) => acc + (l.visits || 0), 0);
+  if (landingVisits === 0 || totalClicks.value === 0) return '—';
+  return `${((totalClicks.value / landingVisits) * 100).toFixed(2)}%`;
+});
+
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
+
+const activeDomains = computed(() => {
+  return domains.value.filter((d) => d.status === 'active');
+});
+
+const hasActiveFilter = computed(() => {
+  return keyword.value.trim() !== '' || typeFilter.value !== 'all' || statusFilter.value !== 'all';
 });
 
 const filteredLinks = computed(() => {
@@ -1492,6 +1015,79 @@ const filteredLinks = computed(() => {
   });
 });
 
+// ==================== 抽屉表单状态 ====================
+const drawerVisible = ref(false);
+const editingLinkId = ref<number | null>(null);
+const isEdit = computed(() => editingLinkId.value !== null && editingLinkId.value > 0);
+const saving = ref(false);
+const uploadingZip = ref(false);
+const landingFileInput = ref<HTMLInputElement | null>(null);
+const pendingLandingFile = ref<File | null>(null);
+const landingFileSummary = ref('未上传压缩包');
+
+const form = reactive({
+  code: '',
+  domainIds: [] as number[],
+  linkType: 'redirect' as LinkType,
+  redirectStatus: '302' as RedirectStatus,
+  status: 'enabled' as LinkStatus,
+  targetUrls: ['https://'],
+  landingSource: 'url' as LandingSource,
+  landingUrl: '',
+});
+
+const outbound = reactive({
+  stripReferer: true,
+  passParams: false,
+  hideTarget: true,
+  randomDelay: false,
+});
+
+const primaryDomainId = computed({
+  get: () => {
+    if (form.domainIds.length > 0) return form.domainIds[0];
+    return 0;
+  },
+  set: (val: number) => {
+    if (!val) return;
+    if (!form.domainIds.includes(val)) {
+      form.domainIds = [val, ...form.domainIds.filter((id) => id !== val)];
+    }
+  },
+});
+
+function onPrimaryDomainSelectChange(e: Event) {
+  const target = e.target as HTMLSelectElement;
+  const id = Number(target.value);
+  if (id && !form.domainIds.includes(id)) {
+    form.domainIds.unshift(id);
+  }
+}
+
+const previewDomain = computed(() => {
+  const chosen = domains.value.find((d) => form.domainIds.includes(d.id));
+  if (chosen) return chosen.fqdn;
+  if (domains.value.length > 0) return domains.value[0].fqdn;
+  return 'your-domain.com';
+});
+
+const previewUrl = computed(() => {
+  const code = form.code.trim() || '自动生成';
+  return `https://${previewDomain.value}/${code}`;
+});
+
+const validTargetsCount = computed(() => {
+  return form.targetUrls
+    .map((u) => u.trim())
+    .filter((u) => u && u !== 'https://' && u !== 'http://').length;
+});
+
+// ==================== 模态框: 批量导入 ====================
+const showBatchModal = ref(false);
+const batchText = ref('');
+const batchDomainId = ref<number | undefined>(undefined);
+const batchImporting = ref(false);
+
 const parsedBatchLinesCount = computed(() => {
   return batchText.value
     .split('\n')
@@ -1499,293 +1095,175 @@ const parsedBatchLinesCount = computed(() => {
     .filter(Boolean).length;
 });
 
-// 6 步访问路径裁决推演 (实时联动)
-const traceStep1 = computed(() => {
-  if (boundRules.value.length > 0) {
-    const r = boundRules.value[0];
-    return `① 命中 ${r.id}（${r.name.split('·')[0].trim()}）`;
-  }
-  return '① 未命中绑定规则 → 执行兜底：无规则兜底';
-});
-
-const traceStep2 = computed(() => {
-  if (boundRules.value.length > 0) {
-    return `② 动作：${boundRules.value[0].action}`;
-  }
-  return '② 动作：放行 → 目标池 A（默认兜底池）';
-});
-
-const traceStep3 = computed(() => {
-  const t = targets.value[0];
-  if (!t || !t.url) return '③ 权重选择：尚未配置出口';
+// ==================== 数据加载 ====================
+async function loadData() {
+  loading.value = true;
   try {
-    const host = new URL(t.url).hostname;
-    return `③ 权重选择：${host}（权重 ${t.weight}，目标池调度）`;
-  } catch {
-    return `③ 权重选择：${t.url}（权重 ${t.weight}）`;
+    const [linksRes, domainsRes] = await Promise.all([
+      listLinks({ page: page.value, pageSize: pageSize.value }),
+      listDomains(),
+    ]);
+
+    links.value = linksRes.items;
+    total.value = linksRes.total;
+    domains.value = domainsRes;
+
+    if (domainsRes.length > 0 && !batchDomainId.value) {
+      const active = domainsRes.find((d) => d.status === 'active');
+      batchDomainId.value = active ? active.id : domainsRes[0].id;
+    }
+  } catch (error) {
+    if (error instanceof ApiError) {
+      message.error(error.message);
+    } else {
+      message.error('加载短链数据失败');
+    }
+    links.value = [];
+    total.value = 0;
+  } finally {
+    loading.value = false;
   }
-});
+}
 
-const traceStep4 = computed(() => {
-  const parts: string[] = [];
-  parts.push(outbound.stripReferer ? '剥离 Referer' : '保留 Referer');
-  if (outbound.randomDelay) parts.push('随机延迟 0–800ms');
-  if (outbound.passUtm) parts.push('透传 UTM 参数');
-  if (outbound.hideTarget) parts.push('隐藏真实目标');
-  return `④ ${parts.join(' + ')}`;
-});
+// ==================== 列表与表格操作 ====================
+function getPrimaryDomain(link: Link): string {
+  if (link.domains && link.domains.length > 0) {
+    return link.domains[0];
+  }
+  return domains.value[0]?.fqdn || '—';
+}
 
-const traceStep5 = computed(() => {
-  const t = targets.value[0];
-  const urlDisplay = t?.url ? truncateUrl(t.url) : 'northwind-media.com/landing';
-  return `⑤ ${form.redirectStatus || '302'} → ${urlDisplay}`;
-});
-
-const traceStep6 = computed(() => {
-  const platforms: string[] = [];
-  if (postback.tiktokEvents) platforms.push('TikTok');
-  if (postback.metaCapi) platforms.push('Meta');
-  if (postback.googleEnhanced || postback.googleOffline) platforms.push('Google');
-  const firstEvt = postback.events.split(',')[0]?.trim() || 'ViewContent';
-  if (platforms.length === 0) return `⑥ 回传转化：未开启广告回传`;
-  return `⑥ 回传 ${firstEvt} 至 ${platforms.join(' / ')}`;
-});
-
-const healthyTargetsCount = computed(() => {
-  return targets.value.filter((t) => t.health === '健康').length;
-});
-
-const certRemainingDays = computed(() => {
-  const cur = domains.value.find((d) => d.id === form.domainId || d.fqdn === form.domainFqdn);
-  if (cur?.certStatus === 'issued') return '38 天';
-  if (cur?.certStatus === 'pending') return '签发中';
-  return '—';
-});
-
-const targetAlertCount = computed(() => {
-  return targets.value.filter((t) => t.health.includes('慢') || t.health.includes('未')).length;
-});
-
-// ==================== 工具辅助方法 ====================
-function truncateUrl(url: string): string {
+function formatTargetDisplay(urls: string[] | undefined): string {
+  if (!urls || urls.length === 0) return '—';
   try {
-    const u = new URL(url);
-    return `${u.hostname}${u.pathname}`;
+    const u = new URL(urls[0]);
+    return `${u.hostname}${u.pathname !== '/' ? u.pathname : ''}`;
   } catch {
-    return url;
+    return urls[0];
   }
-}
-
-function getLinkDomain(link: Link): string {
-  return link.domains?.[0] || domains.value[0]?.fqdn || 'go.northwind-media.com';
-}
-
-function getLinkRuleStr(link: Link): string {
-  if (linkRulesMap[link.code]) return linkRulesMap[link.code];
-  if (editingLinkId.value === link.id && boundRules.value.length > 0) {
-    return boundRules.value.map((r) => r.id).join(' / ');
-  }
-  return '（未绑定）';
-}
-
-function getTargetPoolName(link: Link): string {
-  if (link.code === 'legacy-cp') return '白标页';
-  if (link.code === 'fb-ck7') return '目标池 B';
-  return '目标池 A';
 }
 
 function getLinkCtr(link: Link): string {
+  if (link.linkType !== 'landing') return '—';
   if (!link.visits || link.visits === 0) return '—';
   if (!link.clicks || link.clicks === 0) return '0.00%';
   return `${((link.clicks / link.visits) * 100).toFixed(2)}%`;
 }
 
-function getDomainLinkStats(d: Domain): string {
-  const matched = links.value.filter((l) => l.domains?.includes(d.fqdn));
-  const activeCount = matched.filter((l) => l.status === 'enabled').length;
-  if (matched.length > 0) return `${matched.length} / ${activeCount}`;
-  if (d.fqdn.includes('go.')) return '6 / 4';
-  if (d.fqdn.includes('eu.')) return '3 / 3';
-  if (d.fqdn.includes('bl.')) return '2 / 2';
-  if (d.fqdn.includes('nwmedia')) return '5 / 5';
-  if (d.fqdn.includes('old.')) return '1 / 1';
-  return '0 / 0';
-}
-
-function getDomainVisitsFormatted(d: Domain): string {
-  const matched = links.value.filter((l) => l.domains?.includes(d.fqdn));
-  const sum = matched.reduce((acc, l) => acc + (l.visits || 0), 0);
-  if (sum > 0) return sum.toLocaleString();
-  if (d.fqdn.includes('go.')) return '1,042,338';
-  if (d.fqdn.includes('eu.')) return '188,204';
-  if (d.fqdn.includes('nwmedia')) return '72,406';
-  if (d.fqdn.includes('old.')) return '640';
-  return '0';
-}
-
-// ==================== 选项卡切换与 URL 同步 ====================
-function switchTab(tab: 'links' | 'edit' | 'domains') {
-  currentTab.value = tab;
-  try {
-    localStorage.setItem('cloak.lm.tab', tab);
-  } catch {}
-  router.replace({
-    query: { ...route.query, tab },
-    hash: tab === 'domains' ? '#domains' : tab === 'edit' ? '#edit' : '#links',
-  });
-}
-
-function syncTabFromRoute() {
-  const qTab = route.query.tab as string | undefined;
-  const hash = route.hash;
-  const qEdit = route.query.edit as string | undefined;
-
-  if (qTab === 'links' || qTab === 'edit' || qTab === 'domains') {
-    currentTab.value = qTab;
-  } else if (hash === '#domains') {
-    currentTab.value = 'domains';
-  } else if (hash === '#edit') {
-    currentTab.value = 'edit';
-  } else if (hash === '#links') {
-    currentTab.value = 'links';
-  } else if (qEdit) {
-    currentTab.value = 'edit';
-  } else {
-    try {
-      const saved = localStorage.getItem('cloak.lm.tab') as 'links' | 'edit' | 'domains' | null;
-      if (saved && ['links', 'edit', 'domains'].includes(saved)) {
-        currentTab.value = saved;
-      }
-    } catch {}
-  }
-
-  if (qEdit) {
-    const found = links.value.find((l) => l.code === qEdit || String(l.id) === qEdit);
-    if (found) {
-      openEditTab(found);
-    }
-  }
-}
-
-watch(
-  () => [route.query.tab, route.hash, route.query.edit],
-  () => {
-    syncTabFromRoute();
-  },
-);
-
-// ==================== 数据加载 ====================
-async function loadData() {
-  loading.value = true;
-  try {
-    const [linksRes, domainsRes] = await Promise.allSettled([
-      listLinks({ page: 1, pageSize: 100 }),
-      listDomains(),
-    ]);
-
-    if (linksRes.status === 'fulfilled' && linksRes.value.items.length > 0) {
-      links.value = linksRes.value.items;
-      total.value = linksRes.value.total;
-      isLiveBackend.value = true;
-    } else {
-      links.value = [...DEMO_LINKS];
-      total.value = DEMO_LINKS.length;
-    }
-
-    if (domainsRes.status === 'fulfilled' && domainsRes.value.length > 0) {
-      domains.value = domainsRes.value;
-      isLiveBackend.value = true;
-    } else {
-      domains.value = [...DEMO_DOMAINS];
-    }
-
-    if (domains.value.length > 0 && !batchDomainId.value) {
-      batchDomainId.value = domains.value[0].id;
-    }
-  } catch {
-    links.value = [...DEMO_LINKS];
-    total.value = DEMO_LINKS.length;
-    domains.value = [...DEMO_DOMAINS];
-  } finally {
-    loading.value = false;
-    syncTabFromRoute();
-  }
-}
-
-onMounted(() => {
-  loadData();
-});
-
-// ==================== 短链列表操作 ====================
-async function onToggleLinkStatus(link: Link) {
-  const nextStatus: LinkStatus = link.status === 'enabled' ? 'disabled' : 'enabled';
-  const label = nextStatus === 'disabled' ? '停用' : '启用';
-  try {
-    if (link.id > 0) {
-      await updateLink(link.id, { status: nextStatus });
-    }
-    link.status = nextStatus;
-    message.success(`短链「${link.code}」已${label}`);
-  } catch (error) {
-    if (error instanceof ApiError) message.error(error.message);
-    else {
-      link.status = nextStatus;
-      message.success(`短链「${link.code}」已${label} (演示)`);
-    }
-  }
-}
-
 async function copyLinkUrl(link: Link) {
-  const fqdn = getLinkDomain(link);
+  const fqdn = getPrimaryDomain(link);
   const url = `https://${fqdn}/${link.code}`;
   try {
     await navigator.clipboard.writeText(url);
-    message.success('已复制: ' + url);
+    message.success('已复制短链: ' + url);
   } catch {
     message.error('复制失败，请手动复制');
   }
 }
 
+async function copyPreviewUrl() {
+  try {
+    await navigator.clipboard.writeText(previewUrl.value);
+    message.success('已复制预览地址: ' + previewUrl.value);
+  } catch {
+    message.error('复制失败，请手动复制');
+  }
+}
+
+async function onToggleLinkStatus(link: Link) {
+  if (statusUpdatingId.value === link.id) return;
+  const nextStatus: LinkStatus = link.status === 'enabled' ? 'disabled' : 'enabled';
+  const label = nextStatus === 'disabled' ? '停用' : '启用';
+
+  statusUpdatingId.value = link.id;
+  try {
+    const updated = await updateLink(link.id, { status: nextStatus });
+    link.status = updated.status;
+    message.success(`短链「${link.code}」已${label}`);
+  } catch (error) {
+    if (error instanceof ApiError) {
+      message.error(error.message);
+    } else {
+      message.error(`${label}失败，请稍后重试`);
+    }
+  } finally {
+    statusUpdatingId.value = null;
+  }
+}
+
 function handleDeleteLink(link: Link) {
   confirm({
-    title: `删除短链「${link.code}」?`,
-    content: '删除为逻辑删除：记录、关联与访问信息保留，但「域名/短码」将不再命中。',
-    okText: '删除',
+    title: `逻辑删除短链「${link.code}」?`,
+    content: '删除为逻辑删除：短链记录与历史访问明细保留，但「域名/短码」将不再对外重定向。',
+    okText: '确认逻辑删除',
     cancelText: '取消',
     danger: true,
     onOk: async () => {
       try {
-        if (link.id > 0) await deleteLink(link.id);
-        links.value = links.value.filter((l) => l.id !== link.id);
-        message.success('短链已逻辑删除');
+        await deleteLink(link.id);
+        message.success(`短链「${link.code}」已逻辑删除`);
+        await loadData();
+        await auth.fetchMe();
       } catch (err) {
         if (err instanceof ApiError) message.error(err.message);
-        else {
-          links.value = links.value.filter((l) => l.id !== link.id);
-          message.success('短链已删除 (演示)');
-        }
+        else message.error('删除短链失败');
+      }
+    },
+  });
+}
+
+function handlePurgeLink(link: Link) {
+  confirm({
+    title: `彻底清除短链「${link.code}」?`,
+    content: '警告：彻底清除为物理删除！将永久移除该短链及全部历史访问明细，此操作不可撤销！',
+    okText: '彻底物理删除',
+    cancelText: '取消',
+    danger: true,
+    onOk: async () => {
+      try {
+        await purgeLink(link.id);
+        message.success(`短链「${link.code}」已彻底清除`);
+        await loadData();
+        await auth.fetchMe();
+      } catch (err) {
+        if (err instanceof ApiError) message.error(err.message);
+        else message.error('彻底删除短链失败');
       }
     },
   });
 }
 
 function exportCsv() {
-  const headers = ['短码', '承载域名', '类型', '绑定规则', '默认去向', '目标数', '24h访问', '转化', 'CTR', '状态', '创建时间'];
+  const headers = [
+    '短码',
+    '承载域名',
+    '类型',
+    '重定向状态码',
+    '目标URL',
+    '24h访问',
+    '转化点击',
+    'CTR',
+    '状态',
+    '创建时间',
+  ];
   const rows = filteredLinks.value.map((l) => [
     l.code,
-    getLinkDomain(l),
+    (l.domains || []).join('; '),
     l.linkType === 'landing' ? '落地页型' : '跳转型',
-    getLinkRuleStr(l),
-    getTargetPoolName(l),
-    l.targetUrls?.length || 1,
+    l.redirectStatus || '302',
+    (l.targetUrls || []).join('; '),
     l.visits || 0,
-    l.clicks || 0,
+    l.linkType === 'landing' ? l.clicks || 0 : 0,
     getLinkCtr(l),
     l.status === 'enabled' ? '启用' : '停用',
     formatDateTime(l.createdAt),
   ]);
 
-  const csvContent = [headers.join(','), ...rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))].join('\n');
+  const csvContent = [
+    headers.join(','),
+    ...rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')),
+  ].join('\n');
+
   const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -1796,50 +1274,55 @@ function exportCsv() {
   message.success(`已导出 ${rows.length} 条短链记录`);
 }
 
-// ==================== 编辑器操作 ====================
-function openCreate() {
+function resetFilters() {
+  keyword.value = '';
+  typeFilter.value = 'all';
+  statusFilter.value = 'all';
+}
+
+function goToPage(p: number) {
+  if (p < 1 || p > totalPages.value || p === page.value) return;
+  page.value = p;
+  loadData();
+}
+
+function onPageSizeChange() {
+  page.value = 1;
+  loadData();
+}
+
+// ==================== 抽屉操作 ====================
+function openCreateDrawer() {
   editingLinkId.value = null;
   form.code = '';
   form.linkType = 'redirect';
   form.redirectStatus = '302';
-  form.schedule = '2026-01-01 → 长期';
+  form.status = 'enabled';
+  form.targetUrls = ['https://'];
   form.landingSource = 'url';
   form.landingUrl = '';
-  form.status = 'enabled';
+  pendingLandingFile.value = null;
   landingFileSummary.value = '未上传压缩包';
 
-  if (domains.value.length > 0) {
-    form.domainId = domains.value[0].id;
-    form.domainFqdn = domains.value[0].fqdn;
+  const defaultDomain = activeDomains.value[0] || domains.value[0];
+  if (defaultDomain) {
+    form.domainIds = [defaultDomain.id];
+  } else {
+    form.domainIds = [];
   }
 
-  targets.value = [
-    {
-      url: 'https://',
-      pool: '目标池 A',
-      weight: 1,
-      health: '健康',
-      visits24h: 0,
-      editing: true,
-    },
-  ];
-
-  boundRules.value = [
-    { id: 'R-001', name: '目标市场 · 移动端放行', action: '放行 → 目标池 A' },
-  ];
-
-  switchTab('edit');
+  drawerVisible.value = true;
 }
 
-function openEditTab(link: Link) {
+function openEditDrawer(link: Link) {
   editingLinkId.value = link.id;
   form.code = link.code;
   form.linkType = link.linkType || 'redirect';
   form.redirectStatus = link.redirectStatus || '302';
-  form.schedule = '2026-01-01 → 长期';
+  form.status = link.status || 'enabled';
   form.landingSource = link.landingSource || 'url';
   form.landingUrl = link.landingUrl || '';
-  form.status = link.status || 'enabled';
+  pendingLandingFile.value = null;
 
   if (link.landingUploaded) {
     landingFileSummary.value = `${link.code}-landing.zip · 已托管 · 状态正常`;
@@ -1847,107 +1330,52 @@ function openEditTab(link: Link) {
     landingFileSummary.value = '未上传压缩包';
   }
 
-  const fqdn = link.domains?.[0];
-  if (fqdn) {
-    const d = domains.value.find((item) => item.fqdn === fqdn);
-    if (d) {
-      form.domainId = d.id;
-      form.domainFqdn = d.fqdn;
-    } else {
-      form.domainFqdn = fqdn;
-      if (domains.value.length > 0) form.domainId = domains.value[0].id;
-    }
+  const matched = domains.value.filter((d) => link.domains?.includes(d.fqdn)).map((d) => d.id);
+  if (matched.length > 0) {
+    form.domainIds = matched;
   } else if (domains.value.length > 0) {
-    form.domainId = domains.value[0].id;
-    form.domainFqdn = domains.value[0].fqdn;
+    form.domainIds = [domains.value[0].id];
+  } else {
+    form.domainIds = [];
   }
 
   if (link.targetUrls && link.targetUrls.length > 0) {
-    targets.value = link.targetUrls.map((url, i) => ({
-      url,
-      pool: i % 2 === 0 ? '目标池 A' : '目标池 B',
-      weight: i === 0 ? 5 : i === 1 ? 3 : 1,
-      health: '健康',
-      visits24h: Math.round((link.visits || 0) / link.targetUrls.length),
-      editing: false,
-    }));
+    form.targetUrls = [...link.targetUrls];
   } else {
-    targets.value = [
-      {
-        url: 'https://northwind-media.com/landing/' + link.code,
-        pool: '目标池 A',
-        weight: 1,
-        health: '健康',
-        visits24h: link.visits || 0,
-        editing: false,
-      },
-    ];
+    form.targetUrls = ['https://'];
   }
 
-  const ruleIds = (linkRulesMap[link.code] || '').split(' / ');
-  const rulesFound = CATALOG_RULES.filter((r) => ruleIds.includes(r.id));
-  boundRules.value = rulesFound.length > 0 ? [...rulesFound] : [
-    { id: 'R-001', name: '目标市场 · 移动端放行', action: '放行 → 目标池 A' },
-  ];
-
-  switchTab('edit');
+  drawerVisible.value = true;
 }
 
-function onDomainChange() {
-  const d = domains.value.find((item) => item.id === form.domainId);
-  if (d) form.domainFqdn = d.fqdn;
+function closeDrawer() {
+  drawerVisible.value = false;
 }
 
-function moveRuleUp(idx: number) {
-  if (idx <= 0) return;
-  const temp = boundRules.value[idx - 1];
-  boundRules.value[idx - 1] = boundRules.value[idx];
-  boundRules.value[idx] = temp;
+function addTargetUrl() {
+  form.targetUrls.push('https://');
 }
 
-function moveRuleDown(idx: number) {
-  if (idx >= boundRules.value.length - 1) return;
-  const temp = boundRules.value[idx + 1];
-  boundRules.value[idx + 1] = boundRules.value[idx];
-  boundRules.value[idx] = temp;
-}
-
-function removeBoundRule(idx: number) {
-  boundRules.value.splice(idx, 1);
-}
-
-function bindSelectedRule() {
-  if (!selectedRuleToAdd.value) return;
-  const rid = selectedRuleToAdd.value;
-  if (boundRules.value.some((r) => r.id === rid)) {
-    message.warning('该规则已在此短链绑定列表中');
-    return;
-  }
-  const found = CATALOG_RULES.find((r) => r.id === rid);
-  if (found) {
-    boundRules.value.push({ ...found });
-    selectedRuleToAdd.value = '';
-    message.success(`已绑定规则 ${found.id}`);
-  }
-}
-
-function addTarget() {
-  targets.value.push({
-    url: 'https://',
-    pool: '目标池 A',
-    weight: 1,
-    health: '健康',
-    visits24h: 0,
-    editing: true,
-  });
-}
-
-function removeTarget(idx: number) {
-  if (targets.value.length <= 1) {
+function removeTargetUrl(idx: number) {
+  if (form.targetUrls.length <= 1) {
     message.warning('请至少保留一个出口目标');
     return;
   }
-  targets.value.splice(idx, 1);
+  form.targetUrls.splice(idx, 1);
+}
+
+function moveTargetUp(idx: number) {
+  if (idx <= 0) return;
+  const temp = form.targetUrls[idx - 1];
+  form.targetUrls[idx - 1] = form.targetUrls[idx];
+  form.targetUrls[idx] = temp;
+}
+
+function moveTargetDown(idx: number) {
+  if (idx >= form.targetUrls.length - 1) return;
+  const temp = form.targetUrls[idx + 1];
+  form.targetUrls[idx + 1] = form.targetUrls[idx];
+  form.targetUrls[idx] = temp;
 }
 
 function triggerLandingFileUpload() {
@@ -1961,115 +1389,126 @@ async function handleLandingFileUpload(e: Event) {
 
   if (!file.name.endsWith('.zip')) {
     message.error('落地页文件必须为 .zip 格式压缩包');
+    input.value = '';
     return;
   }
 
-  if (!editingLinkId.value || editingLinkId.value <= 0) {
-    landingFileSummary.value = `${file.name} · ${(file.size / 1024).toFixed(0)} KB · 待保存后上传`;
-    message.info('新建短链请先保存基本设置，随后自动上传落地页包');
-    return;
-  }
-
-  uploadingZip.value = true;
-  try {
-    const updated = await uploadLanding(editingLinkId.value, file);
-    landingFileSummary.value = `${file.name} · ${(file.size / 1024).toFixed(0)} KB · 刚刚上传`;
-    message.success('落地页压缩包托管成功');
-    const idx = links.value.findIndex((l) => l.id === updated.id);
-    if (idx >= 0) links.value[idx] = updated;
-  } catch (err) {
-    if (err instanceof ApiError) message.error(err.message);
-    else {
-      landingFileSummary.value = `${file.name} · ${(file.size / 1024).toFixed(0)} KB · 已上传 (演示)`;
-      message.success('压缩包上传成功 (演示)');
+  if (editingLinkId.value) {
+    uploadingZip.value = true;
+    try {
+      await uploadLanding(editingLinkId.value, file);
+      landingFileSummary.value = `${file.name} · ${(file.size / 1024).toFixed(0)} KB · 刚刚上传`;
+      message.success('落地页压缩包已上传并托管');
+      await loadData();
+    } catch (err) {
+      if (err instanceof ApiError) message.error(err.message);
+      else message.error('上传压缩包失败');
+    } finally {
+      uploadingZip.value = false;
+      input.value = '';
     }
-  } finally {
-    uploadingZip.value = false;
+  } else {
+    pendingLandingFile.value = file;
+    landingFileSummary.value = `${file.name} · ${(file.size / 1024).toFixed(0)} KB · 待创建后自动上传`;
+    message.info('压缩包已选定，将在保存短链后自动上传托管');
     input.value = '';
   }
 }
 
 async function handleSaveLink() {
-  const validTargetUrls = targets.value
-    .map((t) => t.url.trim())
-    .filter((u) => u && u !== 'https://');
+  const cleanedTargets = form.targetUrls
+    .map((u) => u.trim())
+    .filter((u) => u && u !== 'https://' && u !== 'http://')
+    .map((u) => {
+      if (!u.startsWith('http://') && !u.startsWith('https://')) {
+        return 'https://' + u;
+      }
+      return u;
+    });
 
-  if (validTargetUrls.length === 0) {
+  if (cleanedTargets.length === 0) {
     message.error('请至少配置一个有效的目标 URL');
+    return;
+  }
+
+  for (const url of cleanedTargets) {
+    try {
+      new URL(url);
+    } catch {
+      message.error(`目标 URL 格式不合法：${url}`);
+      return;
+    }
+  }
+
+  if (form.domainIds.length === 0) {
+    message.error('请至少选择一个承载域名');
+    return;
+  }
+
+  if (form.linkType === 'landing' && form.landingSource === 'url' && !form.landingUrl.trim()) {
+    message.error('落地页型（URL 来源）必须填写落地页地址');
     return;
   }
 
   saving.value = true;
   try {
-    const domainIds = form.domainId ? [form.domainId] : [];
-    if (editingLinkId.value && editingLinkId.value > 0) {
-      const updated = await updateLink(editingLinkId.value, {
-        targetUrls: validTargetUrls,
-        domainIds,
+    if (editingLinkId.value) {
+      await updateLink(editingLinkId.value, {
+        targetUrls: cleanedTargets,
+        domainIds: form.domainIds,
         redirectStatus: form.redirectStatus,
         status: form.status,
         linkType: form.linkType,
         landingSource: form.landingSource,
-        landingUrl: form.landingUrl,
+        landingUrl: form.landingUrl.trim() || undefined,
       });
-      const idx = links.value.findIndex((l) => l.id === editingLinkId.value);
-      if (idx >= 0) links.value[idx] = updated;
+      message.success(`短链「${form.code}」修改成功`);
     } else {
       const created = await createLink({
         code: form.code.trim() || undefined,
-        targetUrls: validTargetUrls,
-        domainIds,
+        targetUrls: cleanedTargets,
+        domainIds: form.domainIds,
         redirectStatus: form.redirectStatus,
         linkType: form.linkType,
         landingSource: form.landingSource,
-        landingUrl: form.landingUrl,
+        landingUrl: form.landingUrl.trim() || undefined,
       });
-      editingLinkId.value = created.id;
-      form.code = created.code;
-      links.value.unshift(created);
-      total.value += 1;
+
+      if (form.linkType === 'landing' && form.landingSource === 'upload' && pendingLandingFile.value) {
+        try {
+          await uploadLanding(created.id, pendingLandingFile.value);
+        } catch {
+          message.warning('短链已创建，但落地页压缩包上传失败，可稍后在编辑中重新上传');
+        }
+      }
+
+      message.success(`短链「${created.code}」创建成功`);
     }
 
-    if (form.code) {
-      linkRulesMap[form.code] = boundRules.value.map((r) => r.id).join(' / ') || '（未绑定）';
-    }
-
-    isSavedRecently.value = true;
-    setTimeout(() => {
-      isSavedRecently.value = false;
-    }, 1600);
-    message.success('短链已成功保存');
+    closeDrawer();
+    await loadData();
+    await auth.fetchMe();
   } catch (error) {
     if (error instanceof ApiError) {
       message.error(error.message);
     } else {
-      if (form.code) {
-        linkRulesMap[form.code] = boundRules.value.map((r) => r.id).join(' / ') || '（未绑定）';
-      }
-      isSavedRecently.value = true;
-      setTimeout(() => {
-        isSavedRecently.value = false;
-      }, 1600);
-      message.success('配置已保存 (演示模式)');
+      message.error('保存短链失败，请检查输入或稍后重试');
     }
   } finally {
     saving.value = false;
   }
 }
 
-async function copyCurrentLink() {
-  const fqdn = form.domainFqdn || currentDomainFqdn.value;
-  const code = form.code || 'vip-access';
-  const url = `https://${fqdn}/${code}`;
-  try {
-    await navigator.clipboard.writeText(url);
-    message.success('已复制短链: ' + url);
-  } catch {
-    message.error('复制失败，请手动选择复制');
+// ==================== 模态框操作: 批量导入 ====================
+function openBatchModal() {
+  batchText.value = '';
+  const firstActive = activeDomains.value[0] || domains.value[0];
+  if (firstActive) {
+    batchDomainId.value = firstActive.id;
   }
+  showBatchModal.value = true;
 }
 
-// ==================== 模态框操作 ====================
 async function executeBatchImport() {
   const lines = batchText.value
     .split('\n')
@@ -2077,13 +1516,19 @@ async function executeBatchImport() {
     .filter(Boolean);
 
   if (lines.length === 0) return;
+  if (!batchDomainId.value) {
+    message.error('请选择承载域名');
+    return;
+  }
 
   batchImporting.value = true;
   let successCount = 0;
+  let failCount = 0;
+  const errors: string[] = [];
 
   for (const line of lines) {
     const parts = line.split(/[\s,]+/).filter(Boolean);
-    let code = '';
+    let code: string | undefined = undefined;
     let url = '';
     if (parts.length >= 2) {
       code = parts[0];
@@ -2097,141 +1542,105 @@ async function executeBatchImport() {
     }
 
     try {
-      const created = await createLink({
+      new URL(url);
+    } catch {
+      failCount++;
+      errors.push(`URL 非法: ${url}`);
+      continue;
+    }
+
+    try {
+      await createLink({
         code: code || undefined,
         targetUrls: [url],
-        domainIds: batchDomainId.value ? [batchDomainId.value] : [],
+        domainIds: [batchDomainId.value],
         redirectStatus: '302',
         linkType: 'redirect',
       });
-      links.value.unshift(created);
       successCount++;
-    } catch {
-      const mockId = Date.now() + Math.floor(Math.random() * 1000);
-      links.value.unshift({
-        id: mockId,
-        code: code || 'b-' + Math.random().toString(36).slice(2, 7),
-        targetUrls: [url],
-        redirectStatus: '302',
-        linkType: 'redirect',
-        landingSource: 'url',
-        landingUrl: '',
-        status: 'enabled',
-        domains: [currentDomainFqdn.value],
-        visits: 0,
-        clicks: 0,
-        landingUploaded: false,
-        createdAt: new Date().toISOString(),
-      });
-      successCount++;
+    } catch (err) {
+      failCount++;
+      if (err instanceof ApiError) {
+        errors.push(`${code || url}: ${err.message}`);
+      }
     }
   }
 
-  total.value = links.value.length;
   batchImporting.value = false;
   showBatchModal.value = false;
   batchText.value = '';
-  message.success(`成功导入 ${successCount} 条短链`);
+
+  if (successCount > 0) {
+    message.success(`成功导入 ${successCount} 条短链${failCount > 0 ? `，失败 ${failCount} 条` : ''}`);
+    await loadData();
+    await auth.fetchMe();
+  } else {
+    message.error(`导入失败：全部 ${failCount} 条均未成功 (${errors[0] || '未知错误'})`);
+  }
 }
 
-async function handleCreateDomain() {
-  const fqdn = newDomainFqdn.value.trim().toLowerCase();
-  if (!fqdn) return;
-
-  addingDomain.value = true;
-  try {
-    const created = await createDomain({
-      fqdn,
-      description: newDomainDesc.value.trim() || undefined,
-    });
-    domains.value.push(created);
-    message.success(`自有域名「${created.fqdn}」已提交`);
-    showAddDomainModal.value = false;
-    newDomainFqdn.value = '';
-    newDomainDesc.value = '';
-  } catch (error) {
-    if (error instanceof ApiError) {
-      message.error(error.message);
-    } else {
-      const mockDomain: Domain = {
-        id: Date.now(),
-        fqdn,
-        description: newDomainDesc.value.trim() || '自定义自有域名',
-        origin: 'self',
-        status: 'pending',
-        certStatus: 'pending',
-        activatedAt: '',
-        createdAt: new Date().toISOString(),
-      };
-      domains.value.push(mockDomain);
-      message.success(`自有域名「${fqdn}」已添加 (演示)`);
-      showAddDomainModal.value = false;
-      newDomainFqdn.value = '';
-      newDomainDesc.value = '';
+// ==================== 键盘事件与路由监听 ====================
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    if (drawerVisible.value) {
+      closeDrawer();
+    } else if (showBatchModal.value) {
+      showBatchModal.value = false;
     }
-  } finally {
-    addingDomain.value = false;
   }
 }
 
-// ==================== 域名池操作 ====================
-async function handleRecheckDomain(d: Domain) {
-  try {
-    await recheckDomain(d.id);
-    message.success(`已提交 ${d.fqdn} 的重新校验，请稍后刷新状态`);
-  } catch (err) {
-    if (err instanceof ApiError) message.error(err.message);
-    else message.success(`已重新触发 ${d.fqdn} 的 DNS 校验`);
+onMounted(async () => {
+  window.addEventListener('keydown', onKeydown);
+  await loadData();
+
+  if (route.query.new === '1') {
+    openCreateDrawer();
+  } else if (route.query.edit) {
+    const editIdOrCode = String(route.query.edit);
+    const found = links.value.find(
+      (l) => String(l.id) === editIdOrCode || l.code === editIdOrCode,
+    );
+    if (found) {
+      openEditDrawer(found);
+    } else {
+      const numId = Number(editIdOrCode);
+      if (!isNaN(numId) && numId > 0) {
+        try {
+          const detail = await getLink(numId);
+          openEditDrawer(detail);
+        } catch {}
+      }
+    }
   }
-}
+});
 
-function handleToggleDomainStatus(d: Domain, next: DomainStatus) {
-  const label = next === 'stopped' ? '停用' : '恢复';
-  confirm({
-    title: `${label}域名「${d.fqdn}」?`,
-    content:
-      next === 'stopped'
-        ? '停用后，该域名下的所有短链将立即返回 404 未命中。'
-        : '恢复后，该域名下的短链将恢复解析服务。',
-    okText: label,
-    danger: next === 'stopped',
-    cancelText: '取消',
-    onOk: async () => {
-      try {
-        await updateDomainStatus(d.id, next);
-        d.status = next;
-        message.success(`域名已${label}`);
-      } catch (err) {
-        if (err instanceof ApiError) message.error(err.message);
-        else {
-          d.status = next;
-          message.success(`域名已${label} (演示)`);
-        }
-      }
-    },
-  });
-}
-
-function handleDeleteDomain(d: Domain) {
-  confirm({
-    title: `删除域名「${d.fqdn}」?`,
-    content: '删除为物理删除。如果仍有关联的未删除短链将被拒绝，请确认已清空关联。',
-    okText: '删除',
-    cancelText: '取消',
-    danger: true,
-    onOk: async () => {
-      try {
-        await deleteDomain(d.id);
-        domains.value = domains.value.filter((item) => item.id !== d.id);
-        message.success('域名已删除');
-      } catch (err) {
-        if (err instanceof ApiError) message.error(err.message);
-        else {
-          domains.value = domains.value.filter((item) => item.id !== d.id);
-          message.success('域名已删除 (演示)');
-        }
-      }
-    },
-  });
-}
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown);
+});
 </script>
+
+<style scoped>
+/* 侧边抽屉遮罩过渡 */
+.drawer-backdrop-enter-active,
+.drawer-backdrop-leave-active {
+  transition: opacity 0.22s ease;
+}
+.drawer-backdrop-enter-from,
+.drawer-backdrop-leave-to {
+  opacity: 0;
+}
+
+/* 侧边抽屉滑入过渡 */
+.drawer-slide-enter-active {
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
+}
+.drawer-slide-leave-active {
+  transition: transform 0.2s cubic-bezier(0.4, 0, 1, 1), opacity 0.15s ease;
+}
+.drawer-slide-enter-from,
+.drawer-slide-leave-to {
+  transform: translateX(100%);
+  opacity: 0.8;
+}
+</style>

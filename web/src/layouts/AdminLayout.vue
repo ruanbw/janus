@@ -45,16 +45,16 @@
       </nav>
 
       <div v-if="!collapsed" class="border-t border-white/10 px-3.5 py-3">
-        <div class="font-mono text-[10.5px] tracking-wider text-slate-400 uppercase">
-          租户 · {{ auth.tenant?.slug?.toUpperCase() || 'NORTHWIND MEDIA' }}
+        <div class="truncate font-mono text-[10.5px] tracking-wider text-slate-400 uppercase">
+          租户 · {{ auth.tenant?.slug?.toUpperCase() || auth.tenant?.email?.split('@')[0]?.toUpperCase() || 'TENANT' }}
         </div>
         <div class="mt-2 flex items-center gap-2.5">
           <span class="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 font-mono text-[11px] font-semibold text-slate-200">
             {{ avatarInitial }}
           </span>
-          <div class="text-[12px] leading-tight text-slate-300">
-            运营管理员
-            <div class="font-mono text-[10px] text-slate-400">{{ auth.tenant?.tier?.name || 'Agency Pro' }}</div>
+          <div class="min-w-0 text-[12px] leading-tight text-slate-300">
+            <div>{{ auth.isSuperAdmin ? '超级管理员' : '租户管理员' }}</div>
+            <div class="font-mono text-[10px] text-slate-400">{{ auth.tenant?.tier?.name || '标准版' }}</div>
           </div>
         </div>
       </div>
@@ -127,10 +127,10 @@
         <div class="flex shrink-0 items-center gap-3">
           <span class="badge badge-ok hidden md:inline-flex">
             <span class="dot dot-live"></span>
-            8/8 边缘节点正常
+            系统就绪
           </span>
-          <span class="badge badge-neutral hidden lg:inline-flex">
-            规则 v2.14.0
+          <span v-if="auth.config?.serverIp" class="badge badge-neutral hidden lg:inline-flex font-mono">
+            节点 IP · {{ auth.config.serverIp }}
           </span>
           <AppTag v-if="auth.tenant?.tier" color="cyan" class="hidden sm:inline-flex">
             等级 · {{ auth.tenant.tier.name }}

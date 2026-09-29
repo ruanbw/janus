@@ -1,0 +1,1 @@
+import{Y as o,Z as a,$ as e,a0 as s}from"./index-Bi1KEgKR.js";function r(){return o("/domains")}function u(n){return a("/domains",n)}function c(n){return a(`/domains/${n}/recheck`)}function m(n,t){return e(`/domains/${n}`,{status:t})}function d(n){return s(`/domains/${n}`)}export{u as c,d,r as l,c as r,m as u};
