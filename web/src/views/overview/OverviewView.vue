@@ -1,36 +1,5 @@
 <template>
   <div class="space-y-5 pb-10">
-    <!-- 系统定位说明 + 刷新操作 -->
-    <section class="panel">
-      <div class="panel-bd">
-        <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div class="max-w-[78ch]">
-            <p class="eyebrow">系统定位</p>
-            <h2 class="text-[20px] font-[640] tracking-[-0.018em] text-ink">
-              斗篷（cloaking）是一层「准入裁决」，不是一层「跳转」
-            </h2>
-            <p class="tiny muted mt-2">
-              广告平台审查员、爬虫、同行与无效流量都会访问投放链接。斗篷在请求到达时先做访客画像，再用一组有序规则裁决：放行到真实落地页、返回白标页、限流，或直接丢弃。判断依据包括 IP 归属与网络属性、国家地区、设备与系统、浏览器、语言、Referrer 与设备指纹。下面的 4 个模块就是这条裁决链路的完整实现。
-            </p>
-          </div>
-          <div class="shrink-0">
-            <AppButton :loading="loading" @click="loadData">
-              <template #icon><RefreshCw :size="14" /></template>
-              刷新数据
-            </AppButton>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- 真实配额使用度 -->
-    <QuotaBar
-      :links-used="quotaUsage?.links ?? links.length"
-      :links-max="quotaUsage?.maxLinks"
-      :domains-used="quotaUsage?.domains ?? domains.length"
-      :domains-max="quotaUsage?.maxDomains"
-    />
-
     <!-- KPI 卡片网格 (真实数据驱动) -->
     <section class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
       <div
@@ -308,7 +277,6 @@ import { RefreshCw } from '@lucide/vue';
 
 import { listDomains } from '@/api/domains';
 import { listLinks } from '@/api/links';
-import QuotaBar from '@/components/QuotaBar.vue';
 import AppButton from '@/components/ui/AppButton.vue';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';

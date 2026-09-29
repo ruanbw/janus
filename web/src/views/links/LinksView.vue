@@ -1,27 +1,6 @@
 <template>
   <div class="flex flex-col gap-5 pb-10" data-od-id="links-view">
-    <!-- ==================== 顶栏说明与状态 ==================== -->
-    <header class="panel" data-od-id="topbar-link-management">
-      <div class="panel-hd">
-        <div>
-          <div class="eyebrow">CLOAK / 短链管理</div>
-          <h1 class="text-xl font-bold tracking-tight text-ink md:text-2xl mt-0.5">短链与目标</h1>
-          <p class="topbar-sub">
-            短链是访问入口与路由分发的绑定点：承载域名、短码识别、跳转分流与落地页托管。
-          </p>
-        </div>
-        <div class="btn-row">
-          <span class="badge badge-neutral" :title="`当前短链用量：${usage?.links ?? total} / ${usage?.maxLinks ?? '不限'}`">
-            <span class="dot dot-live" style="color: var(--accent)"></span>
-            已连接服务
-          </span>
-        </div>
-      </div>
-    </header>
-
-    <!-- ==================== 配额条与 4 个 KPI 指标 ==================== -->
-    <QuotaBar :links-used="usage?.links" :links-max="usage?.maxLinks" />
-
+    <!-- ==================== 4 个 KPI 指标 ==================== -->
     <section class="kpi-grid" data-od-id="links-kpi">
       <!-- KPI 1: 短链配额 -->
       <div class="kpi">
@@ -516,7 +495,6 @@ import {
   updateLink,
   uploadLanding,
 } from '@/api/links';
-import QuotaBar from '@/components/QuotaBar.vue';
 import AppEmpty from '@/components/ui/AppEmpty.vue';
 import { confirm } from '@/components/ui/confirm';
 import { useAuthStore } from '@/stores/auth';
