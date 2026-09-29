@@ -5,22 +5,22 @@
     :disabled="disabled || loading"
     v-model:open="open"
     :name="name"
-    class="relative w-full"
   >
     <SelectTrigger
-      class="app-field flex w-full items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 text-sm text-ink transition-colors focus:border-brand-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-surface-strong disabled:text-ink-faint"
-      :class="[sizeClasses, formItem?.invalid.value ? 'border-err' : '']"
+      :class="triggerClasses"
+      :aria-invalid="isInvalid ? 'true' : 'false'"
     >
       <!-- 多选:值标签 + 溢出计数 -->
-      <div v-if="multiple" class="flex min-w-0 flex-1 flex-wrap items-center gap-1 py-1">
-        <template v-for="tag in visibleTags" :key="tag.value">
+      <div v-if="multiple" class="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+        <template v-for="tag in visibleTags" :key="String(tag.value)">
           <span
-            class="inline-flex max-w-[160px] items-center gap-1 truncate rounded bg-brand-50 px-1.5 py-0.5 text-xs text-brand-700 dark:bg-brand-500/15 dark:text-brand-300"
+            class="inline-flex max-w-[160px] items-center gap-1 truncate rounded-sm border border-line bg-surface px-1.5 py-0.5 text-xs font-medium text-ink shadow-2xs dark:bg-surface-strong"
           >
             <span class="truncate">{{ tag.label }}</span>
             <button
               type="button"
-              class="shrink-0 opacity-60 hover:opacity-100"
+              tabindex="-1"
+              class="shrink-0 rounded-xs text-ink-faint transition-colors hover:bg-surface-strong hover:text-ink"
               @click.stop="removeTag(tag.value)"
             >
               <X :size="11" />
@@ -37,52 +37,66 @@
         </template>
       </SelectValue>
 
-      <Loader2 v-if="loading" :size="14" class="shrink-0 animate-spin text-ink-faint" />
-      <button
-        v-else-if="allowClear && (multiple ? multipleValues.length > 0 : model !== undefined && model !== null && model !== '')"
-        type="button"
-        class="shrink-0 text-ink-faint hover:text-ink"
-        @click.stop="clearValue"
-      >
-        <X :size="13" />
-      </button>
-      <SelectIcon v-else class="shrink-0 text-ink-faint">
-        <ChevronDown :size="15" />
-      </SelectIcon>
+      <div class="flex shrink-0 items-center gap-1.5 text-ink-faint">
+        <Loader2 v-if="loading" :size="14" class="animate-spin" />
+        <button
+          v-else-if="allowClear && hasValue && !disabled"
+          type="button"
+          tabindex="-1"
+          class="flex h-4 w-4 items-center justify-center rounded-sm transition-colors hover:bg-surface-strong hover:text-ink"
+          @click.stop="clearValue"
+        >
+          <X :size="12" />
+        </button>
+        <SelectIcon as-child>
+          <ChevronDown :size="14" class="opacity-70 transition-transform duration-200" />
+        </SelectIcon>
+      </div>
     </SelectTrigger>
 
     <SelectPortal>
       <SelectContent
         :side-offset="4"
         position="popper"
-        class="z-50 max-h-72 min-w-[var(--reka-select-trigger-width)] overflow-hidden rounded-xl border border-line bg-surface p-1 shadow-xl"
+        class="z-50 min-w-[var(--reka-select-trigger-width)] max-h-72 overflow-hidden rounded-md border border-line bg-surface p-1 text-ink shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2"
         @open-auto-focus="onOpenAutoFocus"
       >
-        <SelectViewport class="max-h-64 overflow-y-auto p-0.5">
-          <div v-if="showSearch" class="px-1 pb-1 pt-0.5">
-            <input
-              ref="searchRef"
-              v-model="search"
-              type="text"
-              placeholder="搜索…"
-              class="w-full rounded-md border border-line bg-surface-muted px-2.5 py-1.5 text-[13px] text-ink placeholder:text-ink-faint focus:border-brand-500 focus:outline-none"
-              @click.stop
-              @keydown.stop
-            />
-          </div>
+        <div v-if="showSearch" class="mb-1 flex items-center border-b border-line px-2.5 py-1.5">
+          <Search :size="13" class="mr-2 shrink-0 text-ink-faint" />
+          <input
+            ref="searchRef"
+            v-model="search"
+            type="text"
+            placeholder="搜索选项…"
+            class="w-full bg-transparent text-xs text-ink placeholder:text-ink-faint focus:outline-none"
+            @click.stop
+            @keydown.stop
+          />
+          <button
+            v-if="search"
+            type="button"
+            class="shrink-0 text-ink-faint hover:text-ink"
+            @click.stop="search = ''"
+          >
+            <X :size="12" />
+          </button>
+        </div>
+        <SelectViewport class="max-h-60 overflow-y-auto p-0.5">
           <SelectItem
             v-for="opt in filteredOptions"
             :key="String(opt.value)"
             :value="opt.value"
             :disabled="opt.disabled"
-            class="flex cursor-pointer items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-[13px] text-ink outline-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50 data-[highlighted]:bg-brand-50 data-[highlighted]:text-brand-700 dark:data-[highlighted]:bg-brand-500/15 dark:data-[highlighted]:text-brand-300"
+            class="relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-xs outline-none transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-surface-strong data-[highlighted]:text-ink"
           >
+            <span class="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+              <SelectItemIndicator>
+                <Check :size="14" class="text-brand-600 dark:text-brand-400" />
+              </SelectItemIndicator>
+            </span>
             <SelectItemText>{{ opt.label }}</SelectItemText>
-            <SelectItemIndicator class="shrink-0">
-              <Check :size="14" class="text-brand-600 dark:text-brand-400" />
-            </SelectItemIndicator>
           </SelectItem>
-          <div v-if="filteredOptions.length === 0" class="px-2.5 py-3 text-center text-xs text-ink-faint">
+          <div v-if="filteredOptions.length === 0" class="py-6 text-center text-xs text-ink-faint">
             无匹配选项
           </div>
         </SelectViewport>
@@ -105,14 +119,15 @@ import {
   SelectValue,
   SelectViewport,
 } from 'reka-ui';
-import { Check, ChevronDown, Loader2, X } from '@lucide/vue';
+import { Check, ChevronDown, Loader2, Search, X } from '@lucide/vue';
 
+import { cn } from '@/lib/utils';
 import { useFormItem } from './form';
 import type { SelectOption } from './types';
 
 const props = withDefaults(
   defineProps<{
-    modelValue?: string | number | Array<string | number> | undefined;
+    modelValue?: any;
     options?: SelectOption[];
     multiple?: boolean;
     placeholder?: string;
@@ -121,15 +136,25 @@ const props = withDefaults(
     maxTagCount?: number;
     loading?: boolean;
     disabled?: boolean;
-    size?: 'large' | 'middle' | 'small' | 'default';
+    size?: 'large' | 'middle' | 'small' | 'default' | 'sm' | 'lg';
     name?: string;
+    invalid?: boolean;
+    class?: any;
   }>(),
-  { options: () => [], multiple: false, allowClear: false, showSearch: false, size: 'middle', disabled: false, loading: false },
+  {
+    options: () => [],
+    multiple: false,
+    allowClear: false,
+    showSearch: false,
+    size: 'middle',
+    disabled: false,
+    loading: false,
+  },
 );
 
 const emit = defineEmits<{
-  'update:modelValue': [value: unknown];
-  change: [value: unknown];
+  'update:modelValue': [value: any];
+  change: [value: any];
 }>();
 
 const formItem = useFormItem();
@@ -138,28 +163,43 @@ const search = ref('');
 const searchRef = ref<HTMLInputElement | null>(null);
 
 const model = computed({
-  get(): string | number | Array<string | number> | undefined {
+  get(): any {
     return props.modelValue;
   },
-  set(value: unknown) {
-    emit('update:modelValue', value as string | number | Array<string | number> | undefined);
+  set(value: any) {
+    emit('update:modelValue', value);
     emit('change', value);
     formItem?.clearError();
   },
 });
 
-const sizeClasses = computed(() => {
-  if (props.size === 'large') return 'min-h-10 text-[15px]';
-  if (props.size === 'small') return 'min-h-8 text-[13px]';
-  return 'min-h-9';
+const isInvalid = computed(() => Boolean(props.invalid || formItem?.invalid.value));
+
+const triggerClasses = computed(() => {
+  const isSm = props.size === 'small' || props.size === 'sm';
+  const isLg = props.size === 'large' || props.size === 'lg';
+
+  return cn(
+    'app-field flex w-full items-center justify-between gap-2 rounded-md border border-line bg-surface/50 px-3 text-sm shadow-xs transition-colors placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50 dark:bg-surface-strong/30',
+    isSm ? 'min-h-8 py-1 text-xs' : isLg ? 'min-h-10 py-2 text-base' : 'min-h-9 py-1.5',
+    isInvalid.value && 'border-err focus-visible:ring-err focus-visible:border-err',
+    props.class,
+  );
 });
 
 const multipleValues = computed<Array<string | number>>(() =>
   Array.isArray(model.value) ? model.value : [],
 );
 
+const hasValue = computed(() => {
+  if (props.multiple) {
+    return multipleValues.value.length > 0;
+  }
+  return model.value !== undefined && model.value !== null && model.value !== '';
+});
+
 const filteredOptions = computed(() => {
-  if (props.showSearch === false || search.value.trim() === '') return props.options;
+  if (!props.showSearch || search.value.trim() === '') return props.options;
   const q = search.value.trim().toLowerCase();
   return props.options.filter((o) => o.label.toLowerCase().includes(q));
 });
@@ -171,19 +211,19 @@ function labelOf(value: unknown): string {
 
 /** 多选可见标签(maxTagCount 截断) */
 const visibleTags = computed(() => {
-  const values = Array.isArray(model.value) ? model.value : [];
+  const values = multipleValues.value;
   const limit = props.maxTagCount !== undefined ? props.maxTagCount : values.length;
   return values.slice(0, limit).map((v) => ({ value: v, label: labelOf(v) }));
 });
 
 const hiddenCount = computed(() => {
-  const values = Array.isArray(model.value) ? model.value : [];
+  const values = multipleValues.value;
   const limit = props.maxTagCount !== undefined ? props.maxTagCount : values.length;
   return Math.max(0, values.length - limit);
 });
 
 function removeTag(value: string | number): void {
-  const values = Array.isArray(model.value) ? [...model.value] : [];
+  const values = [...multipleValues.value];
   const index = values.indexOf(value);
   if (index >= 0) {
     values.splice(index, 1);
@@ -204,6 +244,6 @@ function onOpenAutoFocus(): void {
 }
 
 watch(open, (isOpen) => {
-  if (isOpen === false) search.value = '';
+  if (!isOpen) search.value = '';
 });
 </script>

@@ -1,5 +1,5 @@
 <template>
-  <form class="app-form" @submit.prevent="onSubmit">
+  <form class="app-form" :class="props.class" @submit.prevent="onSubmit">
     <slot />
   </form>
 </template>
@@ -14,6 +14,7 @@ import type { FormRule } from './types';
 const props = defineProps<{
   model: Record<string, unknown>;
   rules?: Record<string, FormRule[]>;
+  class?: any;
 }>();
 
 const emit = defineEmits<{

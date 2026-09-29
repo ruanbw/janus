@@ -1,29 +1,38 @@
 <template>
-  <div class="group inline-flex cursor-pointer items-center gap-2 disabled:cursor-not-allowed">
+  <label
+    :for="uid"
+    class="inline-flex cursor-pointer items-center gap-2 text-sm text-ink select-none"
+    :class="disabled ? 'cursor-not-allowed opacity-50' : ''"
+  >
     <RadioGroupItem
-      :value="value"
       :id="uid"
+      :value="value"
       :disabled="disabled"
-      class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface transition-colors group-data-[state=checked]:border-brand-600"
+      class="peer flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-line-strong bg-surface shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-brand-600 dark:data-[state=checked]:border-brand-500"
+      :class="props.class"
     >
-      <RadioGroupIndicator>
-        <span class="block h-2 w-2 rounded-full bg-brand-600" />
+      <RadioGroupIndicator class="flex items-center justify-center">
+        <span class="h-2 w-2 rounded-full bg-brand-600 dark:bg-brand-500" />
       </RadioGroupIndicator>
     </RadioGroupItem>
-    <label :for="uid" class="cursor-pointer text-[13px] text-ink select-none"><slot /></label>
-  </div>
+    <span v-if="$slots.default" class="text-sm font-medium leading-none">
+      <slot />
+    </span>
+  </label>
 </template>
 
 <script setup lang="ts">
 import { RadioGroupIndicator, RadioGroupItem } from 'reka-ui';
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     value: string | number;
     disabled?: boolean;
+    id?: string;
+    class?: any;
   }>(),
   { disabled: false },
 );
 
-const uid = 'radio-' + Math.random().toString(36).slice(2, 9);
+const uid = props.id ?? 'radio-' + Math.random().toString(36).slice(2, 9);
 </script>

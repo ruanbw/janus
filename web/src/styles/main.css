@@ -38,6 +38,9 @@
 
 /* 明暗主题 CSS 变量 */
 :root {
+  --radius: 0.5rem;
+  --ring: #6366f1;
+  --ring-offset: #ffffff;
   --surface: #ffffff;
   --surface-muted: #f4f6fb;
   --surface-strong: #e9edf6;
@@ -58,6 +61,8 @@
 }
 
 .dark {
+  --ring: #6366f1;
+  --ring-offset: #10141d;
   --surface: #10141d;
   --surface-muted: #151b28;
   --surface-strong: #1c2333;
@@ -79,6 +84,11 @@
 
 /* 语义色 → 工具类(bg-surface / text-ink / border-line / text-ok …) */
 @theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-ring: var(--ring);
   --color-surface: var(--surface);
   --color-surface-muted: var(--surface-muted);
   --color-surface-strong: var(--surface-strong);
@@ -138,9 +148,66 @@ body {
 
 /* 表单控件统一焦点环 */
 .app-field:focus-visible {
-  outline: 2px solid var(--color-brand-500);
-  outline-offset: 1px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--color-brand-500);
 }
+
+.ring-offset-surface {
+  --tw-ring-offset-color: var(--surface);
+}
+
+/* shadcn 进出场动效与关键帧 */
+@keyframes enter {
+  from {
+    opacity: var(--tw-enter-opacity, 1);
+    transform: translate3d(var(--tw-enter-translate-x, 0), var(--tw-enter-translate-y, 0), 0)
+      scale3d(var(--tw-enter-scale, 1), var(--tw-enter-scale, 1), 1)
+      rotate(var(--tw-enter-rotate, 0));
+  }
+}
+
+@keyframes exit {
+  to {
+    opacity: var(--tw-exit-opacity, 1);
+    transform: translate3d(var(--tw-exit-translate-x, 0), var(--tw-exit-translate-y, 0), 0)
+      scale3d(var(--tw-exit-scale, 1), var(--tw-exit-scale, 1), 1)
+      rotate(var(--tw-exit-rotate, 0));
+  }
+}
+
+.animate-in {
+  animation: enter 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --tw-enter-opacity: 1;
+  --tw-enter-scale: 1;
+  --tw-enter-rotate: 0deg;
+  --tw-enter-translate-x: 0;
+  --tw-enter-translate-y: 0;
+}
+
+.animate-out {
+  animation: exit 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  --tw-exit-opacity: 1;
+  --tw-exit-scale: 1;
+  --tw-exit-rotate: 0deg;
+  --tw-exit-translate-x: 0;
+  --tw-exit-translate-y: 0;
+}
+
+.fade-in-0 { --tw-enter-opacity: 0; }
+.fade-in-50 { --tw-enter-opacity: 0.5; }
+.fade-out-0 { --tw-exit-opacity: 0; }
+
+.zoom-in-95 { --tw-enter-scale: 0.95; }
+.zoom-out-95 { --tw-exit-scale: 0.95; }
+
+.slide-in-from-top-2 { --tw-enter-translate-y: -0.5rem; }
+.slide-in-from-bottom-2 { --tw-enter-translate-y: 0.5rem; }
+.slide-in-from-left-2 { --tw-enter-translate-x: -0.5rem; }
+.slide-in-from-right-2 { --tw-enter-translate-x: 0.5rem; }
+.slide-in-from-left-1\/2 { --tw-enter-translate-x: -50%; }
+.slide-in-from-top-\[48\%\] { --tw-enter-translate-y: -48%; }
+.slide-out-to-left-1\/2 { --tw-exit-translate-x: -50%; }
+.slide-out-to-top-\[48\%\] { --tw-exit-translate-y: -48%; }
 
 /* 表单校验错误态:由 AppFormItem 注入 data-invalid 到字段包装层 */
 [data-invalid='true'] .app-field {

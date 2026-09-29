@@ -4,19 +4,20 @@
       <div
         v-for="t in toasts"
         :key="t.id"
-        class="pointer-events-auto flex w-full items-start gap-2.5 rounded-xl border px-3.5 py-2.5 shadow-lg backdrop-blur"
+        class="pointer-events-auto flex w-full items-start gap-3 rounded-xl border bg-surface/95 p-3.5 shadow-lg backdrop-blur-md transition-all dark:bg-surface-strong/95"
         :class="toastClasses(t.type)"
       >
-        <span class="mt-0.5 shrink-0">
-          <component :is="iconOf(t.type)" :size="15" />
+        <span class="mt-0.5 shrink-0" :class="iconColorClass(t.type)">
+          <component :is="iconOf(t.type)" :size="16" />
         </span>
-        <p class="min-w-0 flex-1 break-words text-[13px] leading-relaxed">{{ t.content }}</p>
+        <p class="min-w-0 flex-1 break-words text-[13px] font-medium leading-relaxed text-ink">{{ t.content }}</p>
         <button
           type="button"
-          class="shrink-0 opacity-60 transition-opacity hover:opacity-100"
+          tabindex="-1"
+          class="shrink-0 rounded-xs p-0.5 text-ink-faint opacity-60 transition-opacity hover:opacity-100 hover:text-ink focus-visible:outline-none"
           @click="dismiss(t.id)"
         >
-          <X :size="13" />
+          <X :size="14" />
         </button>
       </div>
     </TransitionGroup>
@@ -32,13 +33,26 @@ import type { ToastType } from './toast';
 function toastClasses(type: ToastType): string {
   switch (type) {
     case 'success':
-      return 'border-ok/30 bg-ok/10 text-ink';
+      return 'border-ok/30 text-ink';
     case 'error':
-      return 'border-err/30 bg-err/10 text-ink';
+      return 'border-err/30 text-ink';
     case 'warning':
-      return 'border-warn/30 bg-warn/10 text-ink';
+      return 'border-warn/30 text-ink';
     default:
-      return 'border-info/30 bg-info/10 text-ink';
+      return 'border-info/30 text-ink';
+  }
+}
+
+function iconColorClass(type: ToastType): string {
+  switch (type) {
+    case 'success':
+      return 'text-ok';
+    case 'error':
+      return 'text-err';
+    case 'warning':
+      return 'text-warn';
+    default:
+      return 'text-info';
   }
 }
 
@@ -59,18 +73,16 @@ function iconOf(type: ToastType) {
 <style scoped>
 .toast-enter-active,
 .toast-leave-active {
-  transition:
-    opacity 0.22s ease,
-    transform 0.22s ease;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .toast-enter-from {
   opacity: 0;
-  transform: translateY(-8px) scale(0.97);
+  transform: translateY(-12px) scale(0.95);
 }
 
 .toast-leave-to {
   opacity: 0;
-  transform: translateY(-6px) scale(0.98);
+  transform: translateY(-8px) scale(0.96);
 }
 </style>

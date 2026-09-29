@@ -1,44 +1,75 @@
 <template>
-  <div class="relative w-full">
+  <div class="relative w-full" :class="isInvalid ? 'data-invalid-wrap' : ''">
     <textarea
       :value="modelValue"
       :placeholder="placeholder"
       :maxlength="maxlength"
       :rows="rows"
       :disabled="disabled"
-      :aria-invalid="formItem?.invalid.value ? 'true' : 'false'"
-      class="app-field w-full resize-y rounded-lg border border-line bg-surface px-3 py-2 text-sm leading-relaxed text-ink placeholder:text-ink-faint transition-colors focus:border-brand-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-surface-strong disabled:text-ink-faint"
+      :readonly="readonly"
+      :aria-invalid="isInvalid ? 'true' : 'false'"
+      :class="textareaClasses"
       @input="onInput"
-      @blur="formItem?.clearError()"
+      @blur="onBlur"
+      @focus="emit('focus', $event)"
     />
-    <span v-if="showCount" class="pointer-events-none absolute bottom-1.5 right-2.5 text-[11px] text-ink-faint">
-      {{ String(modelValue ?? '').length }}{{ maxlength !== undefined ? '/' + maxlength : '' }}
-    </span>
+    <div
+      v-if="showCount"
+      class="pointer-events-none absolute bottom-2 right-2.5 rounded bg-surface/80 px-1 py-0.5 text-[11px] font-mono text-ink-faint backdrop-blur-xs select-none"
+    >
+      {{ currentLength }}{{ maxlength !== undefined ? ` / ${maxlength}` : '' }}
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
+
+import { cn } from '@/lib/utils';
 import { useFormItem } from './form';
 
-withDefaults(
+const props = withDefaults(
   defineProps<{
     modelValue?: string;
     placeholder?: string;
     maxlength?: number;
     rows?: number;
     disabled?: boolean;
+    readonly?: boolean;
     showCount?: boolean;
+    invalid?: boolean;
+    class?: any;
   }>(),
-  { modelValue: '', rows: 2, showCount: false, disabled: false },
+  { modelValue: '', rows: 3, showCount: false, disabled: false, readonly: false },
 );
 
-const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
+const emit = defineEmits<{
+  'update:modelValue': [value: string];
+  blur: [event: FocusEvent];
+  focus: [event: FocusEvent];
+}>();
 
 const formItem = useFormItem();
+const isInvalid = computed(() => Boolean(props.invalid || formItem?.invalid.value));
+const currentLength = computed(() => String(props.modelValue ?? '').length);
+
+const textareaClasses = computed(() => {
+  return cn(
+    'app-field flex min-h-[80px] w-full resize-y rounded-md border border-line bg-surface/50 px-3 py-2 text-sm shadow-xs transition-colors placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50 dark:bg-surface-strong/30',
+    props.showCount && 'pb-7',
+    isInvalid.value && 'border-err focus-visible:ring-err focus-visible:border-err',
+    props.class,
+  );
+});
 
 function onInput(event: Event): void {
   const el = event.target as HTMLTextAreaElement;
   emit('update:modelValue', el.value);
+  formItem?.clearError();
+}
+
+function onBlur(event: FocusEvent): void {
+  emit('blur', event);
   formItem?.clearError();
 }
 </script>

@@ -1,17 +1,17 @@
 <template>
   <span
-    class="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium leading-5 whitespace-nowrap"
-    :class="presetClass"
+    :class="tagClasses"
     :style="customStyle"
   >
     <slot />
   </span>
 </template>
 
-<script setup lang="ts">
-import { computed } from 'vue';
+<script lang="ts">
+import { cva } from 'class-variance-authority';
 
-type TagColor =
+export type TagVariant = 'default' | 'secondary' | 'destructive' | 'outline';
+export type TagColor =
   | 'default'
   | 'blue'
   | 'cyan'
@@ -25,17 +25,43 @@ type TagColor =
   | 'gold'
   | 'geekblue';
 
+export const badgeVariants = cva(
+  'inline-flex select-none items-center gap-1.5 rounded-md border px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2',
+  {
+    variants: {
+      variant: {
+        default:
+          'border-transparent bg-brand-600 text-white shadow-2xs hover:bg-brand-500 dark:bg-brand-500 dark:hover:bg-brand-400',
+        secondary:
+          'border-transparent bg-surface-strong text-ink hover:bg-surface-strong/80',
+        destructive:
+          'border-transparent bg-err text-white shadow-2xs hover:bg-err/90',
+        outline: 'border-line text-ink bg-transparent',
+      },
+    },
+    defaultVariants: {
+      variant: 'default',
+    },
+  },
+);
+</script>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+
+import { cn } from '@/lib/utils';
+
 const props = withDefaults(
   defineProps<{
-    /** antd Tag 兼容的预设色名,或任意 hex 颜色 */
+    variant?: TagVariant;
     color?: TagColor | string;
+    class?: any;
   }>(),
   { color: 'default' },
 );
 
 const PRESETS: Record<string, string> = {
-  default:
-    'border-line bg-surface-strong text-ink-soft dark:bg-surface-strong',
+  default: 'border-line bg-surface-strong/70 text-ink-soft dark:bg-surface-strong',
   blue: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300',
   cyan: 'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-500/30 dark:bg-cyan-500/10 dark:text-cyan-300',
   green:
@@ -56,8 +82,20 @@ const PRESETS: Record<string, string> = {
     'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-300',
 };
 
-const presetClass = computed(() => PRESETS[props.color] ?? '');
+const tagClasses = computed(() => {
+  if (props.variant !== undefined) {
+    return cn(badgeVariants({ variant: props.variant }), props.class);
+  }
+  const isCustomHex = props.color && /^#[0-9a-fA-F]{6}$/.test(props.color);
+  return cn(
+    'inline-flex select-none items-center gap-1.5 rounded-md border px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap transition-colors',
+    isCustomHex ? '' : (PRESETS[props.color] ?? PRESETS.default),
+    props.class,
+  );
+});
+
 const customStyle = computed(() => {
+  if (props.variant !== undefined) return undefined;
   if (PRESETS[props.color] !== undefined) return undefined;
   const hex = props.color;
   if (/^#[0-9a-fA-F]{6}$/.test(hex) === false) return undefined;

@@ -1,168 +1,475 @@
 <template>
-  <div>
+  <div class="mx-auto max-w-6xl">
     <PageHeader :title="isEdit ? '编辑短链' : '创建短链'" :description="headerDescription">
       <template #actions>
         <AppButton @click="goBack">
           <template #icon><ArrowLeft :size="15" /></template>
-          返回
+          返回列表
         </AppButton>
       </template>
     </PageHeader>
 
-    <AppCard :bordered="false" class="form-card">
-      <AppSpin :spinning="loading">
-        <AppForm ref="formRef" :model="form as unknown as Record<string, unknown>" :rules="rules">
-          <AppFormItem name="code" label="短码" :extra="codeExtra">
-            <AppInput
-              v-model="form.code"
-              placeholder="留空自动生成"
-              :maxlength="SHORT_CODE_MAX_LENGTH"
-              :disabled="isEdit"
-            />
-          </AppFormItem>
+    <AppSpin :spinning="loading">
+      <AppForm ref="formRef" :model="form as unknown as Record<string, unknown>" :rules="rules">
+        <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <!-- 左侧 2 列:表单主操作区 -->
+          <div class="space-y-6 lg:col-span-2">
+            <!-- 模块 1:基础与类型 -->
+            <AppCard :padding="false">
+              <CardHeader>
+                <CardTitle class="flex items-center gap-2">
+                  <Hash :size="18" class="text-brand-600 dark:text-brand-400" />
+                  基本信息与类型
+                </CardTitle>
+                <CardDescription>
+                  设置短链的公开标识短码与行为方式（创建后短码不可更改）
+                </CardDescription>
+              </CardHeader>
+              <CardContent class="space-y-5">
+                <AppFormItem name="code" label="短码" :extra="codeExtra">
+                  <AppInput
+                    v-model="form.code"
+                    placeholder="留空自动生成"
+                    :maxlength="SHORT_CODE_MAX_LENGTH"
+                    :disabled="isEdit"
+                  >
+                    <template #prefix>
+                      <Hash :size="15" />
+                    </template>
+                  </AppInput>
+                </AppFormItem>
 
-          <AppFormItem
-            name="linkType"
-            label="短链类型"
-            extra="跳转型:访问短链后立即重定向到目标 URL(支持多个按顺序轮询)。落地页型:先展示一个中间落地页(在线地址或上传的压缩包),访问者点击后才跳转,可单独统计「点击」数。"
-          >
-            <AppRadioGroup v-model="form.linkType">
-              <AppRadio value="redirect">跳转型</AppRadio>
-              <AppRadio value="landing">落地页型</AppRadio>
-            </AppRadioGroup>
-          </AppFormItem>
-
-          <AppFormItem
-            name="targetUrls"
-            label="目标 URL"
-            extra="支持配置多个目标 URL,访问时按从上到下的顺序轮询分发。支持任意协议(如 https://、http://、mailto:)。每个 URL 不能包含换行/制表符等控制字符,单个最长 4096 字符。"
-          >
-            <div class="flex flex-col gap-2">
-              <div
-                v-for="(_, index) in form.targetUrls"
-                :key="index"
-                class="flex items-center gap-1.5"
-              >
-                <AppInput
-                  v-model="form.targetUrls[index]"
-                  placeholder="https://example.com/page"
-                />
-                <AppButton
-                  v-if="form.targetUrls.length > 1"
-                  type="text"
-                  danger
-                  class="shrink-0"
-                  @click="removeTargetUrl(index)"
+                <AppFormItem
+                  name="linkType"
+                  label="短链类型"
+                  extra="跳转型直接重定向到目标 URL；落地页型先展示中间页面，访问者点击按钮经 SDK 计数后再到达目标。"
                 >
-                  <template #icon><CircleMinus :size="15" /></template>
-                </AppButton>
-              </div>
-              <AppButton type="dashed" block @click="addTargetUrl">
-                <template #icon><Plus :size="15" /></template>
-                添加目标 URL
-              </AppButton>
-            </div>
-          </AppFormItem>
+                  <AppRadioGroup v-model="form.linkType" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <AppRadioCard
+                      value="redirect"
+                      title="跳转型"
+                      description="访问即立即重定向到目标 URL，支持多目标轮询分发"
+                      :icon="ExternalLink"
+                    />
+                    <AppRadioCard
+                      value="landing"
+                      title="落地页型"
+                      description="访问先展示落地页，点击按钮经 JS SDK 计数后到达目标"
+                      :icon="Layout"
+                    />
+                  </AppRadioGroup>
+                </AppFormItem>
+              </CardContent>
+            </AppCard>
 
-          <template v-if="form.linkType === 'landing'">
-            <AppFormItem
-              name="landingSource"
-              label="落地页来源"
-              extra="URL 地址:落地页直接指向一个在线地址,访问时先重定向到该地址。上传压缩包:上传一个静态站点 zip(必须包含 index.html),由本服务托管,访问时直接展示。"
-            >
-              <AppRadioGroup v-model="form.landingSource">
-                <AppRadio value="url">URL 地址</AppRadio>
-                <AppRadio value="upload">上传压缩包</AppRadio>
-              </AppRadioGroup>
-            </AppFormItem>
+            <!-- 模块 2:路由目标与落地页配置 -->
+            <AppCard :padding="false">
+              <CardHeader>
+                <CardTitle class="flex items-center gap-2">
+                  <Link2 :size="18" class="text-brand-600 dark:text-brand-400" />
+                  {{ form.linkType === 'redirect' ? '目标 URL 与跳转机制' : '落地页与最终目标' }}
+                </CardTitle>
+                <CardDescription>
+                  {{
+                    form.linkType === 'redirect'
+                      ? '配置访问者重定向的目的地与 HTTP 缓存策略'
+                      : '配置落地页来源以及落地页按钮点击后跳转的最终目标'
+                  }}
+                </CardDescription>
+              </CardHeader>
+              <CardContent class="space-y-6">
+                <!-- 跳转型:重定向状态选择 -->
+                <AppFormItem
+                  v-if="form.linkType === 'redirect'"
+                  name="redirectStatus"
+                  label="重定向状态码"
+                  extra="临时重定向(302)适合经常调整目标的场景；永久重定向(301)会被浏览器与搜索引擎深度缓存。"
+                >
+                  <AppRadioGroup v-model="form.redirectStatus" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <AppRadioCard
+                      value="302"
+                      title="302 临时重定向"
+                      description="不缓存跳转，目标变更立即对所有访问者生效"
+                      :icon="Zap"
+                    >
+                      <template #extra>
+                        <AppTag color="green">推荐</AppTag>
+                      </template>
+                    </AppRadioCard>
+                    <AppRadioCard
+                      value="301"
+                      title="301 永久重定向"
+                      description="浏览器与搜索引擎长久缓存，减轻服务器二次请求负载"
+                      :icon="Clock"
+                    />
+                  </AppRadioGroup>
+                </AppFormItem>
 
-            <AppFormItem
-              v-if="form.landingSource === 'url'"
-              name="landingUrl"
-              label="落地页地址"
-              extra="访问落地页型短链时,先重定向到此地址。不能包含控制字符,最长 4096 字符。仅在「落地页来源 = URL 地址」时填写。"
-            >
-              <AppInput v-model="form.landingUrl" placeholder="https://example.com/landing" />
-            </AppFormItem>
+                <!-- 落地页型:来源切换与配置 -->
+                <template v-if="form.linkType === 'landing'">
+                  <AppFormItem
+                    name="landingSource"
+                    label="落地页来源"
+                    extra="可直接指向外部托管的网页，或将静态站点压缩包直接上传至本平台托管。"
+                  >
+                    <AppRadioGroup v-model="form.landingSource" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <AppRadioCard
+                        value="url"
+                        title="URL 地址"
+                        description="落地页直接指向一个外部在线地址，访问时先跳至该页面"
+                        :icon="Globe"
+                      />
+                      <AppRadioCard
+                        value="upload"
+                        title="上传静态压缩包"
+                        description="上传含 index.html 的 zip 包，由本平台托管在短链根路径"
+                        :icon="UploadCloud"
+                      />
+                    </AppRadioGroup>
+                  </AppFormItem>
 
-            <AppFormItem
-              v-else
-              name="landingFile"
-              label="落地页压缩包"
-              extra="压缩包必须包含 index.html,作为落地页入口。上传为替换式:再次上传会覆盖旧版本,成功后立即生效,无需重新创建短链。仅支持 .zip 格式。"
-            >
-              <div class="flex flex-col gap-2">
-                <div class="flex items-center gap-2.5">
-                  <AppUpload accept=".zip" :before-upload="onSelectZip">
-                    <AppButton :loading="landingUploading">
-                      <template #icon><Upload :size="15" /></template>
-                      {{ form.landingUploaded ? '重新上传压缩包' : '选择 zip 压缩包' }}
-                    </AppButton>
-                  </AppUpload>
-                  <AppTag v-if="form.landingUploaded" color="success">已上传</AppTag>
-                  <AppTag v-else color="default">未上传</AppTag>
+                  <!-- 落地页 URL -->
+                  <AppFormItem
+                    v-if="form.landingSource === 'url'"
+                    name="landingUrl"
+                    label="落地页地址"
+                    extra="访问此短链时首先呈现的在线落地页 URL，最长 4096 字符。"
+                  >
+                    <AppInput
+                      v-model="form.landingUrl"
+                      placeholder="https://example.com/landing"
+                    >
+                      <template #prefix>
+                        <Globe :size="15" />
+                      </template>
+                    </AppInput>
+                  </AppFormItem>
+
+                  <!-- 落地页压缩包上传区域 -->
+                  <AppFormItem
+                    v-else
+                    name="landingFile"
+                    label="落地页静态压缩包"
+                    extra="压缩包必须包含 index.html 作为页面入口。支持拖拽或点击上传，支持覆盖式热更新。"
+                  >
+                    <div
+                      class="relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 text-center transition-all"
+                      :class="
+                        isDragging
+                          ? 'border-brand-500 bg-brand-50/30 dark:bg-brand-500/10'
+                          : 'border-line-strong hover:border-brand-400 bg-surface/40 hover:bg-surface'
+                      "
+                      @dragover.prevent="isDragging = true"
+                      @dragleave.prevent="isDragging = false"
+                      @drop.prevent="onDropZip"
+                    >
+                      <FileArchive :size="36" class="mb-3 text-brand-600 dark:text-brand-400" />
+                      
+                      <div class="mb-2 flex items-center gap-2">
+                        <AppUpload accept=".zip" :before-upload="onSelectZip">
+                          <AppButton size="small" :loading="landingUploading">
+                            <template #icon><Upload :size="14" /></template>
+                            {{ form.landingUploaded ? '重新选择压缩包' : '选择 zip 文件' }}
+                          </AppButton>
+                        </AppUpload>
+
+                        <AppTag v-if="form.landingUploaded" color="green">
+                          <CheckCircle2 :size="12" class="mr-1" />
+                          已托管压缩包
+                        </AppTag>
+                        <AppTag v-else color="default">未上传</AppTag>
+                      </div>
+
+                      <p class="text-xs text-ink-faint">
+                        支持点击上方按钮或将 <span class="font-medium text-ink">.zip 压缩包</span> 拖拽到此处
+                      </p>
+                      <p class="mt-1 text-[11px] text-ink-faint">
+                        压缩包根目录必须包含 <code class="font-mono text-ink">index.html</code>，更新上传后即刻生效
+                      </p>
+
+                      <!-- 已选文件待上传提示 -->
+                      <div
+                        v-if="landingFile"
+                        class="mt-3.5 flex w-full max-w-md items-center justify-between rounded-lg border border-brand-200 bg-brand-50/50 px-3.5 py-2 text-xs text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300"
+                      >
+                        <div class="flex min-w-0 items-center gap-2 truncate">
+                          <FileArchive :size="14" class="shrink-0" />
+                          <span class="truncate font-medium">{{ landingFile.name }}</span>
+                          <span class="text-[11px] opacity-75">({{ formatFileSize(landingFile.size) }})</span>
+                        </div>
+                        <AppTag color="blue" class="shrink-0">待上传</AppTag>
+                      </div>
+                    </div>
+                  </AppFormItem>
+                </template>
+
+                <!-- 目标 URL 动态列表卡片 -->
+                <AppFormItem
+                  name="targetUrls"
+                  :label="form.linkType === 'landing' ? '落地页最终目标 URL' : '目标 URL 列表'"
+                  extra="支持配置多个目标 URL，访问时按轮询（Round-Robin）顺序分发。支持任意协议（如 https://、http://、mailto:）。"
+                >
+                  <div class="space-y-2.5">
+                    <div
+                      v-for="(_, index) in form.targetUrls"
+                      :key="index"
+                      class="group flex items-center gap-2"
+                    >
+                      <!-- 序号徽章 -->
+                      <span
+                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-surface-muted text-xs font-semibold text-ink-soft select-none"
+                      >
+                        {{ index + 1 }}
+                      </span>
+
+                      <!-- URL 输入框 -->
+                      <div class="flex-1">
+                        <AppInput
+                          v-model="form.targetUrls[index]"
+                          placeholder="https://example.com/target-page"
+                        >
+                          <template #prefix>
+                            <Link2 :size="15" />
+                          </template>
+                        </AppInput>
+                      </div>
+
+                      <!-- 删除按钮 -->
+                      <AppButton
+                        v-if="form.targetUrls.length > 1"
+                        type="text"
+                        danger
+                        class="shrink-0 text-ink-faint hover:text-err"
+                        title="删除该目标"
+                        @click="removeTargetUrl(index)"
+                      >
+                        <template #icon><Trash2 :size="16" /></template>
+                      </AppButton>
+                    </div>
+
+                    <!-- 操作与分发提示行 -->
+                    <div class="pt-1 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <AppButton
+                        type="dashed"
+                        class="w-full sm:w-auto"
+                        @click="addTargetUrl"
+                      >
+                        <template #icon><Plus :size="15" /></template>
+                        添加目标 URL
+                      </AppButton>
+                      <span
+                        v-if="form.targetUrls.length > 1"
+                        class="text-xs text-ink-faint flex items-center gap-1"
+                      >
+                        <RefreshCw :size="12" class="text-brand-600" />
+                        已启用多地址轮询分发机制（共 {{ form.targetUrls.length }} 个目标）
+                      </span>
+                    </div>
+                  </div>
+                </AppFormItem>
+              </CardContent>
+            </AppCard>
+
+            <!-- 模块 3:域名与状态 -->
+            <AppCard :padding="false">
+              <CardHeader>
+                <CardTitle class="flex items-center gap-2">
+                  <Globe :size="18" class="text-brand-600 dark:text-brand-400" />
+                  关联域名与状态
+                </CardTitle>
+                <CardDescription>
+                  指定承载该短链的一个或多个已激活域名，以及短链当前的服务状态
+                </CardDescription>
+              </CardHeader>
+              <CardContent class="space-y-5">
+                <AppFormItem
+                  name="domainIds"
+                  label="关联域名"
+                  extra="仅已激活（active）的域名可关联短链。同一短码可在不同域名下独立指向不同目标，至少选择一个域名。"
+                >
+                  <AppSelect
+                    v-model="form.domainIds"
+                    multiple
+                    placeholder="请选择关联域名"
+                    :options="domainOptions"
+                    :max-tag-count="4"
+                  />
+                </AppFormItem>
+
+                <!-- 编辑模式状态切换 -->
+                <AppFormItem
+                  v-if="isEdit"
+                  name="status"
+                  label="短链服务状态"
+                  extra="启用时正常解析跳转并记录访问统计；停用时保留短链配置但对外返回 404 未命中。"
+                >
+                  <AppRadioGroup v-model="form.status" class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <AppRadioCard
+                      value="enabled"
+                      title="正常启用"
+                      description="短链正常对外提供访问与跳转，记录访问明细"
+                      :icon="CheckCircle2"
+                    />
+                    <AppRadioCard
+                      value="disabled"
+                      title="暂停停用"
+                      description="短链保留配置但访问时返回 404，可随时重新启用"
+                      :icon="PauseCircle"
+                    />
+                  </AppRadioGroup>
+                </AppFormItem>
+              </CardContent>
+
+              <!-- 表单底部操作栏 -->
+              <CardFooter class="flex items-center justify-between border-t border-line bg-surface-muted/30 px-6 py-4">
+                <span class="text-xs text-ink-faint">
+                  配置提交后立即生效
+                </span>
+                <div class="flex items-center gap-3">
+                  <AppButton @click="goBack">取消</AppButton>
+                  <AppButton
+                    type="primary"
+                    :loading="submitting"
+                    @click="onSubmit"
+                  >
+                    {{ isEdit ? '保存短链修改' : '立即创建短链' }}
+                  </AppButton>
                 </div>
-                <div v-if="landingFile" class="break-all text-xs text-ink-soft">
-                  待上传:{{ landingFile.name }}
+              </CardFooter>
+            </AppCard>
+          </div>
+
+          <!-- 右侧 1 列:实时预览与指引侧栏 -->
+          <div class="space-y-6 lg:col-span-1">
+            <!-- 实时预览卡片 -->
+            <AppCard :padding="false" class="sticky top-6">
+              <CardHeader class="pb-3">
+                <CardTitle class="flex items-center gap-2 text-sm font-semibold">
+                  <Sparkles :size="16" class="text-brand-600 dark:text-brand-400" />
+                  短链实时预览
+                </CardTitle>
+                <CardDescription>
+                  根据当前填写的短码与所选域名实时生成短链完整地址
+                </CardDescription>
+              </CardHeader>
+              <CardContent class="space-y-4">
+                <!-- 拼接后的完整地址展示框 -->
+                <div class="rounded-xl border border-line bg-surface-muted/60 p-3.5 space-y-2">
+                  <div class="flex items-center justify-between text-[11px] text-ink-faint">
+                    <span>主访问地址</span>
+                    <span v-if="selectedDomains.length > 1" class="font-medium text-brand-600 dark:text-brand-400">
+                      +{{ selectedDomains.length - 1 }} 个备选域名
+                    </span>
+                  </div>
+                  <div class="mono break-all text-xs font-semibold text-ink selection:bg-brand-100">
+                    {{ previewUrl }}
+                  </div>
+                  <div class="pt-1 flex items-center justify-between">
+                    <CopyText :text="previewUrl" class="text-xs text-brand-600 hover:text-brand-700 font-medium">
+                      复制完整地址
+                    </CopyText>
+                    <a
+                      v-if="canOpenPreview"
+                      :href="previewUrl"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="inline-flex items-center gap-1 text-xs text-ink-soft hover:text-ink transition-colors"
+                    >
+                      <span>测试访问</span>
+                      <ExternalLink :size="12" />
+                    </a>
+                  </div>
                 </div>
-              </div>
-            </AppFormItem>
-          </template>
 
-          <AppFormItem
-            name="domainIds"
-            label="关联域名"
-            extra="仅已激活(active)的域名可关联短链;待激活、校验失败、已停用的域名置灰不可选。同一条短码可在不同域名下指向不同目标,至少选择一个域名。"
-          >
-            <AppSelect
-              v-model="form.domainIds"
-              multiple
-              placeholder="选择关联域名"
-              :options="domainOptions"
-              :max-tag-count="3"
-            />
-          </AppFormItem>
+                <!-- 配置清单摘要 -->
+                <div class="space-y-2.5 border-t border-line pt-3.5 text-xs">
+                  <div class="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                    配置清单摘要
+                  </div>
 
-          <AppFormItem
-            v-if="form.linkType === 'redirect'"
-            name="redirectStatus"
-            label="重定向方式"
-            extra="临时重定向(302):浏览器与搜索引擎不缓存跳转,目标变更后立即生效,适合经常调整目标的场景。永久重定向(301):浏览器与搜索引擎会缓存跳转,目标变更后旧地址可能长期命中缓存。"
-          >
-            <AppRadioGroup v-model="form.redirectStatus">
-              <AppRadio value="302">临时重定向(302)</AppRadio>
-              <AppRadio value="301">永久重定向(301)</AppRadio>
-            </AppRadioGroup>
-          </AppFormItem>
+                  <div class="flex items-center justify-between">
+                    <span class="text-ink-soft">短链类型</span>
+                    <AppTag v-if="form.linkType === 'redirect'" color="blue">
+                      跳转型 ({{ form.redirectStatus }})
+                    </AppTag>
+                    <AppTag v-else color="purple">
+                      落地页型 ({{ form.landingSource === 'url' ? 'URL' : '压缩包' }})
+                    </AppTag>
+                  </div>
 
-          <AppFormItem
-            v-if="isEdit"
-            name="status"
-            label="状态"
-            extra="启用:短链正常解析并计入访问统计。停用:短链保留但访问时返回未命中(404),可随时重新启用。"
-          >
-            <AppRadioGroup v-model="form.status">
-              <AppRadio value="enabled">启用</AppRadio>
-              <AppRadio value="disabled">停用</AppRadio>
-            </AppRadioGroup>
-          </AppFormItem>
+                  <div class="flex items-center justify-between">
+                    <span class="text-ink-soft">目标地址</span>
+                    <span class="font-medium text-ink tabular-nums">
+                      {{ validTargetsCount }} 个
+                      <span v-if="validTargetsCount > 1" class="text-ink-faint font-normal">(轮询)</span>
+                    </span>
+                  </div>
 
-          <AppFormItem>
-            <AppSpace>
-              <AppButton type="primary" :loading="submitting" @click="onSubmit">保存</AppButton>
-              <AppButton @click="goBack">取消</AppButton>
-            </AppSpace>
-          </AppFormItem>
-        </AppForm>
-      </AppSpin>
-    </AppCard>
+                  <div class="flex items-center justify-between">
+                    <span class="text-ink-soft">关联域名</span>
+                    <span class="font-medium text-ink tabular-nums">
+                      {{ form.domainIds.length }} 个域名
+                    </span>
+                  </div>
+
+                  <div class="flex items-center justify-between">
+                    <span class="text-ink-soft">短码模式</span>
+                    <span class="font-medium text-ink">
+                      {{ form.code.trim() ? '自定义短码' : '系统自动生成' }}
+                    </span>
+                  </div>
+
+                  <div v-if="isEdit" class="flex items-center justify-between">
+                    <span class="text-ink-soft">服务状态</span>
+                    <AppTag :color="form.status === 'enabled' ? 'green' : 'default'">
+                      {{ form.status === 'enabled' ? '正常启用' : '暂停停用' }}
+                    </AppTag>
+                  </div>
+                </div>
+
+                <!-- 指南小卡片 -->
+                <div class="rounded-lg border border-line-strong/60 bg-surface/50 p-3 text-[11px] leading-relaxed text-ink-faint space-y-1.5">
+                  <div class="flex items-center gap-1 font-medium text-ink-soft">
+                    <Info :size="13" class="text-brand-600" />
+                    温馨提示
+                  </div>
+                  <p>• 同一短码可在不同域名下指向不同目标，实现域名隔离。</p>
+                  <p>• 推荐使用 302 临时重定向，方便未来根据需要随时修改目标。</p>
+                  <p v-if="form.linkType === 'landing'">
+                    • 落地页按钮须引用平台提供的 JS SDK，点击才能被回传统计并跳转至目标。
+                  </p>
+                </div>
+              </CardContent>
+            </AppCard>
+          </div>
+        </div>
+      </AppForm>
+    </AppSpin>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ArrowLeft, CircleMinus, Plus, Upload } from '@lucide/vue';
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Clock,
+  ExternalLink,
+  FileArchive,
+  Globe,
+  Hash,
+  Info,
+  Layout,
+  Link2,
+  PauseCircle,
+  Plus,
+  RefreshCw,
+  Trash2,
+  Upload,
+  UploadCloud,
+  Zap,
+} from '@lucide/vue';
 import type { FormRule } from '@/components/ui/types';
 
 import { listDomains } from '@/api/domains';
@@ -190,8 +497,8 @@ const isEdit = computed(() => route.name === 'link-edit' && validLinkId.value !=
 
 const headerDescription = computed(() =>
   isEdit.value
-    ? '修改短链的目标、类型、落地页与关联域名;短码创建后不可修改'
-    : '选择短链类型、目标与关联域名,提交后立即生效;短码可留空自动生成',
+    ? '修改短链的目标、类型、落地页与关联域名；短码创建后不可修改'
+    : '选择短链类型、目标与关联域名，提交后立即生效；短码可留空自动生成',
 );
 
 const formRef = ref();
@@ -199,6 +506,7 @@ const submitting = ref(false);
 const loading = ref(false);
 const landingFile = ref<File | null>(null);
 const landingUploading = ref(false);
+const isDragging = ref(false);
 
 const link = ref<Link | null>(null);
 const domains = ref<Domain[]>([]);
@@ -238,19 +546,45 @@ const domainOptions = computed(() =>
     const active = d.status === 'active';
     return {
       value: d.id,
-      label: active ? d.fqdn : d.fqdn + '(' + (DOMAIN_STATUS_NOTE[d.status] ?? '不可用') + ')',
+      label: active ? d.fqdn : d.fqdn + ' (' + (DOMAIN_STATUS_NOTE[d.status] ?? '不可用') + ')',
       disabled: !active,
     };
   }),
 );
 
+/** 当前选中的域名对象列表 */
+const selectedDomains = computed(() =>
+  domains.value.filter((d) => form.domainIds.includes(d.id)),
+);
+
+/** 预览短链的主域名 */
+const primaryDomain = computed(() => {
+  return selectedDomains.value[0]?.fqdn || 'your-domain.com';
+});
+
+/** 实时预览 URL */
+const previewUrl = computed(() => {
+  const codePart = form.code.trim() || (isEdit.value ? 'code' : '自动生成');
+  return `https://${primaryDomain.value}/${codePart}`;
+});
+
+/** 是否可直接点击打开测试预览(非占位且已保存模式) */
+const canOpenPreview = computed(() => {
+  return isEdit.value && selectedDomains.value.length > 0 && form.code.trim().length > 0;
+});
+
+/** 有效的目标 URL 计数 */
+const validTargetsCount = computed(() => {
+  return form.targetUrls.filter((u) => u.trim().length > 0).length;
+});
+
 /** 短码说明:创建时说明生成规则,编辑时说明不可修改 */
 const codeExtra = computed(() =>
   isEdit.value
-    ? '短码创建后不可修改。完整短链地址为「https://<域名>/<短码>」,短码即地址最后一段。'
-    : '留空则由系统按账号设置的默认长度自动生成。字符集仅含字母与数字,并去除易混淆字符 0/O/1/l/I。自定义短码最长 ' +
+    ? '短码创建后不可修改。完整短链地址为「https://<域名>/<短码>」，短码即地址最后一段。'
+    : '留空则由系统按账号设置的默认长度自动生成。字符集仅含字母与数字，并去除易混淆字符 0/O/1/l/I。自定义短码最长 ' +
       SHORT_CODE_MAX_LENGTH +
-      ' 位,创建后不可修改。',
+      ' 位，创建后不可修改。',
 );
 
 const hasControlChars = (value: string) => /[\u0000-\u001f\u007f]/.test(value);
@@ -329,9 +663,15 @@ const rules: Record<string, FormRule[]> = {
   ],
 };
 
+/** 格式化文件大小 */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
 /** 用短链详情回填表单(编辑模式) */
 function applyLink(data: Link) {
-  // 由 fqdn 列表反查域名 id
   const fqdnSet = new Set(data.domains);
   form.code = data.code;
   form.targetUrls = data.targetUrls.length > 0 ? [...data.targetUrls] : [''];
@@ -382,7 +722,7 @@ async function init() {
       applyLink(data);
     } catch (error) {
       if (error instanceof ApiError) message.error(error.message);
-      else message.error('加载短链失败,请稍后重试');
+      else message.error('加载短链失败，请稍后重试');
       router.push({ name: 'links' });
       return;
     } finally {
@@ -395,7 +735,7 @@ async function init() {
 
 onMounted(init);
 
-/** 新增一行目标 URL(允许存在空行,提交前统一 trim 并在校验中提示空值) */
+/** 新增一行目标 URL */
 function addTargetUrl() {
   form.targetUrls.push('');
 }
@@ -406,15 +746,27 @@ function removeTargetUrl(index: number) {
   form.targetUrls.splice(index, 1);
 }
 
-/** 选择 zip:拦截默认上传;编辑时立即上传,创建时留待建链后上传 */
+/** 选择 zip 文件 */
 async function onSelectZip(file: File): Promise<boolean> {
+  if (!file.name.toLowerCase().endsWith('.zip')) {
+    message.error('仅支持 .zip 格式的压缩包');
+    return false;
+  }
   landingFile.value = file;
   if (isEdit.value && link.value) {
     await doUploadLanding(link.value.id);
   } else {
-    message.info('落地页压缩包将在短链创建成功后自动上传');
+    message.info('落地页压缩包已选定，将在短链创建成功后自动上传');
   }
   return false;
+}
+
+/** 拖拽 zip 文件上传 */
+function onDropZip(e: DragEvent) {
+  isDragging.value = false;
+  const file = e.dataTransfer?.files?.[0];
+  if (!file) return;
+  onSelectZip(file);
 }
 
 /** 上传已选 zip(替换式) */
@@ -427,7 +779,7 @@ async function doUploadLanding(id: number) {
     message.success('落地页压缩包已上传');
   } catch (error) {
     if (error instanceof ApiError) message.error(error.message);
-    else message.error('上传失败,请稍后重试');
+    else message.error('上传失败，请稍后重试');
   } finally {
     landingUploading.value = false;
   }
@@ -492,7 +844,7 @@ async function onSubmit() {
       if (error.status === 403) {
         const usage = getQuotaUsage(error.details);
         if (usage) {
-          message.error('短链配额超限:当前 ' + usage.links + '/' + usage.maxLinks + ' 条短链,已达上限');
+          message.error('短链配额超限:当前 ' + usage.links + '/' + usage.maxLinks + ' 条短链，已达上限');
         } else {
           message.error('短链配额超限:' + error.message);
         }
@@ -502,7 +854,7 @@ async function onSubmit() {
         message.error(error.message);
       }
     } else {
-      message.error('保存失败,请稍后重试');
+      message.error('保存失败，请稍后重试');
     }
   } finally {
     submitting.value = false;
@@ -513,9 +865,3 @@ function goBack() {
   router.push({ name: 'links' });
 }
 </script>
-
-<style scoped>
-.form-card {
-  max-width: 640px;
-}
-</style>

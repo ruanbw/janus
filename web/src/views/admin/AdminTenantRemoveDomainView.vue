@@ -1,68 +1,106 @@
 <template>
-  <div>
+  <div class="mx-auto max-w-xl">
     <PageHeader
       title="移除违规域名"
-      description="从平台侧强制移除租户的违规域名,并解除其上的短链关联"
+      description="从平台侧强制注销并解绑指定违规域名，立即物理删除记录并解除所有短链绑定"
     >
       <template #actions>
         <AppButton @click="goBack">
           <template #icon><ArrowLeft :size="15" /></template>
-          返回
+          返回租户列表
         </AppButton>
       </template>
     </PageHeader>
 
-    <AppForm
-      :model="form"
-      :rules="rules"
-      class="max-w-[640px]"
-      @finish="onSubmit"
-    >
-      <AppFormItem
-        label="租户邮箱"
-        extra="本次要移除违规域名的租户,仅用于确认操作对象,不可修改"
-      >
-        <span class="mono">{{ tenant?.email ?? '—' }}</span>
-      </AppFormItem>
+    <AppSpin :spinning="loading">
+      <!-- 带有警告/危险语义的 AppCard -->
+      <AppCard :padding="false" class="border-err/40 shadow-xs dark:border-err/30">
+        <CardHeader class="border-b border-err/10 bg-err/5 pb-4 dark:bg-err/10">
+          <CardTitle class="flex items-center gap-2 text-err">
+            <ShieldAlert :size="20" />
+            强制移除违规域名
+          </CardTitle>
+          <CardDescription class="text-ink-soft">
+            此操作仅供平台管理员处置恶意、侵权或违规域名，执行后不可撤销
+          </CardDescription>
+        </CardHeader>
 
-      <AppFormItem
-        name="domainId"
-        label="域名 ID"
-        extra="契约暂未提供超管域名列表端点,请从数据库或后端日志获取域名 ID。平台强删将解除该域名上的短链关联,请确认该域名确为违规后再提交。"
-      >
-        <AppInputNumber
-          v-model="form.domainId"
-          :min="1"
-          :precision="0"
-          placeholder="请输入域名 ID"
-        />
-      </AppFormItem>
+        <CardContent class="space-y-6 p-6">
+          <!-- 目标租户信息栏 -->
+          <div class="rounded-xl border border-line bg-surface-muted/50 p-4 space-y-2.5">
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-medium text-ink-soft">目标租户邮箱</span>
+              <span class="mono font-semibold text-ink">{{ tenant?.email ?? '—' }}</span>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="font-medium text-ink-soft">租户前缀 / 等级</span>
+              <span class="text-ink">
+                <code class="font-mono">{{ tenant?.slug ?? '—' }}</code>
+                <span class="text-ink-faint mx-1.5">·</span>
+                <AppTag color="cyan">{{ tenant?.tier?.name ?? '—' }}</AppTag>
+              </span>
+            </div>
+          </div>
 
-      <AppAlert
-        type="warning"
-        show-icon
-        message="平台强删将解除该域名上的短链关联,请确认该域名确为违规。"
-      />
+          <!-- 域名 ID 输入表单 -->
+          <AppForm ref="formRef" :model="form" :rules="rules" @finish="onFormSubmit">
+            <AppFormItem
+              name="domainId"
+              label="违规域名 ID"
+              extra="请输入要强删的域名数字 ID（可从数据库或后端运行日志中获取，须为 ≥ 1 的正整数）。"
+            >
+              <AppInputNumber
+                v-model="form.domainId"
+                :min="1"
+                :precision="0"
+                placeholder="请输入要移除的域名 ID"
+                class="w-full"
+              />
+            </AppFormItem>
+          </AppForm>
 
-      <AppFormItem>
-        <AppSpace>
-          <AppButton type="primary" danger html-type="submit" :loading="submitting" :disabled="loading">
-            移除
-          </AppButton>
-          <AppButton @click="goBack">取消</AppButton>
-        </AppSpace>
-      </AppFormItem>
-    </AppForm>
+          <!-- 强力破坏性警示 Alert -->
+          <AppAlert
+            type="error"
+            variant="destructive"
+            show-icon
+            title="不可撤销的破坏性操作警示"
+            message="平台强删为物理硬删除：将立即永久删除该域名记录，并即刻解除其上所有关联短链的域名绑定。原有以此域名访问的短链将即刻失效！请再次确认域名 ID 与租户对应关系。"
+          />
+        </CardContent>
+
+        <!-- CardFooter 操作按钮 -->
+        <CardFooter class="flex items-center justify-between border-t border-line bg-surface-muted/30 px-6 py-4">
+          <span class="text-xs text-ink-faint">
+            需要二次安全确认
+          </span>
+          <div class="flex items-center gap-3">
+            <AppButton @click="goBack">取消</AppButton>
+            <AppButton
+              type="primary"
+              danger
+              :loading="submitting"
+              :disabled="loading || form.domainId === undefined"
+              @click="onRemoveClick"
+            >
+              <template #icon><Trash2 :size="15" /></template>
+              强制移除违规域名
+            </AppButton>
+          </div>
+        </CardFooter>
+      </AppCard>
+    </AppSpin>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ArrowLeft } from '@lucide/vue';
+import { ArrowLeft, ShieldAlert, Trash2 } from '@lucide/vue';
 
 import { getTenant, removeDomain } from '@/api/admin';
 import PageHeader from '@/components/PageHeader.vue';
+import { confirmAsync } from '@/components/ui/confirm';
 import type { FormRule } from '@/components/ui/types';
 import { ApiError } from '@/types/api';
 import type { Tenant } from '@/types/api';
@@ -76,6 +114,7 @@ const tenantId = Number(route.params.id);
 const tenant = ref<Tenant | null>(null);
 const loading = ref(true);
 const submitting = ref(false);
+const formRef = ref();
 
 const form = reactive<{ domainId: number | undefined }>({ domainId: undefined });
 
@@ -120,19 +159,46 @@ async function load() {
 
 onMounted(load);
 
-async function onSubmit() {
+/** 点击强制移除按钮:先校验表单，然后弹出破坏性二次确认框 */
+async function onRemoveClick() {
+  try {
+    await formRef.value?.validate();
+  } catch {
+    return;
+  }
+
   if (form.domainId === undefined) {
     message.warning('请输入域名 ID');
     return;
   }
+
+  const ok = await confirmAsync({
+    title: `确认强制移除域名 ID #${form.domainId}？`,
+    content: `该操作不可撤销！将物理删除该域名，并同时解除租户「${tenant.value?.email ?? '该租户'}」所有绑定在此域名上的短链关联。`,
+    okText: '确认强制删除',
+    cancelText: '取消',
+    danger: true,
+  });
+
+  if (!ok) return;
+
+  await executeRemove();
+}
+
+async function onFormSubmit() {
+  await onRemoveClick();
+}
+
+async function executeRemove() {
+  if (form.domainId === undefined) return;
   submitting.value = true;
   try {
     await removeDomain(form.domainId);
-    message.success('违规域名已移除');
+    message.success(`域名 #${form.domainId} 已被强制移除并解绑`);
     router.push({ name: 'admin-tenants' });
   } catch (error) {
     if (error instanceof ApiError) message.error(error.message);
-    else message.error('移除失败,请稍后重试');
+    else message.error('移除失败，请稍后重试');
   } finally {
     submitting.value = false;
   }

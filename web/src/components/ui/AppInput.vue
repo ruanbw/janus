@@ -1,8 +1,12 @@
 <template>
-  <div :class="wrapperClasses" class="relative w-full">
-    <span v-if="$slots.prefix" class="pointer-events-none absolute inset-y-0 left-3 flex items-center text-ink-faint">
+  <div :class="wrapperClasses" class="relative flex w-full items-center">
+    <span
+      v-if="$slots.prefix"
+      class="pointer-events-none absolute left-3 z-10 flex items-center text-ink-faint [&>svg]:size-4"
+    >
       <slot name="prefix" />
     </span>
+
     <input
       :type="inputType"
       :value="modelValue"
@@ -11,34 +15,54 @@
       :disabled="disabled"
       :readonly="readonly"
       :autocomplete="autocomplete"
-      :aria-invalid="formItem?.invalid.value ? 'true' : 'false'"
-      class="app-field w-full rounded-lg border border-line bg-surface text-ink placeholder:text-ink-faint transition-colors focus:border-brand-500 focus:outline-none disabled:cursor-not-allowed disabled:bg-surface-strong disabled:text-ink-faint"
-      :class="[sizeClasses, $slots.prefix ? 'pl-9' : '', $slots.suffix || isPassword ? 'pr-10' : '']"
+      :aria-invalid="isInvalid ? 'true' : 'false'"
+      :class="inputClasses"
       @input="onInput"
       @change="onInput"
+      @focus="emit('focus', $event)"
       @blur="onBlur"
       @keydown.enter="emit('pressEnter')"
     />
-    <button
-      v-if="isPassword"
-      type="button"
-      class="absolute inset-y-0 right-2.5 flex items-center text-ink-faint transition-colors hover:text-ink-soft"
-      tabindex="-1"
-      @click="showPassword = !showPassword"
+
+    <div
+      v-if="hasRightElements"
+      class="absolute right-2.5 z-10 flex items-center gap-1.5 text-ink-faint"
     >
-      <EyeOff v-if="showPassword" :size="15" />
-      <Eye v-else :size="15" />
-    </button>
-    <span v-else-if="$slots.suffix" class="absolute inset-y-0 right-3 flex items-center text-ink-faint">
-      <slot name="suffix" />
-    </span>
+      <button
+        v-if="showClear"
+        type="button"
+        tabindex="-1"
+        title="清空"
+        class="flex h-5 w-5 items-center justify-center rounded-sm transition-colors hover:bg-surface-strong hover:text-ink focus-visible:outline-none"
+        @click.stop="onClear"
+      >
+        <X :size="13" />
+      </button>
+
+      <button
+        v-if="isPassword"
+        type="button"
+        tabindex="-1"
+        :title="showPassword ? '隐藏密码' : '显示密码'"
+        class="flex h-5 w-5 items-center justify-center rounded-sm transition-colors hover:bg-surface-strong hover:text-ink focus-visible:outline-none"
+        @click.stop="showPassword = !showPassword"
+      >
+        <EyeOff v-if="showPassword" :size="14" />
+        <Eye v-else :size="14" />
+      </button>
+
+      <span v-if="$slots.suffix" class="flex items-center [&>svg]:size-4">
+        <slot name="suffix" />
+      </span>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
-import { Eye, EyeOff } from '@lucide/vue';
+import { computed, ref, useSlots } from 'vue';
+import { Eye, EyeOff, X } from '@lucide/vue';
 
+import { cn } from '@/lib/utils';
 import { useFormItem } from './form';
 
 const props = withDefaults(
@@ -50,30 +74,69 @@ const props = withDefaults(
     disabled?: boolean;
     readonly?: boolean;
     autocomplete?: string;
-    size?: 'large' | 'middle' | 'small' | 'default';
+    size?: 'large' | 'middle' | 'small' | 'default' | 'sm' | 'lg';
+    allowClear?: boolean;
+    invalid?: boolean;
+    class?: any;
   }>(),
-  { modelValue: '', type: 'text', size: 'middle' },
+  { modelValue: '', type: 'text', size: 'middle', allowClear: false },
 );
 
 const emit = defineEmits<{
   'update:modelValue': [value: string];
   pressEnter: [];
   blur: [event: FocusEvent];
+  focus: [event: FocusEvent];
+  clear: [];
 }>();
 
+const slots = useSlots();
 const formItem = useFormItem();
 const showPassword = ref(false);
 
 const isPassword = computed(() => props.type === 'password');
 const inputType = computed(() => (isPassword.value && showPassword.value ? 'text' : props.type));
+const isInvalid = computed(() => Boolean(props.invalid || formItem?.invalid.value));
 
-const sizeClasses = computed(() => {
-  if (props.size === 'large') return 'h-10 text-[15px]';
-  if (props.size === 'small') return 'h-8 text-[13px]';
-  return 'h-9 text-sm';
+const showClear = computed(() => {
+  return (
+    props.allowClear &&
+    !props.disabled &&
+    !props.readonly &&
+    props.modelValue !== undefined &&
+    props.modelValue !== null &&
+    String(props.modelValue).length > 0
+  );
 });
 
-const wrapperClasses = computed(() => (formItem?.invalid.value ? 'data-invalid-wrap' : ''));
+const hasRightElements = computed(() => {
+  return showClear.value || isPassword.value || Boolean(slots.suffix);
+});
+
+const inputClasses = computed(() => {
+  const isSm = props.size === 'small' || props.size === 'sm';
+  const isLg = props.size === 'large' || props.size === 'lg';
+
+  let rightPadding = '';
+  if (hasRightElements.value) {
+    let count = 0;
+    if (showClear.value) count++;
+    if (isPassword.value) count++;
+    if (slots.suffix) count++;
+    rightPadding = count > 1 ? 'pr-16' : 'pr-9';
+  }
+
+  return cn(
+    'app-field flex w-full rounded-md border border-line bg-surface/50 text-ink shadow-xs transition-colors placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50 dark:bg-surface-strong/30',
+    isSm ? 'h-8 px-2.5 text-xs' : isLg ? 'h-10 px-3.5 text-base' : 'h-9 px-3 py-1 text-sm',
+    slots.prefix && 'pl-9',
+    rightPadding,
+    isInvalid.value && 'border-err focus-visible:ring-err focus-visible:border-err',
+    props.class,
+  );
+});
+
+const wrapperClasses = computed(() => (isInvalid.value ? 'data-invalid-wrap' : ''));
 
 function onInput(event: Event): void {
   const el = event.target as HTMLInputElement;
@@ -83,5 +146,11 @@ function onInput(event: Event): void {
 
 function onBlur(event: FocusEvent): void {
   emit('blur', event);
+}
+
+function onClear(): void {
+  emit('update:modelValue', '');
+  emit('clear');
+  formItem?.clearError();
 }
 </script>

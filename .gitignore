@@ -6,3 +6,5 @@ certs/
 web/dist/
 .gocache
 .scratch
+.serena/
+.pi/

@@ -1,16 +1,21 @@
 <template>
-  <div class="flex items-center gap-2">
-    <div
-      class="flex-1 overflow-hidden rounded-full bg-surface-strong"
+  <div :class="cn('flex w-full items-center gap-3', props.class)">
+    <ProgressRoot
+      v-model="clamped"
+      :max="100"
+      class="relative flex-1 overflow-hidden rounded-full bg-surface-strong"
       :style="{ height: strokeWidth + 'px' }"
     >
-      <div
-        class="h-full rounded-full transition-[width] duration-300 ease-out"
+      <ProgressIndicator
+        class="h-full w-full flex-1 rounded-full transition-all duration-300 ease-in-out"
         :class="barClasses"
-        :style="{ width: clamped + '%' }"
+        :style="{ transform: `translateX(-${100 - clamped}%)` }"
       />
-    </div>
-    <span v-if="showInfo" class="w-9 shrink-0 text-right text-xs text-ink-soft tabular-nums">
+    </ProgressRoot>
+    <span
+      v-if="showInfo"
+      class="w-10 shrink-0 text-right text-xs font-medium text-ink-soft tabular-nums select-none"
+    >
       {{ Math.round(clamped) }}%
     </span>
   </div>
@@ -18,6 +23,9 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { ProgressIndicator, ProgressRoot } from 'reka-ui';
+
+import { cn } from '@/lib/utils';
 
 const props = withDefaults(
   defineProps<{
@@ -25,6 +33,7 @@ const props = withDefaults(
     status?: 'normal' | 'exception' | 'active' | 'success';
     showInfo?: boolean;
     strokeWidth?: number;
+    class?: any;
   }>(),
   { percent: 0, status: 'normal', showInfo: true, strokeWidth: 8 },
 );
@@ -34,7 +43,7 @@ const clamped = computed(() => Math.max(0, Math.min(100, props.percent)));
 const barClasses = computed(() => {
   if (props.status === 'exception') return 'bg-err';
   if (props.status === 'success') return 'bg-ok';
-  if (props.status === 'active') return 'progress-active';
+  if (props.status === 'active') return 'progress-active bg-brand-600 dark:bg-brand-500';
   return 'bg-brand-600 dark:bg-brand-500';
 });
 </script>
