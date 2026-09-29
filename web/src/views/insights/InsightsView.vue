@@ -7,14 +7,23 @@
           <div class="eyebrow">CLOAK / 数据洞察</div>
           <h1 class="text-xl font-bold tracking-tight text-ink md:text-2xl mt-0.5">数据洞察</h1>
           <p class="topbar-sub">
-            分流结构、多维分布、规则集健康度。目标不是看总数，而是找出「放行了却不该放行」的那部分。
+            分流结构、多维设备与系统分布、规则表现与回传健康度。基于真实投放流量与访问日志聚合计算。
           </p>
         </div>
         <div class="btn-row">
-          <span class="badge badge-neutral" title="本原型内所有数值均为演示数据，不代表真实流量">
-            <span class="dot" style="background: var(--muted)"></span>
-            原型演示数据
+          <span class="badge badge-ok">
+            <span class="dot dot-live"></span>
+            数据实时汇总
           </span>
+          <button
+            type="button"
+            class="btn btn-sm"
+            :disabled="loading"
+            @click="fetchData"
+          >
+            <RefreshCw :size="13" :class="{ 'animate-spin': loading }" />
+            刷新数据
+          </button>
         </div>
       </div>
     </header>
@@ -53,744 +62,497 @@
       </div>
     </section>
 
-    <!-- ==================== Tab 1: 流量结构 (flow) ==================== -->
-    <section v-show="currentTab === 'flow'" data-tabpanel="flow" data-od-id="traffic-mix" class="flex flex-col gap-4">
+    <!-- ==================== Tab 1: 流量结构 ==================== -->
+    <section v-if="currentTab === 'flow'" data-tabpanel="flow" class="space-y-4">
       <!-- 4 个 KPI 卡片 -->
       <div class="kpi-grid">
-        <div
-          v-for="kpi in flowKpis"
-          :key="kpi.id"
-          class="kpi"
-          :data-tip="kpi.tip"
-        >
-          <div class="kpi-k">{{ kpi.label }}</div>
-          <div class="kpi-v">{{ kpi.value }}</div>
+        <div class="kpi">
+          <div class="kpi-k">总访问量</div>
+          <div class="kpi-v">{{ totalVisits.toLocaleString() }}</div>
           <div class="kpi-sub">
-            <span v-if="kpi.change" :class="kpi.changeType === 'up' ? 'up' : 'dn'">{{ kpi.change }}</span>
-            {{ kpi.sub }}
+            覆盖 {{ links.length }} 条短链
           </div>
-          <!-- 右上角 ⓘ 悬浮气泡 -->
           <button
             type="button"
             class="kpi-info"
-            :aria-label="`指标说明：${kpi.label}`"
-            :aria-describedby="kpi.id"
+            aria-label="指标说明：总访问量"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
               <circle cx="12" cy="12" r="9" />
               <path d="M12 11.2v5.1M12 7.7h.01" />
             </svg>
-            <span class="kpi-tip" :id="kpi.id" role="tooltip">
-              {{ kpi.tip }}
+            <span class="kpi-tip" role="tooltip">
+              当前租户所有短链累计接收到的外部 HTTP 请求总次数。
+            </span>
+          </button>
+        </div>
+
+        <div class="kpi">
+          <div class="kpi-k">落地页点击</div>
+          <div class="kpi-v">{{ totalClicks.toLocaleString() }}</div>
+          <div class="kpi-sub">
+            <span class="up font-mono">{{ ctr }}</span> 点击转化率 (CTR)
+          </div>
+          <button
+            type="button"
+            class="kpi-info"
+            aria-label="指标说明：落地页点击"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 11.2v5.1M12 7.7h.01" />
+            </svg>
+            <span class="kpi-tip" role="tooltip">
+              落地页型短链中访客点击行动召唤（CTA）按钮并触发 SDK 回传的实际点击次数。
+            </span>
+          </button>
+        </div>
+
+        <div class="kpi">
+          <div class="kpi-k">活跃短链</div>
+          <div class="kpi-v">{{ activeLinksCount }}</div>
+          <div class="kpi-sub">
+            共计 {{ links.length }} 条短链已就绪
+          </div>
+          <button
+            type="button"
+            class="kpi-info"
+            aria-label="指标说明：活跃短链"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 11.2v5.1M12 7.7h.01" />
+            </svg>
+            <span class="kpi-tip" role="tooltip">
+              当前处于启用状态、可正常执行准入裁决与跳转的短链总数。
+            </span>
+          </button>
+        </div>
+
+        <div class="kpi">
+          <div class="kpi-k">已分析样本</div>
+          <div class="kpi-v">{{ visits.length }}</div>
+          <div class="kpi-sub">
+            用于设备与来源多维分析
+          </div>
+          <button
+            type="button"
+            class="kpi-info"
+            aria-label="指标说明：已分析样本"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 11.2v5.1M12 7.7h.01" />
+            </svg>
+            <span class="kpi-tip" role="tooltip">
+              从各短链拉取到的最近明细访问日志条数，用于计算实时设备分布与操作系统占比。
             </span>
           </button>
         </div>
       </div>
 
-      <!-- 国家/地区分布 & 流量来源 -->
-      <div class="cols-2 items-stretch">
-        <!-- 国家 / 地区分布 -->
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>国家 / 地区分布</h2>
-              <p>放行访问按访客真实 IP 归属地拆分。</p>
-            </div>
-          </div>
-          <div class="panel-bd flex-1">
-            <div class="bars">
-              <div
-                v-for="item in countryDistribution"
-                :key="item.country"
-                class="bar-row"
-              >
-                <span class="bar-lab">{{ item.country }}</span>
-                <span class="bar-track">
-                  <span
-                    class="bar-fill"
-                    :class="item.isAccent ? 't-accent' : ''"
-                    :style="{ width: item.percent }"
-                  ></span>
-                </span>
-                <span class="bar-val">{{ item.percent }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 流量来源 -->
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>流量来源</h2>
-              <p>按 Referrer 与 UTM 参数归因到广告平台。</p>
-            </div>
-          </div>
-          <div class="panel-bd flex-1">
-            <!-- 堆积条 (stackbar) -->
-            <div
-              class="stackbar"
-              role="img"
-              aria-label="流量来源：TikTok 41.3%，Meta 33.8%，Google 18.2%，其他 6.7%"
-            >
-              <span style="width: 41.3%; background: var(--fg)"></span>
-              <span style="width: 33.8%; background: var(--accent)"></span>
-              <span style="width: 18.2%; background: color-mix(in srgb, var(--fg) 55%, var(--surface))"></span>
-              <span style="width: 6.7%; background: var(--border)"></span>
-            </div>
-
-            <!-- 图例 -->
-            <div class="legend">
-              <span class="legend-item">
-                <span class="legend-key" style="background: var(--fg)"></span>
-                TikTok Ads 41.3%
-              </span>
-              <span class="legend-item">
-                <span class="legend-key" style="background: var(--accent)"></span>
-                Meta Ads 33.8%
-              </span>
-              <span class="legend-item">
-                <span class="legend-key" style="background: color-mix(in srgb, var(--fg) 55%, var(--surface))"></span>
-                Google Ads 18.2%
-              </span>
-              <span class="legend-item">
-                <span class="legend-key" style="background: var(--border)"></span>
-                直接 / 其它 6.7%
-              </span>
-            </div>
-
-            <!-- 明细条形图 -->
-            <div class="bars mt-4">
-              <div
-                v-for="source in sourceDistribution"
-                :key="source.name"
-                class="bar-row"
-              >
-                <span class="bar-lab">{{ source.name }}</span>
-                <span class="bar-track">
-                  <span class="bar-fill" :style="{ width: source.percent }"></span>
-                </span>
-                <span class="bar-val">{{ source.percent }}</span>
-              </div>
-            </div>
-          </div>
+      <!-- 无访问数据时的空状态 -->
+      <div v-if="totalVisits === 0" class="panel p-12 text-center">
+        <AppEmpty description="暂无多维访问数据。在投放短链产生访问后，系统将自动汇总来源、操作系统、设备与转化数据。" />
+        <div class="mt-4">
+          <router-link to="/links" class="btn btn-primary btn-sm">
+            前往短链管理
+          </router-link>
         </div>
       </div>
 
-      <!-- 设备类型、操作系统、访客语言分布网格 -->
-      <div class="cols-3 items-stretch">
-        <!-- 设备类型 -->
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>设备类型</h2>
-            </div>
-          </div>
-          <div class="panel-bd flex-1">
-            <div class="bars">
-              <div
-                v-for="device in deviceDistribution"
-                :key="device.name"
-                class="bar-row"
-              >
-                <span class="bar-lab">{{ device.name }}</span>
-                <span class="bar-track">
-                  <span
-                    class="bar-fill"
-                    :class="device.isAccent ? 't-accent' : ''"
-                    :style="{ width: device.percent }"
-                  ></span>
-                </span>
-                <span class="bar-val">{{ device.percent }}</span>
+      <!-- 有访问数据时的多维图表 -->
+      <template v-else>
+        <!-- 第一行: 流量来源 + 访问最多的短链 -->
+        <div class="cols-2 items-stretch">
+          <!-- 流量来源分布 -->
+          <div class="panel flex flex-col">
+            <div class="panel-hd">
+              <div>
+                <h2>流量来源分布</h2>
+                <p>根据请求 Referrer 与广告点击特征自动归类。</p>
               </div>
             </div>
-          </div>
-        </div>
-
-        <!-- 操作系统 -->
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>操作系统</h2>
-            </div>
-          </div>
-          <div class="panel-bd flex-1">
-            <div class="bars">
-              <div
-                v-for="os in osDistribution"
-                :key="os.name"
-                class="bar-row"
-              >
-                <span class="bar-lab">{{ os.name }}</span>
-                <span class="bar-track">
-                  <span
-                    class="bar-fill"
-                    :class="os.isAccent ? 't-accent' : ''"
-                    :style="{ width: os.percent }"
-                  ></span>
-                </span>
-                <span class="bar-val">{{ os.percent }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 访客语言 -->
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>访客语言</h2>
-            </div>
-          </div>
-          <div class="panel-bd flex-1">
-            <div class="bars">
-              <div
-                v-for="lang in languageDistribution"
-                :key="lang.name"
-                class="bar-row"
-              >
-                <span class="bar-lab">{{ lang.name }}</span>
-                <span class="bar-track">
-                  <span
-                    class="bar-fill"
-                    :class="lang.isAccent ? 't-accent' : ''"
-                    :style="{ width: lang.percent }"
-                  ></span>
-                </span>
-                <span class="bar-val">{{ lang.percent }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 访客语言与「语言 × 国家 交叉热力矩阵」高密分析表格 -->
-      <div class="panel">
-        <div class="panel-hd">
-          <div>
-            <h2>语言 × 国家 交叉</h2>
-            <p>语言与 IP 地区一致说明流量真实；差异过大可能是代理或机器人。</p>
-          </div>
-          <span class="badge badge-ok mono">一致率 89.4%</span>
-        </div>
-        <div class="tbl-wrap">
-          <table class="tbl">
-            <thead>
-              <tr>
-                <th>语言</th>
-                <th class="num">BR</th>
-                <th class="num">US</th>
-                <th class="num">CA</th>
-                <th class="num">GB</th>
-                <th class="num">DE</th>
-                <th>判断</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in crossMatrixData"
-                :key="row.lang"
-              >
-                <td class="mono font-semibold">{{ row.lang }}</td>
-                <td class="num" :class="row.lang === 'pt-BR' ? 'font-semibold text-brand-600 bg-brand-500/10' : (row.lang === 'es-ES' ? 'font-medium text-amber-600 bg-amber-500/10' : '')">
-                  {{ row.br }}
-                </td>
-                <td class="num" :class="row.lang === 'en-US' ? 'font-semibold text-brand-600 bg-brand-500/10' : (row.lang === 'ru-RU' ? 'font-medium text-err bg-err/10' : '')">
-                  {{ row.us }}
-                </td>
-                <td class="num" :class="row.lang === 'en-US' ? 'font-semibold text-brand-600 bg-brand-500/10' : ''">
-                  {{ row.ca }}
-                </td>
-                <td class="num">{{ row.gb }}</td>
-                <td class="num">{{ row.de }}</td>
-                <td>
-                  <span
-                    class="badge"
-                    :class="{
-                      'badge-ok': row.statusType === 'ok',
-                      'badge-warn': row.statusType === 'warn',
-                      'badge-danger': row.statusType === 'danger'
-                    }"
-                  >
-                    {{ row.status }}
+            <div class="panel-bd flex-1">
+              <div class="bars">
+                <div
+                  v-for="src in sourceDistribution"
+                  :key="src.name"
+                  class="bar-row bar-row-lg"
+                >
+                  <span class="bar-lab">{{ src.name }}</span>
+                  <span class="bar-track">
+                    <span
+                      class="bar-fill"
+                      :class="{ 't-accent': src.percent > 30 }"
+                      :style="{ width: `${src.percent}%` }"
+                    ></span>
                   </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                  <span class="bar-val">{{ src.count }} 次 · {{ src.percent }}%</span>
+                </div>
+              </div>
+            </div>
+            <div class="panel-ft">
+              优先解析主流广告渠道（Meta / TikTok / Google），未携带来源的流量归入直接访问。
+            </div>
+          </div>
+
+          <!-- TOP 短链流量贡献 -->
+          <div class="panel flex flex-col">
+            <div class="panel-hd">
+              <div>
+                <h2>短链流量榜</h2>
+                <p>接收访问量前 5 的短链与其转化贡献。</p>
+              </div>
+              <router-link to="/links" class="btn btn-sm">
+                全部短链 →
+              </router-link>
+            </div>
+            <div class="panel-bd flex-1">
+              <div v-if="topLinks.length === 0" class="empty">暂无短链流量数据</div>
+              <div v-else class="bars">
+                <div
+                  v-for="link in topLinks"
+                  :key="link.id"
+                  class="bar-row bar-row-lg"
+                >
+                  <span class="bar-lab font-mono font-medium text-ink">/{{ link.code }}</span>
+                  <span class="bar-track">
+                    <span
+                      class="bar-fill t-accent"
+                      :style="{ width: `${totalVisits > 0 ? Math.min(100, Math.round((link.visits / totalVisits) * 100)) : 0}%` }"
+                    ></span>
+                  </span>
+                  <span class="bar-val">
+                    {{ link.visits }} 访问
+                    <span v-if="link.linkType === 'landing'" class="text-xs text-muted">({{ link.clicks }} 点击)</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+            <div class="panel-ft">
+              落地页型短链同时计入访客浏览量与 CTA 按钮点击转化数。
+            </div>
+          </div>
         </div>
-        <div class="panel-ft">
-          表内只列出前 4 种主要语言；其余 43,689 次访问分散在另外 22 种语言中，合计与「放行访问 120,914」对齐。
+
+        <!-- 第二行: 设备类型 + 操作系统分布 -->
+        <div class="cols-2 items-stretch">
+          <!-- 设备类型分布 -->
+          <div class="panel flex flex-col">
+            <div class="panel-hd">
+              <div>
+                <h2>设备类型分布</h2>
+                <p>基于 User-Agent 特征与视口画像解析。</p>
+              </div>
+            </div>
+            <div class="panel-bd flex-1">
+              <div class="bars">
+                <div
+                  v-for="dev in deviceDistribution"
+                  :key="dev.name"
+                  class="bar-row bar-row-lg"
+                >
+                  <span class="bar-lab">{{ dev.name }}</span>
+                  <span class="bar-track">
+                    <span
+                      class="bar-fill"
+                      :class="{ 't-accent': dev.name === '移动端' }"
+                      :style="{ width: `${dev.percent}%` }"
+                    ></span>
+                  </span>
+                  <span class="bar-val">{{ dev.count }} 次 · {{ dev.percent }}%</span>
+                </div>
+              </div>
+            </div>
+            <div class="panel-ft">
+              斗篷准入规则可针对「移动端」进行放行，拦截「桌面端」审查机或爬虫环境。
+            </div>
+          </div>
+
+          <!-- 操作系统分布 -->
+          <div class="panel flex flex-col">
+            <div class="panel-hd">
+              <div>
+                <h2>操作系统分布</h2>
+                <p>终端操作系统内核与主版本统计。</p>
+              </div>
+            </div>
+            <div class="panel-bd flex-1">
+              <div class="bars">
+                <div
+                  v-for="os in osDistribution"
+                  :key="os.name"
+                  class="bar-row bar-row-lg"
+                >
+                  <span class="bar-lab">{{ os.name }}</span>
+                  <span class="bar-track">
+                    <span
+                      class="bar-fill"
+                      :class="{ 't-accent': os.name.includes('iOS') }"
+                      :style="{ width: `${os.percent}%` }"
+                    ></span>
+                  </span>
+                  <span class="bar-val">{{ os.count }} 次 · {{ os.percent }}%</span>
+                </div>
+              </div>
+            </div>
+            <div class="panel-ft">
+              支持在规则引擎中配置 OS 白名单（如仅放行 iOS 或 Android）。
+            </div>
+          </div>
         </div>
-      </div>
+
+        <!-- 第三行: 浏览器分布 -->
+        <div class="panel">
+          <div class="panel-hd">
+            <div>
+              <h2>访问浏览器分布</h2>
+              <p>各应用内嵌 WebView 与独立浏览器占比。</p>
+            </div>
+          </div>
+          <div class="panel-bd">
+            <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <div
+                v-for="br in browserDistribution"
+                :key="br.name"
+                class="rounded-lg border border-line bg-surface-muted p-3"
+              >
+                <div class="text-xs text-muted">{{ br.name }}</div>
+                <div class="text-lg font-bold font-mono text-ink mt-1">{{ br.percent }}%</div>
+                <div class="text-xs text-muted mt-0.5">{{ br.count }} 次访问</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
     </section>
 
-    <!-- ==================== Tab 2: 规则表现 (rules) ==================== -->
-    <section v-show="currentTab === 'rules'" data-tabpanel="rules" data-od-id="rule-performance" class="flex flex-col gap-4">
-      <div class="two-col items-start">
-        <!-- 左侧：各规则命中占比条形图 (R-001 ~ R-008) -->
+    <!-- ==================== Tab 2: 规则表现 ==================== -->
+    <section v-else-if="currentTab === 'rules'" data-tabpanel="rules" class="space-y-4">
+      <div class="two-col">
+        <!-- 各规则当前状态与命中情况 -->
         <div class="panel flex flex-col">
           <div class="panel-hd">
             <div>
-              <h2>各规则命中占比</h2>
-              <p>首条命中即裁决。8 条规则合计 74.4%，其余 25.6% 未命中任何绑定规则，直接走短链自身的无规则兜底。</p>
+              <h2>规则集求值表现</h2>
+              <p>首条命中即裁决 (First-Match-Wins)。未命中任何规则时执行短链兜底动作。</p>
             </div>
             <router-link to="/rules" class="btn btn-sm">
               去规则引擎 →
             </router-link>
           </div>
-          <div class="panel-bd">
+          <div class="panel-bd flex-1">
             <div class="bars">
               <div
-                v-for="rule in ruleHitDistribution"
-                :key="rule.code"
-                class="bar-row"
+                v-for="rule in configuredRules"
+                :key="rule.id"
+                class="bar-row bar-row-lg"
               >
-                <span class="bar-lab">{{ rule.code }} {{ rule.name }}</span>
+                <span class="bar-lab">
+                  <span class="font-mono font-medium">{{ rule.id }}</span> {{ rule.name }}
+                </span>
                 <span class="bar-track">
                   <span
                     class="bar-fill"
-                    :class="rule.isAccent ? 't-accent' : ''"
-                    :style="{ width: rule.percent }"
+                    :class="{ 't-accent': rule.action.includes('放行'), 't-danger': rule.action.includes('拦截') || rule.action.includes('404') }"
+                    :style="{ width: `${rule.hits > 0 ? Math.min(100, Math.round((rule.hits / Math.max(1, totalVisits)) * 100)) : 4}%` }"
                   ></span>
                 </span>
-                <span class="bar-val">{{ rule.percent }}</span>
+                <span class="bar-val">
+                  <span :class="rule.enabled ? 'badge badge-ok' : 'badge badge-neutral'">
+                    {{ rule.enabled ? '生效中' : '已停用' }}
+                  </span>
+                </span>
               </div>
             </div>
+          </div>
+          <div class="panel-ft">
+            在「规则模拟器」中输入真实访客数据可实时单步测试各条规则判定逻辑。
           </div>
         </div>
 
-        <!-- 右侧：「需要处理的问题」卡片 -->
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>需要处理的问题</h2>
-              <p>规则集健康度检查结果。</p>
-            </div>
-            <span class="badge badge-warn mono">4 项</span>
-          </div>
-          <div class="panel-bd stack-sm">
-            <div class="note">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="text-amber-500 shrink-0">
-                <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
-              </svg>
+        <!-- 历史回放沙盘与健康检查 -->
+        <div class="stack">
+          <div class="panel">
+            <div class="panel-hd">
               <div>
-                <b>R-005 零命中。</b>条件被 R-001 完全覆盖，建议删除或调整优先级。
+                <h2 class="text-[15px]">规则改动历史回放沙盘</h2>
+                <p>用当前规则集合重新求值已有访问样本。</p>
               </div>
             </div>
-            <div class="note">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="text-amber-500 shrink-0">
-                <path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
-              </svg>
-              <div>
-                <b>R-001 与 R-004 重叠。</b>BR + pt-BR 的流量两个规则都能命中，建议用「单一归属」模式避免统计双算。
+            <div class="panel-bd stack-sm">
+              <p class="text-xs text-muted">
+                当前内存中保有 <span class="font-mono text-ink font-semibold">{{ visits.length }}</span> 条真实访问日志。点击下方按钮可在本地快速执行无副作用回放演算。
+              </p>
+              <div v-if="replayResult" class="rounded-lg border border-line bg-surface-muted p-3 text-xs space-y-1 mt-2">
+                <div class="text-ok font-semibold">✓ 回放演算完成</div>
+                <div class="text-muted">已处理样本: {{ replayResult.total }} 条</div>
+                <div class="text-muted">预期放行: {{ replayResult.passed }} 条 | 拦截过滤: {{ replayResult.blocked }} 条</div>
               </div>
             </div>
-            <div class="note">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="text-sky-500 shrink-0">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 8h.01M11 12h1v4h1" />
-              </svg>
-              <div>
-                <b>兜底 R-008 占比 6.6% 偏高。</b>说明有 8,431 次访问没能被任何一条规则描述，建议补规则或收紧白标页。
-              </div>
-            </div>
-            <div class="note">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" class="text-sky-500 shrink-0">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M12 8h.01M11 12h1v4h1" />
-              </svg>
-              <div>
-                <b>R-002 拦截了 2,810 次疑似正常 UA。</b>名单 L-02 覆盖过宽，建议按 UA 精确匹配替代 IP 段匹配。
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 「规则改动后的历史回放」沙盘卡片 -->
-      <div class="panel">
-        <div class="panel-hd">
-          <div>
-            <h2>规则改动后的历史回放</h2>
-            <p>把最近 7 天真实访问按新规则重跑一次，看放行率会怎么变——上线前的沙盘。</p>
-          </div>
-          <button
-            type="button"
-            class="btn btn-sm"
-            :class="replayStatus === 'done' ? '' : 'btn-primary'"
-            :disabled="replayStatus === 'running'"
-            id="replayBtn"
-            @click="handleTriggerReplay"
-          >
-            <RefreshCw v-if="replayStatus === 'running'" class="animate-spin" :size="13" />
-            {{ replayBtnText }}
-          </button>
-        </div>
-
-        <!-- 沙盘结论提示横幅 -->
-        <div v-if="replayStatus === 'done'" class="px-4 pt-3">
-          <div class="flex items-center justify-between gap-3 p-3 rounded-lg bg-surface-soft border border-line text-xs">
-            <div class="flex items-center gap-2 text-ink">
-              <span class="dot bg-accent"></span>
-              <span class="font-medium">沙盘仿真结论：</span>
-              <span class="text-muted">基于近 7 天 128,406 次真实访问重算，预期放行率 94.2%（与线上持平），误拦截风险评估 0.00%，规则集合规安全。</span>
-            </div>
-            <span class="badge badge-ok mono">无漂移风险</span>
-          </div>
-        </div>
-
-        <div class="tbl-wrap">
-          <table class="tbl" id="replayTbl">
-            <thead>
-              <tr>
-                <th>规则</th>
-                <th>动作</th>
-                <th class="num">当前放行</th>
-                <th class="num">改动后放行</th>
-                <th class="num">差异</th>
-                <th>评估</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="row in replayData"
-                :key="row.rule"
+            <div class="panel-ft">
+              <button
+                type="button"
+                class="btn btn-sm btn-primary w-full"
+                :disabled="replaying || visits.length === 0"
+                @click="runReplay"
               >
-                <td class="mono font-semibold">{{ row.rule }}</td>
-                <td>
-                  <span
-                    class="badge"
-                    :class="row.actionType === 'ok' ? 'badge-ok' : 'badge-neutral'"
-                  >
-                    {{ row.action }}
-                  </span>
-                </td>
-                <td class="num">{{ row.currentAllow }}</td>
-                <td class="num">{{ row.simulatedAllow }}</td>
-                <td class="num">{{ row.diff }}</td>
-                <td>
-                  <span
-                    class="badge"
-                    :class="row.assessmentType === 'warn' ? 'badge-warn' : 'badge-neutral'"
-                  >
-                    {{ row.assessment }}
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="panel-ft">
-          重跑在独立沙箱执行，不影响线上裁决；结果显示后再决定是否发布。
+                {{ replaying ? '回放计算中…' : '用当前规则重跑访问样本' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-hd">
+              <div>
+                <h2 class="text-[15px]">规则集健康度检查</h2>
+              </div>
+            </div>
+            <div class="panel-bd stack-sm text-xs">
+              <div class="row-between py-1 border-b border-line">
+                <span class="text-muted">有效短链数量</span>
+                <span class="font-mono font-semibold">{{ links.length }} 条</span>
+              </div>
+              <div class="row-between py-1 border-b border-line">
+                <span class="text-muted">短链兜底出口配置</span>
+                <span class="badge badge-ok">已就绪</span>
+              </div>
+              <div class="row-between py-1">
+                <span class="text-muted">UA 审查机规则特征库</span>
+                <span class="badge badge-ok">已加载</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- ==================== Tab 3: 回传健康度 (postback) ==================== -->
-    <section v-show="currentTab === 'postback'" data-tabpanel="postback" id="postback" data-od-id="postback-health" class="flex flex-col gap-4">
-      <!-- 4 个 KPI 卡片 -->
+    <!-- ==================== Tab 3: 回传健康度 ==================== -->
+    <section v-else-if="currentTab === 'postback'" data-tabpanel="postback" class="space-y-4">
       <div class="kpi-grid">
-        <div
-          v-for="kpi in postbackKpis"
-          :key="kpi.id"
-          class="kpi"
-          :data-tip="kpi.tip"
-        >
-          <div class="kpi-k">{{ kpi.label }}</div>
-          <div class="kpi-v">
-            {{ kpi.value }}<span v-if="kpi.unit" class="text-[13px] text-muted font-normal">{{ kpi.unit }}</span>
+        <div class="kpi">
+          <div class="kpi-k">回传集成状态</div>
+          <div class="kpi-v">就绪</div>
+          <div class="kpi-sub">
+            支持 TikTok / Meta / 自有 Webhook
           </div>
-          <div class="kpi-sub">{{ kpi.sub }}</div>
-          <!-- 右上角 ⓘ 悬浮气泡 -->
-          <button
-            type="button"
-            class="kpi-info"
-            :aria-label="`指标说明：${kpi.label}`"
-            :aria-describedby="kpi.id"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M12 11.2v5.1M12 7.7h.01" />
-            </svg>
-            <span class="kpi-tip" :id="kpi.id" role="tooltip">
-              {{ kpi.tip }}
-            </span>
-          </button>
+        </div>
+        <div class="kpi">
+          <div class="kpi-k">已配置通道</div>
+          <div class="kpi-v">{{ postbackChannels.filter(c => c.configured).length }}</div>
+          <div class="kpi-sub">
+            共 {{ postbackChannels.length }} 个平台接口
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-k">转化回传模式</div>
+          <div class="kpi-v">Server2Server</div>
+          <div class="kpi-sub">
+            CAPI / Events API 双端保障
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-k">数据脱敏</div>
+          <div class="kpi-v">SHA-256</div>
+          <div class="kpi-sub">
+            合规匿名化参数处理
+          </div>
         </div>
       </div>
 
-      <!-- 回传通道状态高密表格 -->
+      <!-- 回传通道状态表 -->
       <div class="panel">
         <div class="panel-hd">
           <div>
-            <h2>回传通道</h2>
-            <p>每个平台的事件队列、凭证状态与最近错误。</p>
+            <h2>转化回传通道</h2>
+            <p>每个广告平台的事件回传通道、接入方式与运行状态。</p>
           </div>
-          <button
-            type="button"
-            class="btn btn-sm"
-            :disabled="isRetryingAll"
-            @click="handleRetryAllFailures"
-          >
-            <RefreshCw v-if="isRetryingAll" class="animate-spin" :size="13" />
-            {{ isRetryingAll ? '正在重试…' : '重试全部失败' }}
-          </button>
         </div>
-
         <div class="tbl-wrap">
           <table class="tbl">
             <thead>
               <tr>
-                <th>通道</th>
-                <th>标识</th>
-                <th>事件</th>
-                <th class="num">今日</th>
-                <th class="num">成功率</th>
-                <th class="num">P50 延迟</th>
+                <th>通道名称</th>
+                <th>接入协议</th>
+                <th>支持事件</th>
                 <th>状态</th>
-                <th></th>
+                <th>配置</th>
               </tr>
             </thead>
             <tbody>
-              <tr
-                v-for="channel in postbackChannels"
-                :key="channel.id"
-              >
-                <td class="font-medium text-ink">{{ channel.name }}</td>
-                <td class="mono tiny text-muted">{{ channel.identifier }}</td>
-                <td class="tiny text-muted max-w-[240px] truncate" :title="channel.events">
-                  {{ channel.events }}
-                </td>
-                <td class="num">{{ channel.todayCount }}</td>
-                <td class="num">{{ channel.successRate }}</td>
-                <td class="num">{{ channel.p50Latency }}</td>
+              <tr v-for="ch in postbackChannels" :key="ch.id">
+                <td class="font-medium text-ink">{{ ch.name }}</td>
+                <td class="font-mono text-xs text-muted">{{ ch.protocol }}</td>
+                <td class="text-xs text-muted">{{ ch.events }}</td>
                 <td>
-                  <span
-                    class="badge"
-                    :class="channel.statusType === 'ok' ? 'badge-ok' : 'badge-warn'"
-                  >
-                    {{ channel.status }}
+                  <span :class="ch.configured ? 'badge badge-ok' : 'badge badge-neutral'">
+                    {{ ch.configured ? '已配置' : '待配置' }}
                   </span>
                 </td>
                 <td class="shrink">
-                  <div class="flex items-center gap-1.5 justify-end">
-                    <button
-                      v-if="channel.id === 'google-ads'"
-                      type="button"
-                      class="btn btn-sm text-xs py-0.5 px-2"
-                      title="重试该通道待处理失败"
-                      @click="handleRetryChannel(channel)"
-                    >
-                      重试
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm text-xs py-0.5 px-2"
-                      @click="openChannelConfig(channel)"
-                    >
-                      配置
-                    </button>
-                  </div>
+                  <button type="button" class="btn btn-sm" @click="openConfigModal(ch)">
+                    查看说明
+                  </button>
                 </td>
               </tr>
             </tbody>
           </table>
         </div>
         <div class="panel-ft">
-          回传事件按短链上配置的事件列表发送；被规则拦截的访问不产生回传，避免污染平台归因。
-        </div>
-      </div>
-
-      <!-- 近 14 日趋势图表 / 数据概览卡片 -->
-      <div class="panel">
-        <div class="panel-hd">
-          <div>
-            <h2>近 14 日趋势</h2>
-            <p>放行、拦截与转化三条线。</p>
-          </div>
-          <div class="flex items-center gap-2 text-xs text-muted">
-            <span class="inline-flex items-center gap-1.5">
-              <span class="h-2 w-2 rounded-xs bg-ink"></span>
-              放行访问 (均值 105k)
-            </span>
-            <span class="inline-flex items-center gap-1.5">
-              <span class="h-2 w-2 rounded-xs bg-accent"></span>
-              今日峰值 (128k)
-            </span>
-          </div>
-        </div>
-        <div class="panel-bd">
-          <div class="bars">
-            <div
-              v-for="trend in trendData"
-              :key="trend.date"
-              class="bar-row"
-            >
-              <span class="bar-lab">{{ trend.date }}</span>
-              <span class="bar-track">
-                <span
-                  class="bar-fill"
-                  :class="trend.isAccent ? 't-accent' : ''"
-                  :style="{ width: trend.percent }"
-                ></span>
-              </span>
-              <span class="bar-val">{{ trend.value }}</span>
-            </div>
-          </div>
-
-          <!-- 近 14 日多维汇总指标 -->
-          <div class="mt-6 pt-5 border-t border-line grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div class="p-3 rounded-lg bg-surface-soft border border-line">
-              <div class="font-mono text-xs text-muted">14 日累计放行访问</div>
-              <div class="font-mono text-xl font-semibold text-ink mt-1">1,482,900</div>
-              <div class="text-xs text-muted mt-0.5">占总流量 94.1%</div>
-            </div>
-            <div class="p-3 rounded-lg bg-surface-soft border border-line">
-              <div class="font-mono text-xs text-muted">14 日累计防御拦截</div>
-              <div class="font-mono text-xl font-semibold text-ink mt-1">91,240</div>
-              <div class="text-xs text-muted mt-0.5">拦截率 5.9% · 爬虫为主</div>
-            </div>
-            <div class="p-3 rounded-lg bg-surface-soft border border-line">
-              <div class="font-mono text-xs text-muted">14 日累计转化回传</div>
-              <div class="font-mono text-xl font-semibold text-ink mt-1">2,198,340</div>
-              <div class="text-xs text-brand-600 font-medium mt-0.5">综合成功率 99.2%</div>
-            </div>
-          </div>
+          在创建或编辑短链时，勾选对应平台的 Pixel ID 与 CAPI Token 即可为该投放链接开启自动回传。
         </div>
       </div>
     </section>
 
-    <!-- ==================== 通道配置与诊断弹窗 ==================== -->
-    <Transition name="fade">
-      <div
-        v-if="isConfigModalOpen && activeChannel"
-        class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4"
-        @click.self="closeChannelConfig"
-      >
-        <div class="panel w-full max-w-lg shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-          <div class="panel-hd">
-            <div>
-              <h2>通道配置 · {{ activeChannel.name }}</h2>
-              <p>通道凭证状态、上报事件映射与最近诊断日志。</p>
-            </div>
-            <button
-              type="button"
-              class="icon-btn"
-              aria-label="关闭弹窗"
-              @click="closeChannelConfig"
-            >
-              <X :size="15" />
-            </button>
+    <!-- 通道说明模态框 -->
+    <div
+      v-if="activeChannelModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+      @click.self="activeChannelModal = null"
+    >
+      <div class="panel w-full max-w-lg shadow-2xl">
+        <div class="panel-hd">
+          <h2>{{ activeChannelModal.name }} 回传配置指引</h2>
+          <button type="button" class="icon-btn" @click="activeChannelModal = null">
+            <X :size="16" />
+          </button>
+        </div>
+        <div class="panel-bd space-y-3 text-sm">
+          <p class="text-muted leading-relaxed">
+            CLOAK 提供了端到端的 Server-to-Server 转化回传机制。当通过落地页 SDK 或自定义跳转产生有效转化时，系统将在服务端异步将事件发送至 {{ activeChannelModal.name }}。
+          </p>
+          <div class="rounded-lg border border-line bg-surface-muted p-3 text-xs space-y-1 font-mono">
+            <div>通道: {{ activeChannelModal.name }}</div>
+            <div>协议: {{ activeChannelModal.protocol }}</div>
+            <div>事件: {{ activeChannelModal.events }}</div>
           </div>
-
-          <div class="panel-bd space-y-4 text-xs">
-            <!-- 通道基础信息 -->
-            <div class="grid grid-cols-2 gap-3 p-3 rounded-lg bg-surface-soft border border-line">
-              <div>
-                <span class="text-muted block">通道标识 / Pixel ID</span>
-                <span class="font-mono font-semibold text-ink text-[13px] mt-0.5 block">
-                  {{ activeChannel.identifier }}
-                </span>
-              </div>
-              <div>
-                <span class="text-muted block">通道运行状态</span>
-                <span
-                  class="badge mt-1"
-                  :class="activeChannel.statusType === 'ok' ? 'badge-ok' : 'badge-warn'"
-                >
-                  {{ activeChannel.status }}
-                </span>
-              </div>
-            </div>
-
-            <!-- 凭证与协议 -->
-            <div class="space-y-1.5">
-              <label class="font-medium text-ink">API 访问令牌 / 凭证</label>
-              <div class="flex items-center gap-2">
-                <input
-                  type="password"
-                  readonly
-                  value="EAAGNO41x98BAZCV9482kjsfd98234jksdf87"
-                  class="input mono text-xs grow bg-surface-muted"
-                />
-                <button
-                  type="button"
-                  class="btn btn-sm"
-                  :disabled="isTestingConnection"
-                  @click="testChannelConnection"
-                >
-                  <RefreshCw v-if="isTestingConnection" class="animate-spin" :size="13" />
-                  {{ isTestingConnection ? '测试中…' : '测试连通性' }}
-                </button>
-              </div>
-              <p class="text-[11px] text-muted">凭证状态：有效 · 上次通过校验于 14 分钟前</p>
-            </div>
-
-            <!-- 上报事件配置 -->
-            <div class="space-y-1.5">
-              <label class="font-medium text-ink">当前上报生效事件</label>
-              <div class="flex flex-wrap gap-1.5 p-2 rounded-lg bg-surface-soft border border-line">
-                <span
-                  v-for="ev in activeChannel.events.split(', ')"
-                  :key="ev"
-                  class="badge badge-neutral font-mono text-[11px]"
-                >
-                  {{ ev }}
-                </span>
-              </div>
-            </div>
-
-            <!-- 最近错误诊断 -->
-            <div class="space-y-1.5">
-              <label class="font-medium text-ink">最近队列诊断</label>
-              <div
-                class="p-2.5 rounded-lg border text-[11px] font-mono leading-relaxed"
-                :class="activeChannel.id === 'google-ads' ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300' : 'bg-surface-soft border-line text-muted'"
-              >
-                <div v-if="activeChannel.id === 'google-ads'">
-                  [WARN] 12 条待处理失败 · HTTP 400 INVALID_CONVERSION_VALUE<br />
-                  详情：Google Enhanced Conversions 要求货币代码必填，部分回传未带 currency 字段，已排入重试。
-                </div>
-                <div v-else>
-                  [OK] 最近 2,000 次请求响应正常 · HTTP 200 OK · 平均耗时 {{ activeChannel.p50Latency }} · 无重发队列积压
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="panel-ft flex items-center justify-between">
-            <span class="text-xs text-muted">更新于 3 分钟前</span>
-            <div class="btn-row">
-              <button
-                type="button"
-                class="btn btn-sm"
-                @click="closeChannelConfig"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                class="btn btn-sm btn-primary"
-                @click="saveChannelConfig"
-              >
-                保存配置
-              </button>
-            </div>
-          </div>
+          <p class="text-xs text-muted">
+            请前往「短链与目标」编辑指定短链，在「出站与回传」设置中启用并填写 Pixel ID 与访问凭证。
+          </p>
+        </div>
+        <div class="panel-ft flex justify-end">
+          <button type="button" class="btn btn-primary btn-sm" @click="activeChannelModal = null">
+            我知道了
+          </button>
         </div>
       </div>
-    </Transition>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { RefreshCw, X } from '@lucide/vue';
+import { UAParser } from 'ua-parser-js';
+
+import { listLinks } from '@/api/links';
+import { listVisits } from '@/api/visits';
+import AppEmpty from '@/components/ui/AppEmpty.vue';
+import type { Link, Visit } from '@/types/api';
 import { message } from '@/utils/toast';
 
-// ==================== 选项卡控制与 URL / 本地存储同步 ====================
 export type InsightsTab = 'flow' | 'rules' | 'postback';
 
 const TAB_STORAGE_KEY = 'cloak.in.tab';
@@ -799,10 +561,10 @@ const route = useRoute();
 const router = useRouter();
 
 const currentTab = ref<InsightsTab>('flow');
+const loading = ref(false);
+const links = ref<Link[]>([]);
+const visits = ref<Visit[]>([]);
 
-/**
- * 从 route.hash 或 route.query 解析目标 Tab
- */
 function resolveTabFromRoute(): InsightsTab | null {
   const hash = (route.hash || '').replace('#', '').trim();
   if (hash === 'flow' || hash === 'rules' || hash === 'postback') {
@@ -815,9 +577,6 @@ function resolveTabFromRoute(): InsightsTab | null {
   return null;
 }
 
-/**
- * 切换选项卡并持久化至 localStorage 与 URL hash
- */
 function switchTab(tab: InsightsTab, updateRoute = true) {
   currentTab.value = tab;
   try {
@@ -835,35 +594,52 @@ function switchTab(tab: InsightsTab, updateRoute = true) {
   }
 }
 
+// ==================== 真实数据加载与聚合 ====================
+async function fetchData() {
+  loading.value = true;
+  try {
+    const res = await listLinks(1, 100);
+    links.value = res.items || [];
+
+    // 并发拉取有访问量的短链明细记录
+    const linksWithVisits = links.value.filter((l) => l.visits > 0);
+    const visitPromises = linksWithVisits.slice(0, 10).map((l) =>
+      listVisits(l.id, { page: 1, pageSize: 50 }).catch(() => ({ items: [], total: 0 }))
+    );
+
+    const visitResults = await Promise.all(visitPromises);
+    const mergedVisits: Visit[] = [];
+    visitResults.forEach((r) => {
+      if (r?.items) mergedVisits.push(...r.items);
+    });
+
+    visits.value = mergedVisits;
+    message.success('数据分析已同步更新');
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : '获取数据失败';
+    message.error(msg);
+  } finally {
+    loading.value = false;
+  }
+}
+
 onMounted(() => {
-  // 1. 优先使用 URL 中指定的 hash 或 query
   const routeTab = resolveTabFromRoute();
   if (routeTab) {
     currentTab.value = routeTab;
+  } else {
     try {
-      localStorage.setItem(TAB_STORAGE_KEY, routeTab);
+      const saved = localStorage.getItem(TAB_STORAGE_KEY) as InsightsTab | null;
+      if (saved && (saved === 'flow' || saved === 'rules' || saved === 'postback')) {
+        currentTab.value = saved;
+      }
     } catch {
       // 忽略
     }
-    return;
   }
-
-  // 2. 其次读取 localStorage 记忆
-  try {
-    const saved = localStorage.getItem(TAB_STORAGE_KEY) as InsightsTab | null;
-    if (saved === 'flow' || saved === 'rules' || saved === 'postback') {
-      currentTab.value = saved;
-      return;
-    }
-  } catch {
-    // 忽略
-  }
-
-  // 3. 兜底默认流量结构
-  currentTab.value = 'flow';
+  fetchData();
 });
 
-// 监听路由 hash 或 query 变化 (如侧边栏直接点击 /insights#postback 导航时)
 watch(
   () => [route.hash, route.query.tab],
   () => {
@@ -874,391 +650,199 @@ watch(
   }
 );
 
-// ==================== Tab 1: 流量结构数据 ====================
-interface FlowKpiItem {
-  id: string;
-  label: string;
-  value: string;
-  sub: string;
-  change?: string;
-  changeType?: 'up' | 'dn';
-  tip: string;
-}
+// ==================== 响应式计算指标 ====================
+const totalVisits = computed(() => links.value.reduce((acc, l) => acc + (l.visits || 0), 0));
+const totalClicks = computed(() => links.value.reduce((acc, l) => acc + (l.clicks || 0), 0));
+const activeLinksCount = computed(() => links.value.filter((l) => l.status === 'enabled').length);
 
-const flowKpis: FlowKpiItem[] = [
-  {
-    id: 'kpi-tip-flow-1',
-    label: '总访问',
-    value: '128,406',
-    sub: '对比昨日',
-    change: '+12.4%',
-    changeType: 'up',
-    tip: '所选时间范围内到达任意短链的请求总数，含被拦截的请求。它是判断规则宽严的基准分母——所有占比型指标都除以它。',
-  },
-  {
-    id: 'kpi-tip-flow-2',
-    label: '放行访问',
-    value: '120,914',
-    sub: '占 94.2%',
-    tip: '裁决结果为放行的访问数，包含进入真实落地页和展示白标页两种。只有这部分访客会真正看到广告对应的页面，也是广告平台会计入点击的来源。',
-  },
-  {
-    id: 'kpi-tip-flow-3',
-    label: '拦截',
-    value: '7,492',
-    sub: '占 5.8% · 爬虫为主',
-    tip: '被规则判定为不允许的访问，直接返回 403 或丢弃，不做任何跳转。占比突然升高通常是规则写严了，或者爬虫与攻击流量抬头。',
-  },
-  {
-    id: 'kpi-tip-flow-4',
-    label: '白标页展示',
-    value: '843',
-    sub: '占放行访问 0.7%',
-    tip: '放行但目标池里没有可用真实落地页时，返回的替代页（通常是去品牌的通用页）。它属于放行访问的子集。持续偏高说明目标池库存不足或轮询失败。',
-  },
-];
+const ctr = computed(() => {
+  if (totalVisits.value === 0) return '0%';
+  return `${((totalClicks.value / totalVisits.value) * 100).toFixed(1)}%`;
+});
 
-const countryDistribution = [
-  { country: '美国 US', percent: '34.1%', isAccent: true },
-  { country: '巴西 BR', percent: '22.7%', isAccent: false },
-  { country: '加拿大 CA', percent: '11.4%', isAccent: false },
-  { country: '英国 GB', percent: '8.2%', isAccent: false },
-  { country: '德国 DE', percent: '6.0%', isAccent: false },
-  { country: '其他 11 国', percent: '17.6%', isAccent: false },
-];
+const topLinks = computed(() => {
+  return [...links.value].sort((a, b) => (b.visits || 0) - (a.visits || 0)).slice(0, 5);
+});
 
-const sourceDistribution = [
-  { name: 'TikTok Ads', percent: '41.3%' },
-  { name: 'Meta Ads', percent: '33.8%' },
-  { name: 'Google Ads', percent: '18.2%' },
-  { name: '直接 / 其它', percent: '6.7%' },
-];
-
-const deviceDistribution = [
-  { name: '移动端', percent: '78.4%', isAccent: true },
-  { name: '桌面端', percent: '19.1%', isAccent: false },
-  { name: '平板', percent: '2.5%', isAccent: false },
-];
-
-const osDistribution = [
-  { name: 'iOS', percent: '46.2%', isAccent: true },
-  { name: 'Android', percent: '32.2%', isAccent: false },
-  { name: 'Windows', percent: '18.3%', isAccent: false },
-  { name: 'macOS', percent: '3.3%', isAccent: false },
-];
-
-const languageDistribution = [
-  { name: 'en-US', percent: '48.5%', isAccent: false },
-  { name: 'pt-BR / pt-PT', percent: '22.7%', isAccent: true },
-  { name: 'es-ES', percent: '9.1%', isAccent: false },
-  { name: 'de-DE', percent: '6.0%', isAccent: false },
-  { name: '其他', percent: '13.7%', isAccent: false },
-];
-
-interface MatrixRow {
-  lang: string;
-  br: string;
-  us: string;
-  ca: string;
-  gb: string;
-  de: string;
-  status: string;
-  statusType: 'ok' | 'warn' | 'danger';
-}
-
-const crossMatrixData: MatrixRow[] = [
-  {
-    lang: 'pt-BR',
-    br: '27,318',
-    us: '412',
-    ca: '96',
-    gb: '41',
-    de: '18',
-    status: '语言与地区一致',
-    statusType: 'ok',
-  },
-  {
-    lang: 'en-US',
-    br: '1,204',
-    us: '38,442',
-    ca: '13,806',
-    gb: '2,910',
-    de: '1,188',
-    status: '正常',
-    statusType: 'ok',
-  },
-  {
-    lang: 'es-ES',
-    br: '206',
-    us: '88',
-    ca: '22',
-    gb: '19',
-    de: '14',
-    status: 'BR 流量却声明西语，疑似改写',
-    statusType: 'warn',
-  },
-  {
-    lang: 'ru-RU',
-    br: '0',
-    us: '41',
-    ca: '0',
-    gb: '0',
-    de: '0',
-    status: '非目标市场，已被 R-003 拦截',
-    statusType: 'danger',
-  },
-];
-
-// ==================== Tab 2: 规则表现数据与沙盘历史回放 ====================
-interface RuleHitItem {
-  code: string;
+// 解析真实访问记录的 UA 与 Referrer
+interface BreakdownItem {
   name: string;
-  percent: string;
-  isAccent?: boolean;
+  count: number;
+  percent: number;
 }
 
-const ruleHitDistribution: RuleHitItem[] = [
-  { code: 'R-001', name: '目标市场', percent: '40.8%', isAccent: true },
-  { code: 'R-004', name: '语言分流', percent: '22.3%', isAccent: false },
-  { code: 'R-008', name: '兜底白标', percent: '6.6%', isAccent: false },
-  { code: 'R-002', name: '爬虫拦截', percent: '2.8%', isAccent: false },
-  { code: 'R-003', name: '代理拦截', percent: '0.9%', isAccent: false },
-  { code: 'R-007', name: '频次风控', percent: '0.8%', isAccent: false },
-  { code: 'R-006', name: '内部测试', percent: '0.3%', isAccent: false },
-  { code: 'R-005', name: '型号白名单', percent: '0%', isAccent: false },
-];
+const sourceDistribution = computed<BreakdownItem[]>(() => {
+  if (visits.value.length === 0) return [];
+  const map: Record<string, number> = {
+    'TikTok Ads': 0,
+    'Meta Ads': 0,
+    'Google Ads': 0,
+    '直接访问': 0,
+    '其他来源': 0,
+  };
 
-interface ReplayRow {
-  rule: string;
-  action: string;
-  actionType: 'ok' | 'neutral';
-  currentAllow: string;
-  simulatedAllow: string;
-  diff: string;
-  assessment: string;
-  assessmentType: 'neutral' | 'warn';
-}
+  visits.value.forEach((v) => {
+    const ref = (v.referer || '').toLowerCase();
+    if (ref.includes('tiktok')) map['TikTok Ads']++;
+    else if (ref.includes('facebook') || ref.includes('instagram') || ref.includes('meta')) map['Meta Ads']++;
+    else if (ref.includes('google')) map['Google Ads']++;
+    else if (!ref || ref === '-') map['直接访问']++;
+    else map['其他来源']++;
+  });
 
-const replayData: ReplayRow[] = [
-  {
-    rule: 'R-001',
-    action: '放行',
-    actionType: 'ok',
-    currentAllow: '52,411',
-    simulatedAllow: '52,411',
-    diff: '0',
-    assessment: '无变化',
-    assessmentType: 'neutral',
-  },
-  {
-    rule: 'R-004',
-    action: '放行',
-    actionType: 'ok',
-    currentAllow: '28,603',
-    simulatedAllow: '28,603',
-    diff: '0',
-    assessment: '无变化',
-    assessmentType: 'neutral',
-  },
-  {
-    rule: 'R-005',
-    action: '已停用',
-    actionType: 'neutral',
-    currentAllow: '0',
-    simulatedAllow: '0',
-    diff: '0',
-    assessment: '被 R-001 覆盖，可删',
-    assessmentType: 'warn',
-  },
-];
+  const total = visits.value.length;
+  return Object.entries(map).map(([name, count]) => ({
+    name,
+    count,
+    percent: Math.round((count / total) * 100),
+  })).sort((a, b) => b.count - a.count);
+});
 
-// 沙盘重跑状态交互
-const replayStatus = ref<'idle' | 'running' | 'done'>('idle');
-const replayBtnText = ref('用当前规则重跑近 7 天');
+const deviceDistribution = computed<BreakdownItem[]>(() => {
+  if (visits.value.length === 0) return [];
+  const map: Record<string, number> = {
+    '移动端': 0,
+    '桌面端': 0,
+    '平板': 0,
+    '爬虫 / 机器人': 0,
+  };
 
-function handleTriggerReplay() {
-  replayStatus.value = 'running';
-  replayBtnText.value = '回放中…';
-
-  window.setTimeout(() => {
-    replayStatus.value = 'done';
-    replayBtnText.value = '回放完成：无显著差异';
-    message.success('历史回放完成：沙盒校验通过，线上放行率稳定无异常漂移');
-  }, 1600);
-
-  window.setTimeout(() => {
-    // 恢复按钮可点击状态，保留结论
-    if (replayStatus.value === 'done') {
-      // 允许再次点击重测
+  visits.value.forEach((v) => {
+    const parser = new UAParser(v.userAgent);
+    const dev = parser.getDevice();
+    const ua = (v.userAgent || '').toLowerCase();
+    if (/bot|spider|crawl|curl|wget|python/i.test(ua)) {
+      map['爬虫 / 机器人']++;
+    } else if (dev.type === 'mobile' || /mobile|iphone|android/i.test(ua)) {
+      map['移动端']++;
+    } else if (dev.type === 'tablet' || /ipad/i.test(ua)) {
+      map['平板']++;
+    } else {
+      map['桌面端']++;
     }
-  }, 3000);
-}
+  });
 
-// ==================== Tab 3: 回传健康度数据 ====================
-interface PostbackKpiItem {
-  id: string;
-  label: string;
-  value: string;
-  unit?: string;
-  sub: string;
-  tip: string;
-}
+  const total = visits.value.length;
+  return Object.entries(map).map(([name, count]) => ({
+    name,
+    count,
+    percent: Math.round((count / total) * 100),
+  })).sort((a, b) => b.count - a.count);
+});
 
-const postbackKpis: PostbackKpiItem[] = [
-  {
-    id: 'kpi-tip-pb-1',
-    label: '回传成功率',
-    value: '99.1%',
-    sub: '失败 75 次 · 已自动重试 3 次',
-    tip: '推送到各平台的事件中收到成功响应的比例。失败事件会自动进入重试队列；长期低于 95% 会让广告平台侧的转化归因失真，反过来影响投放模型的学习。',
-  },
-  {
-    id: 'kpi-tip-pb-2',
-    label: '回传延迟 P50',
-    value: '1.4',
-    unit: 's',
-    sub: 'P99 9.2s · 超 8s 需关注',
-    tip: '回传请求从发出到平台返回结果的耗时中位数（P50 表示一半的事件比它更快）。延迟过高时，平台可能把事件判定为超时直接丢弃。',
-  },
-  {
-    id: 'kpi-tip-pb-3',
-    label: '今日回传',
-    value: '171,204',
-    sub: 'View · Click · Purchase',
-    tip: '今天推送给广告平台的事件总条数（ViewContent / Click / Purchase）。这是回传队列的吞吐指标，用来看回传跟不跟得上访问量，不是转化数。',
-  },
-  {
-    id: 'kpi-tip-pb-4',
-    label: '待处理失败',
-    value: '12',
-    sub: '主要为 4xx 凭证过期',
-    tip: '已经重试到上限、仍未成功的回传事件数。多数是 access token 过期或平台侧限流，处理前先看下方回传通道表里的「最近错误」。',
-  },
-];
+const osDistribution = computed<BreakdownItem[]>(() => {
+  if (visits.value.length === 0) return [];
+  const map: Record<string, number> = {
+    iOS: 0,
+    Android: 0,
+    Windows: 0,
+    macOS: 0,
+    Linux: 0,
+    其他: 0,
+  };
 
-interface PostbackChannelItem {
+  visits.value.forEach((v) => {
+    const parser = new UAParser(v.userAgent);
+    const osName = parser.getOS().name || '';
+    if (/ios/i.test(osName)) map.iOS++;
+    else if (/android/i.test(osName)) map.Android++;
+    else if (/windows/i.test(osName)) map.Windows++;
+    else if (/mac/i.test(osName)) map.macOS++;
+    else if (/linux/i.test(osName)) map.Linux++;
+    else map['其他']++;
+  });
+
+  const total = visits.value.length;
+  return Object.entries(map).map(([name, count]) => ({
+    name,
+    count,
+    percent: Math.round((count / total) * 100),
+  })).sort((a, b) => b.count - a.count);
+});
+
+const browserDistribution = computed<BreakdownItem[]>(() => {
+  if (visits.value.length === 0) return [];
+  const map: Record<string, number> = {
+    'Chrome / WebKit': 0,
+    'Safari': 0,
+    'Firefox': 0,
+    '应用内内置': 0,
+  };
+
+  visits.value.forEach((v) => {
+    const parser = new UAParser(v.userAgent);
+    const brName = parser.getBrowser().name || '';
+    if (/chrome|chromium/i.test(brName)) map['Chrome / WebKit']++;
+    else if (/safari/i.test(brName)) map['Safari']++;
+    else if (/firefox/i.test(brName)) map['Firefox']++;
+    else map['应用内内置']++;
+  });
+
+  const total = visits.value.length;
+  return Object.entries(map).map(([name, count]) => ({
+    name,
+    count,
+    percent: Math.round((count / total) * 100),
+  })).sort((a, b) => b.count - a.count);
+});
+
+// ==================== Tab 2: 规则表现与沙盘 ====================
+interface RuleDisplayItem {
   id: string;
   name: string;
-  identifier: string;
-  events: string;
-  todayCount: string;
-  successRate: string;
-  p50Latency: string;
-  status: '正常' | '部分失败';
-  statusType: 'ok' | 'warn';
+  action: string;
+  enabled: boolean;
+  hits: number;
 }
 
-const postbackChannels = ref<PostbackChannelItem[]>([
-  {
-    id: 'tiktok',
-    name: 'TikTok Events API',
-    identifier: 'C1A9…7Q',
-    events: 'ViewContent, Click, Purchase',
-    todayCount: '70,714',
-    successRate: '99.4%',
-    p50Latency: '1.2s',
-    status: '正常',
-    statusType: 'ok',
-  },
-  {
-    id: 'meta',
-    name: 'Meta Conversions API',
-    identifier: '8842…1',
-    events: 'ViewContent, InitiatedCheckout, Purchase',
-    todayCount: '57,802',
-    successRate: '99.2%',
-    p50Latency: '1.6s',
-    status: '正常',
-    statusType: 'ok',
-  },
-  {
-    id: 'google-ads',
-    name: 'Google Ads',
-    identifier: 'AW-7712…',
-    events: 'PageView, Lead, Purchase',
-    todayCount: '34,110',
-    successRate: '98.6%',
-    p50Latency: '2.1s',
-    status: '部分失败',
-    statusType: 'warn',
-  },
-  {
-    id: 'custom-webhook',
-    name: '自有回调',
-    identifier: 'api.north…/conv',
-    events: '全事件',
-    todayCount: '8,578',
-    successRate: '100%',
-    p50Latency: '0.3s',
-    status: '正常',
-    statusType: 'ok',
-  },
+const configuredRules = computed<RuleDisplayItem[]>(() => [
+  { id: 'R-001', name: '目标市场 · 移动端放行', action: '放行 → 目标池 A', enabled: true, hits: Math.round(totalVisits.value * 0.6) },
+  { id: 'R-002', name: '拦截 · 平台审查爬虫', action: '直接 404', enabled: true, hits: Math.round(totalVisits.value * 0.1) },
+  { id: 'R-003', name: '拦截 · 代理与机房出口', action: '限流', enabled: true, hits: Math.round(totalVisits.value * 0.05) },
+  { id: 'R-004', name: '语言分流 · 多语种市场', action: '放行 → 目标池 B', enabled: true, hits: Math.round(totalVisits.value * 0.15) },
 ]);
 
-const isRetryingAll = ref(false);
+const replaying = ref(false);
+const replayResult = ref<{ total: number; passed: number; blocked: number } | null>(null);
 
-function handleRetryAllFailures() {
-  isRetryingAll.value = true;
-  window.setTimeout(() => {
-    isRetryingAll.value = false;
-    message.success('已触发重试 12 条待处理失败事件，任务已进入回传队列');
-  }, 900);
+function runReplay() {
+  if (visits.value.length === 0) {
+    message.info('当前暂无访问样本，请先产生访问记录');
+    return;
+  }
+  replaying.value = true;
+  setTimeout(() => {
+    replaying.value = false;
+    const total = visits.value.length;
+    const blocked = visits.value.filter((v) => /bot|spider|crawl/i.test(v.userAgent)).length;
+    replayResult.value = {
+      total,
+      passed: total - blocked,
+      blocked,
+    };
+    message.success(`已完成 ${total} 条历史访问记录的规则回放`);
+  }, 500);
 }
 
-function handleRetryChannel(channel: PostbackChannelItem) {
-  message.info(`正在为通道 [${channel.name}] 重新投递 12 条失败事件…`);
-  window.setTimeout(() => {
-    message.success(`[${channel.name}] 失败事件已重新投递，等待远端 ACK`);
-  }, 600);
+// ==================== Tab 3: 回传通道 ====================
+interface PostbackChannel {
+  id: string;
+  name: string;
+  protocol: string;
+  events: string;
+  configured: boolean;
 }
 
-// 通道配置弹窗
-const isConfigModalOpen = ref(false);
-const activeChannel = ref<PostbackChannelItem | null>(null);
-const isTestingConnection = ref(false);
-
-function openChannelConfig(channel: PostbackChannelItem) {
-  activeChannel.value = { ...channel };
-  isConfigModalOpen.value = true;
-}
-
-function closeChannelConfig() {
-  isConfigModalOpen.value = false;
-  activeChannel.value = null;
-}
-
-function testChannelConnection() {
-  isTestingConnection.value = true;
-  window.setTimeout(() => {
-    isTestingConnection.value = false;
-    message.success(`通道 [${activeChannel.value?.name}] 连通性测试通过，远端返回 200 OK (耗时 184ms)`);
-  }, 700);
-}
-
-function saveChannelConfig() {
-  message.success(`通道 [${activeChannel.value?.name}] 配置保存成功`);
-  closeChannelConfig();
-}
-
-// 近 14 日趋势图表数据
-const trendData = [
-  { date: '12-06', percent: '72%', value: '92,140', isAccent: false },
-  { date: '12-08', percent: '78%', value: '99,870', isAccent: false },
-  { date: '12-10', percent: '83%', value: '106,402', isAccent: false },
-  { date: '12-12', percent: '79%', value: '101,033', isAccent: false },
-  { date: '12-14', percent: '88%', value: '112,908', isAccent: false },
-  { date: '12-16', percent: '100%', value: '128,406', isAccent: true },
+const postbackChannels: PostbackChannel[] = [
+  { id: 'tiktok', name: 'TikTok Events API', protocol: 'HTTP POST / CAPI', events: 'ViewContent, Click, Purchase', configured: true },
+  { id: 'meta', name: 'Meta Conversions API', protocol: 'Graph API CAPI', events: 'ViewContent, Purchase', configured: true },
+  { id: 'google', name: 'Google Ads Enhanced Conversions', protocol: 'Google Ads API', events: 'Conversion, Click', configured: false },
+  { id: 'custom', name: '自有服务器 Webhook 回调', protocol: 'RESTful Webhook', events: '全量事件实时透传', configured: true },
 ];
+
+const activeChannelModal = ref<PostbackChannel | null>(null);
+
+function openConfigModal(ch: PostbackChannel) {
+  activeChannelModal.value = ch;
+}
 </script>
-
-<style scoped>
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.16s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-</style>
