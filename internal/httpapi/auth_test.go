@@ -73,6 +73,9 @@ func (c *testClient) post(path string, body any) *http.Response {
 func (c *testClient) patch(path string, body any) *http.Response {
 	return c.do(http.MethodPatch, path, body)
 }
+func (c *testClient) put(path string, body any) *http.Response {
+	return c.do(http.MethodPut, path, body)
+}
 func (c *testClient) del(path string) *http.Response { return c.do(http.MethodDelete, path, nil) }
 
 // register 注册并返回响应(测试用;成功后自动从 mailer 提取验证 token 存入返回结构)。

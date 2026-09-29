@@ -19,6 +19,7 @@ import (
 	"cloak/internal/jwt"
 	"cloak/internal/mailer"
 	"cloak/internal/rbac"
+	"cloak/internal/rules"
 	"cloak/internal/store"
 )
 
@@ -29,6 +30,10 @@ type Deps struct {
 	// RateLimit 认证端点限流配置;nil 时使用 DefaultRateLimit()。
 	// 测试环境可注入高阈值/关闭(见 testutil)。
 	RateLimit *RateLimitConfig
+	// RuleCache 租户规则快照缓存;nil 时按 Store.RulesForTenant 自动构建。
+	// 跳转热路径每次访问都要向它要一份快照(spec D7),它不查库。
+	// 暴露在 Deps 里是为了测试能注入自定义 Loader/TTL,生产走默认构造。
+	RuleCache *rules.Cache
 }
 
 type API struct {
@@ -40,6 +45,7 @@ type API struct {
 	authRate     *rateLimiter   // login/verify-email/forgot/reset
 	rbacEnforcer *rbac.Enforcer // Casbin RBAC 授权(enforcer 线程安全,authorize 中间件使用)
 	jwtMgr       *jwt.Manager   // Bearer JWT 校验(authenticate 中间件使用)
+	ruleCache    *rules.Cache   // 规则快照(跳转热路径求值;nil 时求值恒为"无规则")
 }
 
 // New 构建 Gin 引擎:全局中间件(panic 恢复+访问日志、后台域名 SPA 分流)+ 全部路由。
@@ -64,6 +70,13 @@ func New(d Deps) http.Handler {
 	}
 	jwtMgr := jwt.NewManager(secret, d.Cfg.JWTTTL)
 
+	// 规则快照缓存:整租户的启用规则一次性读进内存并预编译,跳转热路径只做纯内存求值。
+	// 加载失败按"该租户没有规则"放行(spec 风险章节,fail-open)。
+	ruleCache := d.RuleCache
+	if ruleCache == nil {
+		ruleCache = rules.NewCache(d.Store.RulesForTenant)
+	}
+
 	a := &API{
 		store:        d.Store,
 		mailer:       d.Mailer,
@@ -73,6 +86,7 @@ func New(d Deps) http.Handler {
 		authRate:     newRateLimiter(rl.AuthLimit, rl.AuthWindow),
 		rbacEnforcer: rb,
 		jwtMgr:       jwtMgr,
+		ruleCache:    ruleCache,
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -126,6 +140,16 @@ func New(d Deps) http.Handler {
 	prot.GET("/links/:id/stats", a.handleLinkStats)
 	// 16:落地页上传(zip 替换式)
 	prot.POST("/links/:id/landing", a.handleUploadLanding)
+	// 规则与「规则 ↔ 短链」关联(关联只存在规则一侧,spec D1;
+	// 短链表单的勾选与规则编辑器的多选写的是同一份 rule_links)
+	prot.GET("/rules", a.handleListRules)
+	prot.POST("/rules", a.handleCreateRule)
+	prot.GET("/rules/options", a.handleRuleOptions)
+	prot.GET("/rules/:id", a.handleGetRule)
+	prot.PATCH("/rules/:id", a.handlePatchRule)
+	prot.DELETE("/rules/:id", a.handleDeleteRule)
+	prot.GET("/links/:id/rules", a.handleListLinkRules)
+	prot.PUT("/links/:id/rules", a.handlePutLinkRules)
 	// 06:租户设置
 	prot.GET("/me", a.handleGetMe)
 	prot.PATCH("/me", a.handlePatchMe)

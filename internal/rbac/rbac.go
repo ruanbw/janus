@@ -63,6 +63,14 @@ p, tenant, /api/links/batch-purge, POST
 p, tenant, /api/links/*/landing, POST
 p, tenant, /api/links/*/visits, GET
 p, tenant, /api/links/*/stats, GET
+p, tenant, /api/links/*/rules, GET
+p, tenant, /api/links/*/rules, PUT
+p, tenant, /api/rules, GET
+p, tenant, /api/rules, POST
+p, tenant, /api/rules/options, GET
+p, tenant, /api/rules/*, GET
+p, tenant, /api/rules/*, PATCH
+p, tenant, /api/rules/*, DELETE
 p, superadmin, /api/*, *
 `
 

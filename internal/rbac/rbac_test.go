@@ -47,6 +47,15 @@ func TestEnforce(t *testing.T) {
 		{"tenant POST /api/auth/logout", RoleTenant, http.MethodPost, "/api/auth/logout", true},
 		{"tenant GET /api/auth/me", RoleTenant, http.MethodGet, "/api/auth/me", true},
 		{"tenant POST /api/auth/change-password", RoleTenant, http.MethodPost, "/api/auth/change-password", true},
+		// 规则与「规则 ↔ 短链」关联
+		{"tenant GET /api/rules", RoleTenant, http.MethodGet, "/api/rules", true},
+		{"tenant POST /api/rules", RoleTenant, http.MethodPost, "/api/rules", true},
+		{"tenant GET /api/rules/options", RoleTenant, http.MethodGet, "/api/rules/options", true},
+		{"tenant GET /api/rules/5", RoleTenant, http.MethodGet, "/api/rules/5", true},
+		{"tenant PATCH /api/rules/5", RoleTenant, http.MethodPatch, "/api/rules/5", true},
+		{"tenant DELETE /api/rules/5", RoleTenant, http.MethodDelete, "/api/rules/5", true},
+		{"tenant GET /api/links/5/rules", RoleTenant, http.MethodGet, "/api/links/5/rules", true},
+		{"tenant PUT /api/links/5/rules", RoleTenant, http.MethodPut, "/api/links/5/rules", true},
 		// keyMatch3 贪婪语义:/* 匹配任意多段后缀,故 /api/domains/* 与 /api/links/* 也覆盖深层路径
 		{"tenant GET /api/domains/5/recheck", RoleTenant, http.MethodGet, "/api/domains/5/recheck", true},
 		{"tenant GET /api/links/5/visits/extra", RoleTenant, http.MethodGet, "/api/links/5/visits/extra", true},
@@ -62,6 +71,10 @@ func TestEnforce(t *testing.T) {
 		{"tenant POST /api/config", RoleTenant, http.MethodPost, "/api/config", false},
 		{"tenant POST /api/links/5/visits", RoleTenant, http.MethodPost, "/api/links/5/visits", false},
 		{"tenant PUT /api/me", RoleTenant, http.MethodPut, "/api/me", false},
+		// 关联只接受 GET/PUT:POST /api/links/5/rules 未放行
+		{"tenant POST /api/links/5/rules", RoleTenant, http.MethodPost, "/api/links/5/rules", false},
+		// keyMatch3 贪婪:/* 覆盖更深层路径,与上面 /api/links/5/rules 的既有行为一致
+		{"tenant GET /api/rules/5/anything", RoleTenant, http.MethodGet, "/api/rules/5/anything", true},
 
 		// 路径不匹配:裸路径/未知路径不在任何策略条目的匹配范围内
 		{"tenant GET /api/admin", RoleTenant, http.MethodGet, "/api/admin", false},
