@@ -35,7 +35,16 @@ function normalizeLink(link: Link): Link {
 }
 
 /** 短链列表(分页,含 visits/clicks 计数;默认不含逻辑删除项) */
-export async function listLinks(query: LinkListQuery = {}): Promise<PageResult<Link>> {
+export function listLinks(page: number, pageSize?: number): Promise<PageResult<Link>>;
+export function listLinks(query?: LinkListQuery): Promise<PageResult<Link>>;
+export async function listLinks(
+  queryOrPage: LinkListQuery | number = {},
+  pageSize?: number,
+): Promise<PageResult<Link>> {
+  const query: LinkListQuery =
+    typeof queryOrPage === 'number'
+      ? { page: queryOrPage, pageSize }
+      : queryOrPage;
   const result = await get<PageResult<Link>>('/links', { ...query });
   return { ...result, items: result.items.map(normalizeLink) };
 }
