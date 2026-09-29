@@ -6,16 +6,23 @@
       :class="collapsed ? 'w-[64px]' : 'w-[224px]'"
     >
       <div
-        class="flex h-14 shrink-0 cursor-pointer select-none items-center justify-center gap-2.5"
-        @click="router.push('/domains')"
+        class="flex h-14 shrink-0 cursor-pointer select-none items-center gap-2.5 px-3.5"
+        @click="router.push('/overview')"
       >
-        <BrandMark :size="collapsed ? 30 : 32" />
-        <span v-if="!collapsed" class="text-[15px] font-bold tracking-[2px] text-white">CLOAK 后台</span>
+        <span
+          class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-ink font-mono text-[13px] font-bold text-surface shadow-xs"
+        >
+          C
+        </span>
+        <div v-if="!collapsed" class="flex flex-col leading-tight">
+          <span class="text-[14.5px] font-bold tracking-tight text-white">CLOAK</span>
+          <span class="font-mono text-[10px] tracking-wider text-slate-400 uppercase">Cloak Console</span>
+        </div>
       </div>
 
       <nav class="flex-1 overflow-y-auto px-2.5 py-2">
         <template v-for="group in navGroups" :key="group.title">
-          <p v-if="!collapsed" class="px-2.5 pt-3 pb-1.5 text-[11px] font-medium tracking-wider text-slate-500">
+          <p v-if="!collapsed" class="px-2.5 pt-3 pb-1.5 font-mono text-[10.5px] font-semibold tracking-wider text-slate-400 uppercase">
             {{ group.title }}
           </p>
           <button
@@ -25,7 +32,7 @@
             class="group mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors"
             :class="
               isActive(item.to)
-                ? 'bg-brand-600 font-medium text-white shadow-sm'
+                ? 'bg-brand-600 font-semibold text-white shadow-sm'
                 : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
             "
             :title="collapsed ? item.label : undefined"
@@ -37,8 +44,22 @@
         </template>
       </nav>
 
-      <div class="shrink-0 pb-4 pt-2 text-center text-[11px] tracking-wider text-slate-600">
-        <span v-if="!collapsed">CLOAK v0.1</span>
+      <div v-if="!collapsed" class="border-t border-white/10 px-3.5 py-3">
+        <div class="font-mono text-[10.5px] tracking-wider text-slate-400 uppercase">
+          租户 · {{ auth.tenant?.slug?.toUpperCase() || 'NORTHWIND MEDIA' }}
+        </div>
+        <div class="mt-2 flex items-center gap-2.5">
+          <span class="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 font-mono text-[11px] font-semibold text-slate-200">
+            {{ avatarInitial }}
+          </span>
+          <div class="text-[12px] leading-tight text-slate-300">
+            运营管理员
+            <div class="font-mono text-[10px] text-slate-400">{{ auth.tenant?.tier?.name || 'Agency Pro' }}</div>
+          </div>
+        </div>
+      </div>
+      <div v-else class="pb-3 pt-2 text-center font-mono text-[10px] text-slate-400">
+        C
       </div>
     </aside>
 
@@ -48,9 +69,16 @@
         <div class="absolute inset-0 bg-black/45" @click="drawerOpen = false" />
         <aside class="absolute inset-y-0 left-0 flex w-64 flex-col bg-[var(--sidebar-bg)] shadow-2xl">
           <div class="flex h-14 shrink-0 items-center justify-between px-4">
-            <div class="flex cursor-pointer items-center gap-2.5" @click="go('/domains')">
-              <BrandMark :size="28" />
-              <span class="text-[15px] font-bold tracking-[2px] text-white">CLOAK 后台</span>
+            <div class="flex cursor-pointer items-center gap-2.5" @click="go('/overview')">
+              <span
+                class="flex h-7 w-7 items-center justify-center rounded-lg bg-ink font-mono text-[13px] font-bold text-surface shadow-xs"
+              >
+                C
+              </span>
+              <div class="flex flex-col leading-tight">
+                <span class="text-[14.5px] font-bold tracking-tight text-white">CLOAK</span>
+                <span class="font-mono text-[10px] tracking-wider text-slate-400 uppercase">Cloak Console</span>
+              </div>
             </div>
             <button type="button" class="text-slate-400 hover:text-white" @click="drawerOpen = false">
               <X :size="18" />
@@ -58,13 +86,13 @@
           </div>
           <nav class="flex-1 overflow-y-auto px-2.5 py-2">
             <template v-for="group in navGroups" :key="group.title">
-              <p class="px-2.5 pt-3 pb-1.5 text-[11px] font-medium tracking-wider text-slate-500">{{ group.title }}</p>
+              <p class="px-2.5 pt-3 pb-1.5 font-mono text-[10.5px] font-semibold tracking-wider text-slate-400 uppercase">{{ group.title }}</p>
               <button
                 v-for="item in visibleItems(group)"
                 :key="item.to"
                 type="button"
                 class="mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors"
-                :class="isActive(item.to) ? 'bg-brand-600 font-medium text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'"
+                :class="isActive(item.to) ? 'bg-brand-600 font-semibold text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'"
                 @click="go(item.to)"
               >
                 <component :is="item.icon" :size="16" class="shrink-0" />
@@ -78,8 +106,8 @@
 
     <!-- ================= 主区域 ================= -->
     <div class="flex min-h-screen flex-col md:pl-[224px]" :class="collapsed ? 'md:pl-[64px]' : ''">
-      <header class="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-surface px-4 shadow-sm md:px-6">
-        <div class="flex min-w-0 items-center gap-2">
+      <header class="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-surface/90 px-4 backdrop-blur-md md:px-6">
+        <div class="flex min-w-0 items-center gap-3">
           <button
             type="button"
             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-surface-strong hover:text-ink"
@@ -89,11 +117,24 @@
             <PanelLeftOpen v-else-if="!isMobile" :size="17" />
             <Menu v-else :size="17" @click="drawerOpen = true" />
           </button>
-          <h1 class="truncate text-[15px] font-semibold text-ink">{{ routeTitle }}</h1>
+          <div class="flex min-w-0 items-center gap-2">
+            <span class="font-mono text-xs text-muted">CLOAK</span>
+            <span class="text-muted">/</span>
+            <h1 class="truncate text-[14.5px] font-semibold text-ink">{{ routeTitle }}</h1>
+          </div>
         </div>
 
-        <div class="flex shrink-0 items-center gap-2.5">
-          <AppTag v-if="auth.tenant?.tier" color="cyan">等级 · {{ auth.tenant.tier.name }}</AppTag>
+        <div class="flex shrink-0 items-center gap-3">
+          <span class="badge badge-ok hidden md:inline-flex">
+            <span class="dot dot-live"></span>
+            8/8 边缘节点正常
+          </span>
+          <span class="badge badge-neutral hidden lg:inline-flex">
+            规则 v2.14.0
+          </span>
+          <AppTag v-if="auth.tenant?.tier" color="cyan" class="hidden sm:inline-flex">
+            等级 · {{ auth.tenant.tier.name }}
+          </AppTag>
 
           <button
             type="button"
@@ -166,13 +207,18 @@ import {
   ChevronDown,
   Crown,
   Globe,
+  LayoutDashboard,
   Link2,
   LogOut,
   Menu,
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  Radio,
+  Send,
   Settings,
+  ShieldCheck,
+  Sliders,
   Sun,
   User,
   X,
@@ -232,11 +278,21 @@ watch(
 
 const navGroups: NavGroup[] = [
   {
-    title: '管理',
+    title: '控制台',
     items: [
-      { to: '/domains', label: '域名', icon: Globe },
-      { to: '/links', label: '短链', icon: Link2 },
-      { to: '/stats', label: '统计', icon: BarChart3 },
+      { to: '/overview', label: '总览', icon: LayoutDashboard },
+      { to: '/links', label: '短链与目标', icon: Link2 },
+      { to: '/rules', label: '规则引擎', icon: Sliders },
+      { to: '/visit-stream', label: '访问决策流', icon: Radio },
+      { to: '/insights', label: '数据洞察', icon: BarChart3 },
+    ],
+  },
+  {
+    title: '配置',
+    items: [
+      { to: '/rules#lists', label: '名单库', icon: ShieldCheck },
+      { to: '/domains', label: '域名池', icon: Globe },
+      { to: '/insights#postback', label: '转化回传', icon: Send },
     ],
   },
   {
@@ -253,7 +309,14 @@ function visibleItems(group: NavGroup): NavItem[] {
 }
 
 function isActive(to: string): boolean {
-  return route.path === to || route.path.startsWith(to + '/');
+  if (to.includes('#')) {
+    const [path, hash] = to.split('#');
+    return route.path === path && route.hash === '#' + hash;
+  }
+  if (route.hash && (to === '/rules' || to === '/insights')) {
+    return false;
+  }
+  return route.path === to || (to !== '/' && route.path.startsWith(to + '/'));
 }
 
 const routeTitle = computed(() => (route.meta.title as string | undefined) ?? 'CLOAK 后台');

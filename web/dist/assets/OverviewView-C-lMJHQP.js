@@ -1,0 +1,1 @@
+import{_ as t,o,p as a,e}from"./index-C_SylhgN.js";const c={},n={class:"space-y-6"};function r(l,s){return o(),a("div",n,[...s[0]||(s[0]=[e("div",{class:"panel p-6"},[e("h2",{class:"text-lg font-semibold"},"系统总览"),e("p",{class:"text-sm text-muted"},"加载中...")],-1)])])}const i=t(c,[["render",r]]);export{i as default};

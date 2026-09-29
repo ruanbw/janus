@@ -40,13 +40,19 @@ const router = createRouter({
     {
       path: '/',
       component: AdminLayout,
-      redirect: '/domains',
+      redirect: '/overview',
       children: [
+        {
+          path: 'overview',
+          name: 'overview',
+          component: () => import('@/views/overview/OverviewView.vue'),
+          meta: { title: '系统总览' },
+        },
         {
           path: 'domains',
           name: 'domains',
           component: () => import('@/views/domains/DomainsView.vue'),
-          meta: { title: '域名' },
+          meta: { title: '域名池' },
         },
         {
           path: 'domains/new',
@@ -58,7 +64,7 @@ const router = createRouter({
           path: 'links',
           name: 'links',
           component: () => import('@/views/links/LinksView.vue'),
-          meta: { title: '短链' },
+          meta: { title: '短链与目标' },
         },
         {
           path: 'links/new',
@@ -71,6 +77,24 @@ const router = createRouter({
           name: 'link-edit',
           component: () => import('@/views/links/LinkFormView.vue'),
           meta: { title: '编辑短链' },
+        },
+        {
+          path: 'rules',
+          name: 'rules',
+          component: () => import('@/views/rules/RuleEngineView.vue'),
+          meta: { title: '规则引擎' },
+        },
+        {
+          path: 'visit-stream',
+          name: 'visit-stream',
+          component: () => import('@/views/visits/VisitStreamView.vue'),
+          meta: { title: '访问决策流' },
+        },
+        {
+          path: 'insights',
+          name: 'insights',
+          component: () => import('@/views/insights/InsightsView.vue'),
+          meta: { title: '数据洞察' },
         },
         {
           path: 'stats',

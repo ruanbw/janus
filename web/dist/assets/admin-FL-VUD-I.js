@@ -1,1 +1,0 @@
-import{P as t,R as e,S as i}from"./index-Jl8hJC0e.js";function s(){return t("/admin/tenants")}function u(){return t("/admin/tiers")}function o(n){return t(`/admin/tenants/${n}`)}function m(n,a){return e(`/admin/tenants/${n}`,a)}function d(n){return i(`/admin/domains/${n}`)}export{u as a,o as g,s as l,d as r,m as u};
