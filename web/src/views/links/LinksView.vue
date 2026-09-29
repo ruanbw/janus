@@ -145,13 +145,11 @@
         <table class="tbl" id="linkTable">
           <thead>
             <tr>
-              <th class="shrink">短码</th>
-              <th class="shrink">承载域名</th>
+              <th class="shrink">短链链接</th>
               <th class="shrink">类型</th>
               <th>出口目标 URL</th>
               <th class="num">24h 访问</th>
               <th class="num">转化点击</th>
-              <th class="num">CTR</th>
               <th class="shrink">状态</th>
               <th class="shrink">启用</th>
               <th class="shrink">操作</th>
@@ -160,7 +158,7 @@
           <tbody>
             <!-- 加载态 -->
             <tr v-if="loading && links.length === 0">
-              <td colspan="10" class="empty">
+              <td colspan="8" class="empty">
                 <div class="flex items-center justify-center gap-2 text-muted py-6">
                   <RefreshCw class="animate-spin" :size="16" />
                   正在加载短链数据...
@@ -170,7 +168,7 @@
 
             <!-- 空状态 -->
             <tr v-else-if="filteredLinks.length === 0">
-              <td colspan="10" class="py-8">
+              <td colspan="8" class="py-8">
                 <AppEmpty
                   :description="links.length === 0 ? '暂无短链记录，请点击下方按钮创建第一条短链' : '未找到符合当前筛选条件的短链记录'"
                 />
@@ -202,51 +200,36 @@
               :key="link.id"
               :data-status="link.status === 'enabled' ? 'on' : 'off'"
             >
-              <!-- 短码 -->
+              <!-- 短链链接:每个关联域名一行完整短链(同短码可被多条域名承载) -->
               <td class="shrink">
-                <div class="row items-center" style="gap: 6px; flex-wrap: nowrap">
-                  <button
-                    type="button"
-                    class="linkish mono font-semibold text-left"
-                    :title="'点击编辑 ' + link.code"
-                    @click="goEdit(link)"
+                <div class="stack" style="gap: 3px">
+                  <div
+                    v-for="url in linkUrls(link)"
+                    :key="url"
+                    class="row"
+                    style="gap: 6px; flex-wrap: nowrap; min-width: 0"
                   >
-                    {{ link.code }}
-                  </button>
-                  <button
-                    type="button"
-                    class="icon-btn text-muted hover:text-fg"
-                    style="width: 22px; height: 22px; border: none; background: transparent; padding: 0"
-                    title="复制完整短链 URL"
-                    @click.stop="copyLinkUrl(link)"
-                  >
-                    <Copy :size="12" />
-                  </button>
-                  <a
-                    :href="'https://' + getPrimaryDomain(link) + '/' + link.code"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="icon-btn text-muted hover:text-fg inline-flex items-center justify-center"
-                    style="width: 22px; height: 22px; border: none; background: transparent; padding: 0"
-                    title="在新标签页测试访问短链"
-                    @click.stop
-                  >
-                    <ExternalLink :size="12" />
-                  </a>
-                </div>
-              </td>
-
-              <!-- 承载域名 -->
-              <td class="shrink mono tiny muted">
-                <div class="flex items-center gap-1.5 flex-wrap">
-                  <span>{{ getPrimaryDomain(link) }}</span>
-                  <span
-                    v-if="link.domains && link.domains.length > 1"
-                    class="badge badge-neutral micro"
-                    :title="link.domains.join(', ')"
-                  >
-                    +{{ link.domains.length - 1 }}
-                  </span>
+                    <a
+                      :href="url"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="linkish mono tiny truncate"
+                      style="max-width: 300px"
+                      :title="url + '（新标签页打开）'"
+                      @click.stop
+                    >
+                      {{ url }}
+                    </a>
+                    <button
+                      type="button"
+                      class="icon-btn"
+                      style="width: 22px; height: 22px; border: none; background: transparent; padding: 0"
+                      :title="'复制 ' + url"
+                      @click.stop="copyText(url)"
+                    >
+                      <Copy :size="12" />
+                    </button>
+                  </div>
                 </div>
               </td>
 
@@ -260,18 +243,41 @@
                 </span>
               </td>
 
-              <!-- 目标 URL -->
+              <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序 -->
               <td>
-                <div class="flex items-center gap-1.5 min-w-0 max-w-md">
-                  <span class="mono tiny truncate" :title="link.targetUrls?.[0] || '—'">
-                    {{ formatTargetDisplay(link.targetUrls) }}
-                  </span>
-                  <span
+                <div class="stack" style="gap: 3px; min-width: 0; max-width: 420px">
+                  <div
                     v-if="link.targetUrls && link.targetUrls.length > 1"
-                    class="badge badge-neutral micro shrink-0"
-                    :title="`多目标轮询 (${link.targetUrls.length} 个出口):\n` + link.targetUrls.join('\n')"
+                    class="tiny muted"
                   >
-                    +{{ link.targetUrls.length - 1 }} 轮询
+                    {{ link.targetUrls.length }} 个目标 · 轮询分发
+                  </div>
+                  <div
+                    v-for="(url, i) in link.targetUrls || []"
+                    :key="url + '-' + i"
+                    class="row"
+                    style="gap: 6px; flex-wrap: nowrap; min-width: 0"
+                  >
+                    <span
+                      v-if="link.targetUrls && link.targetUrls.length > 1"
+                      class="badge badge-neutral micro shrink-0"
+                      :title="'轮询顺序第 ' + (i + 1) + ' 位'"
+                    >
+                      {{ i + 1 }}
+                    </span>
+                    <span
+                      class="mono tiny truncate"
+                      style="max-width: 340px"
+                      :title="url"
+                    >
+                      {{ url }}
+                    </span>
+                  </div>
+                  <span
+                    v-if="!link.targetUrls || link.targetUrls.length === 0"
+                    class="tiny muted"
+                  >
+                    —
                   </span>
                 </div>
               </td>
@@ -284,11 +290,6 @@
               <!-- 转化点击 -->
               <td class="num">
                 {{ link.linkType === 'landing' ? (link.clicks || 0).toLocaleString() : '—' }}
-              </td>
-
-              <!-- CTR -->
-              <td class="num">
-                {{ getLinkCtr(link) }}
               </td>
 
               <!-- 状态 -->
@@ -474,7 +475,6 @@ import {
   ArrowDown,
   ArrowUp,
   Copy,
-  ExternalLink,
   FileDown,
   Pencil,
   Plus,
@@ -655,14 +655,11 @@ function getPrimaryDomain(link: Link): string {
   return domains.value[0]?.fqdn || '—';
 }
 
-function formatTargetDisplay(urls: string[] | undefined): string {
-  if (!urls || urls.length === 0) return '—';
-  try {
-    const u = new URL(urls[0]);
-    return `${u.hostname}${u.pathname !== '/' ? u.pathname : ''}`;
-  } catch {
-    return urls[0];
-  }
+/** 短链完整 URL 列表:每个关联域名一行(无关联域名时回退到平台默认域名)。 */
+function linkUrls(link: Link): string[] {
+  const hosts =
+    link.domains && link.domains.length > 0 ? link.domains : [getPrimaryDomain(link)];
+  return hosts.map((host) => `https://${host}/${link.code}`);
 }
 
 function getLinkCtr(link: Link): string {
@@ -672,12 +669,10 @@ function getLinkCtr(link: Link): string {
   return `${((link.clicks / link.visits) * 100).toFixed(2)}%`;
 }
 
-async function copyLinkUrl(link: Link) {
-  const fqdn = getPrimaryDomain(link);
-  const url = `https://${fqdn}/${link.code}`;
+async function copyText(text: string) {
   try {
-    await navigator.clipboard.writeText(url);
-    message.success('已复制短链: ' + url);
+    await navigator.clipboard.writeText(text);
+    message.success('已复制: ' + text);
   } catch {
     message.error('复制失败，请手动复制');
   }
