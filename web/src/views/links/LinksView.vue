@@ -93,12 +93,12 @@
       </div>
 
       <!-- 搜索与筛选工具栏 -->
-      <div class="panel-bd" style="padding-bottom: 0">
+      <div class="panel-bd">
         <div class="toolbar">
           <div class="relative grow min-w-[200px]">
             <input
               v-model="keyword"
-              class="input w-full pl-8"
+              class="input input-icon"
               id="linkSearch"
               placeholder="搜索短码、域名或目标 URL…"
               aria-label="搜索短链"

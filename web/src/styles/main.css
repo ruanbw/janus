@@ -684,6 +684,18 @@ body {
   font-size: 12.5px;
 }
 
+/* 带前置图标的输入框：为图标预留 32px 左内边距。
+   注意：本文件样式未进 @layer，优先级高于 Tailwind 工具类，
+   故 Tailwind 的 pl-8 / pr-8 会被上面的 padding 简写覆盖，必须改用这里的类。 */
+.input-icon {
+  padding-left: 32px;
+}
+
+/* 带后置操作按钮（清空/显隐）的输入框 */
+.input-affix {
+  padding-right: 32px;
+}
+
 .input:focus,
 .select:focus,
 .textarea:focus {
@@ -799,10 +811,14 @@ body {
   flex-wrap: wrap;
 }
 
-.toolbar .input,
+/* 工具栏内的下拉按内容自适应宽度；输入框保持 100% 以填满外层 .grow 容器 */
 .toolbar .select {
   min-height: 32px;
   width: auto;
+}
+
+.toolbar .input {
+  min-height: 32px;
 }
 
 .toolbar .grow {

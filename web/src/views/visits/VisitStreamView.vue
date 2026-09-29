@@ -130,7 +130,7 @@
           <div class="relative grow min-w-[240px]">
             <input
               v-model="searchQuery"
-              class="input grow w-full pl-8"
+              class="input input-icon"
               id="vSearch"
               placeholder="搜索真实 IP、Referrer、UA 或短码…"
               aria-label="搜索访问"

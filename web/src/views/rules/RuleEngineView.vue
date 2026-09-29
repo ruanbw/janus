@@ -62,7 +62,7 @@
         </div>
       </div>
 
-      <div class="panel-bd" style="padding-bottom: 0">
+      <div class="panel-bd">
         <div class="toolbar">
           <!-- 动作过滤分段器 -->
           <div class="seg-filter" id="actFilter" role="group" aria-label="按动作过滤">
@@ -82,7 +82,7 @@
           <div class="relative grow min-w-[200px]">
             <input
               v-model="searchKeyword"
-              class="input grow pr-8"
+              class="input input-affix"
               id="ruleSearch"
               placeholder="搜索规则名、编号或条件内容…"
               aria-label="搜索规则"
