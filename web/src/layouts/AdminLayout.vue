@@ -105,7 +105,10 @@
     </Transition>
 
     <!-- ================= 主区域 ================= -->
-    <div class="flex min-h-screen flex-col md:pl-[224px]" :class="collapsed ? 'md:pl-[64px]' : ''">
+    <div
+      class="flex min-h-screen flex-col transition-[padding] duration-200 ease-out md:pl-[224px]"
+      :class="collapsed ? 'md:pl-[64px]' : ''"
+    >
       <header class="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-surface/90 px-4 backdrop-blur-md md:px-6">
         <div class="flex min-w-0 items-center gap-3">
           <button
@@ -186,7 +189,8 @@
         </div>
       </header>
 
-      <main class="mx-auto w-full max-w-[1440px] flex-1 px-4 py-5 md:px-6">
+      <!-- 内容宽度跟随侧边栏伸缩:不加固定 max-width,否则宽屏下收缩侧边栏时右侧不会变宽 -->
+      <main class="w-full flex-1 px-4 py-5 md:px-6">
         <router-view v-slot="{ Component }">
           <transition name="page" mode="out-in">
             <component :is="Component" :key="route.fullPath" />
