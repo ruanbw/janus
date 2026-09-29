@@ -681,7 +681,7 @@
                 v-model="simInput.ip"
                 class="input mono"
                 id="simIp"
-                placeholder="202.159.44.7"
+                placeholder="例如 1.2.3.4"
               />
             </div>
             <div class="field">
@@ -834,8 +834,11 @@
           </div>
 
           <div class="panel-bd">
+            <div v-if="simTraceSteps.length === 0" class="empty py-8 text-center text-xs text-muted">
+              请在左侧输入访客参数并点击「运行模拟」，系统将根据当前启用的规则链路生成决策推演。
+            </div>
             <!-- 链式回放步骤 -->
-            <div class="trace" id="simTrace">
+            <div v-else class="trace" id="simTrace">
               <div
                 v-for="step in simTraceSteps"
                 :key="step.ruleId"
@@ -2025,10 +2028,10 @@ function saveCurrentRule() {
 const isSimulating = ref(false);
 
 const simInput = reactive({
-  url: 'https://go.northwind-media.com/vip-access?ttclid=9d1f2a7c',
-  ip: '202.159.44.7',
-  ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1',
-  lang: 'pt-BR,pt;q=0.9,en-US;q=0.8',
+  url: typeof window !== 'undefined' ? `${window.location.origin}/promo` : 'https://example.com/promo',
+  ip: '',
+  ua: typeof navigator !== 'undefined' ? navigator.userAgent : 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15',
+  lang: typeof navigator !== 'undefined' ? navigator.language : 'zh-CN,zh;q=0.9,en;q=0.8',
 });
 
 function syncSimInputFromQuery() {
@@ -2074,90 +2077,15 @@ const simProfile = reactive({
 });
 
 const simVerdict = reactive({
-  title: '命中 R-004 · 放行',
-  badgeClass: 'badge-ok',
-  accentColor: 'var(--accent)',
-  cardStyle: 'background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, transparent);',
-  actionText: '放行 → 目标池 B · 第 1 个出口',
-  detailText: '302 → https://northwind-media.com/landing/pt-special-offer',
+  title: '待运行求值',
+  badgeClass: 'badge-neutral',
+  accentColor: 'var(--muted)',
+  cardStyle: '',
+  actionText: '输入访客参数后点击「运行模拟」',
+  detailText: '系统将解析当前输入的访客画像，并按优先级依次匹配启用的规则集',
 });
 
-const simTraceSteps = ref<TraceStep[]>([
-  {
-    ruleId: 'R-006',
-    ruleName: '内部测试强制放行',
-    status: 'skip',
-    statusText: '未命中',
-    badgeClass: 'badge-neutral',
-    facts: [
-      { text: 'IP 段 202.159.44.7', hit: false },
-      { text: '名单 L-01 内部测试网段', hit: false },
-    ],
-    whyText: 'IP 不在内部测试名单 L-01 中',
-    latency: '0.2ms',
-  },
-  {
-    ruleId: 'R-001',
-    ruleName: '目标市场 · 移动端放行',
-    status: 'skip',
-    statusText: '未命中',
-    badgeClass: 'badge-neutral',
-    facts: [
-      { text: '国家 BR ∉ [US, CA, GB, AU, DE]', hit: false },
-      { text: '设备类型 = 移动', hit: true },
-      { text: '系统 = iOS 18.1', hit: true },
-    ],
-    whyText: '国家 BR 不在北美与欧洲五国白名单内',
-    latency: '0.3ms',
-  },
-  {
-    ruleId: 'R-002',
-    ruleName: '拦截 · 平台审查爬虫',
-    status: 'skip',
-    statusText: '未命中',
-    badgeClass: 'badge-neutral',
-    facts: [
-      { text: 'UA 非爬虫/bot', hit: false },
-      { text: 'IP ∉ L-02 审查爬虫段', hit: false },
-    ],
-    whyText: '未匹配任何审查爬虫特征',
-    latency: '0.2ms',
-  },
-  {
-    ruleId: 'R-003',
-    ruleName: '拦截 · 代理与机房出口',
-    status: 'skip',
-    statusText: '未命中',
-    badgeClass: 'badge-neutral',
-    facts: [
-      { text: 'IP 属性 = 住宅网段', hit: false },
-      { text: '非代理 / 非机房', hit: false },
-    ],
-    whyText: '威胁情报无代理记录',
-    latency: '0.3ms',
-  },
-  {
-    ruleId: 'R-004',
-    ruleName: '语言分流 · 葡语市场',
-    status: 'hit',
-    statusText: '命中',
-    badgeClass: 'badge-ok',
-    facts: [
-      { text: '语言 = pt-BR', hit: true },
-      { text: '设备类型 ≠ 爬虫', hit: true },
-    ],
-    whyText: '符合葡语市场定向规则，立即执行放行裁决',
-    latency: '0.4ms',
-  },
-  {
-    ruleId: 'R-005',
-    ruleName: '设备型号白名单',
-    status: 'skip',
-    statusText: '已跳过',
-    badgeClass: 'badge-neutral',
-    whyText: '首条命中即裁决 (First-Match-Wins)，后续规则不再求值',
-  },
-]);
+const simTraceSteps = ref<TraceStep[]>([]);
 
 function runSimulation() {
   isSimulating.value = true;
@@ -2312,7 +2240,7 @@ function runSimulation() {
 }
 
 function loadSampleBot() {
-  simInput.url = 'https://go.northwind-media.com/vip-access?fbclid=IwAR27abc';
+  simInput.url = 'https://example.com/promo?fbclid=IwAR27abc';
   simInput.ip = '157.240.1.35';
   simInput.ua = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
   simInput.lang = 'en-US,en;q=0.9';
@@ -2321,7 +2249,7 @@ function loadSampleBot() {
 }
 
 function loadSampleDatacenter() {
-  simInput.url = 'https://go.northwind-media.com/vip-access';
+  simInput.url = 'https://example.com/promo';
   simInput.ip = '52.95.245.14';
   simInput.ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
   simInput.lang = 'de-DE,de;q=0.9,en;q=0.8';
@@ -2330,7 +2258,7 @@ function loadSampleDatacenter() {
 }
 
 function loadSampleMobile() {
-  simInput.url = 'https://go.northwind-media.com/vip-access?ttclid=9d1f2a7c';
+  simInput.url = 'https://example.com/promo?ttclid=9d1f2a7c';
   simInput.ip = '189.45.71.13';
   simInput.ua = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1';
   simInput.lang = 'pt-BR,pt;q=0.9,en-US;q=0.8';
