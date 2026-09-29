@@ -148,8 +148,8 @@
               <th class="shrink">短链链接</th>
               <th class="shrink">类型</th>
               <th>出口目标 URL</th>
-              <th class="num">24h 访问</th>
-              <th class="num">转化点击</th>
+              <th class="num" title="累计访问次数:自短链创建以来被访问的总次数">访问次数</th>
+              <th class="num" title="落地页按钮经 SDK 回传的点击次数,仅落地页型短链有">点击次数</th>
               <th class="shrink">状态</th>
               <th class="shrink">启用</th>
               <th class="shrink">操作</th>
@@ -282,12 +282,12 @@
                 </div>
               </td>
 
-              <!-- 24h 访问 -->
+              <!-- 访问次数 -->
               <td class="num">
                 {{ (link.visits || 0).toLocaleString() }}
               </td>
 
-              <!-- 转化点击 -->
+              <!-- 点击次数 -->
               <td class="num">
                 {{ link.linkType === 'landing' ? (link.clicks || 0).toLocaleString() : '—' }}
               </td>
@@ -748,8 +748,8 @@ function exportCsv() {
     '类型',
     '重定向状态码',
     '目标URL',
-    '24h访问',
-    '转化点击',
+    '访问次数',
+    '点击次数',
     'CTR',
     '状态',
     '创建时间',
