@@ -211,7 +211,7 @@
               <th class="num" title="落地页按钮经 SDK 回传的点击次数,仅落地页型短链有">点击次数</th>
               <th class="shrink">状态</th>
               <th class="shrink">启用</th>
-              <th class="shrink">操作</th>
+              <th class="shrink col-actions">操作</th>
             </tr>
           </thead>
           <tbody>
@@ -383,7 +383,7 @@
               </td>
 
               <!-- 操作 -->
-              <td class="shrink">
+              <td class="shrink col-actions">
                 <div class="row" style="gap: 4px; flex-wrap: nowrap">
                   <button
                     type="button"
