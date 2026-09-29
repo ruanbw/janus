@@ -465,6 +465,38 @@ body {
   border-color: var(--danger);
 }
 
+/* ─── 危险操作语义色 (Danger Actions) ────────────────────────────────── */
+/* 本文件的样式未进 @layer,优先级高于 Tailwind 工具类,故视图里给按钮写
+   text-red-500 / hover:bg-red-50 会被 .btn 与 .btn-ghost 的声明盖掉(删除按钮
+   显示成普通灰)。危险语义一律走下面的类,不再依赖工具类。
+   顺序:三个新规则都排在 .btn / .btn:hover / .btn-ghost / .btn-ghost:hover /
+   .btn-danger 之后,同特异性靠后胜出,叠加使用时以红色为准。 */
+.btn-danger-solid {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+/* hover 走略深的混合红并保持白字(:active / [disabled] 继续沿用 .btn 的既有声明) */
+.btn-danger-solid:hover {
+  background: color-mix(in srgb, var(--danger) 88%, #000000);
+  border-color: color-mix(in srgb, var(--danger) 88%, #000000);
+  color: #fff;
+}
+
+.btn-ghost-danger {
+  background: transparent;
+  border-color: transparent;
+  color: var(--danger);
+}
+
+/* border-color 需显式回到 transparent,否则会露出 .btn:hover 的灰边 */
+.btn-ghost-danger:hover {
+  background: var(--danger-soft);
+  border-color: transparent;
+  color: var(--danger);
+}
+
 .btn svg {
   width: 14px;
   height: 14px;
