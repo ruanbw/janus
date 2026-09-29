@@ -105,7 +105,7 @@
             type="button"
             class="btn btn-sm btn-primary"
             id="newLink"
-            @click="openCreateDrawer"
+            @click="goCreate"
           >
             <Plus :size="14" />
             新建短链
@@ -200,7 +200,7 @@
                     v-if="links.length === 0"
                     type="button"
                     class="btn btn-sm btn-primary"
-                    @click="openCreateDrawer"
+                    @click="goCreate"
                   >
                     <Plus :size="14" />
                     新建短链
@@ -230,7 +230,7 @@
                     type="button"
                     class="linkish mono font-semibold text-left"
                     :title="'点击编辑 ' + link.code"
-                    @click="openEditDrawer(link)"
+                    @click="goEdit(link)"
                   >
                     {{ link.code }}
                   </button>
@@ -340,7 +340,7 @@
                     type="button"
                     class="btn btn-sm btn-ghost"
                     title="编辑短链"
-                    @click="openEditDrawer(link)"
+                    @click="goEdit(link)"
                   >
                     <Pencil :size="12" />
                     编辑
@@ -416,396 +416,6 @@
       </div>
     </section>
 
-    <!-- ==================== 侧边抽屉: 新建 / 编辑短链 ==================== -->
-    <Transition name="drawer-backdrop">
-      <div
-        v-if="drawerVisible"
-        class="fixed inset-0 z-40 bg-black/45 backdrop-blur-xs"
-        @click="closeDrawer"
-      />
-    </Transition>
-
-    <Transition name="drawer-slide">
-      <div
-        v-if="drawerVisible"
-        class="fixed inset-y-0 right-0 z-50 flex w-full max-w-2xl flex-col border-l border-line bg-surface shadow-2xl"
-        role="dialog"
-        aria-modal="true"
-      >
-        <!-- 抽屉头部 -->
-        <div class="panel-hd shrink-0">
-          <div>
-            <div class="eyebrow">{{ isEdit ? '短链配置 / 编辑' : '短链配置 / 新建' }}</div>
-            <h2 class="text-base font-bold tracking-tight text-ink mt-0.5">
-              {{ isEdit ? `编辑短链 · ${form.code}` : '新建短链' }}
-            </h2>
-            <p class="text-xs text-muted">
-              {{ isEdit ? '更新出口目标、落地页设置及出站处理参数' : '配置短码、承载域名、分发目标与行为参数' }}
-            </p>
-          </div>
-          <div class="row" style="gap: 8px">
-            <span class="badge badge-neutral mono">
-              {{ isEdit ? `ID · ${editingLinkId}` : 'NEW' }}
-            </span>
-            <button
-              type="button"
-              class="icon-btn text-muted hover:text-fg"
-              title="关闭抽屉"
-              @click="closeDrawer"
-            >
-              <X :size="16" />
-            </button>
-          </div>
-        </div>
-
-        <!-- 抽屉主体表单 (滚动区) -->
-        <div class="flex-1 overflow-y-auto p-5 space-y-5">
-          <!-- 模块 1: 基本设置 -->
-          <div class="panel">
-            <div class="panel-hd">
-              <div>
-                <h3 class="text-sm font-semibold">基本信息</h3>
-                <p>短链的公开标识短码与行为类型</p>
-              </div>
-            </div>
-            <div class="panel-bd stack">
-              <div class="form-grid">
-                <div class="field">
-                  <label for="drawerCode">短码</label>
-                  <input
-                    v-model="form.code"
-                    class="input mono"
-                    id="drawerCode"
-                    placeholder="留空自动生成短码"
-                    :disabled="isEdit"
-                  />
-                  <span class="hint">
-                    同一域名下短码不可重复{{ isEdit ? '（创建后短码不可更改）' : '' }}
-                  </span>
-                </div>
-
-                <div class="field">
-                  <label for="drawerDomain">承载域名</label>
-                  <select
-                    v-model="primaryDomainId"
-                    class="select"
-                    id="drawerDomain"
-                    @change="onPrimaryDomainSelectChange"
-                  >
-                    <option v-if="domains.length === 0" :value="0" disabled>
-                      正在加载域名...
-                    </option>
-                    <option
-                      v-for="d in domains"
-                      :key="d.id"
-                      :value="d.id"
-                      :disabled="d.status !== 'active'"
-                    >
-                      {{ d.fqdn }} ({{ d.origin === 'self' ? '自有' : '默认' }}){{ d.status !== 'active' ? ' - ' + (DOMAIN_STATUS_NOTE[d.status] || '未激活') : '' }}
-                    </option>
-                  </select>
-                  <span class="hint">仅已激活 (active) 域名可承载短链访问</span>
-                </div>
-
-                <!-- 多域名复选绑定 -->
-                <div v-if="domains.length > 1" class="field span-2">
-                  <label>关联承载域名（可多选）</label>
-                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-2.5 rounded border border-line bg-surface-muted/50 max-h-32 overflow-y-auto">
-                    <label
-                      v-for="d in domains"
-                      :key="d.id"
-                      class="flex items-center gap-2 text-xs cursor-pointer select-none"
-                      :class="d.status !== 'active' ? 'opacity-50' : ''"
-                    >
-                      <input
-                        type="checkbox"
-                        :value="d.id"
-                        v-model="form.domainIds"
-                        :disabled="d.status !== 'active'"
-                      />
-                      <span class="mono truncate">{{ d.fqdn }}</span>
-                      <span class="badge badge-neutral micro shrink-0">
-                        {{ d.origin === 'self' ? '自有' : '默认' }}
-                      </span>
-                    </label>
-                  </div>
-                </div>
-
-                <div class="field span-2">
-                  <label>短链类型</label>
-                  <div class="segmented" style="align-self: start">
-                    <button
-                      type="button"
-                      :aria-pressed="form.linkType === 'redirect'"
-                      @click="form.linkType = 'redirect'"
-                    >
-                      跳转型 · 访问即重定向
-                    </button>
-                    <button
-                      type="button"
-                      :aria-pressed="form.linkType === 'landing'"
-                      @click="form.linkType = 'landing'"
-                    >
-                      落地页型 · 先到落地页
-                    </button>
-                  </div>
-                </div>
-
-                <div v-if="form.linkType === 'redirect'" class="field span-2">
-                  <label for="drawerRedirectStatus">重定向状态码</label>
-                  <select v-model="form.redirectStatus" class="select" id="drawerRedirectStatus">
-                    <option value="302">302 · 临时重定向（推荐，不缓存目标地址）</option>
-                    <option value="301">301 · 永久重定向（浏览器与搜索引擎长期缓存）</option>
-                  </select>
-                </div>
-
-                <div v-if="isEdit" class="field span-2">
-                  <label>短链状态</label>
-                  <div class="segmented" style="align-self: start">
-                    <button
-                      type="button"
-                      :aria-pressed="form.status === 'enabled'"
-                      @click="form.status = 'enabled'"
-                    >
-                      正常启用
-                    </button>
-                    <button
-                      type="button"
-                      :aria-pressed="form.status === 'disabled'"
-                      @click="form.status = 'disabled'"
-                    >
-                      暂停停用 (返回 404)
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 模块 2: 目标 URL 列表 (多目标动态管理) -->
-          <div class="panel">
-            <div class="panel-hd">
-              <div>
-                <h3 class="text-sm font-semibold">目标 URL (出口)</h3>
-                <p>短链的最终目的地。配置多个目标时，系统将按顺序轮询（Round-Robin）选择出口。</p>
-              </div>
-              <button type="button" class="btn btn-sm" @click="addTargetUrl">
-                <Plus :size="13" /> 添加目标
-              </button>
-            </div>
-            <div class="panel-bd stack-sm">
-              <div
-                v-for="(target, idx) in form.targetUrls"
-                :key="idx"
-                class="flex items-center gap-2"
-              >
-                <span class="mono micro muted w-6 text-right shrink-0">#{{ idx + 1 }}</span>
-                <input
-                  v-model="form.targetUrls[idx]"
-                  class="input mono grow"
-                  placeholder="https://example.com/dest"
-                />
-                <button
-                  type="button"
-                  class="icon-btn text-muted hover:text-fg"
-                  :disabled="idx === 0"
-                  title="上移（提高轮询次序）"
-                  @click="moveTargetUp(idx)"
-                >
-                  <ArrowUp :size="14" />
-                </button>
-                <button
-                  type="button"
-                  class="icon-btn text-muted hover:text-fg"
-                  :disabled="idx === form.targetUrls.length - 1"
-                  title="下移（延后轮询次序）"
-                  @click="moveTargetDown(idx)"
-                >
-                  <ArrowDown :size="14" />
-                </button>
-                <button
-                  type="button"
-                  class="icon-btn text-red-500 hover:text-red-600"
-                  :disabled="form.targetUrls.length <= 1"
-                  title="移除该目标"
-                  @click="removeTargetUrl(idx)"
-                >
-                  <Trash2 :size="14" />
-                </button>
-              </div>
-              <p class="hint">开放重定向支持任意合法协议 URL（如 https://、http:// 或自定义 scheme）</p>
-            </div>
-          </div>
-
-          <!-- 模块 3: 落地页设置 (仅落地页型显示) -->
-          <div v-show="form.linkType === 'landing'" class="panel">
-            <div class="panel-hd">
-              <div>
-                <h3 class="text-sm font-semibold">落地页设置</h3>
-                <p>访问者访问短链时先到达落地页，落地页内按钮经平台 JS SDK 回传点击并跳转至目标 URL。</p>
-              </div>
-            </div>
-            <div class="panel-bd stack">
-              <div class="form-grid">
-                <div class="field span-2">
-                  <label>落地页来源</label>
-                  <div class="segmented" style="align-self: start">
-                    <button
-                      type="button"
-                      :aria-pressed="form.landingSource === 'url'"
-                      @click="form.landingSource = 'url'"
-                    >
-                      填写落地页 URL
-                    </button>
-                    <button
-                      type="button"
-                      :aria-pressed="form.landingSource === 'upload'"
-                      @click="form.landingSource = 'upload'"
-                    >
-                      上传静态 ZIP 包
-                    </button>
-                  </div>
-                </div>
-
-                <!-- 来源: URL -->
-                <div v-if="form.landingSource === 'url'" class="field span-2">
-                  <label for="drawerLandingUrl">落地页地址 (URL)</label>
-                  <input
-                    v-model="form.landingUrl"
-                    class="input mono"
-                    id="drawerLandingUrl"
-                    placeholder="https://yourbrand.com/landing-page"
-                  />
-                  <span class="hint">访问短链时将先重定向至此地址；落地页按钮经 JS SDK 触发转化回传</span>
-                </div>
-
-                <!-- 来源: Upload -->
-                <div v-else class="field span-2">
-                  <label>静态落地页压缩包</label>
-                  <div class="row" style="gap: 8px">
-                    <input
-                      v-model="landingFileSummary"
-                      class="input mono grow text-xs"
-                      readonly
-                    />
-                    <input
-                      ref="landingFileInput"
-                      type="file"
-                      accept=".zip"
-                      class="hidden"
-                      @change="handleLandingFileUpload"
-                    />
-                    <button
-                      type="button"
-                      class="btn btn-sm"
-                      :disabled="uploadingZip"
-                      @click="triggerLandingFileUpload"
-                    >
-                      <Upload :size="13" />
-                      {{ uploadingZip ? '上传中...' : '选择 ZIP' }}
-                    </button>
-                  </div>
-                  <span class="hint">平台直接托管在「短码/」路径下，压缩包根目录下必须包含 index.html</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 模块 4: 出站参数处理 -->
-          <div class="panel">
-            <div class="panel-hd">
-              <div>
-                <h3 class="text-sm font-semibold">出站处理配置</h3>
-                <p>控制短链重定向时携带与剥离的参数特征</p>
-              </div>
-            </div>
-            <div class="panel-bd stack-sm">
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <label class="flex items-center gap-2.5 text-xs cursor-pointer select-none">
-                  <span class="switch">
-                    <input type="checkbox" v-model="outbound.stripReferer" />
-                    <i></i>
-                  </span>
-                  <span>剥离 Referer（不向目标站泄露来源）</span>
-                </label>
-                <label class="flex items-center gap-2.5 text-xs cursor-pointer select-none">
-                  <span class="switch">
-                    <input type="checkbox" v-model="outbound.passParams" />
-                    <i></i>
-                  </span>
-                  <span>透传查询参数（继承 UTM 与广告 ID）</span>
-                </label>
-                <label class="flex items-center gap-2.5 text-xs cursor-pointer select-none">
-                  <span class="switch">
-                    <input type="checkbox" v-model="outbound.hideTarget" />
-                    <i></i>
-                  </span>
-                  <span>隐藏真实目标（Location 外不留痕迹）</span>
-                </label>
-                <label class="flex items-center gap-2.5 text-xs cursor-pointer select-none">
-                  <span class="switch">
-                    <input type="checkbox" v-model="outbound.randomDelay" />
-                    <i></i>
-                  </span>
-                  <span>加随机微延迟 0–300ms（弱化时序指纹）</span>
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <!-- 模块 5: 短链地址预览 -->
-          <div class="panel">
-            <div class="panel-hd">
-              <div>
-                <h3 class="text-sm font-semibold">短链地址预览</h3>
-                <p>生成并核对对外分发的短链 URL</p>
-              </div>
-              <button
-                type="button"
-                class="btn btn-sm"
-                @click="copyPreviewUrl"
-              >
-                <Copy :size="13" /> 复制短链
-              </button>
-            </div>
-            <div class="panel-bd">
-              <div class="p-3 bg-surface-muted rounded border border-line mono text-xs break-all text-ink font-semibold flex items-center justify-between gap-2">
-                <span>{{ previewUrl }}</span>
-                <span class="badge badge-neutral micro shrink-0">
-                  {{ form.linkType === 'landing' ? '落地页型' : '跳转型' }}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 抽屉底栏 -->
-        <div class="panel-ft row-between shrink-0 bg-surface">
-          <span class="tiny text-muted">
-            目标出口数：{{ validTargetsCount }} 个 · 绑定域名：{{ form.domainIds.length }} 个
-          </span>
-          <div class="row" style="gap: 8px">
-            <button
-              type="button"
-              class="btn btn-sm"
-              :disabled="saving"
-              @click="closeDrawer"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              class="btn btn-sm btn-primary"
-              :disabled="saving"
-              @click="handleSaveLink"
-            >
-              {{ saving ? '保存中...' : (isEdit ? '保存修改' : '确认创建') }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
-
     <!-- ==================== 模态框: 批量导入短链 ==================== -->
     <div
       v-if="showBatchModal"
@@ -879,7 +489,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import dayjs from 'dayjs';
 import {
   ArrowDown,
@@ -923,6 +533,7 @@ import { formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 
 const route = useRoute();
+const router = useRouter();
 const auth = useAuthStore();
 
 const DOMAIN_STATUS_NOTE: Record<string, string> = {
@@ -1015,73 +626,6 @@ const filteredLinks = computed(() => {
   });
 });
 
-// ==================== 抽屉表单状态 ====================
-const drawerVisible = ref(false);
-const editingLinkId = ref<number | null>(null);
-const isEdit = computed(() => editingLinkId.value !== null && editingLinkId.value > 0);
-const saving = ref(false);
-const uploadingZip = ref(false);
-const landingFileInput = ref<HTMLInputElement | null>(null);
-const pendingLandingFile = ref<File | null>(null);
-const landingFileSummary = ref('未上传压缩包');
-
-const form = reactive({
-  code: '',
-  domainIds: [] as number[],
-  linkType: 'redirect' as LinkType,
-  redirectStatus: '302' as RedirectStatus,
-  status: 'enabled' as LinkStatus,
-  targetUrls: ['https://'],
-  landingSource: 'url' as LandingSource,
-  landingUrl: '',
-});
-
-const outbound = reactive({
-  stripReferer: true,
-  passParams: false,
-  hideTarget: true,
-  randomDelay: false,
-});
-
-const primaryDomainId = computed({
-  get: () => {
-    if (form.domainIds.length > 0) return form.domainIds[0];
-    return 0;
-  },
-  set: (val: number) => {
-    if (!val) return;
-    if (!form.domainIds.includes(val)) {
-      form.domainIds = [val, ...form.domainIds.filter((id) => id !== val)];
-    }
-  },
-});
-
-function onPrimaryDomainSelectChange(e: Event) {
-  const target = e.target as HTMLSelectElement;
-  const id = Number(target.value);
-  if (id && !form.domainIds.includes(id)) {
-    form.domainIds.unshift(id);
-  }
-}
-
-const previewDomain = computed(() => {
-  const chosen = domains.value.find((d) => form.domainIds.includes(d.id));
-  if (chosen) return chosen.fqdn;
-  if (domains.value.length > 0) return domains.value[0].fqdn;
-  return 'your-domain.com';
-});
-
-const previewUrl = computed(() => {
-  const code = form.code.trim() || '自动生成';
-  return `https://${previewDomain.value}/${code}`;
-});
-
-const validTargetsCount = computed(() => {
-  return form.targetUrls
-    .map((u) => u.trim())
-    .filter((u) => u && u !== 'https://' && u !== 'http://').length;
-});
-
 // ==================== 模态框: 批量导入 ====================
 const showBatchModal = ref(false);
 const batchText = ref('');
@@ -1156,15 +700,6 @@ async function copyLinkUrl(link: Link) {
   try {
     await navigator.clipboard.writeText(url);
     message.success('已复制短链: ' + url);
-  } catch {
-    message.error('复制失败，请手动复制');
-  }
-}
-
-async function copyPreviewUrl() {
-  try {
-    await navigator.clipboard.writeText(previewUrl.value);
-    message.success('已复制预览地址: ' + previewUrl.value);
   } catch {
     message.error('复制失败，请手动复制');
   }
@@ -1291,212 +826,13 @@ function onPageSizeChange() {
   loadData();
 }
 
-// ==================== 抽屉操作 ====================
-function openCreateDrawer() {
-  editingLinkId.value = null;
-  form.code = '';
-  form.linkType = 'redirect';
-  form.redirectStatus = '302';
-  form.status = 'enabled';
-  form.targetUrls = ['https://'];
-  form.landingSource = 'url';
-  form.landingUrl = '';
-  pendingLandingFile.value = null;
-  landingFileSummary.value = '未上传压缩包';
-
-  const defaultDomain = activeDomains.value[0] || domains.value[0];
-  if (defaultDomain) {
-    form.domainIds = [defaultDomain.id];
-  } else {
-    form.domainIds = [];
-  }
-
-  drawerVisible.value = true;
+// ==================== 独立页面路由导航 ====================
+function goCreate() {
+  router.push('/links/new');
 }
 
-function openEditDrawer(link: Link) {
-  editingLinkId.value = link.id;
-  form.code = link.code;
-  form.linkType = link.linkType || 'redirect';
-  form.redirectStatus = link.redirectStatus || '302';
-  form.status = link.status || 'enabled';
-  form.landingSource = link.landingSource || 'url';
-  form.landingUrl = link.landingUrl || '';
-  pendingLandingFile.value = null;
-
-  if (link.landingUploaded) {
-    landingFileSummary.value = `${link.code}-landing.zip · 已托管 · 状态正常`;
-  } else {
-    landingFileSummary.value = '未上传压缩包';
-  }
-
-  const matched = domains.value.filter((d) => link.domains?.includes(d.fqdn)).map((d) => d.id);
-  if (matched.length > 0) {
-    form.domainIds = matched;
-  } else if (domains.value.length > 0) {
-    form.domainIds = [domains.value[0].id];
-  } else {
-    form.domainIds = [];
-  }
-
-  if (link.targetUrls && link.targetUrls.length > 0) {
-    form.targetUrls = [...link.targetUrls];
-  } else {
-    form.targetUrls = ['https://'];
-  }
-
-  drawerVisible.value = true;
-}
-
-function closeDrawer() {
-  drawerVisible.value = false;
-}
-
-function addTargetUrl() {
-  form.targetUrls.push('https://');
-}
-
-function removeTargetUrl(idx: number) {
-  if (form.targetUrls.length <= 1) {
-    message.warning('请至少保留一个出口目标');
-    return;
-  }
-  form.targetUrls.splice(idx, 1);
-}
-
-function moveTargetUp(idx: number) {
-  if (idx <= 0) return;
-  const temp = form.targetUrls[idx - 1];
-  form.targetUrls[idx - 1] = form.targetUrls[idx];
-  form.targetUrls[idx] = temp;
-}
-
-function moveTargetDown(idx: number) {
-  if (idx >= form.targetUrls.length - 1) return;
-  const temp = form.targetUrls[idx + 1];
-  form.targetUrls[idx + 1] = form.targetUrls[idx];
-  form.targetUrls[idx] = temp;
-}
-
-function triggerLandingFileUpload() {
-  landingFileInput.value?.click();
-}
-
-async function handleLandingFileUpload(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-
-  if (!file.name.endsWith('.zip')) {
-    message.error('落地页文件必须为 .zip 格式压缩包');
-    input.value = '';
-    return;
-  }
-
-  if (editingLinkId.value) {
-    uploadingZip.value = true;
-    try {
-      await uploadLanding(editingLinkId.value, file);
-      landingFileSummary.value = `${file.name} · ${(file.size / 1024).toFixed(0)} KB · 刚刚上传`;
-      message.success('落地页压缩包已上传并托管');
-      await loadData();
-    } catch (err) {
-      if (err instanceof ApiError) message.error(err.message);
-      else message.error('上传压缩包失败');
-    } finally {
-      uploadingZip.value = false;
-      input.value = '';
-    }
-  } else {
-    pendingLandingFile.value = file;
-    landingFileSummary.value = `${file.name} · ${(file.size / 1024).toFixed(0)} KB · 待创建后自动上传`;
-    message.info('压缩包已选定，将在保存短链后自动上传托管');
-    input.value = '';
-  }
-}
-
-async function handleSaveLink() {
-  const cleanedTargets = form.targetUrls
-    .map((u) => u.trim())
-    .filter((u) => u && u !== 'https://' && u !== 'http://')
-    .map((u) => {
-      if (!u.startsWith('http://') && !u.startsWith('https://')) {
-        return 'https://' + u;
-      }
-      return u;
-    });
-
-  if (cleanedTargets.length === 0) {
-    message.error('请至少配置一个有效的目标 URL');
-    return;
-  }
-
-  for (const url of cleanedTargets) {
-    try {
-      new URL(url);
-    } catch {
-      message.error(`目标 URL 格式不合法：${url}`);
-      return;
-    }
-  }
-
-  if (form.domainIds.length === 0) {
-    message.error('请至少选择一个承载域名');
-    return;
-  }
-
-  if (form.linkType === 'landing' && form.landingSource === 'url' && !form.landingUrl.trim()) {
-    message.error('落地页型（URL 来源）必须填写落地页地址');
-    return;
-  }
-
-  saving.value = true;
-  try {
-    if (editingLinkId.value) {
-      await updateLink(editingLinkId.value, {
-        targetUrls: cleanedTargets,
-        domainIds: form.domainIds,
-        redirectStatus: form.redirectStatus,
-        status: form.status,
-        linkType: form.linkType,
-        landingSource: form.landingSource,
-        landingUrl: form.landingUrl.trim() || undefined,
-      });
-      message.success(`短链「${form.code}」修改成功`);
-    } else {
-      const created = await createLink({
-        code: form.code.trim() || undefined,
-        targetUrls: cleanedTargets,
-        domainIds: form.domainIds,
-        redirectStatus: form.redirectStatus,
-        linkType: form.linkType,
-        landingSource: form.landingSource,
-        landingUrl: form.landingUrl.trim() || undefined,
-      });
-
-      if (form.linkType === 'landing' && form.landingSource === 'upload' && pendingLandingFile.value) {
-        try {
-          await uploadLanding(created.id, pendingLandingFile.value);
-        } catch {
-          message.warning('短链已创建，但落地页压缩包上传失败，可稍后在编辑中重新上传');
-        }
-      }
-
-      message.success(`短链「${created.code}」创建成功`);
-    }
-
-    closeDrawer();
-    await loadData();
-    await auth.fetchMe();
-  } catch (error) {
-    if (error instanceof ApiError) {
-      message.error(error.message);
-    } else {
-      message.error('保存短链失败，请检查输入或稍后重试');
-    }
-  } finally {
-    saving.value = false;
-  }
+function goEdit(link: Link) {
+  router.push(`/links/${link.id}/edit`);
 }
 
 // ==================== 模态框操作: 批量导入 ====================
@@ -1582,9 +918,7 @@ async function executeBatchImport() {
 // ==================== 键盘事件与路由监听 ====================
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
-    if (drawerVisible.value) {
-      closeDrawer();
-    } else if (showBatchModal.value) {
+    if (showBatchModal.value) {
       showBatchModal.value = false;
     }
   }
@@ -1595,21 +929,18 @@ onMounted(async () => {
   await loadData();
 
   if (route.query.new === '1') {
-    openCreateDrawer();
+    goCreate();
   } else if (route.query.edit) {
     const editIdOrCode = String(route.query.edit);
     const found = links.value.find(
       (l) => String(l.id) === editIdOrCode || l.code === editIdOrCode,
     );
     if (found) {
-      openEditDrawer(found);
+      goEdit(found);
     } else {
       const numId = Number(editIdOrCode);
       if (!isNaN(numId) && numId > 0) {
-        try {
-          const detail = await getLink(numId);
-          openEditDrawer(detail);
-        } catch {}
+        router.push(`/links/${numId}/edit`);
       }
     }
   }
@@ -1621,26 +952,4 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* 侧边抽屉遮罩过渡 */
-.drawer-backdrop-enter-active,
-.drawer-backdrop-leave-active {
-  transition: opacity 0.22s ease;
-}
-.drawer-backdrop-enter-from,
-.drawer-backdrop-leave-to {
-  opacity: 0;
-}
-
-/* 侧边抽屉滑入过渡 */
-.drawer-slide-enter-active {
-  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.2s ease;
-}
-.drawer-slide-leave-active {
-  transition: transform 0.2s cubic-bezier(0.4, 0, 1, 1), opacity 0.15s ease;
-}
-.drawer-slide-enter-from,
-.drawer-slide-leave-to {
-  transform: translateX(100%);
-  opacity: 0.8;
-}
 </style>
