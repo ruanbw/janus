@@ -1,8 +1,8 @@
 <template>
   <label
     :for="uid"
-    class="inline-flex cursor-pointer items-center gap-2 text-sm text-ink select-none"
-    :class="disabled ? 'cursor-not-allowed opacity-50' : ''"
+    class="inline-flex items-center gap-2 text-sm text-ink select-none"
+    :class="disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'"
   >
     <RadioGroupItem
       :id="uid"

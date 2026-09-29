@@ -73,8 +73,8 @@
                 <span class="font-medium text-ink">短链配额</span>
                 <div class="flex items-center gap-2">
                   <span
-                    class="tabular-nums font-semibold"
-                    :class="linkPercent >= 100 ? 'text-err font-bold' : 'text-ink'"
+                    class="tabular-nums"
+                    :class="linkPercent >= 100 ? 'text-err font-bold' : 'text-ink font-semibold'"
                   >
                     {{ usage?.links ?? 0 }} / {{ usage?.maxLinks ?? '-' }} 条
                   </span>
@@ -104,8 +104,8 @@
                 <span class="font-medium text-ink">自有域名配额</span>
                 <div class="flex items-center gap-2">
                   <span
-                    class="tabular-nums font-semibold"
-                    :class="domainPercent >= 100 ? 'text-err font-bold' : 'text-ink'"
+                    class="tabular-nums"
+                    :class="domainPercent >= 100 ? 'text-err font-bold' : 'text-ink font-semibold'"
                   >
                     {{ usage?.domains ?? 0 }} / {{ usage?.maxDomains ?? '-' }} 个
                   </span>

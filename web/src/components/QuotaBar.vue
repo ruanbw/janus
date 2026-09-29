@@ -1,8 +1,8 @@
 <template>
   <div
     v-if="visible"
-    class="mb-5 grid grid-cols-1 gap-3.5 rounded-xl border border-line bg-surface p-4 md:grid-cols-2"
-    :class="single ? 'md:grid-cols-1' : ''"
+    class="mb-5 grid grid-cols-1 gap-3.5 rounded-xl border border-line bg-surface p-4"
+    :class="single ? '' : 'md:grid-cols-2'"
   >
     <div v-if="linksMax !== undefined" class="flex min-w-0 items-center gap-3">
       <span class="w-16 shrink-0 text-[13px] text-ink-soft">短链配额</span>
