@@ -403,6 +403,94 @@ func (a *API) handlePurgeLink(c *gin.Context) {
 	writeNoContent(c)
 }
 
+// maxBatchLinkIDs 单次批量删除的短链数量上限(与前端多选交互上限一致)。
+const maxBatchLinkIDs = 200
+
+type batchLinkIDsReq struct {
+	IDs []int64 `json:"ids"`
+}
+
+// parseBatchLinkIDs 解析并校验批量操作请求体:ids 非空、数量 ≤ maxBatchLinkIDs、
+// 每项均为正整数;去重并保持请求顺序。非法时写 400 并返回 ok=false。
+func parseBatchLinkIDs(c *gin.Context) ([]int64, bool) {
+	var req batchLinkIDsReq
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
+		return nil, false
+	}
+	if len(req.IDs) == 0 {
+		writeErr(c, http.StatusBadRequest, errValidation, "ids 不能为空")
+		return nil, false
+	}
+	if len(req.IDs) > maxBatchLinkIDs {
+		writeErr(c, http.StatusBadRequest, errValidation, "单次最多处理 200 个短链")
+		return nil, false
+	}
+	seen := make(map[int64]bool, len(req.IDs))
+	ids := make([]int64, 0, len(req.IDs))
+	for _, id := range req.IDs {
+		if id <= 0 {
+			writeErr(c, http.StatusBadRequest, errValidation, "ids 只能包含正整数")
+			return nil, false
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids, true
+}
+
+// handleBatchDeleteLinks POST /api/links/batch-delete — 批量逻辑删除(前端多选)。
+// 等价于逐条 SoftDeleteLink:deleted_at 置位,记录/关联/访问明细保留;
+// 跨租户/已删除/不存在的 id 静默跳过(幂等),deleted 为实际置位行数。
+func (a *API) handleBatchDeleteLinks(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
+	if !ok {
+		return
+	}
+	if !a.requireCSRF(c, sess) {
+		return
+	}
+	ids, ok := parseBatchLinkIDs(c)
+	if !ok {
+		return
+	}
+	n, err := a.store.SoftDeleteLinks(c.Request.Context(), t.ID, ids)
+	if err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
+	}
+	writeJSON(c, http.StatusOK, map[string]any{"deleted": n})
+}
+
+// handleBatchPurgeLinks POST /api/links/batch-purge — 批量物理删除(前端多选)。
+// 连同 visits/link_targets/link_domains(库内 ON DELETE CASCADE)与已上传落地页文件;
+// 跨租户/不存在的 id 静默跳过(幂等),deleted 为实际删除行数。
+func (a *API) handleBatchPurgeLinks(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
+	if !ok {
+		return
+	}
+	if !a.requireCSRF(c, sess) {
+		return
+	}
+	ids, ok := parseBatchLinkIDs(c)
+	if !ok {
+		return
+	}
+	n, err := a.store.PurgeLinks(c.Request.Context(), t.ID, ids)
+	if err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
+	}
+	for _, id := range ids {
+		a.removeLandingFiles(id) // 彻底删除连同落地页文件(16);幂等,含跳过的 id
+	}
+	writeJSON(c, http.StatusOK, map[string]any{"deleted": n})
+}
+
 // ---------- 访问列表与统计(07) ----------
 
 func (a *API) handleListVisits(c *gin.Context) {

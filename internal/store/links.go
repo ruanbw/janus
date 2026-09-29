@@ -326,6 +326,37 @@ func (s *Store) PurgeLink(ctx context.Context, tenantID, id int64) error {
 	return nil
 }
 
+// SoftDeleteLinks 批量逻辑删除(deleted_at 置位,记录与关联保留)。
+// 仅作用于本租户且尚未逻辑删除的 id,跨租户/已删除/不存在的 id 静默跳过(幂等),
+// 返回实际置位行数。ids 为空直接返回 0,不生成非法的 IN () 条件。
+func (s *Store) SoftDeleteLinks(ctx context.Context, tenantID int64, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	res := s.db.WithContext(ctx).Model(&Link{}).
+		Where("tenant_id = ? AND id IN ? AND deleted_at IS NULL", tenantID, ids).
+		Update("deleted_at", gorm.Expr("now()"))
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
+// PurgeLinks 批量物理删除短链(连同 visits/link_targets/link_domains,由库内
+// ON DELETE CASCADE 承担;已逻辑删除的行也会被清除)。
+// 仅作用于本租户的 id,跨租户/不存在的 id 静默跳过(幂等),返回实际删除行数。
+// ids 为空直接返回 0,不生成非法的 IN () 条件。
+func (s *Store) PurgeLinks(ctx context.Context, tenantID int64, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	res := s.db.WithContext(ctx).Where("tenant_id = ? AND id IN ?", tenantID, ids).Delete(&Link{})
+	if res.Error != nil {
+		return 0, res.Error
+	}
+	return res.RowsAffected, nil
+}
+
 // CountActiveLinks 按"尚未物理删除"计数(含逻辑删除行),用于配额校验。
 func (s *Store) CountActiveLinks(ctx context.Context, tenantID int64) (int, error) {
 	var n int64

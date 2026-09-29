@@ -58,6 +58,8 @@ p, tenant, /api/links/*, GET
 p, tenant, /api/links/*, PATCH
 p, tenant, /api/links/*, DELETE
 p, tenant, /api/links/*/purge, POST
+p, tenant, /api/links/batch-delete, POST
+p, tenant, /api/links/batch-purge, POST
 p, tenant, /api/links/*/landing, POST
 p, tenant, /api/links/*/visits, GET
 p, tenant, /api/links/*/stats, GET

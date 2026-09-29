@@ -120,6 +120,8 @@ func New(d Deps) http.Handler {
 	prot.PATCH("/links/:id", a.handlePatchLink)
 	prot.DELETE("/links/:id", a.handleDeleteLink)
 	prot.POST("/links/:id/purge", a.handlePurgeLink)
+	prot.POST("/links/batch-delete", a.handleBatchDeleteLinks)
+	prot.POST("/links/batch-purge", a.handleBatchPurgeLinks)
 	prot.GET("/links/:id/visits", a.handleListVisits)
 	prot.GET("/links/:id/stats", a.handleLinkStats)
 	// 16:落地页上传(zip 替换式)

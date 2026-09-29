@@ -69,6 +69,8 @@
 | POST | /api/links/{id}/landing | multipart `file`(zip) | 200 link | 替换式上传落地页压缩包(需 X-CSRF-Token);非 landing 型 400;校验失败 400(见下);成功后 landingSource=upload、landingUploaded=true |
 | DELETE | /api/links/{id} | - | 204 | 逻辑删除(落地页文件保留) |
 | POST | /api/links/{id}/purge | - | 204 | 物理删除(含访问记录与落地页文件) |
+| POST | /api/links/batch-delete | `{ids: number[]}` | 200 {deleted} | 批量逻辑删除(等价逐条 DELETE,`deleted_at` 置位,记录/关联/访问明细保留);400 ids 为空/数量 > 200/含 ≤ 0 的 id;不属于本租户、已删除或不存在的 id 静默跳过(幂等),`deleted` 为实际置位行数;需 X-CSRF-Token |
+| POST | /api/links/batch-purge | `{ids: number[]}` | 200 {deleted} | 批量物理删除(连同 visits/link_targets/link_domains 走库内 ON DELETE CASCADE,并清理各短链落地页文件);400 条件同上;跨租户/不存在的 id 静默跳过(幂等),`deleted` 为实际删除行数(已逻辑删除的行同样被物理清除);需 X-CSRF-Token |
 | GET | /api/links/{id}/visits | query `page,pageSize` | 200 {items, total} | 访问列表 |
 | GET | /api/links/{id}/stats | - | 200 {visits, clicks} | 访问数与点击数 |
 

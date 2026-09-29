@@ -32,6 +32,8 @@ func TestEnforce(t *testing.T) {
 		{"tenant GET /api/links/5/stats", RoleTenant, http.MethodGet, "/api/links/5/stats", true},
 		{"tenant POST /api/links", RoleTenant, http.MethodPost, "/api/links", true},
 		{"tenant POST /api/links/5/purge", RoleTenant, http.MethodPost, "/api/links/5/purge", true},
+		{"tenant POST /api/links/batch-delete", RoleTenant, http.MethodPost, "/api/links/batch-delete", true},
+		{"tenant POST /api/links/batch-purge", RoleTenant, http.MethodPost, "/api/links/batch-purge", true},
 		{"tenant PATCH /api/links/5", RoleTenant, http.MethodPatch, "/api/links/5", true},
 		{"tenant DELETE /api/links/5", RoleTenant, http.MethodDelete, "/api/links/5", true},
 		{"tenant GET /api/domains", RoleTenant, http.MethodGet, "/api/domains", true},
