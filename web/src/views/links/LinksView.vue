@@ -92,6 +92,54 @@
         </div>
       </div>
 
+      <!-- 批量操作条:有选中项时出现 -->
+      <div
+        v-if="selectedCount > 0"
+        class="row-between flex-wrap gap-3"
+        style="padding: 8px 12px; margin: 0 14px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--accent-soft)"
+        data-od-id="link-batch-bar"
+      >
+        <div class="row tiny" style="gap: 8px">
+          <CheckSquare :size="14" />
+          <span>
+            已选
+            <strong class="text-ink font-mono">{{ selectedCount }}</strong>
+            / {{ filteredLinks.length }} 条(当前页筛选结果)
+          </span>
+        </div>
+        <div class="row" style="gap: 8px">
+          <button
+            type="button"
+            class="btn btn-sm"
+            :disabled="batchOperating"
+            @click="clearSelection"
+          >
+            <X :size="12" />
+            清空选择
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-danger"
+            :disabled="batchOperating"
+            title="批量逻辑删除:记录与历史访问明细保留,「域名/短码」不再对外重定向"
+            @click="handleBatchDelete"
+          >
+            <Trash2 :size="12" />
+            批量逻辑删除
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-danger-solid"
+            :disabled="batchOperating"
+            title="批量彻底删除:物理移除短链及全部历史访问明细,不可撤销"
+            @click="handleBatchPurge"
+          >
+            <Flame :size="12" />
+            批量彻底删除
+          </button>
+        </div>
+      </div>
+
       <!-- 搜索与筛选工具栏 -->
       <div class="panel-bd">
         <div class="toolbar">
@@ -145,6 +193,17 @@
         <table class="tbl" id="linkTable">
           <thead>
             <tr>
+              <th class="shrink">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded accent-brand-600 align-middle"
+                  :checked="allSelected"
+                  :indeterminate.prop="someSelected"
+                  :disabled="filteredLinks.length === 0"
+                  aria-label="全选当前页短链"
+                  @change="toggleSelectAll"
+                />
+              </th>
               <th class="shrink">短链链接</th>
               <th class="shrink">类型</th>
               <th>出口目标 URL</th>
@@ -158,7 +217,7 @@
           <tbody>
             <!-- 加载态 -->
             <tr v-if="loading && links.length === 0">
-              <td colspan="8" class="empty">
+              <td colspan="9" class="empty">
                 <div class="flex items-center justify-center gap-2 text-muted py-6">
                   <RefreshCw class="animate-spin" :size="16" />
                   正在加载短链数据...
@@ -168,7 +227,7 @@
 
             <!-- 空状态 -->
             <tr v-else-if="filteredLinks.length === 0">
-              <td colspan="8" class="py-8">
+              <td colspan="9" class="py-8">
                 <AppEmpty
                   :description="links.length === 0 ? '暂无短链记录，请点击下方按钮创建第一条短链' : '未找到符合当前筛选条件的短链记录'"
                 />
@@ -200,6 +259,16 @@
               :key="link.id"
               :data-status="link.status === 'enabled' ? 'on' : 'off'"
             >
+              <!-- 多选 -->
+              <td class="shrink">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 rounded accent-brand-600 align-middle"
+                  :checked="isSelected(link.id)"
+                  :aria-label="'选中短链 ' + link.code"
+                  @change="toggleSelectOne(link.id)"
+                />
+              </td>
               <!-- 短链链接:每个关联域名一行完整短链(同短码可被多条域名承载) -->
               <td class="shrink">
                 <div class="stack" style="gap: 3px">
@@ -474,8 +543,10 @@ import dayjs from 'dayjs';
 import {
   ArrowDown,
   ArrowUp,
+  CheckSquare,
   Copy,
   FileDown,
+  Flame,
   Pencil,
   Plus,
   RefreshCw,
@@ -487,6 +558,8 @@ import {
 
 import { listDomains } from '@/api/domains';
 import {
+  batchDeleteLinks,
+  batchPurgeLinks,
   createLink,
   deleteLink,
   getLink,
@@ -604,6 +677,103 @@ const filteredLinks = computed(() => {
   });
 });
 
+// ==================== 多选与批量删除 ====================
+const selectedIds = ref<number[]>([]);
+const batchOperating = ref(false);
+
+const selectedCount = computed(() => selectedIds.value.length);
+
+/** 可选范围 = 当前页 + 当前筛选结果(与列表所见一致) */
+const selectableIds = computed(() => filteredLinks.value.map((l) => l.id));
+
+const allSelected = computed(
+  () => selectableIds.value.length > 0 && selectableIds.value.every((id) => selectedIds.value.includes(id)),
+);
+
+const someSelected = computed(() => selectedCount.value > 0 && !allSelected.value);
+
+function isSelected(id: number): boolean {
+  return selectedIds.value.includes(id);
+}
+
+function toggleSelectOne(id: number) {
+  selectedIds.value = isSelected(id)
+    ? selectedIds.value.filter((x) => x !== id)
+    : [...selectedIds.value, id];
+}
+
+function toggleSelectAll() {
+  selectedIds.value = allSelected.value ? [] : [...selectableIds.value];
+}
+
+function clearSelection() {
+  selectedIds.value = [];
+}
+
+/** 选中短码摘要(超长截断),用于删除确认文案 */
+function selectedCodesSummary(limit = 8): string {
+  const codes = filteredLinks.value.filter((l) => isSelected(l.id)).map((l) => l.code);
+  if (codes.length === 0) return '';
+  const head = codes.slice(0, limit).join('、');
+  return codes.length > limit ? `${head} 等 ${codes.length} 条` : head;
+}
+
+/** 批量操作后统一收尾:清空选择、重载列表、刷新配额。ids 为确认时快照的选中项。 */
+async function afterBatchDone(
+  ids: number[],
+  ops: () => Promise<{ deleted: number }>,
+  action: string,
+) {
+  batchOperating.value = true;
+  try {
+    const res = await ops();
+    const skipped = ids.length - res.deleted;
+    message.success(
+      `已${action} ${res.deleted} 条短链` + (skipped > 0 ? `,${skipped} 条不存在或已被删除` : ''),
+    );
+    clearSelection();
+    await loadData();
+    await auth.fetchMe();
+  } catch (err) {
+    if (err instanceof ApiError) message.error(err.message);
+    else message.error(`批量${action}失败,请稍后重试`);
+  } finally {
+    batchOperating.value = false;
+  }
+}
+
+function handleBatchDelete() {
+  if (selectedIds.value.length === 0) return;
+  const ids = [...selectedIds.value];
+  const summary = selectedCodesSummary();
+  confirm({
+    title: `逻辑删除选中的 ${ids.length} 条短链?`,
+    content:
+      '删除为逻辑删除：短链记录与历史访问明细保留，但「域名/短码」将不再对外重定向。' +
+      (summary ? `\n涉及短码：${summary}` : ''),
+    okText: `确认逻辑删除 ${ids.length} 条`,
+    cancelText: '取消',
+    danger: true,
+    onOk: () => afterBatchDone(ids, () => batchDeleteLinks(ids), '逻辑删除'),
+  });
+}
+
+function handleBatchPurge() {
+  if (selectedIds.value.length === 0) return;
+  const ids = [...selectedIds.value];
+  const summary = selectedCodesSummary();
+  confirm({
+    title: `彻底清除选中的 ${ids.length} 条短链?`,
+    content:
+      '警告：彻底清除为物理删除！将永久移除这些短链及全部历史访问明细，此操作不可撤销！' +
+      (summary ? `\n涉及短码：${summary}` : ''),
+    okText: `确认彻底删除 ${ids.length} 条`,
+    cancelText: '取消',
+    danger: true,
+    onOk: () => afterBatchDone(ids, () => batchPurgeLinks(ids), '彻底删除'),
+  });
+}
+
 // ==================== 模态框: 批量导入 ====================
 const showBatchModal = ref(false);
 const batchText = ref('');
@@ -629,6 +799,15 @@ async function loadData() {
     links.value = linksRes.items;
     total.value = linksRes.total;
     domains.value = domainsRes;
+
+    // 批量删除后当前页可能被删空:回退一页再取,避免停在空白页
+    if (links.value.length === 0 && page.value > 1) {
+      page.value -= 1;
+      loading.value = false;
+      return loadData();
+    }
+    // 选中项可能已不在当前页/筛选结果内,丢弃以免后续批量操作打到陈旧 id
+    clearSelection();
 
     if (domainsRes.length > 0 && !batchDomainId.value) {
       const active = domainsRes.find((d) => d.status === 'active');

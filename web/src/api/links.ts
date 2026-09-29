@@ -95,6 +95,16 @@ export function deleteLink(id: number): Promise<void> {
   return del<void>('/links/' + id);
 }
 
+/** 批量逻辑删除:ids 非空且 ≤200;跨租户/已删除/不存在的 id 静默跳过,返回实际删除条数 */
+export function batchDeleteLinks(ids: number[]): Promise<{ deleted: number }> {
+  return post<{ deleted: number }>('/links/batch-delete', { ids });
+}
+
+/** 批量彻底删除(物理删除,含访问记录与落地页文件);语义同 batchDeleteLinks */
+export function batchPurgeLinks(ids: number[]): Promise<{ deleted: number }> {
+  return post<{ deleted: number }>('/links/batch-purge', { ids });
+}
+
 /** 彻底删除(物理删除,含访问记录) */
 export function purgeLink(id: number): Promise<void> {
   return post<void>('/links/' + id + '/purge');
