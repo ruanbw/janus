@@ -25,6 +25,106 @@ export type VisitOutcome = 'success' | 'failed';
  *  no_target 无可用目标 / landing_missing 落地页文件缺失 */
 export type VisitReason = 'link_disabled' | 'link_deleted' | 'no_target' | 'landing_missing';
 
+/* ── 规则引擎 ─────────────────────────────────────────────────────────── */
+/** 规则作用域:global 对租户全部短链生效 / links 仅对 rule_links 显式关联的短链生效 */
+export type RuleScope = 'global' | 'links';
+/** 多个条件之间的关系:all 全部满足 / any 任一满足 */
+export type RuleLogic = 'all' | 'any';
+/** 命中动作:pass 记录命中并走原目标 / redirect 改写目标 URL /
+ *  notfound 直接 404 / throttle 限流 429 */
+export type RuleAction = 'pass' | 'redirect' | 'notfound' | 'throttle';
+/** 短链侧规则的来源:inherited 继承自 scope=global 的全局规则 / scoped 来自 rule_links 显式关联 */
+export type RuleSource = 'inherited' | 'scoped';
+/** 条件判定字段:v1 收敛到后端从请求即可真实求值的 13 个
+ *  (country / asn 依赖 GeoIP 数据源,接入前恒不命中) */
+export type RuleField =
+  | 'ip'
+  | 'ipattr'
+  | 'country'
+  | 'asn'
+  | 'lang'
+  | 'ref'
+  | 'utm'
+  | 'ua'
+  | 'devtype'
+  | 'os'
+  | 'browser'
+  | 'path'
+  | 'domain';
+/**
+ * 条件运算符(后端白名单;传白名单外的值会 400)。
+ *
+ * `duplicated` 的特殊状态:后端**接受**它(在 ValidOperator 白名单内、求值也已接线到
+ * Fact.Seen 通道),但平台目前没有指纹/计数器数据源,Fact.Seen 恒为 nil,该运算符恒不命中。
+ * 即“能提交、不能生效”的假能力,故 v1 不在 RuleEngineView 的 OPERATOR_OPTIONS 里放出
+ * (后端接线已完成,接入访问计数滑动窗口后再放出)。保留在类型里是因为接口层确实可能
+ * 回传它——经 API 写入的历史数据仍要能读得出来。
+ */
+export type RuleOperator =
+  | 'in'
+  | 'not_in'
+  | 'eq'
+  | 'neq'
+  | 'contains'
+  | 'not_contains'
+  | 'gt'
+  | 'lt'
+  | 'regex'
+  | 'duplicated';
+
+/** 单条条件:values 为复数形式(逗号 / 换行分隔录入) */
+export interface RuleCondition {
+  field: RuleField;
+  operator: RuleOperator;
+  values: string[];
+}
+
+/** 规则。conditions 仅在 GET /api/rules/{id} 详情中保证完整,列表响应可能不带 */
+export interface Rule {
+  id: number;
+  name: string;
+  description: string;
+  priority: number;
+  scope: RuleScope;
+  enabled: boolean;
+  logic: RuleLogic;
+  action: RuleAction;
+  /** action=redirect 时的改写目标,其余动作为空串 */
+  destination: string;
+  conditions?: RuleCondition[];
+  /** scope=links 时已关联的短链数(全局规则恒为 0) */
+  linkCount: number;
+  /** 已关联短链的可读标识，形如 `短码@域名`(短码在租户内不唯一，必须带域名)，列表最多回传前 3 个 */
+  linkNames: string[];
+  /** 已关联短链的完整 id 列表(不受 linkNames 前 3 个限制)，供编辑器精确回填关联 */
+  linkIds: number[];
+  hits24h: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 规则下拉选项(GET /api/rules/options) */
+export interface RuleOption {
+  id: number;
+  name: string;
+  scope: RuleScope;
+  action: RuleAction;
+  priority: number;
+  enabled: boolean;
+  hits24h: number;
+}
+
+/** 短链适用的规则(GET /api/links/{id}/rules),含全局继承项与来源标记 */
+export interface LinkRule {
+  id: number;
+  name: string;
+  scope: RuleScope;
+  action: RuleAction;
+  priority: number;
+  enabled: boolean;
+  source: RuleSource;
+}
+
 /** 等级:决定租户的短链与域名数量上限 */
 export interface Tier {
   id: number;
@@ -104,6 +204,10 @@ export interface Link {
   clicks: number;
   /** landing+upload 来源且已成功上传 zip 时为 true */
   landingUploaded: boolean;
+  /** 适用的规则条数(全局规则 + 显式关联的规则) */
+  ruleCount: number;
+  /** 适用的规则名,后端最多回传前 3 个 */
+  ruleNames: string[];
   createdAt: string;
 }
 

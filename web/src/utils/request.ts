@@ -140,6 +140,11 @@ export function patch<T>(url: string, data?: unknown): Promise<T> {
   return request<T>({ method: 'PATCH', url, data });
 }
 
+/** PUT(整体替换语义,如 PUT /api/links/{id}/rules) */
+export function put<T>(url: string, data?: unknown): Promise<T> {
+  return request<T>({ method: 'PUT', url, data });
+}
+
 /** DELETE(204 无响应体,返回 void) */
 export function del<T = void>(url: string): Promise<T> {
   return request<T>({ method: 'DELETE', url });

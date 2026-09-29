@@ -315,7 +315,10 @@
             </router-link>
           </div>
           <div class="panel-bd flex-1">
-            <div class="bars">
+            <div v-if="configuredRules.length === 0" class="empty py-6 text-center text-muted">
+              暂无规则数据
+            </div>
+            <div v-else class="bars">
               <div
                 v-for="rule in configuredRules"
                 :key="rule.id"
@@ -323,12 +326,19 @@
               >
                 <span class="bar-lab">
                   <span class="font-mono font-medium">{{ rule.id }}</span> {{ rule.name }}
+                  <span
+                    v-if="rule.orphan"
+                    class="badge badge-warn"
+                    title="spec D2:作用域为「指定短链」但未关联任何短链的规则不会退化成全局规则，它永远不命中"
+                  >
+                    未关联 · 不会命中
+                  </span>
                 </span>
                 <span class="bar-track">
                   <span
                     class="bar-fill"
-                    :class="{ 't-accent': rule.action.includes('放行'), 't-danger': rule.action.includes('拦截') || rule.action.includes('404') }"
-                    :style="{ width: `${rule.hits > 0 ? Math.min(100, Math.round((rule.hits / Math.max(1, totalVisits)) * 100)) : 4}%` }"
+                    :class="{ 't-accent': rule.action === '放行', 't-danger': rule.action === '404' || rule.action === '限流 429' }"
+                    :style="{ width: `${rule.hits > 0 ? Math.min(100, Math.round((rule.hits / Math.max(1, maxRuleHits)) * 100)) : 4}%` }"
                   ></span>
                 </span>
                 <span class="bar-val">
@@ -340,7 +350,7 @@
             </div>
           </div>
           <div class="panel-ft">
-            在「规则模拟器」中输入真实访客数据可实时单步测试各条规则判定逻辑。
+            柱长为各规则的 24h 命中次数（相对最大值归一化）。逐条求值推演请到规则引擎页的「规则模拟器」。
           </div>
         </div>
 
@@ -349,18 +359,18 @@
           <div class="panel">
             <div class="panel-hd">
               <div>
-                <h2 class="text-[15px]">规则改动历史回放沙盘</h2>
-                <p>用当前规则集合重新求值已有访问样本。</p>
+                <h2 class="text-[15px]">爬虫 UA 粗筛</h2>
+                <p>仅按 UA 正则粗筛已有访问样本，不是规则求值结果。</p>
               </div>
             </div>
             <div class="panel-bd stack-sm">
               <p class="text-xs text-muted">
-                当前内存中保有 <span class="font-mono text-ink font-semibold">{{ visits.length }}</span> 条真实访问日志。点击下方按钮可在本地快速执行无副作用回放演算。
+                当前内存中保有 <span class="font-mono font-semibold text-ink">{{ visits.length }}</span> 条真实访问日志。规则求值在服务端跳转链路上执行，本页拿不到逐条裁决结果。
               </p>
               <div v-if="replayResult" class="rounded-lg border border-line bg-surface-muted p-3 text-xs space-y-1 mt-2">
-                <div class="text-ok font-semibold">✓ 回放演算完成</div>
-                <div class="text-muted">已处理样本: {{ replayResult.total }} 条</div>
-                <div class="text-muted">预期放行: {{ replayResult.passed }} 条 | 拦截过滤: {{ replayResult.blocked }} 条</div>
+                <div class="text-ok font-semibold">✓ 粗筛完成</div>
+                <div class="text-muted">已粗筛样本: {{ replayResult.total }} 条</div>
+                <div class="text-muted">命中爬虫 UA 特征: {{ replayResult.blocked }} 条 | 未命中: {{ replayResult.passed }} 条</div>
               </div>
             </div>
             <div class="panel-ft">
@@ -370,7 +380,7 @@
                 :disabled="replaying || visits.length === 0"
                 @click="runReplay"
               >
-                {{ replaying ? '回放计算中…' : '用当前规则重跑访问样本' }}
+                {{ replaying ? '粗筛中…' : '按爬虫 UA 粗筛访问样本' }}
               </button>
             </div>
           </div>
@@ -383,16 +393,22 @@
             </div>
             <div class="panel-bd stack-sm text-xs">
               <div class="row-between py-1 border-b border-line">
-                <span class="text-muted">有效短链数量</span>
-                <span class="font-mono font-semibold">{{ links.length }} 条</span>
+                <span class="text-muted">规则总数</span>
+                <span class="font-mono font-semibold">{{ rules.length }} 条</span>
               </div>
               <div class="row-between py-1 border-b border-line">
-                <span class="text-muted">短链兜底出口配置</span>
-                <span class="badge badge-ok">已就绪</span>
+                <span class="text-muted">已启用规则</span>
+                <span class="font-mono font-semibold">{{ rules.filter((r) => r.enabled).length }} 条</span>
+              </div>
+              <div class="row-between py-1 border-b border-line">
+                <span class="text-muted">未关联短链的规则</span>
+                <span :class="orphanRuleCount > 0 ? 'badge badge-warn' : 'font-mono font-semibold'">
+                  {{ orphanRuleCount > 0 ? orphanRuleCount + ' 条 · 不会命中' : '0 条' }}
+                </span>
               </div>
               <div class="row-between py-1">
-                <span class="text-muted">UA 审查机规则特征库</span>
-                <span class="badge badge-ok">已加载</span>
+                <span class="text-muted">有效短链数量</span>
+                <span class="font-mono font-semibold">{{ links.length }} 条</span>
               </div>
             </div>
           </div>
@@ -520,9 +536,10 @@ import { X } from '@lucide/vue';
 import { UAParser } from 'ua-parser-js';
 
 import { listLinks } from '@/api/links';
+import { listRules } from '@/api/rules';
 import { listVisits } from '@/api/visits';
 import AppEmpty from '@/components/ui/AppEmpty.vue';
-import type { Link, Visit } from '@/types/api';
+import type { Link, Rule, RuleAction, Visit } from '@/types/api';
 import { message } from '@/utils/toast';
 
 export type InsightsTab = 'flow' | 'rules' | 'postback';
@@ -572,6 +589,15 @@ async function fetchData() {
   try {
     const res = await listLinks(1, 100);
     links.value = res.items || [];
+
+    // 规则集表现（真实规则数据）
+    listRules({ page: 1, pageSize: 100 })
+      .then((r) => {
+        rules.value = r.items;
+      })
+      .catch(() => {
+        rules.value = [];
+      });
 
     // 并发拉取有访问量的短链明细记录
     const linksWithVisits = links.value.filter((l) => l.visits > 0);
@@ -760,23 +786,51 @@ const browserDistribution = computed<BreakdownItem[]>(() => {
 
 // ==================== Tab 2: 规则表现与沙盘 ====================
 interface RuleDisplayItem {
-  id: string;
+  id: number;
   name: string;
   action: string;
   enabled: boolean;
   hits: number;
+  /** scope=links 且未关联短链的规则永远不命中(spec D2) */
+  orphan: boolean;
 }
 
-const configuredRules = computed<RuleDisplayItem[]>(() => [
-  { id: 'R-001', name: '目标市场 · 移动端放行', action: '放行 → 目标池 A', enabled: true, hits: Math.round(totalVisits.value * 0.6) },
-  { id: 'R-002', name: '拦截 · 平台审查爬虫', action: '直接 404', enabled: true, hits: Math.round(totalVisits.value * 0.1) },
-  { id: 'R-003', name: '拦截 · 代理与机房出口', action: '限流', enabled: true, hits: Math.round(totalVisits.value * 0.05) },
-  { id: 'R-004', name: '语言分流 · 多语种市场', action: '放行 → 目标池 B', enabled: true, hits: Math.round(totalVisits.value * 0.15) },
-]);
+const RULE_ACTION_LABEL: Record<RuleAction, string> = {
+  pass: '放行',
+  redirect: '重定向',
+  notfound: '404',
+  throttle: '限流 429',
+};
+
+/** 真实规则数据（GET /api/rules），不再用占位规则编号凑图表 */
+const rules = ref<Rule[]>([]);
+
+const configuredRules = computed<RuleDisplayItem[]>(() =>
+  rules.value.map((r) => ({
+    id: r.id,
+    name: r.name,
+    action: RULE_ACTION_LABEL[r.action] ?? r.action,
+    enabled: r.enabled,
+    hits: r.hits24h || 0,
+    orphan: r.scope === 'links' && (r.linkCount || 0) === 0,
+  })),
+);
+
+/** 零关联的 scoped 规则：永远不命中，规则引擎页同样会显式告警 */
+const orphanRuleCount = computed(() => configuredRules.value.filter((r) => r.orphan).length);
+
+/** 柱长归一化基准：各规则 24h 命中次数的最大值 */
+const maxRuleHits = computed(() =>
+  configuredRules.value.reduce((acc, r) => Math.max(acc, r.hits), 0),
+);
 
 const replaying = ref(false);
 const replayResult = ref<{ total: number; passed: number; blocked: number } | null>(null);
 
+/**
+ * 爬虫 UA 粗筛：只按 UA 正则粗筛访问样本，**不是**规则求值结果
+ * （规则求值在服务端跳转链路上执行，本页拿不到逐条裁决结果）。
+ */
 function runReplay() {
   if (visits.value.length === 0) {
     message.info('当前暂无访问样本，请先产生访问记录');
@@ -792,7 +846,7 @@ function runReplay() {
       passed: total - blocked,
       blocked,
     };
-    message.success(`已完成 ${total} 条历史访问记录的规则回放`);
+    message.success(`已粗筛 ${total} 条历史访问记录`);
   }, 500);
 }
 

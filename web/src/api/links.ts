@@ -19,6 +19,7 @@ export interface LinkListQuery {
  * 归一化短链响应:契约定义 redirectStatus 为 "301"|"302" 字符串,当前后端以数字(301/302)
  * 序列化;domains 在后端极端情况下可能为 null。此处统一转为契约形状,页面无需再兜底。
  * 落地页相关新字段在后端尚未回传时给出契约默认值。
+ * 规则相关字段(ruleCount / ruleNames)同理:后端未回传时按“无关联规则”处理。
  */
 function normalizeLink(link: Link): Link {
   return {
@@ -31,6 +32,8 @@ function normalizeLink(link: Link): Link {
     landingUrl: link.landingUrl || '',
     clicks: typeof link.clicks === 'number' ? link.clicks : 0,
     landingUploaded: link.landingUploaded === true,
+    ruleCount: typeof link.ruleCount === 'number' ? link.ruleCount : 0,
+    ruleNames: Array.isArray(link.ruleNames) ? link.ruleNames : [],
   };
 }
 

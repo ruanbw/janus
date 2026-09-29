@@ -148,7 +148,7 @@
               v-model="keyword"
               class="input input-icon"
               id="linkSearch"
-              placeholder="搜索短码、域名或目标 URL…"
+              placeholder="搜索短码、域名、目标 URL 或规则名…"
               aria-label="搜索短链"
             />
             <Search
@@ -214,6 +214,9 @@
                 访问 / 点击
               </th>
               <th class="shrink">状态</th>
+              <th class="shrink" style="width: 220px" title="适用于该短链的规则（全局规则 + 显式关联的规则）">
+                规则
+              </th>
               <th class="shrink">启用</th>
               <th class="shrink col-actions">操作</th>
             </tr>
@@ -221,7 +224,7 @@
           <tbody>
             <!-- 加载态 -->
             <tr v-if="loading && links.length === 0">
-              <td colspan="8" class="empty">
+              <td colspan="9" class="empty">
                 <div class="flex items-center justify-center gap-2 text-muted py-6">
                   <RefreshCw class="animate-spin" :size="16" />
                   正在加载短链数据...
@@ -231,7 +234,7 @@
 
             <!-- 空状态 -->
             <tr v-else-if="filteredLinks.length === 0">
-              <td colspan="8" class="py-8">
+              <td colspan="9" class="py-8">
                 <AppEmpty
                   :description="links.length === 0 ? '暂无短链记录，请点击下方按钮创建第一条短链' : '未找到符合当前筛选条件的短链记录'"
                 />
@@ -384,6 +387,34 @@
                 <span :class="link.status === 'enabled' ? 'badge badge-ok' : 'badge badge-neutral'">
                   {{ link.status === 'enabled' ? '已启用' : '已停用' }}
                 </span>
+              </td>
+
+              <!-- 规则:条数 + 前若干个规则名,超出走 +K;单元格不折行 -->
+              <td class="shrink">
+                <div
+                  v-if="link.ruleCount > 0"
+                  class="row"
+                  style="gap: 5px; flex-wrap: nowrap; max-width: 210px; overflow: hidden"
+                  :title="'适用规则：' + (link.ruleNames || []).join('、') + (link.ruleCount > (link.ruleNames || []).length ? ' 等 ' + link.ruleCount + ' 条' : '')"
+                >
+                  <span class="mono tiny shrink-0 text-ink-soft">{{ link.ruleCount }} 条</span>
+                  <span
+                    v-for="name in visibleRuleNames(link)"
+                    :key="name"
+                    class="badge badge-neutral micro min-w-0 truncate"
+                    style="max-width: 92px"
+                    :title="name"
+                  >
+                    {{ name }}
+                  </span>
+                  <span
+                    v-if="link.ruleCount > RULE_NAME_VISIBLE"
+                    class="mono micro shrink-0 text-ink-faint"
+                  >
+                    +{{ link.ruleCount - RULE_NAME_VISIBLE }}
+                  </span>
+                </div>
+                <span v-else class="tiny muted">未关联规则</span>
               </td>
 
               <!-- 启用 Switch -->
@@ -626,6 +657,14 @@ const typeFilter = ref<string>('all');
 const statusFilter = ref<string>('all');
 const statusUpdatingId = ref<number | null>(null);
 
+/** 规则列最多直接展示几个规则名,超出走 +K（后端 ruleNames 本身也只回传前 3 个） */
+const RULE_NAME_VISIBLE = 3;
+
+/** 单元格内可见的规则名（不折行，溢出部分由 +K 交代） */
+function visibleRuleNames(link: Link): string[] {
+  return (link.ruleNames || []).slice(0, RULE_NAME_VISIBLE);
+}
+
 // ==================== 计算用量与 KPI ====================
 const usage = computed(() => auth.config?.usage);
 
@@ -682,7 +721,8 @@ const filteredLinks = computed(() => {
     const codeMatch = l.code.toLowerCase().includes(q);
     const domainMatch = l.domains?.some((d) => d.toLowerCase().includes(q)) ?? false;
     const targetMatch = l.targetUrls?.some((u) => u.toLowerCase().includes(q)) ?? false;
-    const okKeyword = !q || codeMatch || domainMatch || targetMatch;
+    const ruleMatch = l.ruleNames?.some((n) => n.toLowerCase().includes(q)) ?? false;
+    const okKeyword = !q || codeMatch || domainMatch || targetMatch || ruleMatch;
 
     let okType = true;
     if (tf === 'redirect') okType = l.linkType === 'redirect';

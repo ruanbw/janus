@@ -319,24 +319,141 @@
                   </AppRadioGroup>
                 </AppFormItem>
               </CardContent>
-
-              <!-- 表单底部操作栏 -->
-              <CardFooter class="flex items-center justify-between border-t border-line bg-surface-muted/30 px-6 py-4">
-                <span class="text-xs text-ink-faint">
-                  配置提交后立即生效
-                </span>
-                <div class="flex items-center gap-3">
-                  <AppButton @click="goBack">取消</AppButton>
-                  <AppButton
-                    type="primary"
-                    :loading="submitting"
-                    @click="onSubmit"
-                  >
-                    {{ isEdit ? '保存短链修改' : '立即创建短链' }}
-                  </AppButton>
-                </div>
-              </CardFooter>
             </AppCard>
+
+            <!-- 模块 4:适用规则(spec D3 指定的界面落点) -->
+            <AppCard :padding="false">
+              <CardHeader class="pb-4">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0 space-y-1">
+                    <CardTitle class="flex items-center gap-2">
+                      <ShieldCheck :size="18" class="text-brand-600 dark:text-brand-400" />
+                      适用规则
+                    </CardTitle>
+                    <CardDescription>
+                      规则在规则引擎侧声明作用域，这里的勾选改写的是同一份 rule_links 关联
+                    </CardDescription>
+                  </div>
+                  <div class="flex shrink-0 items-center gap-2">
+                    <AppTag v-if="globalRuleCount > 0" color="blue">全局 {{ globalRuleCount }}</AppTag>
+                    <AppTag v-if="scopedCheckedCount > 0" color="green">已选 {{ scopedCheckedCount }}</AppTag>
+                    <AppButton
+                      type="text"
+                      class="text-ink-faint hover:text-ink"
+                      :aria-label="rulesExpanded ? '收起适用规则' : '展开适用规则'"
+                      :aria-expanded="rulesExpanded"
+                      @click="rulesExpanded = !rulesExpanded"
+                    >
+                      <template #icon>
+                        <ChevronDown
+                          :size="16"
+                          class="transition-transform duration-200"
+                          :class="rulesExpanded ? 'rotate-180' : ''"
+                        />
+                      </template>
+                      {{ rulesExpanded ? '收起' : '展开' }}
+                    </AppButton>
+                  </div>
+                </div>
+              </CardHeader>
+
+              <CardContent v-if="rulesExpanded" class="space-y-3">
+                <!-- 加载态 -->
+                <div v-if="rulesLoading" class="flex items-center gap-2 py-4 text-xs text-ink-faint">
+                  <Loader2 :size="14" class="animate-spin" />
+                  正在加载规则列表...
+                </div>
+
+                <!-- 短链刚创建：还没有 id，关联无处可写，只做展示 -->
+                <template v-else-if="!isEdit">
+                  <AppAlert type="info" title="创建完成后可配置适用规则">
+                    关联关系写在短链与规则之间，创建短链时无法写入。
+                    下面列出当前租户的规则供你预先了解，<strong>创建后回到编辑页勾选即可生效</strong>。
+                  </AppAlert>
+                  <ul class="max-h-56 divide-y divide-line overflow-y-auto rounded-lg border border-line">
+                    <li
+                      v-for="row in ruleRows"
+                      :key="row.id"
+                      class="flex items-center gap-3 px-3 py-2"
+                    >
+                      <AppCheckbox :checked="row.scope === 'global'" disabled>
+                        {{ row.name }}
+                      </AppCheckbox>
+                      <AppTag v-if="row.scope === 'global'" color="blue">全局</AppTag>
+                      <AppTag v-else color="default">指定短链</AppTag>
+                      <span class="ml-auto text-[11px] text-ink-faint">
+                        {{ row.scope === 'global' ? '对本短链恒生效' : '创建后可勾选' }}
+                      </span>
+                    </li>
+                  </ul>
+                </template>
+
+                <!-- 编辑模式:可勾选的 scoped 规则 -->
+                <template v-else>
+                  <AppAlert v-if="ruleRows.length === 0" type="info" title="暂无规则">
+                    还没有任何规则。请先到
+                    <RouterLink to="/rules" class="font-medium text-brand-600 underline dark:text-brand-400">规则引擎</RouterLink>
+                    新建规则，再回到这里关联。
+                  </AppAlert>
+
+                  <ul v-else class="max-h-64 divide-y divide-line overflow-y-auto rounded-lg border border-line">
+                    <li
+                      v-for="row in ruleRows"
+                      :key="row.id"
+                      class="flex items-center gap-3 px-3 py-2 transition-colors hover:bg-surface-muted/50"
+                    >
+                      <AppTooltip
+                        :title="
+                          row.scope === 'global'
+                            ? '全局规则对所有短链生效，无法在单个短链上关闭'
+                            : '勾选即建立关联，取消即删除'
+                        "
+                      >
+                        <AppCheckbox
+                          :checked="row.checked"
+                          :disabled="row.scope === 'global' || row.updating"
+                          @change="(val: boolean) => onToggleRule(row, val)"
+                        >
+                          <span class="text-[13px] text-ink">{{ row.name }}</span>
+                        </AppCheckbox>
+                      </AppTooltip>
+
+                      <AppTag v-if="row.scope === 'global'" color="blue">全局</AppTag>
+                      <AppTag v-else color="default">指定短链</AppTag>
+                      <AppTag v-if="!row.enabled" color="warning">已停用</AppTag>
+
+                      <span class="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-ink-faint">
+                        <span class="font-mono">优先级 {{ row.priority }}</span>
+                        <span class="font-mono">{{ actionLabel(row.action) }}</span>
+                        <Loader2 v-if="row.updating" :size="12" class="animate-spin" />
+                      </span>
+                    </li>
+                  </ul>
+
+                  <p class="text-xs text-ink-faint">
+                    勾选后立即生效（变更即刻写入关联，不需要保存表单）。
+                    <span class="text-warn">「全局」规则对所有短链生效，无法在单个短链上关闭</span>，如需收窄请到规则引擎改作用域。
+                  </p>
+                </template>
+              </CardContent>
+            </AppCard>
+
+            <!-- 表单底部操作栏 -->
+            <div class="flex items-center justify-between rounded-xl border border-line bg-surface px-6 py-4">
+              <span class="text-xs text-ink-faint">
+                配置提交后立即生效
+              </span>
+              <div class="flex items-center gap-3">
+                <AppButton @click="goBack">取消</AppButton>
+                <AppButton
+                  type="primary"
+                  :loading="submitting"
+                  @click="onSubmit"
+                >
+                  {{ isEdit ? '保存短链修改' : '立即创建短链' }}
+                </AppButton>
+              </div>
+            </div>
           </div>
 
           <!-- 右侧 1 列:实时预览与指引侧栏 -->
@@ -413,6 +530,16 @@
                   </div>
 
                   <div class="flex items-center justify-between">
+                    <span class="text-ink-soft">适用规则</span>
+                    <span class="font-medium text-ink tabular-nums">
+                      {{ rulesLoading ? '加载中…' : (isEdit ? globalRuleCount + scopedCheckedCount : 0) }} 条
+                      <span v-if="isEdit && globalRuleCount > 0" class="text-ink-faint font-normal">
+                        (含全局 {{ globalRuleCount }} 条)
+                      </span>
+                    </span>
+                  </div>
+
+                  <div class="flex items-center justify-between">
                     <span class="text-ink-soft">短码模式</span>
                     <span class="font-medium text-ink">
                       {{ form.code.trim() ? '自定义短码' : '系统自动生成' }}
@@ -454,6 +581,7 @@ import { useRoute, useRouter } from 'vue-router';
 import {
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   Clock,
   ExternalLink,
   FileArchive,
@@ -462,9 +590,11 @@ import {
   Info,
   Layout,
   Link2,
+  Loader2,
   PauseCircle,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Trash2,
   Upload,
   UploadCloud,
@@ -474,14 +604,28 @@ import type { FormRule } from '@/components/ui/types';
 
 import { listDomains } from '@/api/domains';
 import { createLink, getLink, updateLink, uploadLanding } from '@/api/links';
+import { listLinkRules, ruleOptions, setLinkRules } from '@/api/rules';
 import PageHeader from '@/components/PageHeader.vue';
+import AppAlert from '@/components/ui/AppAlert.vue';
+import AppCheckbox from '@/components/ui/AppCheckbox.vue';
+import AppTag from '@/components/ui/AppTag.vue';
+import AppTooltip from '@/components/ui/AppTooltip.vue';
 import {
   SHORT_CODE_FORBIDDEN_PATTERN,
   SHORT_CODE_MAX_LENGTH,
   SHORT_CODE_PATTERN,
 } from '@/constants/dict';
 import { ApiError, getQuotaUsage } from '@/types/api';
-import type { Domain, LandingSource, Link, LinkType, RedirectStatus } from '@/types/api';
+import type {
+  Domain,
+  LandingSource,
+  Link,
+  LinkRule,
+  LinkType,
+  RedirectStatus,
+  RuleAction,
+  RuleScope,
+} from '@/types/api';
 import { message } from '@/utils/toast';
 
 const route = useRoute();
@@ -706,6 +850,123 @@ async function loadDomains() {
   }
 }
 
+/* ==================== 适用规则(spec D3 界面落点) ==================== */
+/** 勾选区的一行：全量规则 + 该短链当前的关联状态 */
+interface RuleRow {
+  id: number;
+  name: string;
+  scope: RuleScope;
+  action: RuleAction;
+  priority: number;
+  enabled: boolean;
+  /** 全局规则恒为 true；scoped 规则取决于是否已写入 rule_links */
+  checked: boolean;
+  updating: boolean;
+}
+
+const ACTION_LABELS: Record<RuleAction, string> = {
+  pass: '放行',
+  redirect: '重定向',
+  notfound: '404',
+  throttle: '限流 429',
+};
+
+function actionLabel(action: RuleAction): string {
+  return ACTION_LABELS[action] ?? action;
+}
+
+const ruleRows = ref<RuleRow[]>([]);
+const rulesLoading = ref(false);
+/** 折叠默认收起：表单字段本就多，适用规则不展开时不占版面 */
+const rulesExpanded = ref(false);
+
+const globalRuleCount = computed(() => ruleRows.value.filter((r) => r.scope === 'global').length);
+const scopedCheckedCount = computed(
+  () => ruleRows.value.filter((r) => r.scope === 'links' && r.checked).length,
+);
+
+/** 全局规则在前、scoped 按优先级升序，与求值顺序一致 */
+function sortRuleRows(rows: RuleRow[]): RuleRow[] {
+  return [...rows].sort((a, b) => {
+    if (a.scope !== b.scope) return a.scope === 'global' ? -1 : 1;
+    return a.priority - b.priority || a.id - b.id;
+  });
+}
+
+/**
+ * 加载适用规则列表。
+ * 全量规则来自 /api/rules/options；当前关联与全局继承项来自 /api/links/{id}/rules。
+ * 新建模式下还没有 id，只能拿到全量规则（预置空态）。
+ */
+async function loadLinkRules(id: number | undefined) {
+  rulesLoading.value = true;
+  try {
+    const [options, applied] = await Promise.all([
+      ruleOptions(),
+      id === undefined ? Promise.resolve<LinkRule[]>([]) : listLinkRules(id),
+    ]);
+    // 全局规则由服务端以 source=inherited 告知；scoped 以 source=scoped 为准
+    const scopedIds = new Set(
+      applied.filter((r) => r.source === 'scoped').map((r) => r.id),
+    );
+    const inheritedIds = new Set(
+      applied.filter((r) => r.source === 'inherited').map((r) => r.id),
+    );
+    ruleRows.value = sortRuleRows(
+      options.map((o) => ({
+        id: o.id,
+        name: o.name,
+        scope: o.scope,
+        action: o.action,
+        priority: o.priority,
+        enabled: o.enabled,
+        checked: o.scope === 'global' || inheritedIds.has(o.id) || scopedIds.has(o.id),
+        updating: false,
+      })),
+    );
+  } catch (error) {
+    if (error instanceof ApiError) message.error(error.message);
+    else message.error('加载适用规则失败,请稍后重试');
+    ruleRows.value = [];
+  } finally {
+    rulesLoading.value = false;
+  }
+}
+
+/** 以服务端返回的关联为准重置勾选态（PUT 失败时不信任本地状态） */
+function applyServerRules(items: LinkRule[]) {
+  const scopedIds = new Set(items.filter((r) => r.source === 'scoped').map((r) => r.id));
+  ruleRows.value = ruleRows.value.map((row) => ({
+    ...row,
+    checked: row.scope === 'global' || scopedIds.has(row.id),
+    updating: false,
+  }));
+}
+
+/**
+ * 勾选变更即刻写入关联（PUT /api/links/{id}/rules 传完整的 scoped id 集合）。
+ * 失败时回滚勾选态并 toast 提示。
+ */
+async function onToggleRule(row: RuleRow, next: boolean) {
+  if (row.scope === 'global' || !link.value || row.updating) return;
+  const prev = row.checked;
+  row.checked = next;
+  row.updating = true;
+  try {
+    const scopedIds = ruleRows.value
+      .filter((r) => r.scope === 'links' && (r.id === row.id ? next : r.checked))
+      .map((r) => r.id);
+    const items = await setLinkRules(link.value.id, scopedIds);
+    applyServerRules(items);
+    message.success(next ? '已关联规则' : '已解除规则关联');
+  } catch (error) {
+    row.checked = prev;
+    row.updating = false;
+    if (error instanceof ApiError) message.error(error.message);
+    else message.error('保存规则关联失败，请稍后重试');
+  }
+}
+
 async function init() {
   await loadDomains();
   if (route.name === 'link-edit') {
@@ -731,6 +992,9 @@ async function init() {
   } else {
     applyDefaults();
   }
+
+  // 适用规则区：编辑模式取本短链的实际关联，新建模式预置空态
+  void loadLinkRules(link.value?.id);
 }
 
 onMounted(init);
