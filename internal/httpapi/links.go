@@ -468,6 +468,8 @@ func (a *API) handleBatchDeleteLinks(c *gin.Context) {
 // handleBatchPurgeLinks POST /api/links/batch-purge — 批量物理删除(前端多选)。
 // 连同 visits/link_targets/link_domains(库内 ON DELETE CASCADE)与已上传落地页文件;
 // 跨租户/不存在的 id 静默跳过(幂等),deleted 为实际删除行数。
+// 注意:落地页文件按短链 ID 存放在租户间共享的目录,只能清理本次真正删掉的那些 id,
+// 否则跨租户混入的 id 会把他人的落地页文件一并删掉。
 func (a *API) handleBatchPurgeLinks(c *gin.Context) {
 	t, sess, ok := a.requireSession(c)
 	if !ok {
@@ -480,15 +482,15 @@ func (a *API) handleBatchPurgeLinks(c *gin.Context) {
 	if !ok {
 		return
 	}
-	n, err := a.store.PurgeLinks(c.Request.Context(), t.ID, ids)
+	purged, err := a.store.PurgeLinks(c.Request.Context(), t.ID, ids)
 	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	for _, id := range ids {
-		a.removeLandingFiles(id) // 彻底删除连同落地页文件(16);幂等,含跳过的 id
+	for _, id := range purged {
+		a.removeLandingFiles(id) // 彻底删除连同落地页文件(16)
 	}
-	writeJSON(c, http.StatusOK, map[string]any{"deleted": n})
+	writeJSON(c, http.StatusOK, map[string]any{"deleted": len(purged)})
 }
 
 // ---------- 访问列表与统计(07) ----------

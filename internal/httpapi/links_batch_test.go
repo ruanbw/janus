@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -223,6 +225,55 @@ func TestBatchDeleteSkipsOtherTenant(t *testing.T) {
 	}
 	if len(listLinks(t, bob)) != 1 {
 		t.Errorf("bob links = %d, want 1", len(listLinks(t, bob)))
+	}
+}
+
+// TestBatchPurgeKeepsOtherTenantLandingFiles 跨租户批量彻底删除不得误删他人的落地页文件。
+// 落地页文件按短链 ID 存放在租户间共享的目录(LandingUploadDir/<linkID>/),
+// 若按"请求里的 id"而非"实际删掉的 id"清理文件,混入的他人短链 id 会让其落地页
+// 文件被删而 DB 行仍在 —— 表现为他人短链的落地页突然 404。
+func TestBatchPurgeKeepsOtherTenantLandingFiles(t *testing.T) {
+	env := testutil.Setup(t)
+	alice := loggedInTenant(t, env, "alice")
+	bob := loggedInTenant(t, env, "bob")
+
+	bobLink := createLandingLink(t, bob, domainIDsOf(t, bob)[0], "bobzip", "upload", "")
+	resp := uploadZip(t, bob, bobLink.ID, makeZip(t, map[string]string{
+		"index.html": "<html><body>BOB-LANDING</body></html>",
+	}))
+	assertStatus(t, resp, http.StatusOK)
+
+	bobDir := filepath.Join(env.Cfg.LandingUploadDir, strconv.FormatInt(bobLink.ID, 10))
+	if _, err := os.Stat(bobDir); err != nil {
+		t.Fatalf("bob 落地页目录应已落盘: %v", err)
+	}
+
+	// alice 拿 bob 的短链 id 发起批量彻底删除
+	if n := batchIDs(t, alice, "/api/links/batch-purge", []int64{bobLink.ID}); n != 0 {
+		t.Fatalf("deleted = %d, want 0(非本租户短链)", n)
+	}
+	if _, err := os.Stat(bobDir); err != nil {
+		t.Errorf("bob 的落地页目录被 alice 的批量彻底删除误删: %v", err)
+	}
+	if exists, _ := linkRowState(t, env, bobLink.ID); !exists {
+		t.Error("bob 短链行不应被删除")
+	}
+
+	// 自己的短链则应连同落地页文件一起被清掉
+	aliceLink := createLandingLink(t, alice, domainIDsOf(t, alice)[0], "actzip", "upload", "")
+	resp = uploadZip(t, alice, aliceLink.ID, makeZip(t, map[string]string{
+		"index.html": "<html><body>ALICE-LANDING</body></html>",
+	}))
+	assertStatus(t, resp, http.StatusOK)
+	aliceDir := filepath.Join(env.Cfg.LandingUploadDir, strconv.FormatInt(aliceLink.ID, 10))
+	if _, err := os.Stat(aliceDir); err != nil {
+		t.Fatalf("alice 落地页目录应已落盘: %v", err)
+	}
+	if n := batchIDs(t, alice, "/api/links/batch-purge", []int64{aliceLink.ID}); n != 1 {
+		t.Fatalf("deleted = %d, want 1", n)
+	}
+	if _, err := os.Stat(aliceDir); !os.IsNotExist(err) {
+		t.Errorf("alice 自己的落地页目录应随批量彻底删除被清理, stat err = %v", err)
 	}
 }
 

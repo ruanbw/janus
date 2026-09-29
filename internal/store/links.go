@@ -344,17 +344,31 @@ func (s *Store) SoftDeleteLinks(ctx context.Context, tenantID int64, ids []int64
 
 // PurgeLinks 批量物理删除短链(连同 visits/link_targets/link_domains,由库内
 // ON DELETE CASCADE 承担;已逻辑删除的行也会被清除)。
-// 仅作用于本租户的 id,跨租户/不存在的 id 静默跳过(幂等),返回实际删除行数。
-// ids 为空直接返回 0,不生成非法的 IN () 条件。
-func (s *Store) PurgeLinks(ctx context.Context, tenantID int64, ids []int64) (int64, error) {
+// 仅作用于本租户的 id,跨租户/不存在的 id 静默跳过(幂等);
+// 返回"实际被删除的短链 ID"——落地页文件按短链 ID 存放在租户间共享的目录中,
+// 调用方必须只清理这批 ID 的文件,否则跨租户传入的 id 会误删他人落地页。
+// ids 为空直接返回 nil,不生成非法的 IN () 条件。
+func (s *Store) PurgeLinks(ctx context.Context, tenantID int64, ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
-		return 0, nil
+		return nil, nil
 	}
-	res := s.db.WithContext(ctx).Where("tenant_id = ? AND id IN ?", tenantID, ids).Delete(&Link{})
-	if res.Error != nil {
-		return 0, res.Error
+	var purged []int64
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 先取本租户真实命中的 id(与 DetachDomain 同范式),再据此删除
+		if err := tx.Model(&Link{}).
+			Where("tenant_id = ? AND id IN ?", tenantID, ids).
+			Pluck("id", &purged).Error; err != nil {
+			return err
+		}
+		if len(purged) == 0 {
+			return nil
+		}
+		return tx.Where("id IN ?", purged).Delete(&Link{}).Error
+	})
+	if err != nil {
+		return nil, err
 	}
-	return res.RowsAffected, nil
+	return purged, nil
 }
 
 // CountActiveLinks 按"尚未物理删除"计数(含逻辑删除行),用于配额校验。
