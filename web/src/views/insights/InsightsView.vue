@@ -1,33 +1,5 @@
 <template>
   <div class="flex flex-col gap-5 pb-10" data-od-id="insights-view">
-    <!-- ==================== 顶部页头与系统说明 ==================== -->
-    <header class="panel" data-od-id="topbar-insights">
-      <div class="panel-hd">
-        <div>
-          <div class="eyebrow">CLOAK / 数据洞察</div>
-          <h1 class="text-xl font-bold tracking-tight text-ink md:text-2xl mt-0.5">数据洞察</h1>
-          <p class="topbar-sub">
-            分流结构、多维设备与系统分布、规则表现与回传健康度。基于真实投放流量与访问日志聚合计算。
-          </p>
-        </div>
-        <div class="btn-row">
-          <span class="badge badge-ok">
-            <span class="dot dot-live"></span>
-            数据实时汇总
-          </span>
-          <button
-            type="button"
-            class="btn btn-sm"
-            :disabled="loading"
-            @click="fetchData"
-          >
-            <RefreshCw :size="13" :class="{ 'animate-spin': loading }" />
-            刷新数据
-          </button>
-        </div>
-      </div>
-    </header>
-
     <!-- ==================== 顶部选项卡 ==================== -->
     <section class="panel" data-od-id="ins-tabs">
       <div class="tabs" role="tablist" id="inTabs">
@@ -544,7 +516,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { RefreshCw, X } from '@lucide/vue';
+import { X } from '@lucide/vue';
 import { UAParser } from 'ua-parser-js';
 
 import { listLinks } from '@/api/links';

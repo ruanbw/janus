@@ -183,35 +183,6 @@
       </div>
     </section>
 
-    <!-- 能力模块导航网格 -->
-    <section class="panel">
-      <div class="panel-hd">
-        <div>
-          <h2>能力模块</h2>
-          <p>短链与目标模块构成斗篷系统的入口。点击进入可交互的高保真控制面板。</p>
-        </div>
-        <span class="badge badge-neutral mono">1 个模块</span>
-      </div>
-      <div class="panel-bd">
-        <div class="mod-grid">
-          <router-link to="/links" class="mod-card">
-            <span class="mod-ico">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />
-              </svg>
-            </span>
-            <h3>短链与目标</h3>
-            <p>每条短链绑定一组规则、一个兜底动作与一个目标池；支持跳转型与落地页型、301/302、权重轮询、定时上下线。</p>
-            <div class="mod-list">
-              已实现部分 + 待补：<br />
-              规则绑定 · 目标权重 · 排期 · Referrer 剥离 · 转化回传绑定
-            </div>
-            <span class="mod-go">进入模块</span>
-          </router-link>
-        </div>
-      </div>
-    </section>
-
     <!-- 合规提示 -->
     <section class="panel">
       <div class="panel-bd">

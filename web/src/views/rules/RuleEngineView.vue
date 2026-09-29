@@ -1,24 +1,5 @@
 <template>
   <div class="flex flex-col gap-5">
-    <!-- ==================== 顶部页头与系统说明 ==================== -->
-    <header class="panel" data-od-id="topbar-rule-engine">
-      <div class="panel-hd">
-        <div>
-          <div class="eyebrow">CLOAK / 规则引擎</div>
-          <h1 class="text-xl font-bold tracking-tight text-ink md:text-2xl mt-0.5">规则引擎</h1>
-          <p class="topbar-sub">
-            把访问者画像成可判定的字段，再用一组按优先级排序的规则决定他看到什么。这是斗篷系统真正的核心。
-          </p>
-        </div>
-        <div class="btn-row">
-          <span class="badge badge-neutral" title="本原型内所有数值均为演示数据，不代表真实流量">
-            <span class="dot bg-muted"></span>
-            原型演示数据
-          </span>
-        </div>
-      </div>
-    </header>
-
     <!-- ==================== 顶部选项卡 ==================== -->
     <section class="panel" data-od-id="rule-engine-tabs">
       <div class="tabs" role="tablist" id="reTabs">

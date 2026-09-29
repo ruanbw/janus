@@ -1,39 +1,5 @@
 <template>
   <div class="flex flex-col gap-5 pb-10" data-od-id="visit-stream-view">
-    <!-- ==================== 顶部页头与系统说明 ==================== -->
-    <header class="panel" data-od-id="topbar-visit-stream">
-      <div class="panel-hd">
-        <div>
-          <div class="eyebrow">CLOAK / 访问决策流</div>
-          <h1 class="text-xl font-bold tracking-tight text-ink md:text-2xl mt-0.5">访问决策流</h1>
-          <p class="topbar-sub">
-            聚合租户下所有短链的真实访问事件。每一次请求均留存解析出的访客环境与决策流水线。
-          </p>
-        </div>
-        <div class="btn-row items-center gap-3">
-          <!-- 自动刷新 Switch 开关 -->
-          <label class="row tiny muted cursor-pointer select-none" style="gap: 6px">
-            <span class="switch">
-              <input type="checkbox" v-model="autoRefresh" id="autoRefresh" />
-              <i></i>
-            </span>
-            <span>自动刷新 (10s)</span>
-          </label>
-          <!-- 手动「刷新」按钮 -->
-          <button
-            type="button"
-            class="btn btn-sm flex items-center gap-1.5"
-            id="refreshBtn"
-            :disabled="isRefreshing"
-            @click="handleManualRefresh"
-          >
-            <RefreshCw :size="13" :class="{ 'animate-spin': isRefreshing }" />
-            <span>{{ isRefreshing ? '拉取中…' : '刷新' }}</span>
-          </button>
-        </div>
-      </div>
-    </header>
-
     <!-- ==================== 顶部 4 个真实 KPI 卡片 ==================== -->
     <section class="kpi-grid" data-od-id="live-kpi">
       <!-- KPI 1: 聚合总访问量 -->
@@ -467,7 +433,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { Info, RefreshCw, Search } from '@lucide/vue';
+import { Info, Search } from '@lucide/vue';
 import { UAParser } from 'ua-parser-js';
 import dayjs from 'dayjs';
 
@@ -987,12 +953,6 @@ async function loadData(silent = false) {
     isLoading.value = false;
     isRefreshing.value = false;
   }
-}
-
-// 手动刷新
-async function handleManualRefresh() {
-  await loadData(false);
-  message.success('已刷新最新访问流');
 }
 
 // 自动刷新定时器
