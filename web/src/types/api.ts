@@ -17,6 +17,13 @@ export type RedirectStatus = '302' | '301';
 export type LinkType = 'redirect' | 'landing';
 /** 落地页来源:url 地址 / upload 上传压缩包(默认 url,仅 landing 型有意义) */
 export type LandingSource = 'url' | 'upload';
+/** 访问动作:跳转型的一次跳转 / 落地页型的一次落地页视图 / 落地页按钮经 SDK 回传的一次点击 */
+export type VisitAction = 'redirect' | 'landing_view' | 'click';
+/** 访问结果:成功 / 失败(失败时 reason 必非空,且该行不计入 link.visits) */
+export type VisitOutcome = 'success' | 'failed';
+/** 失败原因:link_disabled 短链已停用 / link_deleted 短链已删除 /
+ *  no_target 无可用目标 / landing_missing 落地页文件缺失 */
+export type VisitReason = 'link_disabled' | 'link_deleted' | 'no_target' | 'landing_missing';
 
 /** 等级:决定租户的短链与域名数量上限 */
 export interface Tier {
@@ -100,7 +107,7 @@ export interface Link {
   createdAt: string;
 }
 
-/** 访问记录 */
+/** 访问记录(一行 = 一次动作;action='click' 的行不计入 link.visits) */
 export interface Visit {
   id: number;
   linkId: number;
@@ -109,6 +116,22 @@ export interface Visit {
   ip: string;
   userAgent: string;
   referer: string;
+  /** 本次触发的动作:跳转 / 落地页视图 / 点击回传 */
+  action: VisitAction;
+  /** 本次动作是否达成:成功 / 失败 */
+  outcome: VisitOutcome;
+  /** 失败原因,仅 outcome='failed' 时非空(见 VisitReason) */
+  reason: string;
+  /** 本次动作最终抵达的地址(跳转目标 / 落地页 URL / 点击后的目标) */
+  targetUrl: string;
+  /** 国家(地理占位,数据源待接入,当前恒为空字符串) */
+  country: string;
+  /** 是否数据中心出口(地理占位,当前恒为 false) */
+  isDatacenter: boolean;
+  /** 自治系统号(地理占位,当前恒为空字符串) */
+  asn: string;
+  /** Accept-Language 首标签,如 zh-CN(空表示未携带该请求头) */
+  lang: string;
   createdAt: string;
 }
 

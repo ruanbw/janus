@@ -434,7 +434,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { Info, Search } from '@lucide/vue';
-import { UAParser } from 'ua-parser-js';
 import dayjs from 'dayjs';
 
 import { listLinks } from '@/api/links';
@@ -444,91 +443,12 @@ import AppSpin from '@/components/ui/AppSpin.vue';
 import { ApiError } from '@/types/api';
 import type { Link, Visit } from '@/types/api';
 import { message } from '@/utils/toast';
+import { getDeviceBadgeClass, parseUserAgent } from '@/utils/userAgent';
+import type { ParsedUA } from '@/utils/userAgent';
 
 const router = useRouter();
 
-// ==================== UA 解析引擎接口 ====================
-interface ParsedUA {
-  os: string;
-  browser: string;
-  deviceType: '移动端' | '桌面端' | '平板' | '爬虫机器人';
-  deviceModel: string;
-  isBot: boolean;
-}
-
-const BOT_REGEX =
-  /bot|spider|crawl|slurp|facebookexternalhit|curl|wget|python|httpclient|postman|apachebench|googlebot|bingbot|bytespider|yandex|duckduckbot|headless|phantomjs|selenium|puppeteer/i;
-
-/** 专业解析真实 User-Agent */
-function parseUserAgent(ua: string): ParsedUA {
-  if (!ua || !ua.trim()) {
-    return {
-      os: '未知操作系统',
-      browser: '未知浏览器',
-      deviceType: '桌面端',
-      deviceModel: '未知设备',
-      isBot: false,
-    };
-  }
-
-  const parser = new UAParser(ua);
-  const res = parser.getResult();
-  const rawUa = ua.toLowerCase();
-
-  const isBot = BOT_REGEX.test(rawUa) || (res.browser.name ? BOT_REGEX.test(res.browser.name) : false);
-
-  let deviceType: ParsedUA['deviceType'] = '桌面端';
-  if (isBot) {
-    deviceType = '爬虫机器人';
-  } else if (res.device.type === 'tablet' || /ipad|tablet/i.test(rawUa)) {
-    deviceType = '平板';
-  } else if (res.device.type === 'mobile' || /mobile|iphone|android/i.test(rawUa)) {
-    deviceType = '移动端';
-  } else {
-    deviceType = '桌面端';
-  }
-
-  // 操作系统解析 (如 iOS 18, Windows 11, Android 14)
-  const osName = res.os.name || '';
-  const osVersion = res.os.version || '';
-  let os = [osName, osVersion].filter(Boolean).join(' ').trim();
-  if (osName === 'Windows' && rawUa.includes('windows nt 10.0') && rawUa.includes('windows 11')) {
-    os = 'Windows 11';
-  }
-  if (!os) {
-    os = isBot ? '服务器环境 (Bot)' : '未知操作系统';
-  }
-
-  // 浏览器解析 (如 Chrome 131, Safari, Firefox)
-  const browserName = res.browser.name || '';
-  const browserVer = res.browser.major || res.browser.version || '';
-  let browser = [browserName, browserVer].filter(Boolean).join(' ').trim();
-  if (!browser) {
-    if (rawUa.includes('curl')) browser = 'cURL CLI';
-    else if (rawUa.includes('facebookexternalhit')) browser = 'Facebook Crawler';
-    else if (isBot) browser = 'Automated Agent';
-    else browser = '未知浏览器';
-  }
-
-  // 真实设备型号
-  const vendor = res.device.vendor || '';
-  const model = res.device.model || '';
-  let deviceModel = [vendor, model].filter(Boolean).join(' ').trim();
-  if (!deviceModel) {
-    if (deviceType === '爬虫机器人') deviceModel = '自动化节点';
-    else if (deviceType === '桌面端') deviceModel = osName ? `${osName} PC` : 'PC 桌面';
-    else deviceModel = deviceType;
-  }
-
-  return {
-    os,
-    browser,
-    deviceType,
-    deviceModel,
-    isBot,
-  };
-}
-
+// ==================== UA 解析引擎(已抽到 @/utils/userAgent 供访问明细列表复用) ====================
 // ==================== 真实访问决策流项 ====================
 interface ProcessedVisit {
   id: number;
@@ -752,19 +672,6 @@ const tabletPct = computed(() => {
 });
 
 // ==================== 徽标与操作描述 ====================
-function getDeviceBadgeClass(deviceType: ParsedUA['deviceType']): string {
-  switch (deviceType) {
-    case '移动端':
-      return 'badge-ok';
-    case '平板':
-      return 'badge-warn';
-    case '爬虫机器人':
-      return 'badge-danger';
-    default:
-      return 'badge-neutral';
-  }
-}
-
 function formatRowAction(item: ProcessedVisit): { text: string; class: string } {
   if (bannedIps.value.has(item.ip)) {
     return { text: '拦截', class: 'badge-danger' };

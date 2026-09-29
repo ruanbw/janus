@@ -207,8 +207,12 @@
               <th class="shrink">短链链接</th>
               <th class="shrink">类型</th>
               <th>出口目标 URL</th>
-              <th class="num" title="累计访问次数:自短链创建以来被访问的总次数">访问次数</th>
-              <th class="num" title="落地页按钮经 SDK 回传的点击次数,仅落地页型短链有">点击次数</th>
+              <th
+                class="num"
+                title="访问 = 跳转 / 落地页视图的次数(点击行不计入);点击 = 落地页按钮经 SDK 回传的次数。点击数字可查看访问明细"
+              >
+                访问 / 点击
+              </th>
               <th class="shrink">状态</th>
               <th class="shrink">启用</th>
               <th class="shrink col-actions">操作</th>
@@ -217,7 +221,7 @@
           <tbody>
             <!-- 加载态 -->
             <tr v-if="loading && links.length === 0">
-              <td colspan="9" class="empty">
+              <td colspan="8" class="empty">
                 <div class="flex items-center justify-center gap-2 text-muted py-6">
                   <RefreshCw class="animate-spin" :size="16" />
                   正在加载短链数据...
@@ -227,7 +231,7 @@
 
             <!-- 空状态 -->
             <tr v-else-if="filteredLinks.length === 0">
-              <td colspan="9" class="py-8">
+              <td colspan="8" class="py-8">
                 <AppEmpty
                   :description="links.length === 0 ? '暂无短链记录，请点击下方按钮创建第一条短链' : '未找到符合当前筛选条件的短链记录'"
                 />
@@ -351,14 +355,28 @@
                 </div>
               </td>
 
-              <!-- 访问次数 -->
+              <!-- 访问 / 点击:访问 = 跳转 / 落地页视图,点击 = 落地页按钮回传(仅落地页型有意义) -->
               <td class="num">
-                {{ (link.visits || 0).toLocaleString() }}
-              </td>
-
-              <!-- 点击次数 -->
-              <td class="num">
-                {{ link.linkType === 'landing' ? (link.clicks || 0).toLocaleString() : '—' }}
+                <button
+                  type="button"
+                  class="metric-link"
+                  :title="'查看短链「' + link.code + '」的访问明细'"
+                  :aria-label="'查看短链 ' + link.code + ' 的访问明细'"
+                  @click="goVisits(link)"
+                >
+                  <span class="metric-part metric-visits" title="访问次数:跳转 / 落地页视图">
+                    {{ (link.visits || 0).toLocaleString() }}
+                  </span>
+                  <span class="metric-sep" aria-hidden="true">/</span>
+                  <span
+                    class="metric-part metric-clicks"
+                    :class="{ 'is-empty': link.linkType !== 'landing' }"
+                    :title="link.linkType === 'landing' ? '落地页点击次数' : '非落地页型短链无点击统计'"
+                  >
+                    {{ link.linkType === 'landing' ? (link.clicks || 0).toLocaleString() : '—' }}
+                  </span>
+                  <ChevronRight :size="12" class="metric-arrow" aria-hidden="true" />
+                </button>
               </td>
 
               <!-- 状态 -->
@@ -544,6 +562,7 @@ import {
   ArrowDown,
   ArrowUp,
   CheckSquare,
+  ChevronRight,
   Copy,
   FileDown,
   Flame,
@@ -987,6 +1006,11 @@ function goEdit(link: Link) {
   router.push(`/links/${link.id}/edit`);
 }
 
+/** 跳转到该短链的访问明细列表(列表页唯一入口) */
+function goVisits(link: Link) {
+  router.push(`/links/${link.id}/visits`);
+}
+
 // ==================== 模态框操作: 批量导入 ====================
 function openBatchModal() {
   batchText.value = '';
@@ -1104,4 +1128,69 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* 「访问 / 点击」合并列的可点击数字:访问数用前景主色,点击数用次级色;
+   非落地页型无点击数据,弱化为破折号。hover 下划线 + 箭头右移提示可点。 */
+.metric-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 2px 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.metric-part {
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.14s ease;
+}
+
+.metric-visits {
+  color: var(--fg);
+}
+
+.metric-clicks {
+  color: var(--muted);
+}
+
+.metric-clicks.is-empty {
+  color: var(--ink-faint);
+  text-decoration: none;
+}
+
+.metric-sep {
+  color: var(--ink-faint);
+}
+
+.metric-arrow {
+  color: var(--ink-faint);
+  opacity: 0;
+  transform: translateX(-2px);
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+
+.metric-link:hover .metric-part {
+  text-decoration-color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+
+.metric-link:hover .metric-visits {
+  color: var(--accent);
+}
+
+.metric-link:hover .metric-arrow {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.metric-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 </style>

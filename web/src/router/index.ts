@@ -79,6 +79,12 @@ const router = createRouter({
           meta: { title: '编辑短链' },
         },
         {
+          path: 'links/:id/visits',
+          name: 'link-visits',
+          component: () => import('@/views/links/LinkVisitsView.vue'),
+          meta: { title: '访问明细' },
+        },
+        {
           path: 'rules',
           name: 'rules',
           component: () => import('@/views/rules/RuleEngineView.vue'),
