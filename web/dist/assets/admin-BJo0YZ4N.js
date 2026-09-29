@@ -1,0 +1,1 @@
+import{V as t,Y as e,Z as i}from"./index-zYO3Va6w.js";function s(){return t("/admin/tenants")}function u(){return t("/admin/tiers")}function o(n){return t(`/admin/tenants/${n}`)}function m(n,a){return e(`/admin/tenants/${n}`,a)}function d(n){return i(`/admin/domains/${n}`)}export{u as a,o as g,s as l,d as r,m as u};

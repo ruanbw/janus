@@ -1,0 +1,1 @@
+import{_ as t,o as a,p as o,e}from"./index-zYO3Va6w.js";const c={},n={class:"space-y-6"};function r(l,s){return a(),o("div",n,[...s[0]||(s[0]=[e("div",{class:"panel p-6"},[e("h2",{class:"text-lg font-semibold"},"访问决策流"),e("p",{class:"text-sm text-muted"},"加载中...")],-1)])])}const d=t(c,[["render",r]]);export{d as default};

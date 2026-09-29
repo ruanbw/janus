@@ -607,6 +607,206 @@ body {
   outline-offset: 2px;
 }
 
+/* ─── 选项卡 (Tabs) ──────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.tabs button {
+  border: 0;
+  background: transparent;
+  padding: 9px 13px;
+  font-size: 13.5px;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  transition:
+    color 0.14s ease,
+    background 0.14s ease;
+  cursor: pointer;
+}
+
+.tabs button:hover {
+  color: var(--fg);
+  background: var(--fg-soft);
+}
+
+.tabs button[aria-selected='true'] {
+  color: var(--fg);
+  font-weight: 600;
+  border-bottom-color: var(--fg);
+}
+
+/* ─── 表单控件 (Form Controls) ───────────────────────────────────────── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.field > label {
+  font-size: var(--fs-meta);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.field .hint {
+  font-size: var(--fs-micro);
+  color: var(--muted);
+}
+
+.input,
+.select,
+.textarea {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  color: var(--fg);
+  font-size: 13.5px;
+  transition:
+    border-color 0.14s ease,
+    box-shadow 0.14s ease;
+}
+
+.input.mono {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.input::placeholder {
+  color: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+
+.textarea {
+  min-height: 62px;
+  resize: vertical;
+  line-height: 1.5;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    right 13px center,
+    right 8px center;
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 26px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+.form-grid .span-2 {
+  grid-column: 1 / -1;
+}
+
+/* ─── 高密表格 (Dense Tables) ────────────────────────────────────────── */
+.tbl-wrap {
+  overflow-x: auto;
+}
+
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.tbl th,
+.tbl td {
+  padding: 9px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.tbl thead th {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+  background: color-mix(in srgb, var(--fg) 2%, var(--surface));
+  white-space: nowrap;
+}
+
+.tbl tbody tr {
+  transition: background 0.12s ease;
+}
+
+.tbl tbody tr:hover {
+  background: var(--fg-soft);
+}
+
+.tbl tbody tr[aria-selected='true'] {
+  background: var(--accent-soft);
+}
+
+.tbl tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.tbl .r {
+  text-align: right;
+}
+
+.tbl .num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.tbl td.shrink {
+  width: 1%;
+  white-space: nowrap;
+}
+
+/* ─── 搜索工具栏与过滤器 (Toolbar & Filters) ────────────────────────── */
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.toolbar .input,
+.toolbar .select {
+  min-height: 32px;
+  width: auto;
+}
+
+.toolbar .grow {
+  flex: 1 1 200px;
+  min-width: 160px;
+}
+
 /* ─── 分段控制器与快捷过滤 (Segmented Controls) ─────────────────────── */
 .segmented {
   display: inline-flex;
