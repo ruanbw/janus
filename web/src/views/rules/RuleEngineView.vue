@@ -2030,6 +2030,20 @@ const simInput = reactive({
   lang: 'pt-BR,pt;q=0.9,en-US;q=0.8',
 });
 
+function syncSimInputFromQuery() {
+  if (route.query.ip) simInput.ip = String(route.query.ip);
+  if (route.query.ua) simInput.ua = String(route.query.ua);
+  if (route.query.lang) simInput.lang = String(route.query.lang);
+}
+
+watch(
+  () => [route.query.ip, route.query.ua, route.query.lang],
+  () => {
+    syncSimInputFromQuery();
+  },
+  { immediate: true },
+);
+
 const simProfile = reactive({
   ipRange: '202.159.44.0/24',
   ipAttr: '住宅 · 非代理',
