@@ -740,6 +740,7 @@ docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
 | 认证 | `POST /api/auth/register`、`verify-email`、`login`、`token`(API Bearer JWT 签发)、`logout`、`GET /api/auth/me`、`POST /api/auth/change-password`、`forgot-password`、`reset-password` |
 | 域名 | `GET/POST /api/domains`、`GET /api/domains/{id}`、`POST /api/domains/{id}/recheck`、`PATCH /api/domains/{id}`、`DELETE /api/domains/{id}` |
 | 短链 | `GET/POST /api/links`、`GET/PATCH/DELETE /api/links/{id}`、`POST /api/links/{id}/purge`、`POST /api/links/{id}/landing`、`GET /api/links/{id}/visits`、`GET /api/links/{id}/stats` |
+| 规则 | `GET/POST /api/rules`、`GET /api/rules/options`、`GET/PATCH/DELETE /api/rules/{id}`、`GET/PUT /api/links/{id}/rules`(规则是租户级资源,单租户上限 200 条;按优先级升序求值、首条命中即裁决) |
 | 租户设置 | `GET/PATCH /api/me` |
 | 平台管理 | `GET /api/admin/tenants`、`GET /api/admin/tiers`、`GET/PATCH /api/admin/tenants/{id}`、`DELETE /api/admin/domains/{id}` |
 | 跳转 | `GET /{code}`(公开) |
