@@ -396,7 +396,7 @@
                   </button>
                   <button
                     type="button"
-                    class="btn btn-sm btn-ghost text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                    class="btn btn-sm btn-ghost btn-ghost-danger"
                     title="逻辑删除（保留记录与历史数据）"
                     @click="handleDeleteLink(link)"
                   >
@@ -405,7 +405,7 @@
                   </button>
                   <button
                     type="button"
-                    class="btn btn-sm btn-ghost text-xs text-red-600 hover:text-red-700 opacity-60 hover:opacity-100"
+                    class="btn btn-sm btn-ghost btn-ghost-danger text-xs opacity-60 hover:opacity-100"
                     title="彻底清除（物理删除全部数据）"
                     @click="handlePurgeLink(link)"
                   >
