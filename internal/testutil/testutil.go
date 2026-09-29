@@ -86,6 +86,13 @@ func setup(t *testing.T, rc *httpapi.RateLimitConfig) *Env {
 		t.Skipf("test database not available (%v); run: docker compose up -d postgres && docker exec -i cloak-postgres-1 psql -U cloak -d cloak -c 'CREATE DATABASE cloak_test'", err)
 	}
 	t.Cleanup(pool.Close)
+	// 独占测试库到本包测试结束:各包都连同一个库并 TRUNCATE 业务表,
+	// 而 go test 并行跑各包,不加互斥会互相把对方的数据清掉
+	release, err := db.LockTestDB(ctx, pool)
+	if err != nil {
+		t.Fatalf("lock test database: %v", err)
+	}
+	t.Cleanup(release)
 
 	migrationsDir := filepath.Join("..", "..", "migrations")
 	if err := db.Migrate(ctx, pool, migrationsDir); err != nil {
