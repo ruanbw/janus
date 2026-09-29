@@ -38,13 +38,16 @@
       :loading="loading"
       row-key="id"
       :pagination="false"
+      :scroll="{ x: 1220 }"
     >
       <template #cell="{ column, record }">
         <template v-if="column.key === 'email'">
-          <span class="inline-flex items-center gap-2">
-            <span>{{ record.email }}</span>
-            <AppTag v-if="record.isSuperAdmin" color="gold">平台管理员</AppTag>
-          </span>
+          <div class="flex min-w-0 items-center gap-2">
+            <AppTooltip :title="String(record.email)">
+              <span class="truncate font-medium text-ink">{{ record.email }}</span>
+            </AppTooltip>
+            <AppTag v-if="record.isSuperAdmin" color="gold" class="shrink-0">平台管理员</AppTag>
+          </div>
         </template>
         <template v-else-if="column.key === 'status'">
           <AppTag :color="TENANT_STATUS[record.status as TenantStatus].color">
@@ -61,10 +64,10 @@
           </span>
         </template>
         <template v-else-if="column.key === 'createdAt'">
-          {{ formatDateTime(record.createdAt as string) }}
+          <span class="whitespace-nowrap">{{ formatDateTime(record.createdAt as string) }}</span>
         </template>
         <template v-else-if="column.key === 'action'">
-          <AppSpace :size="4">
+          <div class="flex items-center gap-1 whitespace-nowrap">
             <AppTooltip v-if="record.isSuperAdmin" title="平台管理员账号不可封禁">
               <AppButton size="small" danger disabled>
                 <template #icon><CircleStop :size="13" /></template>
@@ -97,7 +100,7 @@
               <template #icon><Trash2 :size="13" /></template>
               移除域名
             </AppButton>
-          </AppSpace>
+          </div>
         </template>
       </template>
     </AppTable>
@@ -129,13 +132,13 @@ function statusCount(status: TenantStatus): number {
 }
 
 const columns: TableColumn[] = [
-  { title: '邮箱', key: 'email', dataIndex: 'email' },
-  { title: '前缀', key: 'slug', dataIndex: 'slug', width: 120 },
-  { title: '状态', key: 'status', dataIndex: 'status', width: 100 },
-  { title: '等级', key: 'tier', dataIndex: 'tier', width: 110 },
-  { title: '用量(短链/域名)', key: 'usage', dataIndex: 'usage', width: 180 },
-  { title: '注册时间', key: 'createdAt', dataIndex: 'createdAt', width: 170 },
-  { title: '操作', key: 'action', width: 300 },
+  { title: '邮箱', key: 'email', dataIndex: 'email', minWidth: 200, ellipsis: true },
+  { title: '前缀', key: 'slug', dataIndex: 'slug', width: 120, nowrap: true },
+  { title: '状态', key: 'status', dataIndex: 'status', width: 100, nowrap: true },
+  { title: '等级', key: 'tier', dataIndex: 'tier', width: 110, nowrap: true },
+  { title: '用量(短链/域名)', key: 'usage', dataIndex: 'usage', width: 200, nowrap: true },
+  { title: '注册时间', key: 'createdAt', dataIndex: 'createdAt', width: 180, nowrap: true },
+  { title: '操作', key: 'action', width: 310, nowrap: true },
 ];
 
 async function load() {

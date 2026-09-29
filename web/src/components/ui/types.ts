@@ -6,7 +6,10 @@ export interface TableColumn {
   key: string;
   dataIndex?: string;
   width?: number | string;
+  minWidth?: number | string;
   ellipsis?: boolean;
+  nowrap?: boolean;
+  align?: 'left' | 'center' | 'right';
 }
 
 /** 表格分页配置(与 antd TablePaginationConfig 兼容的子集) */

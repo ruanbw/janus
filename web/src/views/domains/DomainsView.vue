@@ -17,6 +17,7 @@
       :loading="loading"
       row-key="id"
       :pagination="false"
+      :scroll="{ x: 1390 }"
     >
       <template #cell="{ column, record }">
         <template v-if="column.key === 'fqdn'">
@@ -43,13 +44,13 @@
           </AppTag>
         </template>
         <template v-else-if="column.key === 'activatedAt'">
-          {{ formatDateTime(toDomain(record).activatedAt) }}
+          <span class="whitespace-nowrap">{{ formatDateTime(toDomain(record).activatedAt) }}</span>
         </template>
         <template v-else-if="column.key === 'createdAt'">
-          {{ formatDateTime(toDomain(record).createdAt) }}
+          <span class="whitespace-nowrap">{{ formatDateTime(toDomain(record).createdAt) }}</span>
         </template>
         <template v-else-if="column.key === 'action'">
-          <AppSpace :size="4">
+          <div class="flex items-center gap-1 whitespace-nowrap">
             <AppButton size="small" type="text" @click="onRecheck(toDomain(record))">
               <template #icon><RefreshCw :size="13" /></template>
               手动重检
@@ -84,7 +85,7 @@
                 删除
               </AppButton>
             </AppTooltip>
-          </AppSpace>
+          </div>
         </template>
       </template>
     </AppTable>
@@ -124,14 +125,14 @@ function toDomain(r: Record<string, unknown>): Domain {
 const tableData = computed(() => domains.value as unknown as Record<string, unknown>[]);
 
 const columns: TableColumn[] = [
-  { title: '域名', key: 'fqdn', dataIndex: 'fqdn' },
+  { title: '域名', key: 'fqdn', dataIndex: 'fqdn', width: 220, nowrap: true },
   { title: '描述', key: 'description', dataIndex: 'description', width: 200, ellipsis: true },
-  { title: '来源', key: 'origin', dataIndex: 'origin', width: 140 },
-  { title: '状态', key: 'status', dataIndex: 'status', width: 100 },
-  { title: '证书', key: 'certStatus', dataIndex: 'certStatus', width: 100 },
-  { title: '激活时间', key: 'activatedAt', dataIndex: 'activatedAt', width: 200 },
-  { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 200 },
-  { title: '操作', key: 'action', width: 300 },
+  { title: '来源', key: 'origin', dataIndex: 'origin', width: 130, nowrap: true },
+  { title: '状态', key: 'status', dataIndex: 'status', width: 100, nowrap: true },
+  { title: '证书', key: 'certStatus', dataIndex: 'certStatus', width: 100, nowrap: true },
+  { title: '激活时间', key: 'activatedAt', dataIndex: 'activatedAt', width: 180, nowrap: true },
+  { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 180, nowrap: true },
+  { title: '操作', key: 'action', width: 280, nowrap: true },
 ];
 
 let timer: number | undefined;

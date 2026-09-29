@@ -1,15 +1,21 @@
 <template>
   <div>
     <div class="relative overflow-hidden rounded-xl border border-line bg-surface">
-      <div v-if="scroll && scroll.x" class="overflow-x-auto">
+      <div class="overflow-x-auto">
         <table class="app-table w-full min-w-full border-collapse text-[13px]" :style="tableMinWidth">
+          <colgroup>
+            <col v-for="col in columns" :key="col.key" :style="columnStyle(col)" />
+          </colgroup>
           <thead>
             <tr>
               <th
                 v-for="col in columns"
                 :key="col.key"
-                class="whitespace-nowrap border-b border-line bg-surface-muted px-4 py-2.5 text-left font-semibold text-ink-soft"
-                :style="col.width ? { width: typeof col.width === 'number' ? col.width + 'px' : col.width } : undefined"
+                class="whitespace-nowrap border-b border-line bg-surface-muted px-4 py-2.5 font-semibold text-ink-soft"
+                :class="[
+                  col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left',
+                ]"
+                :style="columnStyle(col)"
               >
                 {{ col.title ?? '' }}
               </th>
@@ -21,7 +27,12 @@
                 v-for="col in columns"
                 :key="col.key"
                 class="border-b border-line px-4 py-2.5 align-middle text-ink"
-                :class="col.ellipsis ? 'max-w-0 truncate' : ''"
+                :class="[
+                  col.ellipsis ? 'max-w-0 truncate' : '',
+                  col.nowrap ? 'whitespace-nowrap' : '',
+                  col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left',
+                ]"
+                :style="columnStyle(col)"
               >
                 <slot name="cell" :column="col" :record="record" :index="rowIndex">
                   {{ cellText(record, col) }}
@@ -29,42 +40,7 @@
               </td>
             </tr>
             <tr v-if="dataSource.length === 0 && !loading">
-              <td :colspan="columns.length" class="px-4 py-4">
-                <AppEmpty description="暂无数据" />
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <div v-else>
-        <table class="app-table w-full border-collapse text-[13px]">
-          <thead>
-            <tr>
-              <th
-                v-for="col in columns"
-                :key="col.key"
-                class="whitespace-nowrap border-b border-line bg-surface-muted px-4 py-2.5 text-left font-semibold text-ink-soft"
-                :style="col.width ? { width: typeof col.width === 'number' ? col.width + 'px' : col.width } : undefined"
-              >
-                {{ col.title ?? '' }}
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="(record, rowIndex) in dataSource" :key="String(record[rowKey] ?? rowIndex)" class="group transition-colors hover:bg-surface-muted">
-              <td
-                v-for="col in columns"
-                :key="col.key"
-                class="border-b border-line px-4 py-2.5 align-middle text-ink"
-                :class="col.ellipsis ? 'max-w-0 truncate' : ''"
-              >
-                <slot name="cell" :column="col" :record="record" :index="rowIndex">
-                  {{ cellText(record, col) }}
-                </slot>
-              </td>
-            </tr>
-            <tr v-if="dataSource.length === 0 && !loading">
-              <td :colspan="columns.length" class="px-4 py-4">
+              <td :colspan="columns.length" class="px-4 py-8">
                 <AppEmpty description="暂无数据" />
               </td>
             </tr>
@@ -166,12 +142,38 @@ watch(
 const total = computed(() => (props.pagination && props.pagination.total) || 0);
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 
+function columnStyle(col: TableColumn): Record<string, string> | undefined {
+  const style: Record<string, string> = {};
+  if (col.width !== undefined) {
+    const w = typeof col.width === 'number' ? `${col.width}px` : col.width;
+    style.width = w;
+    style.minWidth = col.minWidth ? (typeof col.minWidth === 'number' ? `${col.minWidth}px` : col.minWidth) : w;
+  } else if (col.minWidth !== undefined) {
+    style.minWidth = typeof col.minWidth === 'number' ? `${col.minWidth}px` : col.minWidth;
+  }
+  return Object.keys(style).length > 0 ? style : undefined;
+}
+
 const tableMinWidth = computed(() => {
   if (props.scroll && typeof props.scroll.x === 'number') {
     return { minWidth: props.scroll.x + 'px' };
   }
   if (props.scroll && typeof props.scroll.x === 'string') {
     return { minWidth: props.scroll.x };
+  }
+  let totalExplicit = 0;
+  let hasExplicit = false;
+  for (const col of props.columns) {
+    if (typeof col.width === 'number') {
+      totalExplicit += col.width;
+      hasExplicit = true;
+    } else if (typeof col.minWidth === 'number') {
+      totalExplicit += col.minWidth;
+      hasExplicit = true;
+    }
+  }
+  if (hasExplicit && totalExplicit > 0) {
+    return { minWidth: totalExplicit + 'px' };
   }
   return undefined;
 });

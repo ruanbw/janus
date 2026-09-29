@@ -17,7 +17,7 @@
       :loading="loading"
       row-key="id"
       :pagination="pagination"
-      :scroll="{ x: 1300 }"
+      :scroll="{ x: 1600 }"
       @change="onTableChange"
     >
       <template #cell="{ column, record }">
@@ -99,10 +99,10 @@
           <span>{{ record.linkType === 'landing' ? record.clicks : '—' }}</span>
         </template>
         <template v-else-if="column.key === 'createdAt'">
-          {{ formatDateTime(record.createdAt) }}
+          <span class="whitespace-nowrap">{{ formatDateTime(record.createdAt) }}</span>
         </template>
         <template v-else-if="column.key === 'action'">
-          <div class="flex items-center gap-1">
+          <div class="flex items-center gap-1 whitespace-nowrap">
             <AppButton size="small" type="text" @click="openEdit(record)">
               <template #icon><Pencil :size="13" /></template>
               编辑
@@ -173,16 +173,16 @@ const pageSize = ref(10);
 const usage = computed(() => auth.config?.usage);
 
 const columns: TableColumn[] = [
-  { title: '链接', key: 'code', dataIndex: 'code', width: 240 },
-  { title: '类型', key: 'linkType', dataIndex: 'linkType', width: 80 },
+  { title: '链接', key: 'code', dataIndex: 'code', width: 240, nowrap: true },
+  { title: '类型', key: 'linkType', dataIndex: 'linkType', width: 90, nowrap: true },
   { title: '目标 URL', key: 'targetUrls', dataIndex: 'targetUrls', ellipsis: true },
-  { title: '落地页', key: 'landing', width: 170 },
-  { title: '重定向', key: 'redirectStatus', dataIndex: 'redirectStatus', width: 130 },
-  { title: '状态', key: 'status', dataIndex: 'status', width: 90 },
-  { title: '访问数', key: 'visits', dataIndex: 'visits', width: 90 },
-  { title: '点击', key: 'clicks', dataIndex: 'clicks', width: 80 },
-  { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 200 },
-  { title: '操作', key: 'action', width: 330 },
+  { title: '落地页', key: 'landing', width: 170, ellipsis: true },
+  { title: '重定向', key: 'redirectStatus', dataIndex: 'redirectStatus', width: 130, nowrap: true },
+  { title: '状态', key: 'status', dataIndex: 'status', width: 90, nowrap: true },
+  { title: '访问数', key: 'visits', dataIndex: 'visits', width: 90, nowrap: true },
+  { title: '点击', key: 'clicks', dataIndex: 'clicks', width: 80, nowrap: true },
+  { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 190, nowrap: true },
+  { title: '操作', key: 'action', width: 330, nowrap: true },
 ];
 
 const pagination = computed<TablePaginationConfig>(() => ({
