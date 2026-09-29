@@ -188,9 +188,9 @@
       <div class="panel-hd">
         <div>
           <h2>能力模块</h2>
-          <p>四个模块构成完整斗篷系统。点击进入可交互的高保真控制面板。</p>
+          <p>短链与目标模块构成斗篷系统的入口。点击进入可交互的高保真控制面板。</p>
         </div>
-        <span class="badge badge-neutral mono">4 个模块</span>
+        <span class="badge badge-neutral mono">1 个模块</span>
       </div>
       <div class="panel-bd">
         <div class="mod-grid">
@@ -205,48 +205,6 @@
             <div class="mod-list">
               已实现部分 + 待补：<br />
               规则绑定 · 目标权重 · 排期 · Referrer 剥离 · 转化回传绑定
-            </div>
-            <span class="mod-go">进入模块</span>
-          </router-link>
-
-          <router-link to="/rules" class="mod-card">
-            <span class="mod-ico">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 6h16M4 12h10M4 18h7M17 15l3 3-3 3" />
-              </svg>
-            </span>
-            <h3>规则引擎</h3>
-            <p>按优先级串行裁决。条件维度覆盖 IP/CIDR/ASN、代理与机房、国家地区、设备型号与系统、浏览器、语言、时区、Referrer、指纹。</p>
-            <div class="mod-list">
-              规则编辑器 · 条件构造器 · 优先级 · 模拟器 · 冲突检测 · 命中率预估 · 名单库
-            </div>
-            <span class="mod-go">进入模块</span>
-          </router-link>
-
-          <router-link to="/visit-stream" class="mod-card">
-            <span class="mod-ico">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M3 12h4l3 8 4-16 3 8h4" />
-              </svg>
-            </span>
-            <h3>访问决策流</h3>
-            <p>每次访问的完整决策链留痕：画像字段、逐条规则求值结果、最终动作与落地 URL，可回放、可一键封禁。</p>
-            <div class="mod-list">
-              实时流 · 决策回放 · 多维过滤 · 封禁入名单 · 慢请求排查
-            </div>
-            <span class="mod-go">进入模块</span>
-          </router-link>
-
-          <router-link to="/insights" class="mod-card">
-            <span class="mod-ico">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" />
-              </svg>
-            </span>
-            <h3>数据洞察</h3>
-            <p>放行/拦截结构、国家与设备分布、语言构成、各规则命中率与拦截贡献、规则改动后的回放沙盘、回传通道健康度。</p>
-            <div class="mod-list">
-              分流结构 · 多维分布 · 语言×国家交叉 · 规则命中 · 回放沙盘 · 回传延迟
             </div>
             <span class="mod-go">进入模块</span>
           </router-link>
