@@ -57,6 +57,9 @@
   --sidebar-bg-deep: #080b11;
   --sidebar-ink: rgba(203, 213, 225, 0.72);
   --sidebar-ink-active: #ffffff;
+  /* 展开态侧边栏宽度。收起时由 AdminLayout 以内联 style 覆盖为 64px,
+     侧边栏宽度与主区域左内边距共用这一个变量,保证两者永远同步。 */
+  --sidebar-w: 224px;
   color-scheme: light;
 
   /* ============ Tech-Utility 原型设计令牌与语义别名 (Light) ============ */

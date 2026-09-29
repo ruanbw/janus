@@ -1,9 +1,8 @@
 <template>
-  <div class="min-h-screen bg-surface-muted">
+  <div class="min-h-screen bg-surface-muted" :style="sidebarStyle">
     <!-- ================= 桌面侧边栏(≥768px) ================= -->
     <aside
-      class="fixed inset-y-0 left-0 z-30 hidden flex-col overflow-hidden bg-[var(--sidebar-bg)] transition-[width] duration-200 md:flex"
-      :class="collapsed ? 'w-[64px]' : 'w-[224px]'"
+      class="fixed inset-y-0 left-0 z-30 hidden w-[var(--sidebar-w)] flex-col overflow-hidden bg-[var(--sidebar-bg)] transition-[width] duration-200 md:flex"
     >
       <div
         class="flex h-14 shrink-0 cursor-pointer select-none items-center gap-2.5 px-3.5"
@@ -105,9 +104,14 @@
     </Transition>
 
     <!-- ================= 主区域 ================= -->
+    <!-- 左内边距与侧边栏宽度同源于 --sidebar-w(侧边栏宽度也是它)。
+         这里刻意不用「静态类里写展开态的 padding-left 任意值 + 动态类切换收起态
+         的同类任意值」的写法:两个同属性、同断点的任意值工具类会同时挂在元素上,
+         最终生效值由样式表先后顺序决定而非 class 顺序,而 Tailwind 产物里展开态
+         那条恒排在收起态之后,于是收起后左内边距仍是 224px,右侧宽度纹丝不动。
+         改用 var() 后只剩唯一一条规则,与 class 顺序彻底解耦。 -->
     <div
-      class="flex min-h-screen flex-col transition-[padding] duration-200 ease-out md:pl-[224px]"
-      :class="collapsed ? 'md:pl-[64px]' : ''"
+      class="flex min-h-screen flex-col transition-[padding] duration-200 ease-out md:pl-[var(--sidebar-w)]"
     >
       <header class="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-surface/90 px-4 backdrop-blur-md md:px-6">
         <div class="flex min-w-0 items-center gap-3">
@@ -259,6 +263,11 @@ const router = useRouter();
 
 const collapsed = ref(false);
 const drawerOpen = ref(false);
+
+// 侧边栏宽度的唯一真源:aside 宽度与主区域左内边距都读 --sidebar-w
+const sidebarStyle = computed<Record<string, string>>(() => ({
+  '--sidebar-w': collapsed.value ? '64px' : '224px',
+}));
 const isMobile = ref(window.matchMedia('(max-width: 767px)').matches);
 
 const mql = window.matchMedia('(max-width: 767px)');
