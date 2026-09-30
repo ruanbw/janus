@@ -406,7 +406,7 @@ func traceRule(c *Compiled, ctx VisitorContext, linkID int64, draft bool) StepTr
 	}
 	step.Logic = c.Rule.Logic
 	matched := c.matchAll(ctx)
-	step.Conditions = traceConds(c.conds, ctx)
+	step.Conditions = traceConds(c.root, ctx)
 	if matched {
 		step.Status = StepStatusHit
 		step.Reason = "首条命中即裁决(First-Match-Wins):后面的规则不再求值。"
@@ -418,10 +418,17 @@ func traceRule(c *Compiled, ctx VisitorContext, linkID int64, draft bool) StepTr
 }
 
 // traceConds 逐条条件留痕。只读快照与画像,不改判定。
-func traceConds(conds []compiledCond, ctx VisitorContext) []ConditionTrace {
-	out := make([]ConditionTrace, 0, len(conds))
-	for i := range conds {
-		cc := &conds[i]
+func traceConds(root compiledNode, ctx VisitorContext) []ConditionTrace {
+	out := make([]ConditionTrace, 0, root.leafCount())
+	collectTraces(root, ctx, &out)
+	return out
+}
+
+// collectTraces 走遍整棵树逐条留痕,不按短路停下来:
+// 决策链的价值就在于"另一条为什么没生效",只留走到的那一支等于让用户自己猜。
+func collectTraces(n compiledNode, ctx VisitorContext, out *[]ConditionTrace) {
+	for i := range n.conds {
+		cc := &n.conds[i]
 		tr := ConditionTrace{Field: cc.field, Operator: cc.op, Expected: cc.raw}
 		tr.Actual, tr.Available = ctx.Field(cc.field)
 		if cc.op == OpDuplicated {
@@ -429,9 +436,11 @@ func traceConds(conds []compiledCond, ctx VisitorContext) []ConditionTrace {
 		}
 		tr.Matched = cc.match(ctx)
 		tr.Description = describeCond(&tr)
-		out = append(out, tr)
+		*out = append(*out, tr)
 	}
-	return out
+	for i := range n.children {
+		collectTraces(n.children[i], ctx, out)
+	}
 }
 
 // logicMissReason 解释"为什么没命中":成立了几条、缺数据的有几条。
@@ -446,10 +455,18 @@ func logicMissReason(c *Compiled, conds []ConditionTrace) string {
 		}
 	}
 	need := "全部条件都要成立"
-	if !c.logicAll {
+	switch {
+	case c.nested:
+		// 树形态下一句"全部/任一"说清不了,只报叶子统计
+		need = "条件树求值未通过"
+	case !c.logicAll:
 		need = "任一条件成立即可"
 	}
-	msg := fmt.Sprintf("%s,实际成立 %d/%d 条。", need, hits, len(conds))
+	msg := fmt.Sprintf("%s,实际成立 %d/%d 条", need, hits, len(conds))
+	if c.nested {
+		msg += "叶子条件"
+	}
+	msg += "。"
 	if missing > 0 {
 		msg += fmt.Sprintf("其中 %d 条字段取不到数据,恒不成立。", missing)
 	}

@@ -7,6 +7,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql/driver"
 	"encoding/json"
@@ -52,25 +53,222 @@ var ErrForeignLink = errors.New("link not owned by tenant")
 // ErrForeignRule 对称于 ErrForeignLink:传入的规则 id 不属于该租户(或不存在)。
 var ErrForeignRule = errors.New("rule not owned by tenant")
 
-// RuleCondition 一条条件判定(如 country in ['US','CA'])。
+// ConditionLeafNode 一条叶子条件(如 country in ['US','CA'])。
 // 值只接受字面量:CIDR 列表、逗号分隔枚举、正则等(spec D6 名单库暂缓,条件值不支持名单引用)。
-type RuleCondition struct {
+type ConditionLeafNode struct {
 	Field    string   `json:"field"`
 	Operator string   `json:"operator"`
 	Values   []string `json:"values"`
 }
 
-// RuleConditions 规则条件组(conditions 列,JSONB,形如 [{field,operator,values}]),
-// 与普通切片类型的区别只在读写方式:库内是 JSONB 文本,Go 内是结构体切片。
-// 与 RedirectStatus 同样走 driver.Valuer / sql.Scanner,只是这里换的是 JSON 文本。
-type RuleConditions []RuleCondition
+// RuleCondition 是叶子条件的旧名,与 ConditionLeafNode 是同一个类型,
+// 不是两份定义——存量代码(store/httpapi/tests)继续用 RuleCondition,无需改名。
+type RuleCondition = ConditionLeafNode
+
+// 条件树节点的两种 Type。只认这两个:不认识的 Type 按叶子处理。
+const (
+	ConditionTypeGroup = "group"
+	ConditionTypeLeaf  = "leaf"
+)
+
+// ConditionGroupNode 一个条件组。Logic 为 all / any(空按 all),Children 为子节点。
+type ConditionGroupNode struct {
+	Logic    string          `json:"logic"`
+	Children []ConditionNode `json:"children"`
+}
+
+// ConditionNode 条件树节点。Type="group" 时看 Group,Type="leaf" 时看 Leaf。
+// 解析时容忍两种省略写法:对象里直接铺 field/operator/values 当叶子,
+// 或者省略 type 只给 group——存量数据与前端手写 JSON 两种都见过。
+type ConditionNode struct {
+	Type  string              `json:"type"`
+	Group *ConditionGroupNode `json:"group,omitempty"`
+	Leaf  *ConditionLeafNode  `json:"leaf,omitempty"`
+}
+
+// RuleConditions 规则条件组(conditions 列,JSONB)。
+//
+// 两种形态并存,且都读、且写回原形态:
+//
+//	扁平:[{field,operator,values}, …]                      ← 存量数据,语义在 rules.logic(all/any)
+//	树:  {"type":"group","logic":"any","children":[…]}     ← 复合条件,语义在树上
+//
+// 存量扁平行不迁移、不改写:一次无关的改名不会把 conditions 列从数组变成对象,
+// 也就不会让所有历史行的 JSONB 产生无谓的重写与膨胀。
+//
+// 字段:
+//   - Leaves 按遍历序展开的叶子。扁平形态下它就是载荷本身;树形态下是只读快照,
+//     供详情回显、API 出参、决策链留痕直接用,不必每次重新遍历树。
+//   - Root 仅在树形态下非 nil。Root==nil 即扁平形态,all/any 仍取 rules.logic,
+//     求值语义与加条件树之前逐字相同。
+//
+// 两者不会同时是"权威":扁平看 Leaves,树看 Root。
+type RuleConditions struct {
+	Leaves []RuleCondition
+	Root   *ConditionNode
+}
+
+// Conditions 组装一条扁平条件组(一层 all)。
+func Conditions(leaves ...RuleCondition) RuleConditions {
+	return RuleConditions{Leaves: leaves}
+}
+
+// Group 造一个条件组节点。
+func Group(logic string, children ...ConditionNode) ConditionNode {
+	return ConditionNode{Type: ConditionTypeGroup, Group: &ConditionGroupNode{Logic: logic, Children: children}}
+}
+
+// Leaf 造一个叶子节点。
+func Leaf(c RuleCondition) ConditionNode {
+	return ConditionNode{Type: ConditionTypeLeaf, Leaf: &c}
+}
+
+// Tree 造一条使用条件树的规则条件组;Leaves 由 flattenRoot 顺带算出。
+func Tree(root ConditionNode) RuleConditions {
+	c := RuleConditions{Root: &root}
+	c.Leaves = flattenNode(root)
+	return c
+}
+
+// IsTree 是否使用了条件树(否则按扁平形态求值)。
+func (c RuleConditions) IsTree() bool { return c.Root != nil }
+
+// Len 叶子条件条数(两种形态下同义)。
+func (c RuleConditions) Len() int { return len(c.Leaves) }
+
+// IsZero 是否为零值。零值与「显式清空条件」要区分:前者表示本次更新不动这一列。
+func (c RuleConditions) IsZero() bool { return c.Root == nil && c.Leaves == nil }
+
+// IsEmpty 无条件(无叶子):无条件组在求值侧等价于"恒成立的兜底规则",由调用方决定是否放行。
+func (c RuleConditions) IsEmpty() bool { return len(c.Leaves) == 0 && !c.IsTree() }
+
+// flattenRoot 深度优先展开树里的叶子(顺序 = 求值顺序,与短路语义一致)。
+func flattenRoot(root ConditionNode) []RuleCondition { return flattenNode(root) }
+
+func flattenNode(n ConditionNode) []RuleCondition {
+	if n.Leaf != nil && n.Type != ConditionTypeGroup {
+		return []RuleCondition{*n.Leaf}
+	}
+	if n.Group == nil {
+		return nil
+	}
+	out := make([]RuleCondition, 0, len(n.Group.Children))
+	for _, child := range n.Group.Children {
+		out = append(out, flattenNode(child)...)
+	}
+	return out
+}
+
+// rawGroup / rawNode 是解析用的中间形态。Children 存 json.RawMessage 而不是
+// ConditionNode,是为了让每个子节点都回到 nodeFromRaw 重新判型——否则
+// "裸叶子"写法({field,operator,values} 直接铺在 children 数组的元素上)
+// 只在顶层被认得,嵌在组里的那种会被当成废节点静默丢掉。
+type rawGroup struct {
+	Logic    string            `json:"logic"`
+	Children []json.RawMessage `json:"children"`
+}
+
+type rawNode struct {
+	Type     string             `json:"type"`
+	Group    *rawGroup          `json:"group"`
+	Leaf     *ConditionLeafNode `json:"leaf"`
+	Field    string             `json:"field"`
+	Operator string             `json:"operator"`
+	Values   []string           `json:"values"`
+	Logic    string             `json:"logic"`
+	Children []json.RawMessage  `json:"children"`
+}
+
+// nodeFromRaw 认出它是一组还是一个叶子,并把子节点逐个归一化。
+func nodeFromRaw(raw []byte) (ConditionNode, bool) {
+	var probe rawNode
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return ConditionNode{}, false
+	}
+	switch {
+	case probe.Group != nil:
+		return normalizeGroup(*probe.Group), true
+	case probe.Leaf != nil:
+		return normalizeLeaf(*probe.Leaf), true
+	case probe.Type == ConditionTypeGroup || probe.Children != nil:
+		return normalizeGroup(rawGroup{Logic: probe.Logic, Children: probe.Children}), true
+	case probe.Field != "":
+		// 裸叶子:{field,operator,values} 直接铺在节点上
+		return normalizeLeaf(ConditionLeafNode{Field: probe.Field, Operator: probe.Operator, Values: probe.Values}), true
+	}
+	return ConditionNode{}, false
+}
+
+// normalizeGroup 递归归一化子节点(丢掉既不是组也不是叶子的废节点),
+// 并把缺失的 logic 补成 all。
+func normalizeGroup(g rawGroup) ConditionNode {
+	kids := make([]ConditionNode, 0, len(g.Children))
+	for _, child := range g.Children {
+		if n, ok := nodeFromRaw(child); ok {
+			kids = append(kids, n)
+		}
+	}
+	if g.Logic == "" {
+		g.Logic = "all"
+	}
+	return ConditionNode{
+		Type:  ConditionTypeGroup,
+		Group: &ConditionGroupNode{Logic: g.Logic, Children: kids},
+	}
+}
+
+func normalizeLeaf(l ConditionLeafNode) ConditionNode {
+	return ConditionNode{Type: ConditionTypeLeaf, Leaf: &l}
+}
+
+// UnmarshalJSON 兼容两种历史形态:扁平数组与条件树对象。
+// 解析失败一律降级为"无条件组"而不是报错:一条脏数据不该把整份规则加载拖垮
+// (与 Scan 的既有约定一致)。结构性废节点(既无 group 也无 leaf)在解析期丢掉,
+// 字段/运算符是否合法留给求值侧判定——那里才知道 13 个字段与运算符白名单。
+func (c *RuleConditions) UnmarshalJSON(b []byte) error {
+	*c = RuleConditions{}
+	trimmed := bytes.TrimSpace(b)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return nil
+	}
+	switch trimmed[0] {
+	case '[':
+		var leaves []RuleCondition
+		if err := json.Unmarshal(trimmed, &leaves); err != nil {
+			return nil
+		}
+		if leaves == nil {
+			leaves = []RuleCondition{}
+		}
+		c.Leaves = leaves
+		return nil
+	case '{':
+		root, ok := nodeFromRaw(trimmed)
+		if !ok {
+			return nil
+		}
+		c.Root = &root
+		c.Leaves = flattenNode(root)
+		return nil
+	}
+	return nil
+}
+
+// MarshalJSON 写回原形态:树形态写对象,扁平形态写数组。
+// 回写扁平而非一律写成树,是为了不把存量行在一次无关更新里改写成新形态。
+func (c RuleConditions) MarshalJSON() ([]byte, error) {
+	if c.IsTree() {
+		return json.Marshal(c.Root)
+	}
+	if c.Leaves == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(c.Leaves)
+}
 
 // Value 序列化为 JSONB 文本(空条件组写 "[]" 而不是 null)。
 func (c RuleConditions) Value() (driver.Value, error) {
-	if c == nil {
-		return []byte("[]"), nil
-	}
-	b, err := json.Marshal(c)
+	b, err := c.MarshalJSON()
 	if err != nil {
 		return nil, err
 	}
@@ -93,19 +291,13 @@ func (c *RuleConditions) Scan(v any) error {
 }
 
 func (c *RuleConditions) decode(b []byte) error {
-	if len(b) == 0 {
+	if len(bytes.TrimSpace(b)) == 0 {
 		*c = RuleConditions{}
 		return nil
 	}
-	var out RuleConditions
-	if err := json.Unmarshal(b, &out); err != nil {
+	if err := c.UnmarshalJSON(b); err != nil {
 		*c = RuleConditions{}
-		return nil
 	}
-	if out == nil {
-		out = RuleConditions{}
-	}
-	*c = out
 	return nil
 }
 
@@ -270,8 +462,8 @@ func replaceRuleLinks(tx *gorm.DB, tenantID, ruleID int64, linkIDs []int64) erro
 // tenantID 以参数为准(不从入参对象上读),空 scope/logic 归一为 DDL 里的默认值。
 // 唯一约束冲突(同租户重名)返回唯一约束错误(整个创建回滚,由 IsUniqueViolation 判定)。
 func (s *Store) CreateRule(ctx context.Context, tenantID int64, r Rule) (*Rule, error) {
-	if r.Conditions == nil {
-		r.Conditions = RuleConditions{}
+	if r.Conditions.IsZero() {
+		r.Conditions = Conditions()
 	}
 	// DDL 有默认值但 GORM 会把零值一并 INSERT,CHECK 约束不接受空串,这里补上默认值
 	if r.Scope == "" {
@@ -442,7 +634,7 @@ func (s *Store) UpdateRule(ctx context.Context, tenantID, id int64, upd RuleUpda
 	put("destination", upd.Destination != nil, derefOr(cur.Destination, upd.Destination))
 	put("page_mode", upd.PageMode != nil, derefOr(orDefault(cur.PageMode, "default"), upd.PageMode))
 	put("custom_html", upd.CustomHTML != nil, derefOr(cur.CustomHTML, upd.CustomHTML))
-	if upd.Conditions != nil {
+	if upd.Conditions != nil && !upd.Conditions.IsZero() {
 		fields["conditions"] = *upd.Conditions
 	}
 	newScope := orDefault(cur.Scope, RuleScopeGlobal)

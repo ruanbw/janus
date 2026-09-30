@@ -5,8 +5,11 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"cloak/internal/db"
@@ -90,10 +93,9 @@ func TestRuleConditionsJSONBRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	tenantID := newTenant(t, s, "cond@test.io")
 
-	conds := RuleConditions{
-		{Field: "country", Operator: "in", Values: []string{"US", "CA"}},
-		{Field: "ua", Operator: "regex", Values: []string{"(?i)bot|crawler"}},
-	}
+	conds := Conditions(
+		RuleCondition{Field: "country", Operator: "in", Values: []string{"US", "CA"}},
+		RuleCondition{Field: "ua", Operator: "regex", Values: []string{"(?i)bot|crawler"}})
 	r, err := s.CreateRule(ctx, tenantID, Rule{
 		Name: "境外爬虫", Scope: RuleScopeGlobal, Enabled: true,
 		Logic: RuleLogicAny, Action: RuleActionNotfound, Conditions: conds,
@@ -105,17 +107,17 @@ func TestRuleConditionsJSONBRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get rule: %v", err)
 	}
-	if len(got.Conditions) != 2 {
-		t.Fatalf("条件组长度 = %d, want 2", len(got.Conditions))
+	if got.Conditions.Len() != 2 {
+		t.Fatalf("条件组长度 = %d, want 2", got.Conditions.Len())
 	}
-	if got.Conditions[0].Field != "country" || got.Conditions[0].Operator != "in" {
-		t.Fatalf("首条条件 = %+v", got.Conditions[0])
+	if got.Conditions.Leaves[0].Field != "country" || got.Conditions.Leaves[0].Operator != "in" {
+		t.Fatalf("首条条件 = %+v", got.Conditions.Leaves[0])
 	}
-	if len(got.Conditions[0].Values) != 2 || got.Conditions[0].Values[1] != "CA" {
-		t.Fatalf("首条条件 values = %v", got.Conditions[0].Values)
+	if len(got.Conditions.Leaves[0].Values) != 2 || got.Conditions.Leaves[0].Values[1] != "CA" {
+		t.Fatalf("首条条件 values = %v", got.Conditions.Leaves[0].Values)
 	}
-	if got.Conditions[1].Values[0] != "(?i)bot|crawler" {
-		t.Fatalf("正则条件值 = %v", got.Conditions[1].Values)
+	if got.Conditions.Leaves[1].Values[0] != "(?i)bot|crawler" {
+		t.Fatalf("正则条件值 = %v", got.Conditions.Leaves[1].Values)
 	}
 }
 
@@ -140,7 +142,7 @@ func TestRuleEmptyConditionsStoredAsEmptyArray(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get rule: %v", err)
 	}
-	if got.Conditions == nil || len(got.Conditions) != 0 {
+	if got.Conditions.IsZero() || got.Conditions.Len() != 0 {
 		t.Fatalf("条件组 = %#v, want 空切片", got.Conditions)
 	}
 }
@@ -233,7 +235,7 @@ func TestRuleUpdatePartialFields(t *testing.T) {
 	r, err := s.CreateRule(ctx, tenantID, Rule{
 		Name: "原名", Description: "原描述", Priority: 10, Action: RuleActionPass,
 		Destination: "", Enabled: true,
-		Conditions: RuleConditions{{Field: "devtype", Operator: "eq", Values: []string{"bot"}}},
+		Conditions: Conditions(RuleCondition{Field: "devtype", Operator: "eq", Values: []string{"bot"}}),
 	})
 	if err != nil {
 		t.Fatalf("create rule: %v", err)
@@ -254,7 +256,7 @@ func TestRuleUpdatePartialFields(t *testing.T) {
 	if got.Description != "原描述" || got.Priority != 10 {
 		t.Fatalf("未传字段被改写 = %+v", got)
 	}
-	if len(got.Conditions) != 1 || got.Conditions[0].Field != "devtype" {
+	if got.Conditions.Len() != 1 || got.Conditions.Leaves[0].Field != "devtype" {
 		t.Fatalf("条件组被改写 = %+v", got.Conditions)
 	}
 	// 空 destination 必须真的写进去(零值不被 Updates 跳过)
@@ -711,11 +713,11 @@ func TestRuleCustomErrorPages(t *testing.T) {
 	tenantID := newTenant(t, s, "errpages@test.io")
 
 	r, err := s.CreateRule(ctx, tenantID, Rule{
-		Name:        "404拦下",
-		Enabled:     true,
-		Action:      RuleActionNotfound,
-		PageMode:    "custom",
-		CustomHTML:  "<h1>Denied</h1>",
+		Name:       "404拦下",
+		Enabled:    true,
+		Action:     RuleActionNotfound,
+		PageMode:   "custom",
+		CustomHTML: "<h1>Denied</h1>",
 	})
 	if err != nil {
 		t.Fatalf("create rule: %v", err)
@@ -779,5 +781,152 @@ func TestTenantErrorPages(t *testing.T) {
 	}
 	if p404 != "<h1>Global 404</h1>" || p429 != "<h1>Global 429</h1>" {
 		t.Fatalf("updated error pages = %q / %q", p404, p429)
+	}
+}
+
+// ---------- 条件 JSONB 的两种历史形态 ----------
+
+// 历史数据全是扁平数组。读回来必须是扁平形态、回写也必须是扁平数组:
+// 只要回写形态变了,一次无关的改名就会把所有老规则的 JSONB 改写成树。
+func TestRuleConditionsJSONFlatStaysFlat(t *testing.T) {
+	raw := `[{"field":"country","operator":"in","values":["CN","US"]},` +
+		`{"field":"ua","operator":"contains","values":["bot"]}]`
+	var c RuleConditions
+	if err := json.Unmarshal([]byte(raw), &c); err != nil {
+		t.Fatalf("unmarshal flat: %v", err)
+	}
+	if c.IsTree() {
+		t.Fatalf("扁平数组不该被解析成条件树: %#v", c)
+	}
+	if c.Len() != 2 || c.Leaves[0].Field != "country" || c.Leaves[1].Values[0] != "bot" {
+		t.Fatalf("扁平解析结果 = %#v", c)
+	}
+	out, err := json.Marshal(c)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != raw {
+		t.Fatalf("回写形态变了:\n got %s\nwant %s", out, raw)
+	}
+}
+
+// 树形态:组可以带 type:"group" 包一层 group/children,也可以把组字段直接铺在节点上。
+// 两种写法都要认,且都能原样回写成树(形状不统一时以归一化后的树为准)。
+func TestRuleConditionsJSONTree(t *testing.T) {
+	cases := []struct {
+		name    string
+		raw     string
+		logic   string
+		wantLen int
+		leaves  []string
+	}{
+		{
+			name:    "显式 type+group",
+			raw:     `{"type":"group","group":{"logic":"any","children":[{"type":"leaf","leaf":{"field":"country","operator":"eq","values":["CN"]}},{"type":"group","group":{"logic":"all","children":[{"type":"leaf","leaf":{"field":"path","operator":"contains","values":["/promo"]}}]}}]}}`,
+			logic:   "any",
+			wantLen: 2,
+			leaves:  []string{"country", "path"},
+		},
+		{
+			name:    "裸字段节点",
+			raw:     `{"logic":"all","children":[{"field":"country","operator":"eq","values":["CN"]},{"field":"path","operator":"contains","values":["/promo"]}]}`,
+			logic:   "all",
+			wantLen: 2,
+			leaves:  []string{"country", "path"},
+		},
+		{
+			name:    "缺失 logic 按 all",
+			raw:     `{"children":[{"field":"country","operator":"eq","values":["CN"]}]}`,
+			logic:   "all",
+			wantLen: 1,
+			leaves:  []string{"country"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var c RuleConditions
+			if err := json.Unmarshal([]byte(tc.raw), &c); err != nil {
+				t.Fatalf("unmarshal tree: %v", err)
+			}
+			if !c.IsTree() || c.Root == nil {
+				t.Fatalf("没解析成条件树: %#v", c)
+			}
+			if c.Root.Group == nil || c.Root.Group.Logic != tc.logic {
+				t.Fatalf("根组 logic = %#v, want %s", c.Root.Group, tc.logic)
+			}
+			// 叶子按深度优先摊平,顺序就是求值顺序
+			if c.Len() != tc.wantLen {
+				t.Fatalf("叶子数 = %d, want %d (%#v)", c.Len(), tc.wantLen, c.Leaves)
+			}
+			for i, want := range tc.leaves {
+				if c.Leaves[i].Field != want {
+					t.Fatalf("第 %d 个叶子 = %q, want %q", i, c.Leaves[i].Field, want)
+				}
+			}
+			out, err := json.Marshal(c)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var back RuleConditions
+			if err := json.Unmarshal(out, &back); err != nil {
+				t.Fatalf("回写不是合法 JSON: %v (%s)", err, out)
+			}
+			if !back.IsTree() || back.Len() != tc.wantLen || back.Root.Group.Logic != tc.logic {
+				t.Fatalf("回写后形态变了: %s", out)
+			}
+		})
+	}
+}
+
+// 脏数据一律降级成"无条件组"而不是让整份规则加载失败(与 Scan 的既有约定一致)。
+func TestRuleConditionsJSONGarbageDegrades(t *testing.T) {
+	// 注意:语法错误(截断的 JSON)由 encoding/json 自己挡下、根本不会进 UnmarshalJSON,
+	// 这里只覆盖"合法但形状不对"的值——那才是历史脏数据真正的样子。
+	for _, raw := range []string{`null`, `{}`, `[]`, `"条件"`, `123`, `[1,2,3]`, `{"foo":1}`, `[{"field":1}]`} {
+		var c RuleConditions
+		if err := json.Unmarshal([]byte(raw), &c); err != nil {
+			t.Fatalf("%q 不该报错: %v", raw, err)
+		}
+		if c.Len() != 0 {
+			t.Fatalf("%q 解析出 %d 条叶子, want 0", raw, c.Len())
+		}
+	}
+	var c RuleConditions
+	if out, err := json.Marshal(c); err != nil || string(out) != "[]" {
+		t.Fatalf("零值回写 = %s (%v), want []", out, err)
+	}
+	// null / 空输入必须保持零值(PATCH 用它表示"本次不动条件列")
+	var zero RuleConditions
+	if err := json.Unmarshal([]byte("null"), &zero); err != nil || !zero.IsZero() {
+		t.Fatalf("null 后 = %#v (err=%v), want 零值", zero, err)
+	}
+}
+
+// 树形态的 Value()(写库用)必须能被自己读回来——GORM 的读写都走这一条路。
+func TestRuleConditionsValueRoundTripTree(t *testing.T) {
+	tree := Tree(Group("any",
+		Leaf(RuleCondition{Field: "country", Operator: "eq", Values: []string{"CN"}}),
+		Group("all",
+			Leaf(RuleCondition{Field: "path", Operator: "contains", Values: []string{"/promo"}}),
+			Leaf(RuleCondition{Field: "ua", Operator: "regex", Values: []string{"(?i)bot"}}),
+		),
+	))
+	raw, err := tree.Value()
+	if err != nil {
+		t.Fatalf("value: %v", err)
+	}
+	text := fmt.Sprint(raw)
+	if !strings.HasPrefix(text, "{") {
+		t.Fatalf("树形态的 Value() 不是对象: %s", text)
+	}
+	var back RuleConditions
+	if err := back.Scan(text); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if !back.IsTree() || back.Len() != 3 {
+		t.Fatalf("读回来 = %#v", back)
+	}
+	if back.Root.Group.Logic != "any" || back.Root.Group.Children[1].Group.Logic != "all" {
+		t.Fatalf("嵌套组结构丢了: %#v", back.Root)
 	}
 }

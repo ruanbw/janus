@@ -76,6 +76,19 @@ type compiledCond struct {
 	seen   int     // duplicated 阈值
 }
 
+// compiledNode 条件树的编译形态。叶子内联在父节点的切片里(值类型,不为每个叶子单独分配);
+// nodeOpAny 短路命中,nodeOpAll 短路失败。
+type compiledNode struct {
+	op       uint8          // nodeOpAll / nodeOpAny
+	conds    []compiledCond // op 为叶子时的条件
+	children []compiledNode // 子组
+}
+
+const (
+	nodeOpAll uint8 = iota
+	nodeOpAny
+)
+
 // Compiled 一条预编译后的规则。零关联的 scoped 规则在这里表现为
 // appliesAll=false 且 linkIDs 为空,求值期直接跳过(spec D2:不兜底成全局)。
 type Compiled struct {
@@ -83,7 +96,8 @@ type Compiled struct {
 	logicAll   bool
 	appliesAll bool           // scope=global
 	linkIDs    map[int64]bool // scope=links 时的适用短链
-	conds      []compiledCond
+	root       compiledNode   // 条件树(扁平形态 = 一层 logicAll 组)
+	nested     bool           // 是否真的用了嵌套(用于把「为什么没命中」说成人话)
 }
 
 // compileRule 预编译一条规则。conditions 非空但全部被丢弃(字段不认识/正则非法/CIDR 非法)
@@ -109,21 +123,136 @@ func compileRule(r store.Rule, log *slog.Logger) (Compiled, bool) {
 		// 库内 CHECK 拦得住脏值,这里再兜一层:不认识的 logic 一律按 all 求值
 		log.Warn("规则 logic 非法,按 all 求值", "rule", r.ID, "logic", r.Logic)
 	}
-	declared := len(r.Conditions)
+	declared := r.Conditions.Len()
 	kept := 0
-	for _, cond := range r.Conditions {
-		cc, ok := compileCond(cond, r.ID, log)
+	if r.Conditions.IsTree() {
+		root, ok := compileNode(*r.Conditions.Root, r.ID, log)
 		if !ok {
-			continue
+			log.Warn("规则条件树不可求值,整条规则不参与求值", "rule", r.ID, "name", r.Name)
+			return Compiled{}, false
 		}
-		c.conds = append(c.conds, cc)
-		kept++
+		c.root = root
+		c.nested = root.nestedTree()
+		kept = len(root.leaves())
+	} else {
+		// 扁平形态就是"一层 + rules.logic"的树:求值路径只有 root 一条
+		root := compiledNode{op: nodeOpFor(c.logicAll)}
+		for _, cond := range r.Conditions.Leaves {
+			cc, ok := compileCond(cond, r.ID, log)
+			if !ok {
+				continue
+			}
+			root.conds = append(root.conds, cc)
+			kept++
+		}
+		c.root = root
 	}
 	if declared > 0 && kept == 0 {
 		log.Warn("规则条件全部不可求值,整条规则不参与求值", "rule", r.ID, "name", r.Name)
 		return Compiled{}, false
 	}
 	return c, true
+}
+
+func nodeOpFor(logicAll bool) uint8 {
+	if logicAll {
+		return nodeOpAll
+	}
+	return nodeOpAny
+}
+
+// leaves 树里的叶子总数(用于"声明了 N 条却一条都不可求值"的判定)。
+func (n compiledNode) leaves() []compiledCond {
+	if len(n.children) == 0 {
+		return n.conds
+	}
+	var out []compiledCond
+	for i := range n.children {
+		out = append(out, n.children[i].leaves()...)
+	}
+	return out
+}
+
+// nestedTree 树里是否出现了子组(一层 all/any 不算嵌套)。
+func (n compiledNode) nestedTree() bool {
+	if len(n.children) == 0 {
+		return false
+	}
+	if len(n.conds) > 0 {
+		return true
+	}
+	for i := range n.children {
+		if len(n.children[i].children) > 0 || n.children[i].nestedTree() {
+			return true
+		}
+	}
+	return false
+}
+
+// leafCount 叶子总数,不给 leaves() 分配一个临时切片。
+func (n compiledNode) leafCount() int {
+	if len(n.children) == 0 {
+		return len(n.conds)
+	}
+	total := len(n.conds)
+	for i := range n.children {
+		total += n.children[i].leafCount()
+	}
+	return total
+}
+
+// compileNode 预编译条件树的一个节点。ok=false 表示这个节点不可求值,
+// 调用方要么整条规则不参与求值,要么(叶子层)跳过这一条。
+//
+// 为什么不是"跳过坏叶子继续":在 or 组里丢一条叶子会静默收窄规则,
+// 在 and 组里丢一条会静默放宽规则——后者是 fail-open,比整条规则不参与
+// 危险得多。所以非空组编译后变成空组一律判整条规则不可求值。
+func compileNode(n store.ConditionNode, ruleID int64, log *slog.Logger) (compiledNode, bool) {
+	if n.Group != nil && n.Type != store.ConditionTypeLeaf {
+		logic := n.Group.Logic
+		if logic == "" {
+			// 缺失 logic 按 all:与扁平形态、与库内 CHECK 的约定一致
+			logic = "all"
+		}
+		if logic != "all" && logic != "any" {
+			// 库内 CHECK 拦得住脏值;这里兜一层并按 all 求值,和扁平形态同一套策略
+			log.Warn("条件组 logic 非法,按 all 求值", "rule", ruleID, "logic", logic)
+			logic = "all"
+		}
+		out := compiledNode{op: nodeOpFor(logic == "all")}
+		declared := 0
+		for _, child := range n.Group.Children {
+			cc, ok := compileNode(child, ruleID, log)
+			if !ok {
+				// 组里有一个不可求值的叶子,整组作废:在 and 组里丢一条等于把规则放宽
+				// (fail-open),在 any 组里丢一条等于把规则收紧——都不是用户写的东西。
+				return compiledNode{}, false
+			}
+			if len(cc.conds) == 0 && len(cc.children) == 0 {
+				continue // 结构性空组(本来就没有子节点),不算写坏了
+			}
+			if len(cc.conds) == 1 && len(cc.children) == 0 {
+				// 单叶子直接内联,不为每个叶子分配一个节点
+				out.conds = append(out.conds, cc.conds[0])
+			} else {
+				out.children = append(out.children, cc)
+			}
+			declared++
+		}
+		if declared == 0 && len(n.Group.Children) > 0 {
+			log.Warn("条件组声明了子节点但一个都不可求值", "rule", ruleID, "logic", logic)
+			return compiledNode{}, false
+		}
+		return out, true
+	}
+	if n.Leaf == nil {
+		return compiledNode{}, false
+	}
+	cc, ok := compileCond(*n.Leaf, ruleID, log)
+	if !ok {
+		return compiledNode{}, false
+	}
+	return compiledNode{op: nodeOpAll, conds: []compiledCond{cc}}, true
 }
 
 // compileCond 预编译单条条件;ok=false 表示这条条件被丢弃(调用方记录并继续)。
@@ -388,23 +517,28 @@ func (c *compiledCond) matchRegex(raw string) bool {
 // 空条件组视为满足(可以配一条"无条件即执行"的规则);但整条规则
 // 不会带着空条件组出现——conditions 非空却被全部丢弃时整条规则已不参与求值。
 func (c *Compiled) matchAll(ctx VisitorContext) bool {
-	if len(c.conds) == 0 {
-		return true
-	}
-	if c.logicAll {
-		for i := range c.conds {
-			if !c.conds[i].match(ctx) {
-				return false
-			}
+	return c.root.match(ctx)
+}
+
+// match 递归求值。短路是必须的:and 组里后面的条件可能拿不到数据(白跑一次慢判断,
+// 甚至让一次 duplicated 计数被重复触发),any 组里更不该为已经成立的分支继续付出代价。
+func (n compiledNode) match(ctx VisitorContext) bool {
+	// want = 一旦成立就短路返回的那个值:any 组是 true,all 组是 false。
+	// 空节点:all([]) 为真(可配一条"无条件即执行"的规则),any([]) 为假。
+	// 内联的叶子先于嵌套组求值(见 compileNode):叶子是用户直接写在父组里的条件,
+	// 嵌套组排在后面,与叶子摊平后的顺序一致。
+	want := n.op == nodeOpAny
+	for i := range n.conds {
+		if n.conds[i].match(ctx) == want {
+			return want
 		}
-		return true
 	}
-	for i := range c.conds {
-		if c.conds[i].match(ctx) {
-			return true
+	for i := range n.children {
+		if n.children[i].match(ctx) == want {
+			return want
 		}
 	}
-	return false
+	return !want
 }
 
 // applies 规则是否适用于该短链。

@@ -20,7 +20,16 @@ func oneRule(id int64, conds ...store.RuleCondition) store.Rule {
 	return store.Rule{
 		ID: id, Name: "r", Enabled: true, Scope: store.RuleScopeGlobal,
 		Logic: store.RuleLogicAll, Action: store.RuleActionNotfound,
-		Priority: int(id), Conditions: conds,
+		Priority: int(id), Conditions: store.Conditions(conds...),
+	}
+}
+
+// oneTreeRule 造一条以条件树为条件的规则(嵌套形态,组内 logic 自带)。
+func oneTreeRule(id int64, root store.ConditionNode) store.Rule {
+	return store.Rule{
+		ID: id, Name: "tree", Enabled: true, Scope: store.RuleScopeGlobal,
+		Logic: store.RuleLogicAll, Action: store.RuleActionNotfound,
+		Priority: int(id), Conditions: store.Tree(root),
 	}
 }
 
@@ -245,7 +254,9 @@ func TestEvaluateFailsOpenOnPanic(t *testing.T) {
 	snap.Rules = append(snap.Rules, Compiled{
 		Rule:       store.Rule{ID: 99, Enabled: true, Action: store.RuleActionNotfound},
 		appliesAll: true, logicAll: true,
-		conds: []compiledCond{{field: FieldUA, op: OpRegex, res: []*regexp.Regexp{nil}}},
+		root: compiledNode{op: nodeOpAll, conds: []compiledCond{
+			{field: FieldUA, op: OpRegex, res: []*regexp.Regexp{nil}},
+		}},
 	})
 	dec, ok := snap.Evaluate(Fact{UA: "anything"}, 1)
 	if ok {
@@ -649,4 +660,178 @@ func BenchmarkSetOperators(b *testing.B) {
 			}
 		}
 	})
+}
+
+// ---------- 条件树 ----------
+
+// nestedTree 造一棵 "any[ 中国, all[ /promo, 爬虫 ] ]"。
+func nestedTree() store.ConditionNode {
+	return store.Group("any",
+		store.Leaf(store.RuleCondition{Field: FieldCountry, Operator: OpEq, Values: []string{"CN"}}),
+		store.Group("all",
+			store.Leaf(store.RuleCondition{Field: FieldPath, Operator: OpContains, Values: []string{"/promo"}}),
+			store.Leaf(store.RuleCondition{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}}),
+		),
+	)
+}
+
+// 树形态求值:any 与嵌套 all 各自生效,且组内 logic 优先于 rules.logic。
+func TestNestedConditionTree(t *testing.T) {
+	promo := Fact{Path: "/promo", DevType: "bot", Domain: "s.test"}
+	human := Fact{Path: "/promo", DevType: "mobile", Domain: "s.test"}
+	cn := Fact{Country: "CN", Path: "/other", DevType: "mobile", Domain: "s.test"}
+	none := Fact{Path: "/other", DevType: "mobile", Domain: "s.test"}
+
+	cases := []struct {
+		name  string
+		fact  Fact
+		want  bool
+		whyIt string
+	}{
+		{"嵌套 all 两条都成立", promo, true, "路径 + 爬虫同时成立"},
+		{"嵌套 all 只成立一条", human, false, "只是 /promo 不够"},
+		{"外层 any 的叶子成立", cn, true, "中国访客直接命中"},
+		{"全不成立", none, false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// rules.logic 故意写 all:树形态下必须以组内的 any 为准
+			rule := oneTreeRule(1, nestedTree())
+			rule.Logic = store.RuleLogicAll
+			_, got := NewSnapshot([]store.Rule{rule}, discardLog).Evaluate(&tc.fact, 1)
+			if got != tc.want {
+				t.Fatalf("命中 = %v, want %v(%s)", got, tc.want, tc.whyIt)
+			}
+		})
+	}
+}
+
+// 树形态下坏叶子不能只丢自己:在 and 组里丢一条等于把规则放宽(fail-open),
+// 在 any 组里丢一条等于把规则收紧。与扁平形态的"丢单个"策略故意不同。
+func TestNestedTreeBadLeafDropsWholeRule(t *testing.T) {
+	badField := store.RuleCondition{Field: "region", Operator: OpEq, Values: []string{"北京"}}
+	good := store.RuleCondition{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}}
+	fact := Fact{DevType: "bot", Domain: "s.test"}
+
+	// 同一棵树:bad 叶子挂在 and 组里 / 挂在 any 组里,结果都该是整条规则不参与求值
+	for _, tc := range []struct {
+		name string
+		root store.ConditionNode
+	}{
+		{"and 组里的坏叶子", store.Group("all", store.Leaf(good), store.Leaf(badField))},
+		{"any 组里的坏叶子", store.Group("any", store.Leaf(good), store.Leaf(badField))},
+		{"坏叶子自己成一个组", store.Group("all", store.Leaf(good), store.Group("all", store.Leaf(badField)))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snap := NewSnapshot([]store.Rule{oneTreeRule(7, tc.root)}, discardLog)
+			if len(snap.Rules) != 0 {
+				t.Fatalf("整条规则都该被丢弃,却留下了 %d 条", len(snap.Rules))
+			}
+			if _, ok := snap.Evaluate(&fact, 1); ok {
+				t.Fatal("不参与求值的规则不该命中")
+			}
+		})
+	}
+
+	// 对照:同样的坏叶子放在扁平条件里,只丢它自己,规则照常生效(既有行为不变)
+	flat := oneRule(8, good, badField)
+	snap := NewSnapshot([]store.Rule{flat}, discardLog)
+	if len(snap.Rules) != 1 {
+		t.Fatalf("扁平形态不该整条丢弃: %d 条", len(snap.Rules))
+	}
+	if _, ok := snap.Evaluate(&fact, 1); !ok {
+		t.Fatal("扁平形态下剩下的好条件应该命中")
+	}
+}
+
+// 结构性空组(一个子节点都没有)直接跳过;空组不是"写了坏叶子",不该毁掉整条规则。
+func TestNestedTreeStructuralEmptyGroup(t *testing.T) {
+	good := store.Leaf(store.RuleCondition{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}})
+	fact := Fact{DevType: "bot", Domain: "s.test"}
+
+	for _, tc := range []struct {
+		name string
+		root store.ConditionNode
+		want bool
+	}{
+		{"空 any 组被跳过", store.Group("all", good, store.Group("any")), true},
+		{"空 all 组被跳过", store.Group("any", good, store.Group("all")), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snap := NewSnapshot([]store.Rule{oneTreeRule(9, tc.root)}, discardLog)
+			if len(snap.Rules) != 1 {
+				t.Fatalf("规则不该被丢弃,剩 %d 条", len(snap.Rules))
+			}
+			if _, got := snap.Evaluate(&fact, 1); got != tc.want {
+				t.Fatalf("命中 = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	// 反过来:整棵树每个分支都只剩空组 = 用户写的条件一条都不存在。
+	// 这种规则不能求值(它既不是"恒成立"也不是"恒不成立",而是被写坏了),
+	// 整条丢弃并在日志里留下告警,而不是猜一个语义。API 侧本来就拒收空组,
+	// 只有手写 JSONB 的脏数据才会走到这里。
+	var buf bytes.Buffer
+	lg := slog.New(slog.NewTextHandler(&buf, nil))
+	snap := NewSnapshot([]store.Rule{oneTreeRule(9, store.Group("any", store.Group("all")))}, lg)
+	if len(snap.Rules) != 0 {
+		t.Fatalf("只剩空组的树该整条丢弃,剩 %d 条", len(snap.Rules))
+	}
+	if !strings.Contains(buf.String(), "条件树不可求值") {
+		t.Fatalf("缺少丢弃告警:\n%s", buf.String())
+	}
+}
+
+// 根组逻辑缺失时按 all(和扁平形态、库里 CHECK 的约定一致)。
+func TestNestedTreeMissingLogicIsAll(t *testing.T) {
+	root := store.Group("",
+		store.Leaf(store.RuleCondition{Field: FieldCountry, Operator: OpEq, Values: []string{"CN"}}),
+		store.Leaf(store.RuleCondition{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}}),
+	)
+	snap := NewSnapshot([]store.Rule{oneTreeRule(10, root)}, discardLog)
+	if got := snap.Rules[0].root.op; got != nodeOpAll {
+		t.Fatalf("根组 op = %d, want nodeOpAll", got)
+	}
+	onlyBot := Fact{DevType: "bot", Domain: "s.test"}
+	if _, ok := snap.Evaluate(&onlyBot, 1); ok {
+		t.Fatal("缺 country 的叶子不该命中(all 语义)")
+	}
+}
+
+// 仿真留痕必须覆盖整棵树的每个叶子,包括被短路掉的那一支——
+// "为什么另一条没生效"才是决策链要回答的问题。
+func TestNestedTreeSimulateTracesEveryLeaf(t *testing.T) {
+	// 三个叶子都不成立(path 不带 /promo、devtype 不是 bot、country 不是 CN)
+	fact := Fact{Path: "/pricing", DevType: "mobile", Country: "US", Domain: "s.test"}
+	snap := NewSnapshot([]store.Rule{oneTreeRule(11, nestedTree())}, discardLog)
+	res := snap.Simulate(&fact, 1, nil, nil)
+	if res.Matched {
+		t.Fatalf("不该命中: %+v", res.Verdict)
+	}
+	step := res.Steps[0]
+	if len(step.Conditions) != 3 {
+		t.Fatalf("留痕条数 = %d, want 3(全树叶子)", len(step.Conditions))
+	}
+	fields := []string{step.Conditions[0].Field, step.Conditions[1].Field, step.Conditions[2].Field}
+	want := []string{FieldCountry, FieldPath, FieldDevType}
+	for i := range want {
+		if fields[i] != want[i] {
+			t.Fatalf("第 %d 条留痕字段 = %q, want %q", i, fields[i], want[i])
+		}
+	}
+	if !strings.Contains(step.Reason, "条件树求值未通过") || !strings.Contains(step.Reason, "0/3") {
+		t.Fatalf("未命中理由 = %q, want 提到条件树与 0/3", step.Reason)
+	}
+}
+
+// 树形态的求值不分配内存(与扁平形态同一条 0 B/op 基线)。
+func BenchmarkEvaluateNestedTree(b *testing.B) {
+	snap := NewSnapshot([]store.Rule{oneTreeRule(1, nestedTree())}, discardLog)
+	vCtx := AcquireVisitorContext(nil, "US", "")
+	defer ReleaseVisitorContext(vCtx)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		snap.Evaluate(vCtx, 1)
+	}
 }

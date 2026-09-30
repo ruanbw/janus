@@ -113,9 +113,8 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 		w.destination = cur.Destination
 		w.pageMode = firstNonEmpty(cur.PageMode, "default")
 		w.customHTML = cur.CustomHTML
-		if cur.Conditions != nil {
-			w.conditions = cur.Conditions
-		}
+		// 现值无条件时就是零值,直接带过来(条件列不再是切片,靠 IsZero 区分未设置)
+		w.conditions = cur.Conditions
 	}
 	// ① name 必填且非空白(新建时缺失同样算非法)
 	if req.Name != nil {
@@ -183,21 +182,13 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 	if len(w.customHTML) > 512*1024 {
 		return ruleWrite{}, ruleErr("customHtml 超过大小上限(512KB)")
 	}
-	// ⑦⑧ 条件字段与运算符必须都在 v1 白名单内(白名单以 rules 包为准,httpapi 只引用)
+	// ⑦⑧ 条件字段与运算符必须都在 v1 白名单内(白名单以 rules 包为准,httpapi 只引用)。
+	// 条件树里的每个叶子都要校验,报错带 JSON 路径——不指明位置的话用户没法改。
 	if req.Conditions != nil {
-		conds := store.RuleConditions(*req.Conditions)
-		for i, cond := range conds {
-			if !rules.ValidField(cond.Field) {
-				return ruleWrite{}, ruleErr("conditions[%d].field 不在可求值字段集内:%s", i, cond.Field)
-			}
-			if !rules.ValidOperator(cond.Operator) {
-				return ruleWrite{}, ruleErr("conditions[%d].operator 不合法:%s", i, cond.Operator)
-			}
+		if err := validateConditionTree(*req.Conditions); err != nil {
+			return ruleWrite{}, err
 		}
-		if conds == nil {
-			conds = store.RuleConditions{}
-		}
-		w.conditions = conds
+		w.conditions = *req.Conditions
 	}
 	// ⑨ linkIds:只接受本租户、未逻辑删除的短链。scope=global 时不校验也不保留——
 	// 那些 id 马上会被丢弃,为一次注定不发生的写入报错只会给出误导性的失败原因。
@@ -222,6 +213,52 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 		w.linkIDs = &ids
 	}
 	return w, nil
+}
+
+// validateConditionTree 校验一组条件(扁平或树形)。每个叶子都跑一遍
+// 字段/运算符白名单,每个组都校验 logic——库内 CHECK 只拦得住脏值,拦不住
+// 写错的意图,而一条被静默丢弃的条件意味着规则行为和用户以为的不一样。
+func validateConditionTree(conds store.RuleConditions) error {
+	if !conds.IsTree() {
+		for i, cond := range conds.Leaves {
+			if err := validateConditionLeaf(cond, fmt.Sprintf("conditions[%d]", i)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return validateConditionNode(*conds.Root, "conditions")
+}
+
+func validateConditionNode(n store.ConditionNode, path string) error {
+	if n.Leaf != nil {
+		return validateConditionLeaf(*n.Leaf, path)
+	}
+	if n.Group == nil {
+		return ruleErr("%s 不是合法条件节点(既没有 leaf 也没有 group)", path)
+	}
+	if n.Group.Logic != store.RuleLogicAll && n.Group.Logic != store.RuleLogicAny {
+		return ruleErr("%s.logic 只能是 all 或 any:%s", path, n.Group.Logic)
+	}
+	if len(n.Group.Children) == 0 {
+		return ruleErr("%s 是空条件组", path)
+	}
+	for i, child := range n.Group.Children {
+		if err := validateConditionNode(child, fmt.Sprintf("%s.children[%d]", path, i)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateConditionLeaf(cond store.RuleCondition, path string) error {
+	if !rules.ValidField(cond.Field) {
+		return ruleErr("%s.field 不在可求值字段集内:%s", path, cond.Field)
+	}
+	if !rules.ValidOperator(cond.Operator) {
+		return ruleErr("%s.operator 不合法:%s", path, cond.Operator)
+	}
+	return nil
 }
 
 // firstNonEmpty 空串回退到 DDL 默认值(库内 CHECK 保证不为空,这里双保险)。
