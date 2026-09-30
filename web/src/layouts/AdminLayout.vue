@@ -107,17 +107,6 @@
         </div>
 
         <div class="flex shrink-0 items-center gap-3">
-          <span class="badge badge-ok hidden md:inline-flex">
-            <span class="dot dot-live"></span>
-            系统就绪
-          </span>
-          <span v-if="auth.config?.serverIp" class="badge badge-neutral hidden font-mono lg:inline-flex">
-            节点 IP · {{ auth.config?.serverIp }}
-          </span>
-          <AppTag v-if="auth.tenant?.tier" color="cyan" class="hidden sm:inline-flex">
-            等级 · {{ auth.tenant?.tier?.name }}
-          </AppTag>
-
           <ThemeSwitcher />
 
           <DropdownMenuRoot>
@@ -204,7 +193,6 @@ import ErrorBoundary from '@/components/layout/ErrorBoundary.vue';
 import NavList from '@/components/layout/NavList.vue';
 import SidebarBrand from '@/components/layout/SidebarBrand.vue';
 import ThemeSwitcher from '@/components/layout/ThemeSwitcher.vue';
-import AppTag from '@/components/ui/AppTag.vue';
 import { useAuthStore } from '@/stores/auth';
 
 /** 收起态与展开态的侧边栏宽度,是 aside 宽度与主区域左内边距的唯一真源 */
