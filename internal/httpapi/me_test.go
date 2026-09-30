@@ -57,3 +57,50 @@ func TestMeUsageAndCodeLength(t *testing.T) {
 	assertStatus(t, resp, http.StatusBadRequest)
 	_ = resp.Body.Close()
 }
+
+func TestTenantErrorPagesAPI(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+
+	// 1. GET 初始为空
+	resp := c.get("/api/me/error-pages")
+	assertStatus(t, resp, http.StatusOK)
+	type epResp struct {
+		Custom404HTML string `json:"custom404Html"`
+		Custom429HTML string `json:"custom429Html"`
+	}
+	ep := decodeBody[epResp](t, resp)
+	if ep.Custom404HTML != "" || ep.Custom429HTML != "" {
+		t.Fatalf("expected empty error pages, got: %+v", ep)
+	}
+
+	// 2. PATCH 更新有效页面
+	resp = c.patch("/api/me/error-pages", map[string]any{
+		"custom404Html": "<h1>Not Found</h1>",
+		"custom429Html": "<h1>Too Many Requests</h1>",
+	})
+	assertStatus(t, resp, http.StatusOK)
+	ep = decodeBody[epResp](t, resp)
+	if ep.Custom404HTML != "<h1>Not Found</h1>" || ep.Custom429HTML != "<h1>Too Many Requests</h1>" {
+		t.Fatalf("expected updated error pages, got: %+v", ep)
+	}
+
+	// 3. GET 确认持久化
+	resp = c.get("/api/me/error-pages")
+	assertStatus(t, resp, http.StatusOK)
+	ep = decodeBody[epResp](t, resp)
+	if ep.Custom404HTML != "<h1>Not Found</h1>" || ep.Custom429HTML != "<h1>Too Many Requests</h1>" {
+		t.Fatalf("expected persisted error pages, got: %+v", ep)
+	}
+
+	// 4. 超大内容 (>512KB) 返回 400
+	hugeHTML := make([]byte, 513*1024)
+	for i := range hugeHTML {
+		hugeHTML[i] = 'a'
+	}
+	resp = c.patch("/api/me/error-pages", map[string]any{
+		"custom404Html": string(hugeHTML),
+	})
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
+}

@@ -45,6 +45,8 @@ p, tenant, /api/auth/me, GET
 p, tenant, /api/auth/change-password, POST
 p, tenant, /api/me, GET
 p, tenant, /api/me, PATCH
+p, tenant, /api/me/error-pages, GET
+p, tenant, /api/me/error-pages, PATCH
 p, tenant, /api/config, GET
 p, tenant, /api/domains, GET
 p, tenant, /api/domains, POST

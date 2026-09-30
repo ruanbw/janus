@@ -819,3 +819,56 @@ func TestLinkListRuleMeta(t *testing.T) {
 		t.Errorf("l2 rules = %+v, want 空(全局规则不给开关)", detail2.Rules)
 	}
 }
+
+func TestRuleErrorPagePayload(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+
+	// 1. 新建规则指定 pageMode=custom 和 customHtml
+	r := createRule(t, c, map[string]any{
+		"name":       "自定义404规则",
+		"action":     store.RuleActionNotfound,
+		"pageMode":   "custom",
+		"customHtml": "<h1>Access Denied</h1>",
+	})
+	if r.PageMode != "custom" || r.CustomHTML != "<h1>Access Denied</h1>" {
+		t.Fatalf("rule page fields not set: mode=%s, html=%s", r.PageMode, r.CustomHTML)
+	}
+
+	// 2. GET /api/rules/{id} 完整回传
+	resp := c.get(fmt.Sprintf("/api/rules/%d", r.ID))
+	assertStatus(t, resp, http.StatusOK)
+	got := decodeBody[store.Rule](t, resp)
+	if got.PageMode != "custom" || got.CustomHTML != "<h1>Access Denied</h1>" {
+		t.Fatalf("GET rule page fields mismatch: mode=%s, html=%s", got.PageMode, got.CustomHTML)
+	}
+
+	// 3. PATCH 修改 pageMode 与 customHtml
+	patchResp := c.patch(fmt.Sprintf("/api/rules/%d", r.ID), map[string]any{
+		"pageMode":   "default",
+		"customHtml": "",
+	})
+	assertStatus(t, patchResp, http.StatusOK)
+	updated := decodeBody[store.Rule](t, patchResp)
+	if updated.PageMode != "default" || updated.CustomHTML != "" {
+		t.Fatalf("PATCH rule page fields mismatch: mode=%s, html=%s", updated.PageMode, updated.CustomHTML)
+	}
+
+	// 4. 非法 pageMode 返回 400
+	badResp := c.patch(fmt.Sprintf("/api/rules/%d", r.ID), map[string]any{
+		"pageMode": "invalid_mode",
+	})
+	assertStatus(t, badResp, http.StatusBadRequest)
+	_ = badResp.Body.Close()
+
+	// 5. 超大 HTML (>512KB) 返回 400
+	hugeHTML := make([]byte, 513*1024)
+	for i := range hugeHTML {
+		hugeHTML[i] = 'b'
+	}
+	badResp = c.patch(fmt.Sprintf("/api/rules/%d", r.ID), map[string]any{
+		"customHtml": string(hugeHTML),
+	})
+	assertStatus(t, badResp, http.StatusBadRequest)
+	_ = badResp.Body.Close()
+}

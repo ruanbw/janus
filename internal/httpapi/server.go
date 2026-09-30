@@ -173,6 +173,8 @@ func New(d Deps) http.Handler {
 	// 06:租户设置
 	prot.GET("/me", a.handleGetMe)
 	prot.PATCH("/me", a.handlePatchMe)
+	prot.GET("/me/error-pages", a.handleGetErrorPages)
+	prot.PATCH("/me/error-pages", a.handlePatchErrorPages)
 	// 前端启动配置:服务器 IP/平台域名/当前租户配额,按租户返回
 	prot.GET("/config", a.handleGetConfig)
 	// 08:平台管理(超管;tenant 角色由 authorize 直接 403,requireSuperadmin 保留作纵深防御)
