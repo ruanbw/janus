@@ -1,5 +1,5 @@
 <template>
-  <div class="mx-auto max-w-5xl">
+  <div>
     <PageHeader
       title="添加自有域名"
       description="将自有域名的 DNS 解析指向本服务器，系统将自动校验解析并申请签发 HTTPS 证书"

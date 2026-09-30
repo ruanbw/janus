@@ -428,7 +428,7 @@ onMounted(init);
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl">
+  <div>
     <PageHeader :title="isEdit ? '编辑规则' : '新建规则'" :description="headerDescription">
       <template #actions>
         <AppButton @click="goBack">

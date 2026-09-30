@@ -1,5 +1,5 @@
 <template>
-  <div class="mx-auto max-w-xl">
+  <div>
     <PageHeader
       title="移除违规域名"
       description="从平台侧强制注销并解绑指定违规域名，立即物理删除记录并解除所有短链绑定"

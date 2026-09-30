@@ -1,5 +1,5 @@
 <template>
-  <div class="mx-auto max-w-5xl">
+  <div>
     <PageHeader
       title="账号设置与安全"
       description="查看租户核心账户信息，并管理控制台登录密码凭据"

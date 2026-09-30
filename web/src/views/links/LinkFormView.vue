@@ -1,5 +1,5 @@
 <template>
-  <div class="mx-auto max-w-6xl">
+  <div>
     <PageHeader :title="isEdit ? '编辑短链' : '创建短链'" :description="headerDescription">
       <template #actions>
         <AppButton @click="goBack">

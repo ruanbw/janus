@@ -1,5 +1,5 @@
 <template>
-  <div class="mx-auto max-w-2xl">
+  <div>
     <PageHeader
       title="调整租户等级"
       description="修改租户等级将立即调整其短链与自有域名的配额上限，请核对配额变动后再行保存"
