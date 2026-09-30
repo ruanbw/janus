@@ -32,7 +32,12 @@
     </aside>
 
     <!-- 表单侧 -->
-    <main class="flex flex-1 items-center justify-center bg-surface px-6 py-10">
+    <main class="relative flex flex-1 items-center justify-center bg-surface px-6 py-10">
+      <!-- 登录前也允许切换主题,跟随系统的用户不必先登录 -->
+      <div class="absolute top-4 right-4">
+        <ThemeSwitcher />
+      </div>
+
       <div class="w-full max-w-[420px]">
         <div class="auth-mobile-brand mb-7 flex items-center justify-center gap-2.5 text-lg font-bold tracking-[2px] text-ink">
           <BrandMark :size="28" />
@@ -56,6 +61,7 @@
 import { Boxes, LineChart, ShieldCheck } from '@lucide/vue';
 
 import BrandMark from './BrandMark.vue';
+import ThemeSwitcher from './layout/ThemeSwitcher.vue';
 
 withDefaults(
   defineProps<{

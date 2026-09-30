@@ -121,6 +121,29 @@
   --line-soft: color-mix(in srgb, var(--fg) 16%, transparent);
 }
 
+/* ============ 主题切换动画(View Transitions) ============ */
+/* 配合 src/stores/theme.ts 的 setModeAnimated:关掉默认的整页交叉淡入淡出,
+   改成对 ::view-transition-old/new(root) 之一做 clip-path 圆环缩放。
+   层叠顺序跟着 .dark 走 —— class 是在过渡回调里改的,快照绘制时读到的是新状态:
+   浅色下 new 在上层(圆环放大擦出浅色),深色下 old 在上层(浅色圆环收缩擦掉)。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 9999;
+}
+.dark::view-transition-old(root) {
+  z-index: 9999;
+}
+.dark::view-transition-new(root) {
+  z-index: 1;
+}
+
 /* 语义色 → 工具类(bg-surface / text-ink / border-line / text-ok …) */
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);

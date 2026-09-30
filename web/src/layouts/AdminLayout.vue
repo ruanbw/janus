@@ -118,16 +118,7 @@
             等级 · {{ auth.tenant?.tier?.name }}
           </AppTag>
 
-          <button
-            type="button"
-            aria-label="切换主题"
-            class="flex h-8 w-8 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-surface-strong hover:text-ink"
-            :title="theme.isDark ? '切换到浅色模式' : '切换到深色模式'"
-            @click="theme.toggle()"
-          >
-            <Sun v-if="theme.isDark" :size="16" />
-            <Moon v-else :size="16" />
-          </button>
+          <ThemeSwitcher />
 
           <DropdownMenuRoot>
             <DropdownMenuTrigger as-child>
@@ -193,7 +184,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ChevronDown, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Sun, User, X } from '@lucide/vue';
+import { ChevronDown, LogOut, Menu, PanelLeftClose, PanelLeftOpen, User, X } from '@lucide/vue';
 import {
   DialogClose,
   DialogContent,
@@ -212,9 +203,9 @@ import {
 import ErrorBoundary from '@/components/layout/ErrorBoundary.vue';
 import NavList from '@/components/layout/NavList.vue';
 import SidebarBrand from '@/components/layout/SidebarBrand.vue';
+import ThemeSwitcher from '@/components/layout/ThemeSwitcher.vue';
 import AppTag from '@/components/ui/AppTag.vue';
 import { useAuthStore } from '@/stores/auth';
-import { useThemeStore } from '@/stores/theme';
 
 /** 收起态与展开态的侧边栏宽度,是 aside 宽度与主区域左内边距的唯一真源 */
 const SIDEBAR_W_EXPANDED = '224px';
@@ -223,7 +214,6 @@ const SIDEBAR_W_COLLAPSED = '64px';
 const COLLAPSE_STORAGE_KEY = 'cloak:sidebar-collapsed';
 
 const auth = useAuthStore();
-const theme = useThemeStore();
 const route = useRoute();
 const router = useRouter();
 
