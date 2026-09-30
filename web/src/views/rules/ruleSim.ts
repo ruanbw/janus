@@ -1,19 +1,20 @@
 /**
- * 规则模拟器的求值引擎：把一次「假想访问」解析成 13 个可判定字段,
- * 再用与后端 `internal/rules` 同一套语义逐条判定条件。
+ * 规则模拟器的**展示层**：把后端算好的访客画像与决策链映射成页面要的渲染形态。
  *
- * 这里是**纯函数**模块——不碰 API、不碰路由、不碰组件状态,
- * 因此既能喂给规则模拟器页面,也能被将来任何「解释某条规则为什么命中」的功能直接复用。
+ * 求值不再在前端做。`internal/rules` 是唯一求值实现,前端曾经有一份等价实现
+ * (buildVisitorFacts + evalCondition),两处各算一次必然漂移——RE2 与 JS 正则、
+ * GeoIP 与浏览器无数据源,都会让模拟结论与线上裁决对不上,而对不上的诊断比没有诊断更糟:
+ * 它会让人照着假结论去改规则。现在规则模拟器直接调 `POST /api/rules/simulate`,
+ * 与线上 Evaluate 共用同一套求值顺序与同一批条件判定函数。
  *
- * 前端等价实现的边界必须写在代码里(而不是留给用户猜):
- * - country 后端已接离线 GeoIP 库(真实裁决看访问明细),但浏览器里没法离线把 IP 解析成国家,
- *   所以它和其他几个事实一样是「手填」的:不填就按取不到处理,恒不命中;
- * - asn 无数据源,恒空,恒不命中,与后端一致;
- * - 正则后端是 RE2 且大小写敏感,JS 的近似见 evalCondition 的 regex 分支;
- * - 后端求值发生在短链可用性之后,这里只看规则侧。
+ * 本文件剩下的等价实现仍被短链访问明细页使用(它要解释的是**历史**某次访问,
+ * 与现在的规则状态无关,不能回放),等那一页也切到接口后再删。
+ *
+ * 这里是纯函数模块——不碰 API、不碰路由、不碰组件状态。
  */
-import { fieldOption, operatorLabel } from '@/views/rules/ruleMeta';
-import type { RuleCondition, RuleField } from '@/types/api';
+import type { SimulateStep, SimulateVerdict } from '@/api/rules';
+import { actionLabel, fieldOption, operatorLabel } from '@/views/rules/ruleMeta';
+import type { RuleAction, RuleCondition, RuleField } from '@/types/api';
 
 /** 模拟器左侧的输入项 */
 export interface SimInput {
@@ -22,8 +23,8 @@ export interface SimInput {
   ua: string;
   lang: string;
   ref: string;
-  /** ISO 3166-1 alpha-2 国家码。手填:浏览器里没有 IP→国家的离线库,
-   *  而假装能算出来只会让模拟结果与真实裁决对不上。 */
+  /** ISO 3166-1 alpha-2 国家码。通常留空,后端会用离线库按 IP 解析;
+   *  只有想验证「假如这个访客来自 XX 国」时才手填覆盖(手填会盖过 GeoIP 结果)。 */
   country: string;
 }
 
@@ -205,6 +206,100 @@ export interface VisitorFieldView {
   pending: boolean;
 }
 
+/**
+ * 后端扁平化的 13 个字段 → 页面画像结构。
+ * 后端对取不到数据的字段回空串(空值恒不命中),这里保持空串不补默认值:
+ * 补一个猜测值会让画像看起来有数据,而依赖它的条件其实永不成立。
+ */
+export function visitorFactsFromServer(facts: Record<string, string>): VisitorFacts {
+  return {
+    ip: facts.ip || '',
+    ipattr: facts.ipattr || '',
+    country: facts.country || '',
+    asn: facts.asn || '',
+    lang: facts.lang || '',
+    ref: facts.ref || '',
+    utm: facts.utm || '',
+    ua: facts.ua || '',
+    devtype: facts.devtype || '',
+    os: facts.os || '',
+    browser: facts.browser || '',
+    path: facts.path || '',
+    domain: facts.domain || '',
+  };
+}
+
+/**
+ * 后端决策链 → 页面步骤。判词(text/whyText)全部来自后端:
+ * 前端自己组织一句解释,就等于在诊断页里塞进第二套语义。
+ */
+export function traceStepsFromServer(steps: SimulateStep[], winner: SimulateVerdict): TraceStep[] {
+  return steps.map((step, i) => {
+    const conditions = step.conditions || [];
+    const isWinner = step.status === 'hit' && step.ruleId === winner.ruleId;
+    // hit 意味着「这条规则参与了裁决」。阻断类裁决要在链上标红,
+    // 否则 notfound 与 redirect 在页面上看不出区别。
+    const status: TraceStep['status'] = isWinner && winner.blocked ? 'block' : step.status;
+    return {
+      // 草稿规则没有 id,带下标保证 key 唯一
+      key: `${step.draft ? 'draft' : 'rule'}-${step.ruleId}-${i}`,
+      ruleId: step.ruleId,
+      ruleName: step.ruleName,
+      status,
+      statusText: stepStatusText(step.status, conditions.length > 0),
+      facts: conditions.map((c) => ({ text: c.description || '', hit: c.matched === true })),
+      whyText: step.reason || '',
+    };
+  });
+}
+
+/**
+ * skip 有两种:作用域/优先级不适用,和真比了没比过。不区分的话
+ * 用户看到一串「跳过」无法判断该改作用域还是改条件。
+ * 服务端只在真正求值时才回传条件痕迹,据此区分。
+ */
+function stepStatusText(status: SimulateStep['status'], evaluated: boolean): string {
+  if (status === 'disabled') return '已停用';
+  if (status === 'hit') return '命中 · 裁决';
+  return evaluated ? '未命中' : '不适用';
+}
+
+/** 裁决的页面渲染形态。只留 id 不带整条规则:预览页现取,省掉一次无用的回传 */
+export interface VerdictView {
+  title: string;
+  action: string;
+  matched: boolean;
+  blocking: boolean;
+  actionText: string;
+  detailText: string;
+  matchedRuleId: number | null;
+}
+
+export function verdictFromServer(v: SimulateVerdict): VerdictView {
+  const action = v.action as RuleAction;
+  if (!v.matched) {
+    return {
+      title: '无规则命中',
+      action,
+      matched: false,
+      blocking: false,
+      actionText: '未命中任何规则 · 访客看到原短链',
+      detailText: v.message || '',
+      matchedRuleId: null,
+    };
+  }
+  const label = actionLabel(action);
+  return {
+    title: `命中 #${v.ruleId} · ${v.ruleName || label}`,
+    action,
+    matched: true,
+    blocking: v.blocked,
+    actionText: v.destination ? `${label} → ${v.destination}` : label,
+    detailText: v.message || '',
+    matchedRuleId: v.ruleId,
+  };
+}
+
 /** 访客画像:13 个字段的展示形态(空值显式标出,不静默留白) */
 export function visitorFieldViews(facts: VisitorFacts | null): VisitorFieldView[] {
   const f = facts;
@@ -224,7 +319,9 @@ export function visitorFieldViews(facts: VisitorFacts | null): VisitorFieldView[
       label: '国家 / 地区',
       // 显示原始国家码而不是中文名:条件里配的就是码,翻译过反而对不上
       value: f?.country || '—',
-      note: f?.country ? '' : '浏览器里不解析 IP→国家 · 可手填国家码,留空则恒不命中',
+      // 国家由后端离线库按 IP 解析,前端不再自己猜。回空串只有两种可能:IP 是私网/保留段,
+      // 或离线库里没有该段——两种都不该配国家条件,写清楚比显示一个中文名有用。
+      note: f?.country ? '' : '后端离线库未解析出国家(私网 IP 或库中无此段) · 留空按取不到处理',
       pending: false,
     },
     { field: 'asn', label: 'ASN / 运营商', value: '—', note: '数据源待接入 · 恒不命中', pending: true },

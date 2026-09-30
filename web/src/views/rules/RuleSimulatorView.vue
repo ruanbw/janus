@@ -1,10 +1,11 @@
 <script setup lang="ts">
 /**
- * 规则模拟器：输入一次「假想访问」，按与后端一致的语义跑一遍规则链，
+ * 规则模拟器：输入一次「假想访问」，由**后端**跑一遍规则链，
  * 输出访客画像、逐步决策链和最终裁决。独立路由，不属于任何一条规则的生命周期。
  *
- * 关键前提：这是**前端等价求值**，不是服务端执行结果。正则（RE2 vs JS）、
- * 地理字段（无数据源）两处必然存在差异，页面上必须明说而不是让用户自己发现。
+ * 判定完全在后端：Simulate 与线上 Evaluate 共用同一套条件求值函数与同一套匹配顺序。
+ * 曾经这里跑的是一份前端等价求值，正则（RE2 vs JS）与 GeoIP（浏览器没有数据源）
+ * 两处必然偏差——那不是「近似」，而是会让人照着假结论去改规则。
  */
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
@@ -21,13 +22,22 @@ import {
 } from '@lucide/vue';
 
 import { fetchTenantErrorPages } from '@/api/me';
+import { getRule, simulateRules } from '@/api/rules';
 import PageHeader from '@/components/PageHeader.vue';
 import { COUNTRY_OPTIONS } from '@/constants/countries';
 import type { Rule } from '@/types/api';
 import { message } from '@/utils/toast';
 import { actionTagColor } from './ruleMeta';
-import { buildDecisionTrace, verdictOf, type Verdict } from './ruleTrace';
-import { visitorFieldViews, type SimInput, type TraceStep, type VisitorFacts } from './ruleSim';
+import {
+  traceStepsFromServer,
+  verdictFromServer,
+  visitorFactsFromServer,
+  visitorFieldViews,
+  type SimInput,
+  type TraceStep,
+  type VerdictView,
+  type VisitorFacts,
+} from './ruleSim';
 
 const route = useRoute();
 const router = useRouter();
@@ -37,7 +47,7 @@ const previewRuleId = ref<number | null>(null);
 const traceSteps = ref<TraceStep[]>([]);
 const profile = ref<VisitorFacts | null>(null);
 const scopeNote = ref('');
-const verdict = ref<Verdict | null>(null);
+const verdict = ref<VerdictView | null>(null);
 
 const previewModalVisible = ref(false);
 const previewModalTitle = ref('');
@@ -47,12 +57,14 @@ const loadingPreview = ref(false);
 async function previewVisitorBlockedPage() {
   if (!verdict.value) return;
   const action = verdict.value.action;
-  const rule = verdict.value.matchedRule;
   loadingPreview.value = true;
   try {
     previewModalTitle.value = action === 'notfound' ? '404 访客拦截页面预览' : '429 访客限流页面预览';
 
-    // 1. 规则专属自定义页面
+    // 1. 规则专属自定义页面。裁决只回传 ruleId,规则现取:
+    //    裁决本身不需要把整条规则带回来。
+    const ruleId = verdict.value.matchedRuleId;
+    const rule: Rule | null = ruleId ? await getRule(ruleId) : null;
     if (rule?.pageMode === 'custom' && rule.customHtml) {
       previewModalHtml.value = rule.customHtml;
       previewModalVisible.value = true;
@@ -125,19 +137,27 @@ function verdictToneClass(): string {
 async function runSimulation() {
   isSimulating.value = true;
   try {
-    // 求值逻辑在 ruleTrace.ts：规则模拟器与短链访问明细页共用同一份实现，
-    // 两处各算一次必然漂移，而漂移一次的决策链会让人照着假结论改规则。
-    const trace = await buildDecisionTrace(simInput.value, { onlyRuleId: previewRuleId.value });
-    profile.value = trace.facts;
-    scopeNote.value = trace.scopeNote;
-    traceSteps.value = trace.steps;
-    if (trace.skippedForDetail > 0) {
-      message.warning(
-        `${trace.skippedForDetail} 条规则未取到条件（未配置条件或详情接口失败），未参与本次求值`,
-      );
-    }
-    verdict.value = verdictOf(trace);
-    message.success('规则链模拟求值完成');
+    // 切到后端求值后:画像、决策链、裁决全部来自 internal/rules 那一份实现,
+      // 与线上访问同一套顺序。这里只做「后端结果 → 页面渲染形态」的映射。
+      const res = await simulateRules({
+        url: simInput.value.url,
+        ip: simInput.value.ip,
+        userAgent: simInput.value.ua,
+        acceptLanguage: simInput.value.lang,
+        referrer: simInput.value.ref,
+        manualCountry: simInput.value.country,
+        onlyRuleId: previewRuleId.value,
+      });
+      profile.value = visitorFactsFromServer(res.facts);
+      scopeNote.value = res.scopeNote;
+      traceSteps.value = traceStepsFromServer(res.steps, res.verdict);
+      verdict.value = verdictFromServer(res.verdict);
+      if (res.error) {
+        // 后端求值期异常会被兜住并 fail-open(线上不 500),但模拟器要把它显示出来,
+        // 否则用户会把「出错了」误读成「没命中」。
+        message.warning(`后端求值有异常,结果可能不完整：${res.error}`);
+      }
+      message.success('规则链模拟求值完成');
   } catch (error) {
     message.error(error instanceof Error ? error.message : '模拟求值失败，请稍后重试');
   } finally {
@@ -246,9 +266,9 @@ onMounted(async () => {
     </PageHeader>
 
     <div class="mb-4">
-      <AppAlert type="warning" title="这是前端等价求值预览，不是服务端执行结果">
-        求值语义与后端 <code class="mono">internal/rules</code> 对齐，但两处必然有偏差：正则是 RE2（大小写敏感），这里用 JS 近似；
-        国家 / ASN 字段尚无数据源，依赖它们的条件恒不命中。真实结果以线上访问记录为准。
+      <AppAlert type="info" title="与线上同一套求值">
+        判定由后端 <code class="mono">internal/rules</code> 完成，与真实访问同一套条件语义与匹配顺序（首条命中即停）。
+        国家码由后端离线库按 IP 解析；<code class="mono">asn</code> 尚无数据源，依赖它的条件恒不命中。
       </AppAlert>
     </div>
 
@@ -279,11 +299,11 @@ onMounted(async () => {
                 :options="countryOptions"
                 show-search
                 allow-clear
-                placeholder="不选 = 该访客查不到国家"
+                placeholder="留空 = 由后端按 IP 解析"
               />
               <p class="mt-1 text-[11px] leading-relaxed text-ink-faint">
-                ISO 国家码。浏览器里不解析 IP→国家（真实裁决由后端的离线库给出），
-                这里选一个才能验证国家条件；留空按「取不到」处理，该条件恒不命中。
+                ISO 国家码。留空由后端离线库按访客 IP 解析，与真实裁决一致；
+                手填则覆盖 GeoIP 结果，用于验证「假如他来自这个国家」。
               </p>
             </div>
             <div>
