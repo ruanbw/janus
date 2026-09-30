@@ -865,6 +865,37 @@ body {
   background: var(--accent-soft);
 }
 
+/* 短链列表「规则」列里的「规则名 + 启用开关」胶囊。行内直接给开关,是因为判断
+   「这条短链现在受哪条规则管、那条开没开」的人就站在这一列旁边。 */
+.rule-switch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 104px;
+  padding: 1px 4px 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.rule-switch-chip > .truncate {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--fg-soft);
+}
+
+/* 停用的规则:名字变淡 + 虚线边,开关位置不动,免得点完看不出自己关了哪条 */
+.rule-switch-chip-off {
+  background: var(--surface-muted);
+  border-style: dashed;
+}
+
+.rule-switch-chip-off > .truncate {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
 /* ─── 搜索工具栏与过滤器 (Toolbar & Filters) ────────────────────────── */
 .toolbar {
   display: flex;

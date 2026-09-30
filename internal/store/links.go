@@ -26,10 +26,22 @@ type Link struct {
 	Visits         int64          `json:"visits" gorm:"-"`
 	// RuleCount / RuleNames 是"适用规则"的投影(全局规则 + 显式关联的规则),查询后填充。
 	// 关联只存在规则一侧(spec D1),这里是按短链反查同一份数据,不存在第二份规则列表。
-	RuleCount       int64     `json:"ruleCount" gorm:"-"`
-	RuleNames       []string  `json:"ruleNames" gorm:"-"`
-	LandingUploaded bool      `json:"landingUploaded" gorm:"-"`
-	CreatedAt       time.Time `json:"createdAt" gorm:"column:created_at"`
+	RuleCount int64    `json:"ruleCount" gorm:"-"`
+	RuleNames []string `json:"ruleNames" gorm:"-"`
+	// Rules 是**显式关联**到本短链的规则(不含全局继承的),供短链列表在行内直接
+	// 渲染「规则名 + 启用开关」——只认关联,是因为 enabled 是规则级开关,全局规则的
+	// 开关在规则页,顺手在某一行的单链上下文里改它会改掉所有短链。
+	Rules           []LinkRuleBrief `json:"rules" gorm:"-"`
+	LandingUploaded bool            `json:"landingUploaded" gorm:"-"`
+	CreatedAt       time.Time       `json:"createdAt" gorm:"column:created_at"`
+}
+
+// LinkRuleBrief 短链列表行内用的规则投影:只有渲染「名字 + 开关」需要的字段。
+type LinkRuleBrief struct {
+	ID      int64  `json:"id"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+	Scope   string `json:"scope"`
 }
 
 // 短链类型(16):redirect 访问即跳转目标;landing 访问先到落地页、按钮点击后到目标。
@@ -173,15 +185,19 @@ func (s *Store) fillLinkRuleMeta(ctx context.Context, links []*Link) error {
 		ids = append(ids, l.ID)
 	}
 	type row struct {
-		LinkID int64  `gorm:"column:link_id"`
-		RuleID int64  `gorm:"column:rule_id"`
-		Name   string `gorm:"column:name"`
+		LinkID  int64  `gorm:"column:link_id"`
+		RuleID  int64  `gorm:"column:rule_id"`
+		Name    string `gorm:"column:name"`
+		Enabled bool   `gorm:"column:enabled"`
+		Scope   string `gorm:"column:scope"`
 	}
 	var rows []row
 	// 关联表与规则表各 join 一次:rl 侧的 link_id 已按短链过滤,rl.link_id IS NOT NULL
 	// 即"显式关联";全局规则不走关联表(LEFT JOIN 后该列为空)。
+	// enabled / scope 顺带取出来填 Rules:结果集里 scope=links 的行必然 rl 命中,
+	// 所以不用再查一遍关联表,行内开关的数据就来自这一条 SQL。
 	if err := s.db.WithContext(ctx).Table("links l").
-		Select("l.id AS link_id, r.id AS rule_id, r.name").
+		Select("l.id AS link_id, r.id AS rule_id, r.name, r.enabled, r.scope").
 		Joins("JOIN rules r ON r.tenant_id = l.tenant_id").
 		Joins("LEFT JOIN rule_links rl ON rl.rule_id = r.id AND rl.link_id = l.id").
 		Where("l.id IN ? AND (r.scope = ? OR rl.link_id IS NOT NULL)", ids, RuleScopeGlobal).
@@ -190,15 +206,27 @@ func (s *Store) fillLinkRuleMeta(ctx context.Context, links []*Link) error {
 	}
 	nameMap := make(map[int64][]string, len(links))
 	countMap := make(map[int64]int64, len(links))
+	briefMap := make(map[int64][]LinkRuleBrief, len(links))
 	for _, row := range rows {
 		countMap[row.LinkID]++
 		if n := len(nameMap[row.LinkID]); n < maxLinkRuleNames {
 			nameMap[row.LinkID] = append(nameMap[row.LinkID], row.Name)
 		}
+		if row.Scope != RuleScopeGlobal {
+			briefMap[row.LinkID] = append(briefMap[row.LinkID], LinkRuleBrief{
+				ID: row.RuleID, Name: row.Name, Enabled: row.Enabled, Scope: row.Scope,
+			})
+		}
 	}
 	for _, l := range links {
 		l.RuleCount = countMap[l.ID]
 		l.RuleNames = nameMap[l.ID]
+		// 空也要给 [] 而不是 nil:界面对这个字段做 map/filter,null 会在每处都要判一次
+		if briefs := briefMap[l.ID]; briefs != nil {
+			l.Rules = briefs
+		} else {
+			l.Rules = []LinkRuleBrief{}
+		}
 	}
 	return nil
 }

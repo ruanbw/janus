@@ -37,13 +37,14 @@ type ruleOptionItem struct {
 
 // linkRuleItem 短链适用规则(契约 linkRule)。
 type linkRuleItem struct {
-	ID       int64  `json:"id"`
-	Name     string `json:"name"`
-	Scope    string `json:"scope"`
-	Action   string `json:"action"`
-	Priority int    `json:"priority"`
-	Enabled  bool   `json:"enabled"`
-	Source   string `json:"source"`
+	ID        int64  `json:"id"`
+	Name      string `json:"name"`
+	Scope     string `json:"scope"`
+	Action    string `json:"action"`
+	Priority  int    `json:"priority"`
+	Enabled   bool   `json:"enabled"`
+	Source    string `json:"source"`
+	LinkCount int    `json:"linkCount"`
 }
 
 type linkRulesResp struct {
@@ -555,6 +556,14 @@ func TestLinkRulesList(t *testing.T) {
 		b["linkIds"] = []int64{l1.ID}
 		return b
 	}())
+	// 两条短链共用的规则:linkCount 必须是 2,否则短链列表页关掉它时没法告知影响面
+	shared := createRule(t, c, func() map[string]any {
+		b := baseRuleBody("两条共用")
+		b["priority"] = 30
+		b["scope"] = store.RuleScopeLinks
+		b["linkIds"] = []int64{l1.ID, l2.ID}
+		return b
+	}())
 
 	resp := c.get(fmt.Sprintf("/api/links/%d/rules", l1.ID))
 	assertStatus(t, resp, http.StatusOK)
@@ -563,11 +572,20 @@ func TestLinkRulesList(t *testing.T) {
 	for _, it := range items {
 		byID[it.ID] = it
 	}
-	if len(items) != 3 {
-		t.Fatalf("l1 适用规则 = %+v, want 3(全局 + 两条 scoped)", items)
+	if len(items) != 4 {
+		t.Fatalf("l1 适用规则 = %+v, want 4(全局 + 三条 scoped)", items)
 	}
 	if byID[global.ID].Source != "inherited" {
 		t.Errorf("全局规则 source = %q, want inherited", byID[global.ID].Source)
+	}
+	if byID[global.ID].LinkCount != 0 {
+		t.Errorf("全局规则 linkCount = %d, want 0", byID[global.ID].LinkCount)
+	}
+	if byID[scoped.ID].LinkCount != 1 {
+		t.Errorf("只关联 l1 的规则 linkCount = %d, want 1", byID[scoped.ID].LinkCount)
+	}
+	if byID[shared.ID].LinkCount != 2 {
+		t.Errorf("与 l1/l2 共用的规则 linkCount = %d, want 2", byID[shared.ID].LinkCount)
 	}
 	if byID[scoped.ID].Source != "scoped" || byID[disabled.ID].Source != "scoped" {
 		t.Errorf("scoped 规则 source 标错: %+v", items)
@@ -578,8 +596,8 @@ func TestLinkRulesList(t *testing.T) {
 	if _, ok := byID[elsewhere.ID]; ok {
 		t.Errorf("与本短链无关的规则出现在适用列表里: %+v", elsewhere.ID)
 	}
-	// 顺序按求值顺序(priority 升序):专属(10) → 全局(20)
-	if items[0].ID != scoped.ID || items[1].ID != global.ID {
+	// 顺序按求值顺序(priority 升序):专属(10) → 全局(20) → 共用(30) → 停用的(100)
+	if items[0].ID != scoped.ID || items[1].ID != global.ID || items[2].ID != shared.ID {
 		t.Errorf("适用规则顺序 = %v, want 按 priority 升序", items)
 	}
 	// 短链不存在/他人短链 → 404
@@ -708,13 +726,16 @@ func TestLinkListRuleMeta(t *testing.T) {
 		b["priority"] = 20
 		return b
 	}())
-	// 三条 scoped 只关联 l1
+	// 三条 scoped 只关联 l1(最后一条停用:行内开关要能拿到 enabled)
 	for i, name := range []string{"sc1", "sc2", "sc3"} {
 		createRule(t, c, func() map[string]any {
 			b := baseRuleBody(name)
 			b["priority"] = 30 + i
 			b["scope"] = store.RuleScopeLinks
 			b["linkIds"] = []int64{l1.ID}
+			if name == "sc3" {
+				b["enabled"] = false
+			}
 			return b
 		}())
 	}
@@ -737,6 +758,21 @@ func TestLinkListRuleMeta(t *testing.T) {
 	}
 	if listItem.RuleNames[0] != "全局一" {
 		t.Errorf("ruleNames[0] = %q, want 全局一(按 priority 升序)", listItem.RuleNames[0])
+	}
+	// 行内开关的数据:只给显式关联的 scoped 规则,全局规则不进这里(单行里改不得)
+	if len(listItem.Rules) != 3 {
+		t.Fatalf("列表 rules = %+v, want 3 条 scoped", listItem.Rules)
+	}
+	for i, want := range []string{"sc1", "sc2", "sc3"} {
+		if listItem.Rules[i].Name != want {
+			t.Errorf("rules[%d].Name = %q, want %q(按 priority 升序)", i, listItem.Rules[i].Name, want)
+		}
+		if listItem.Rules[i].Scope != store.RuleScopeLinks {
+			t.Errorf("rules[%d].Scope = %q, want links", i, listItem.Rules[i].Scope)
+		}
+	}
+	if listItem.Rules[2].Enabled {
+		t.Errorf("停用的 sc3 在列表里 enabled = true")
 	}
 	// 详情口径必须一致
 	resp := c.get("/api/links/" + strconv.FormatInt(l1.ID, 10))
@@ -769,11 +805,17 @@ func TestLinkListRuleMeta(t *testing.T) {
 	if detail.RuleCount != 3 { // 2 全局 + 1 scoped
 		t.Errorf("解除两条关联后 ruleCount = %d, want 3", detail.RuleCount)
 	}
-	// l2 只继承两条全局规则
+	// l2 只继承两条全局规则:Rules 为空(不是 null),界面才能直接 map
 	resp = c.get("/api/links/" + strconv.FormatInt(l2.ID, 10))
 	assertStatus(t, resp, http.StatusOK)
 	detail2 := decodeBody[store.Link](t, resp)
 	if detail2.RuleCount != 2 {
 		t.Errorf("l2 ruleCount = %d, want 2(仅全局)", detail2.RuleCount)
+	}
+	if detail2.Rules == nil {
+		t.Errorf("l2 rules = null, want 空数组")
+	}
+	if len(detail2.Rules) != 0 {
+		t.Errorf("l2 rules = %+v, want 空(全局规则不给开关)", detail2.Rules)
 	}
 }

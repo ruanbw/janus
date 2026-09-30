@@ -68,6 +68,7 @@ function normalizeLinkRule(item: LinkRule): LinkRule {
     action: item.action || 'pass',
     enabled: item.enabled !== false,
     source: item.source === 'inherited' ? 'inherited' : 'scoped',
+    linkCount: typeof item.linkCount === 'number' ? item.linkCount : 0,
   };
 }
 

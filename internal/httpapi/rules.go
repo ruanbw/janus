@@ -483,6 +483,9 @@ type linkRule struct {
 	Priority int    `json:"priority"`
 	Enabled  bool   `json:"enabled"`
 	Source   string `json:"source"`
+	// LinkCount:scope=links 时该规则还关联着多少条短链(全局规则恒为 0)。
+	// 短链列表页要在这里就地启停规则,没有这个数字就没法告诉用户「关掉它会连带影响别的短链」。
+	LinkCount int `json:"linkCount"`
 }
 
 // 关联来源标记。
@@ -506,6 +509,8 @@ func (a *API) linkRulesFor(c *gin.Context, tenantID, linkID int64) ([]linkRule, 
 		out = append(out, linkRule{
 			ID: r.ID, Name: r.Name, Scope: r.Scope, Action: r.Action,
 			Priority: r.Priority, Enabled: r.Enabled, Source: source,
+			// RulesForLink 已经 fillRuleLinkMeta 填好了 linkCount,直接用,不加查询
+			LinkCount: r.LinkCount,
 		})
 	}
 	return out, nil

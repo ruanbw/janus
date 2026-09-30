@@ -394,29 +394,50 @@
                 </div>
               </td>
 
-              <!-- 规则:条数 + 前若干个规则名,超出走 +K;单元格不折行 -->
+              <!-- 规则:显式关联的每条都带开关(专属于本短链才给开关),其余走 +K / 全局说明 -->
               <td class="shrink">
                 <div
                   v-if="link.ruleCount > 0"
                   class="row"
-                  style="gap: 5px; flex-wrap: nowrap; max-width: 210px; overflow: hidden"
-                  :title="'适用规则：' + (link.ruleNames || []).join('、') + (link.ruleCount > (link.ruleNames || []).length ? ' 等 ' + link.ruleCount + ' 条' : '')"
+                  style="gap: 4px; flex-wrap: nowrap; max-width: 216px; overflow: hidden"
                 >
-                  <span class="mono tiny shrink-0 text-ink-soft">{{ link.ruleCount }} 条</span>
                   <span
-                    v-for="name in visibleRuleNames(link)"
-                    :key="name"
-                    class="badge badge-neutral micro min-w-0 truncate"
-                    style="max-width: 92px"
-                    :title="name"
+                    v-for="rule in ruleChips(link)"
+                    :key="rule.id"
+                    class="rule-switch-chip"
+                    :class="rule.enabled ? '' : 'rule-switch-chip-off'"
+                    :title="rule.name + (rule.enabled ? '' : '(已停用)')"
                   >
-                    {{ name }}
+                    <span class="truncate">{{ rule.name }}</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      :aria-checked="rule.enabled"
+                      :aria-label="(rule.enabled ? '停用规则 ' : '启用规则 ') + rule.name"
+                      :disabled="ruleToggleKey === link.id + ':' + rule.id"
+                      class="relative h-[18px] w-[30px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                      :class="rule.enabled ? 'bg-brand-500' : 'bg-line-strong'"
+                      @click.stop="toggleLinkRule(link, rule, !rule.enabled)"
+                    >
+                      <span
+                        class="absolute top-0.5 h-[14px] w-[14px] rounded-full bg-white shadow transition-all"
+                        :class="rule.enabled ? 'left-[13px]' : 'left-0.5'"
+                      />
+                    </button>
                   </span>
                   <span
-                    v-if="link.ruleCount > RULE_NAME_VISIBLE"
+                    v-if="hiddenRuleCount(link) > 0"
                     class="mono micro shrink-0 text-ink-faint"
+                    :title="'还有 ' + hiddenRuleCount(link) + ' 条关联规则: ' + hiddenRuleNames(link).join('、')"
                   >
-                    +{{ link.ruleCount - RULE_NAME_VISIBLE }}
+                    +{{ hiddenRuleCount(link) }}
+                  </span>
+                  <span
+                    v-if="inheritedRuleCount(link) > 0"
+                    class="micro shrink-0 text-ink-faint"
+                    title="全局规则对所有短链生效,开关在规则页"
+                  >
+                    · {{ inheritedRuleCount(link) }} 条全局
                   </span>
                 </div>
                 <span v-else class="tiny muted">未关联规则</span>
@@ -610,12 +631,14 @@ import {
 } from '@/api/links';
 import AppEmpty from '@/components/ui/AppEmpty.vue';
 import { confirm } from '@/components/ui/confirm';
+import { updateRule } from '@/api/rules';
 
 import { ApiError } from '@/types/api';
 import type {
   Domain,
   LandingSource,
   Link,
+  LinkRuleBrief,
   LinkStatus,
   LinkType,
   RedirectStatus,
@@ -650,12 +673,46 @@ const typeFilter = ref<string>('all');
 const statusFilter = ref<string>('all');
 const statusUpdatingId = ref<number | null>(null);
 
-/** 规则列最多直接展示几个规则名,超出走 +K（后端 ruleNames 本身也只回传前 3 个） */
-const RULE_NAME_VISIBLE = 3;
+// ==================== 规则列:行内开关 ====================
+// 关联的规则直接带在列表数据里(link.rules),所以开关不需要二次请求、不需要展开层。
+// 展示条数有限,超出的走 +K:开关必须看得见才有用,塞满一格反而没人敢点。
+const RULE_SWITCH_VISIBLE = 2;
 
-/** 单元格内可见的规则名（不折行，溢出部分由 +K 交代） */
-function visibleRuleNames(link: Link): string[] {
-  return (link.ruleNames || []).slice(0, RULE_NAME_VISIBLE);
+/** 单元格内带开关的规则(取前几条,顺序 = 后端 priority 升序 = 真实求值顺序) */
+function ruleChips(link: Link): LinkRuleBrief[] {
+  return (link.rules || []).slice(0, RULE_SWITCH_VISIBLE);
+}
+
+function hiddenRuleCount(link: Link): number {
+  return Math.max((link.rules || []).length - RULE_SWITCH_VISIBLE, 0);
+}
+
+function hiddenRuleNames(link: Link): string[] {
+  return (link.rules || []).slice(RULE_SWITCH_VISIBLE).map((r) => r.name);
+}
+
+/** 继承自全局的规则条数(没有开关:enabled 是规则级开关,在这里改会改掉所有短链) */
+function inheritedRuleCount(link: Link): number {
+  return Math.max(link.ruleCount - (link.rules || []).length, 0);
+}
+
+const ruleToggleKey = ref<string | null>(null);
+
+async function toggleLinkRule(link: Link, rule: LinkRuleBrief, next: boolean): Promise<void> {
+  const key = link.id + ':' + rule.id;
+  if (ruleToggleKey.value === key) return;
+  ruleToggleKey.value = key;
+  const label = next ? '启用' : '停用';
+  try {
+    // 用后端回传的 enabled 落盘,而不是本地乐观翻转
+    const updated = await updateRule(rule.id, { enabled: next });
+    rule.enabled = updated.enabled;
+    message.success(`规则「${rule.name}」已${label}`);
+  } catch (error) {
+    message.error(error instanceof ApiError ? error.message : `${label}规则失败，请稍后重试`);
+  } finally {
+    ruleToggleKey.value = null;
+  }
 }
 
 // ==================== 计算用量与 KPI ====================

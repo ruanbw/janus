@@ -116,8 +116,8 @@ func (s *Store) InsertVisit(ctx context.Context, rec VisitRecord) error {
 		UserAgent: rec.UserAgent, Referer: rec.Referer,
 		Action: rec.Action, Outcome: rec.Outcome, Reason: rec.Reason,
 		TargetURL: rec.TargetURL, Lang: rec.Lang,
-		Country:   rec.Country,
-		RuleID: rec.RuleID, RuleAction: rec.RuleAction,
+		Country: rec.Country,
+		RuleID:  rec.RuleID, RuleAction: rec.RuleAction,
 	}
 	return s.db.WithContext(ctx).Create(&v).Error
 }

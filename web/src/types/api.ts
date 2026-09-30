@@ -133,6 +133,17 @@ export interface LinkRule {
   priority: number;
   enabled: boolean;
   source: RuleSource;
+  /** scope=links 时该规则还关联着多少条短链(全局规则恒为 0)。
+   *  在短链列表就地启停规则时用它告知影响面:关掉一条 N 条短链共用的规则会同时影响这 N 条。 */
+  linkCount: number;
+}
+
+/** 短链列表行内的规则投影(见 Link.rules):只有名字与启用状态,没有条件 */
+export interface LinkRuleBrief {
+  id: number;
+  name: string;
+  enabled: boolean;
+  scope: RuleScope;
 }
 
 /** 等级:决定租户的短链与域名数量上限 */
@@ -218,6 +229,8 @@ export interface Link {
   ruleCount: number;
   /** 适用的规则名,后端最多回传前 3 个 */
   ruleNames: string[];
+  /** 显式关联到本短链的规则(不含全局继承的),按 priority 升序,供行内渲染启用开关 */
+  rules: LinkRuleBrief[];
   createdAt: string;
 }
 

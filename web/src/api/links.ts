@@ -34,6 +34,7 @@ function normalizeLink(link: Link): Link {
     landingUploaded: link.landingUploaded === true,
     ruleCount: typeof link.ruleCount === 'number' ? link.ruleCount : 0,
     ruleNames: Array.isArray(link.ruleNames) ? link.ruleNames : [],
+    rules: Array.isArray(link.rules) ? link.rules : [],
   };
 }
 

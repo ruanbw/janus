@@ -22,9 +22,9 @@ var cacheSeed = maphash.MakeSeed()
 
 // cached 给底层 Lookup 套一层进程内缓存。
 type cached struct {
-	inner   Lookup
+	inner    Lookup
 	perShard int
-	shards  [cacheShards]shard
+	shards   [cacheShards]shard
 }
 
 // shard 一片缓存。两代 map:cur 写满后整体丢弃换新,old 留一代兜住老条目。
