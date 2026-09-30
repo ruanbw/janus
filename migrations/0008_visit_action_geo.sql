@@ -13,7 +13,8 @@ ALTER TABLE visits
   ADD COLUMN target_url TEXT NOT NULL DEFAULT '',   -- 本次动作最终抵达的地址
   ADD COLUMN lang       TEXT NOT NULL DEFAULT '';   -- Accept-Language 首标签
 
--- 地理占位:当前无 GeoIP/ASN 数据源,恒为空;接入 mmdb 后只改 Go 侧解析,前端不动
+-- 地理占位:country 已由后端内嵌的离线 GeoIP 库(ip2region)填充(查不到时为空);
+-- asn / is_datacenter 仍无数据源,恒为空/假 —— 要「拦截机房 IP」得另开一个决策
 ALTER TABLE visits
   ADD COLUMN country      TEXT NOT NULL DEFAULT '',
   ADD COLUMN is_datacenter BOOLEAN NOT NULL DEFAULT FALSE,

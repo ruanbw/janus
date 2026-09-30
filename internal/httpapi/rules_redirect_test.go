@@ -21,8 +21,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 
+	"cloak/internal/geo"
 	"cloak/internal/httpapi"
 	"cloak/internal/rules"
 	"cloak/internal/store"
@@ -465,5 +467,77 @@ func TestRuleSnapshotLoadFailureFailsOpen(t *testing.T) {
 	_, _, _, ruleID, ruleAction := ruleVisit(t, env, link.ID)
 	if ruleID != nil || ruleAction != "" {
 		t.Fatalf("放行时却记了规则裁决: %v/%q", ruleID, ruleAction)
+	}
+}
+
+// fakeGeo 可变的地理值桩:同一套代码里先给一个国家、再换另一个,
+// 用来区分"规则匹配上了"和"规则因为 country 有值而匹配上了"。
+type fakeGeo struct {
+	mu   sync.Mutex
+	info geo.Info
+}
+
+func (g *fakeGeo) Lookup(string) geo.Info {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.info
+}
+
+func (g *fakeGeo) set(info geo.Info) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.info = info
+}
+
+// TestRuleCountryConditionUsesInjectedGeo 锁住地理链路端到端接通:
+// 注入的 country 参与规则求值,并且写进访问明细与访问列表接口。
+//
+// 这条链路断掉时不会报错,只会静默退化成"所有 country 规则都不命中"
+// (取不到值恒不命中,ADR 0009),界面上表现为国家一栏永远是 "—"。
+func TestRuleCountryConditionUsesInjectedGeo(t *testing.T) {
+	g := &fakeGeo{info: geo.Info{Country: "US"}}
+	env := testutil.SetupWithGeo(t, g)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "rgeo", "targetUrls": []string{"https://t1.example.com"}, "domainIds": []int64{lid}})
+	createRule(t, c, map[string]any{
+		"name": "美国拦下", "action": store.RuleActionNotfound, "conditions": []map[string]any{
+			{"field": "path", "operator": "eq", "values": []string{"/" + link.Code}},
+			{"field": "country", "operator": "in", "values": []string{"US"}},
+		}})
+
+	// country=US:命中 → 404
+	assertStatus(t, redirectGet(t, env, "localhost", "/"+link.Code), http.StatusNotFound)
+	_, _, reason, _, _ := ruleVisit(t, env, link.ID)
+	if reason != store.VisitReasonRuleBlocked {
+		t.Fatalf("reason = %q, want %q(country=US 应当命中)", reason, store.VisitReasonRuleBlocked)
+	}
+	var country string
+	if err := env.Pool.QueryRow(testutil.Ctx(),
+		`SELECT country FROM visits WHERE link_id=$1 ORDER BY id DESC LIMIT 1`, link.ID).
+		Scan(&country); err != nil {
+		t.Fatalf("read visit country: %v", err)
+	}
+	if country != "US" {
+		t.Fatalf("明细 country = %q, want US(裁决用的国家必须和明细记的是同一个)", country)
+	}
+
+	// country=CN:同一条规则必须不再命中 —— 这才证明 country 真的进了求值,
+	// 而不是"只要有规则就会命中"
+	g.set(geo.Info{Country: "CN"})
+	assertStatus(t, redirectGet(t, env, "localhost", "/"+link.Code), http.StatusFound)
+
+	// 访问列表接口要带出 country,否则前端访问明细页永远渲染不出国家
+	if vp := listVisits(t, c, link.ID, ""); vp.Items[0].Country != "CN" {
+		t.Fatalf("访问列表 country = %q, want CN", vp.Items[0].Country)
+	}
+
+	// 查不到(私网/回环/未收录网段)时:恒不命中,且明细留空而不是填占位符
+	g.set(geo.Info{})
+	assertStatus(t, redirectGet(t, env, "localhost", "/"+link.Code), http.StatusFound)
+	if vp := listVisits(t, c, link.ID, ""); vp.Items[0].Country != "" {
+		t.Fatalf("查不到时 country = %q, want 空(不能填猜测值)", vp.Items[0].Country)
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"cloak/internal/config"
 	"cloak/internal/db"
 	"cloak/internal/domain"
+	"cloak/internal/geo"
 	"cloak/internal/httpapi"
 	"cloak/internal/mailer"
 	"cloak/internal/store"
@@ -69,15 +70,21 @@ type Env struct {
 // 默认注入高阈值限流,避免通用测试被限流干扰;需要验证限流行为的测试用
 // SetupWithRateLimit 自行控制。
 func Setup(t *testing.T) *Env {
-	return setup(t, nil)
+	return setup(t, nil, nil)
 }
 
 // SetupWithRateLimit 以自定义认证限流配置启动测试环境(用于限流黑盒测试)。
 func SetupWithRateLimit(t *testing.T, rc httpapi.RateLimitConfig) *Env {
-	return setup(t, &rc)
+	return setup(t, &rc, nil)
 }
 
-func setup(t *testing.T, rc *httpapi.RateLimitConfig) *Env {
+// SetupWithGeo 注入自定义地理解析启动测试环境(用于国家/地区相关行为的黑盒测试)。
+// 默认(Setup)关掉了地理解析,生产默认走内嵌的离线库。
+func SetupWithGeo(t *testing.T, lookup geo.Lookup) *Env {
+	return setup(t, nil, lookup)
+}
+
+func setup(t *testing.T, rc *httpapi.RateLimitConfig, geoLookup geo.Lookup) *Env {
 	t.Helper()
 	ctx := context.Background()
 
@@ -143,7 +150,16 @@ func setup(t *testing.T, rc *httpapi.RateLimitConfig) *Env {
 			AuthLimit: high, AuthWindow: time.Minute,
 		}
 	}
-	srv := httptest.NewServer(httpapi.New(httpapi.Deps{Store: st, Mailer: m, Cfg: cfg, RateLimit: rc}))
+	// GeoLookup: 默认 geo.Disabled —— 黑盒测试关掉地理解析。两个原因:
+	//   断言不该依赖外部数据集的准确性(某个网段哪天被重新划分就挂了),
+	//   以及别让每个测试二进制都把 46MB 的离线库带上。
+	//   要验证国家相关行为,用 SetupWithGeo 注入一个假 Lookup。
+	if geoLookup == nil {
+		geoLookup = geo.Disabled
+	}
+	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
+		Store: st, Mailer: m, Cfg: cfg, RateLimit: rc, GeoLookup: geoLookup,
+	}))
 	t.Cleanup(srv.Close)
 
 	return &Env{Server: srv, Pool: pool, Store: st, Cfg: cfg, mail: mailBuf}

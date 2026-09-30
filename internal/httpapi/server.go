@@ -16,6 +16,7 @@ import (
 
 	"cloak/internal/config"
 	"cloak/internal/domain"
+	"cloak/internal/geo"
 	"cloak/internal/jwt"
 	"cloak/internal/mailer"
 	"cloak/internal/rbac"
@@ -34,6 +35,9 @@ type Deps struct {
 	// 跳转热路径每次访问都要向它要一份快照(spec D7),它不查库。
 	// 暴露在 Deps 里是为了测试能注入自定义 Loader/TTL,生产走默认构造。
 	RuleCache *rules.Cache
+	// GeoLookup IP → 地理值;nil 时用内嵌的离线 ip2region 库。
+	// 测试注入 geo.Disabled 关掉地理解析(黑盒测试不该依赖外部数据的准确性)。
+	GeoLookup geo.Lookup
 }
 
 type API struct {
@@ -46,6 +50,7 @@ type API struct {
 	rbacEnforcer *rbac.Enforcer // Casbin RBAC 授权(enforcer 线程安全,authorize 中间件使用)
 	jwtMgr       *jwt.Manager   // Bearer JWT 校验(authenticate 中间件使用)
 	ruleCache    *rules.Cache   // 规则快照(跳转热路径求值;nil 时求值恒为"无规则")
+	geo          geo.Lookup     // IP → 国家码(跳转热路径在构造 Fact 之前查,ADR 0009)
 }
 
 // New 构建 Gin 引擎:全局中间件(panic 恢复+访问日志、后台域名 SPA 分流)+ 全部路由。
@@ -77,6 +82,20 @@ func New(d Deps) http.Handler {
 		ruleCache = rules.NewCache(d.Store.RulesForTenant)
 	}
 
+	// 地理值:默认用内嵌的离线 ip2region 库(无网络、无 API Key、无挂载卷)。
+	// 加载失败回落成 geo.Disabled(恒空)而不是启动失败:国家查不到只会让
+	// country 条件恒不命中,不该因为一份附属数据而让整站起不来。
+	geoLookup := d.GeoLookup
+	if geoLookup == nil {
+		g, err := geo.NewXDB()
+		if err != nil {
+			log.Printf("地理数据源不可用,国家相关规则将恒不命中: %v", err)
+			geoLookup = geo.Disabled
+		} else {
+			geoLookup = geo.Cached(g, geo.DefaultCacheEntries)
+		}
+	}
+
 	a := &API{
 		store:        d.Store,
 		mailer:       d.Mailer,
@@ -87,6 +106,7 @@ func New(d Deps) http.Handler {
 		rbacEnforcer: rb,
 		jwtMgr:       jwtMgr,
 		ruleCache:    ruleCache,
+		geo:          geoLookup,
 	}
 
 	gin.SetMode(gin.ReleaseMode)

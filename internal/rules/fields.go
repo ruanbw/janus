@@ -2,8 +2,9 @@
 //
 // 字段只收敛到"后端从请求即可真实求值"的集合:不把拿不到数据的字段落库,
 // 否则规则就是"能配不能跑"的假能力。缺数据源的字段的处理方式:
-//   - country / asn:读请求上下文里的地理值(GeoIP/ASN 未接入,当前恒空),
-//     空值恒不命中——绝不因为"取不到"而默认放行或默认拦截;
+//   - country:读请求上下文里的地理值(跳转链路用离线 ip2region 库按访客 IP 解析,
+//     值是 ISO 3166-1 alpha-2 国家码);asn:当前没有 ASN 数据源,恒空。
+//     取不到值一律恒不命中——绝不因为"取不到"而默认放行或默认拦截;
 //   - 被移出 v1 的字段(region / city / tz / screen / tls(JA3) / canvas / cookie):
 //     缺 GeoIP 粒度、JS 探针与 JA3 采集,一律不在 Fact 上出现。
 //     将来接回来时:地理粒度补 mmdb 查询、screen/canvas 补 JS 探针回传(需新增一张
@@ -25,8 +26,8 @@ import (
 const (
 	FieldIP      = "ip"      // 请求来源 IP,支持 CIDR
 	FieldIPAttr  = "ipattr"  // private / loopback / linklocal
-	FieldCountry = "country" // 恒空:GeoIP 未接入
-	FieldASN     = "asn"     // 恒空:ASN 未接入
+	FieldCountry = "country" // ISO 3166-1 alpha-2 国家码,如 US / CN;取不到时为空
+	FieldASN     = "asn"     // 当前无 ASN 数据源,恒空
 	FieldLang    = "lang"    // Accept-Language 首标签
 	FieldRef     = "ref"     // Referer 主机名
 	FieldUTM     = "utm"     // utm_source 查询参数
@@ -58,8 +59,8 @@ const (
 type Fact struct {
 	IP      string // 来源 IP(字符串,已按可信代理口径解析)
 	IPAttr  string // private / loopback / linklocal,IP 非法时为空
-	Country string // 恒空:GeoIP 未接入
-	ASN     string // 恒空:ASN 未接入
+	Country string // ISO 3166-1 alpha-2 国家码(取不到时为空)
+	ASN     string // 自治系统号(当前无数据源,恒空)
 	Lang    string // Accept-Language 首标签(小写)
 	Ref     string // Referer 主机名(小写,不含端口);无主机名时为空
 	UTM     string // utm_source 查询参数(原样)
@@ -81,17 +82,19 @@ type Fact struct {
 	Seen map[string]int
 }
 
-// geoKey 地理值的请求上下文键(未注入时 country/asn 恒空)。
+// geoKey 地理值的请求上下文键(未注入时 country/asn 为空)。
 type geoKey struct{}
 
-// Geo 一次访问的地理值。当前无数据源,仅作为注入通道存在。
+// Geo 一次访问的地理值。值由 internal/geo 解析后注入(ADR 0009):
+// 求值期只读这两个字符串,不做任何 IO——按 IP 查库的活已经在注入前干完了。
 type Geo struct {
 	Country string
 	ASN     string
 }
 
-// WithGeo 把地理值挂到请求上下文(接入 GeoIP/ASN 后由跳转链路调用)。
-// 现在没有任何调用方:接入前 country/asn 恒空,依赖它们的条件恒不命中。
+// WithGeo 把地理值挂到请求上下文,由跳转链路在构造 Fact 之前调用。
+// 注入空值等价于不注入(取不到的 IP 就该恒不命中),所以调用方不需要
+// 区分"查到了"和"没查到"两种情况,拿到什么填什么即可。
 func WithGeo(ctx context.Context, country, asn string) context.Context {
 	return context.WithValue(ctx, geoKey{}, Geo{Country: country, ASN: asn})
 }

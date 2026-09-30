@@ -85,8 +85,8 @@ func validVisitAction(action string) error {
 	return ErrInvalidAction
 }
 
-// VisitRecord 一次访问/点击的入库字段(Action/Outcome/Reason/TargetURL/Lang 由调用方填写;
-// Country/IsDatacenter/ASN 暂无 GeoIP 数据源,恒为占位值)。
+// VisitRecord 一次访问/点击的入库字段(Action/Outcome/Reason/TargetURL/Lang/Country 由调用方填写;
+// Country 来自离线 ip2region 库,查不到时为空。IsDatacenter/ASN 仍无数据源,不在此列)。
 type VisitRecord struct {
 	LinkID    int64
 	DomainID  int64
@@ -98,6 +98,10 @@ type VisitRecord struct {
 	Reason    string
 	TargetURL string
 	Lang      string
+	// Country:访客 IP 解析出的 ISO 3166-1 alpha-2 国家码(查不到时为空)。
+	// asn / is_datacenter 不在此列:当前没有数据源(ADR 0009),
+	// 传空值与数据库默认值无法区分"没查"和"查了没有",不如不传。
+	Country string
 	// RuleID / RuleAction:本次命中的规则与它的裁决(无规则参与时留空)。
 	// 命中不写任何计数表(spec D9),只多写这两列——明细是这次裁决唯一留痕的地方。
 	RuleID     *int64
@@ -112,6 +116,7 @@ func (s *Store) InsertVisit(ctx context.Context, rec VisitRecord) error {
 		UserAgent: rec.UserAgent, Referer: rec.Referer,
 		Action: rec.Action, Outcome: rec.Outcome, Reason: rec.Reason,
 		TargetURL: rec.TargetURL, Lang: rec.Lang,
+		Country:   rec.Country,
 		RuleID: rec.RuleID, RuleAction: rec.RuleAction,
 	}
 	return s.db.WithContext(ctx).Create(&v).Error
