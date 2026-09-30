@@ -30,8 +30,8 @@
           </div>
         </template>
         <template v-else-if="column.key === 'status'">
-          <AppTag :color="TENANT_STATUS[record.status as TenantStatus].color">
-            {{ TENANT_STATUS[record.status as TenantStatus].label }}
+          <AppTag :color="TENANT_STATUS[record.status as TenantStatus]?.color || 'default'">
+            {{ TENANT_STATUS[record.status as TenantStatus]?.label || record.status || '-' }}
           </AppTag>
         </template>
         <template v-else-if="column.key === 'tier'">

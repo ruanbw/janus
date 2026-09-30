@@ -2,7 +2,7 @@
   <div>
     <PageHeader
       title="账号设置与安全"
-      description="查看租户核心账户信息，并管理控制台登录密码凭据"
+      description="查看租户核心账户信息与资源配额，并管理控制台登录密码凭据"
     />
 
     <!-- 平台超管首次登录设置密码提醒 -->
@@ -16,86 +16,140 @@
     />
 
     <div class="grid grid-cols-1 gap-6 lg:grid-cols-2 items-start">
-      <!-- 左卡片:租户信息 -->
-      <AppCard :padding="false">
-        <CardHeader>
-          <CardTitle class="flex items-center gap-2">
-            <Layers :size="18" class="text-brand-600 dark:text-brand-400" />
-            租户信息
-          </CardTitle>
-          <CardDescription>
-            租户基础账户属性与短码生成偏好
-          </CardDescription>
-        </CardHeader>
+      <!-- 左列: 租户信息与资源配额 -->
+      <div class="space-y-6">
+        <!-- 租户信息卡片 -->
+        <AppCard :padding="false">
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <Layers :size="18" class="text-brand-600 dark:text-brand-400" />
+              租户信息
+            </CardTitle>
+            <CardDescription>
+              租户基础账户属性与短码生成偏好
+            </CardDescription>
+          </CardHeader>
 
-        <CardContent class="space-y-6 p-6">
-          <!-- 结构化的租户信息描述列表 -->
-          <div class="rounded-xl border border-line bg-surface-muted/40 p-4 space-y-3">
-            <div class="flex items-center justify-between text-xs">
-              <span class="text-ink-soft">租户登录邮箱</span>
-              <span class="mono font-semibold text-ink">{{ auth.tenant?.email ?? '—' }}</span>
+          <CardContent class="space-y-6 p-6">
+            <!-- 结构化的租户信息描述列表 -->
+            <div class="rounded-xl border border-line bg-surface-muted/40 p-4 space-y-3">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-ink-soft">租户登录邮箱</span>
+                <span class="mono font-semibold text-ink">{{ auth.tenant?.email ?? '—' }}</span>
+              </div>
+              <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
+                <span class="text-ink-soft">租户标识前缀 (Slug)</span>
+                <code class="font-mono text-xs font-semibold text-ink bg-surface px-1.5 py-0.5 rounded border border-line">
+                  {{ auth.tenant?.slug ?? '-' }}
+                </code>
+              </div>
+              <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
+                <span class="text-ink-soft">当前生效等级</span>
+                <AppTag color="cyan">{{ auth.tenant?.tier?.name ?? '-' }}</AppTag>
+              </div>
+              <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
+                <span class="text-ink-soft">平台默认域名</span>
+                <CopyText
+                  :text="auth.tenant?.defaultDomain ?? ''"
+                  class="mono text-xs font-semibold text-brand-600 hover:text-brand-700"
+                >
+                  {{ auth.tenant?.defaultDomain ?? '-' }}
+                </CopyText>
+              </div>
+              <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
+                <span class="text-ink-soft">账号当前状态</span>
+                <AppTag :color="statusInfo.color">{{ statusInfo.label }}</AppTag>
+              </div>
             </div>
-            <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
-              <span class="text-ink-soft">租户标识前缀 (Slug)</span>
-              <code class="font-mono text-xs font-semibold text-ink bg-surface px-1.5 py-0.5 rounded border border-line">
-                {{ auth.tenant?.slug ?? '-' }}
-              </code>
+
+            <!-- 自动生成短码长度配置 -->
+            <div class="rounded-xl border border-line bg-surface-muted/40 p-4 space-y-3">
+              <div class="space-y-1">
+                <div class="text-xs font-semibold text-ink">自动生成短码长度偏好</div>
+                <p class="text-[11px] text-ink-faint leading-relaxed">
+                  创建短链时若未自定义短码，系统将按此设定位数自动生成随机字母与数字组合（已剔除易混淆字符 0/O/1/l/I）。
+                </p>
+              </div>
+
+              <div class="flex items-center gap-3">
+                <div class="w-32">
+                  <AppInputNumber
+                    v-model="codeLength"
+                    :min="4"
+                    :max="32"
+                    placeholder="长度 4-32"
+                  />
+                </div>
+                <AppButton
+                  type="primary"
+                  :loading="savingCodeLength"
+                  @click="onSaveCodeLength"
+                >
+                  保存长度配置
+                </AppButton>
+                <span class="text-xs text-ink-faint tabular-nums">范围: 4 - 32 位</span>
+              </div>
             </div>
-            <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
-              <span class="text-ink-soft">当前生效等级</span>
-              <AppTag color="cyan">{{ auth.tenant?.tier?.name ?? '-' }}</AppTag>
-            </div>
-            <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
-              <span class="text-ink-soft">平台默认域名</span>
-              <CopyText
-                :text="auth.tenant?.defaultDomain ?? ''"
-                class="mono text-xs font-semibold text-brand-600 hover:text-brand-700"
+          </CardContent>
+        </AppCard>
+
+        <!-- 资源配额卡片 -->
+        <AppCard :padding="false">
+          <CardHeader>
+            <CardTitle class="flex items-center gap-2">
+              <Gauge :size="18" class="text-brand-600 dark:text-brand-400" />
+              资源配额
+            </CardTitle>
+            <CardDescription>
+              租户可用的短链与自有域名配额上限及当前使用进度
+            </CardDescription>
+          </CardHeader>
+
+          <CardContent class="space-y-4 p-6">
+            <div
+              v-for="row in quotaRows"
+              :key="row.key"
+              class="rounded-xl border border-line bg-surface-muted/40 p-4 space-y-2.5"
+            >
+              <div class="flex items-baseline justify-between gap-3 text-xs">
+                <span class="font-medium text-ink">{{ row.label }}</span>
+                <span
+                  class="whitespace-nowrap font-mono tabular-nums"
+                  :class="row.percent >= 100 ? 'text-err font-bold' : 'text-ink font-semibold'"
+                >
+                  {{ row.used }} / {{ row.maxLabel }}
+                  <span class="font-sans font-normal text-ink-faint">（{{ row.percent }}%）</span>
+                </span>
+              </div>
+
+              <AppProgress
+                :percent="row.percent"
+                :status="row.percent >= 100 ? 'exception' : 'active'"
+                :stroke-width="8"
+                :show-info="false"
+              />
+
+              <p
+                v-if="row.percent >= 100"
+                class="flex items-center gap-1.5 text-[11px] font-medium text-err"
               >
-                {{ auth.tenant?.defaultDomain ?? '-' }}
-              </CopyText>
-            </div>
-            <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
-              <span class="text-ink-soft">账号当前状态</span>
-              <AppTag :color="statusInfo.color">{{ statusInfo.label }}</AppTag>
-            </div>
-          </div>
-
-          <!-- 配额进度条监控：原先在「租户信息与配额」卡片里常驻展示。
-               现在整个后台只有总览页一处展示配额（配额是租户级全局事实，
-               重复摆在每个资源页只会让人分不清哪份是最新的），
-               临近上限的告警也跟着搬去了总览。创建时的超限由 403 错误提示兜底，
-               那里带的是后端当时的真实数字。 -->
-
-          <!-- 自动生成短码长度配置 -->
-          <div class="rounded-xl border border-line bg-surface-muted/40 p-4 space-y-3">
-            <div class="space-y-1">
-              <div class="text-xs font-semibold text-ink">自动生成短码长度偏好</div>
-              <p class="text-[11px] text-ink-faint leading-relaxed">
-                创建短链时若未自定义短码，系统将按此设定位数自动生成随机字母与数字组合（已剔除易混淆字符 0/O/1/l/I）。
+                <TriangleAlert :size="13" class="shrink-0" />
+                {{ row.exhausted }}
+              </p>
+              <p
+                v-else-if="row.percent >= QUOTA_WARN_PERCENT"
+                class="flex items-center gap-1.5 text-[11px] font-medium text-warn"
+              >
+                <TriangleAlert :size="13" class="shrink-0" />
+                {{ row.label }}已达 {{ row.percent }}%，接近上限
+              </p>
+              <p v-else class="text-[11px] text-ink-faint">
+                {{ row.note }}
               </p>
             </div>
-
-            <div class="flex items-center gap-3">
-              <div class="w-32">
-                <AppInputNumber
-                  v-model="codeLength"
-                  :min="4"
-                  :max="32"
-                  placeholder="长度 4-32"
-                />
-              </div>
-              <AppButton
-                type="primary"
-                :loading="savingCodeLength"
-                @click="onSaveCodeLength"
-              >
-                保存长度配置
-              </AppButton>
-              <span class="text-xs text-ink-faint tabular-nums">范围: 4 - 32 位</span>
-            </div>
-          </div>
-        </CardContent>
-      </AppCard>
+          </CardContent>
+        </AppCard>
+      </div>
 
       <!-- 右卡片:修改密码 / 设置初始密码 -->
       <AppCard :padding="false">
@@ -206,10 +260,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import {
+  Gauge,
   KeyRound,
   Layers,
   Lock,
   ShieldCheck,
+  TriangleAlert,
 } from '@lucide/vue';
 import { message } from '@/utils/toast';
 import type { FormRule } from '@/components/ui/types';
@@ -237,6 +293,53 @@ const statusInfo = computed(() => {
   return TENANT_STATUS[s] ?? { label: '未知', color: 'default' };
 });
 
+/** 达到这个百分比开始提醒接近上限；100% 则是硬上限 */
+const QUOTA_WARN_PERCENT = 80;
+
+interface QuotaRow {
+  key: 'links' | 'domains';
+  label: string;
+  used: number;
+  max: number;
+  maxLabel: string;
+  percent: number;
+  exhausted: string;
+  note: string;
+}
+
+const quotaRows = computed<QuotaRow[]>(() => {
+  const usage = auth.tenant?.usage;
+  const rows = [
+    {
+      key: 'links' as const,
+      label: '短链配额',
+      used: usage?.links ?? 0,
+      max: usage?.maxLinks ?? 0,
+      exhausted: '短链配额已用尽，无法创建新短链，请联系管理员升级租户等级',
+      note: '包含已启用与已停用的短链；物理删除后才释放名额',
+    },
+    {
+      key: 'domains' as const,
+      label: '自有域名配额',
+      used: usage?.domains ?? 0,
+      max: usage?.maxDomains ?? 0,
+      exhausted: '自有域名配额已用尽，无法添加新域名',
+      note: '平台默认域名不计入自有域名配额',
+    },
+  ];
+  return rows.map((row) => {
+    // max 为 0/缺失时当作不限：显示“不限”，进度条 0%
+    if (!row.max) {
+      return { ...row, maxLabel: '不限', percent: 0 };
+    }
+    return {
+      ...row,
+      maxLabel: String(row.max),
+      percent: Math.min(100, Math.round((row.used / row.max) * 100)),
+    };
+  });
+});
+
 const rules: Record<string, FormRule[]> = {
   oldPassword: [{ required: true, message: '请输入当前密码' }],
   newPassword: [
@@ -256,9 +359,14 @@ const rules: Record<string, FormRule[]> = {
 
 async function load() {
   try {
-    const me = await fetchMyTenant();
-    codeLength.value = me.codeLength;
-    auth.tenant = me;
+    const me = await auth.fetchMe();
+    if (me) {
+      codeLength.value = me.codeLength;
+    } else {
+      const fallbackMe = await fetchMyTenant();
+      codeLength.value = fallbackMe.codeLength;
+      auth.tenant = fallbackMe;
+    }
   } catch (error) {
     if (error instanceof ApiError && error.status !== 401) {
       message.error(error.message);

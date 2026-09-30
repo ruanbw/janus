@@ -9,9 +9,7 @@
       </template>
     </PageHeader>
 
-    <!-- 域名配额条：原先这里常驻一个 <QuotaBar>，与总览、账号设置三处重复。
-         自有域名配额已经只在总览展示（那里是唯一每次加载都刷新的来源），
-         创建超限时表单会直接报 403 并带出实际数字。 -->
+    <!-- 域名配额统一在账号设置展示；创建超限时表单直接报 403 并提示实际数字。 -->
 
     <AppTable
       :columns="columns"
@@ -31,18 +29,18 @@
           {{ toDomain(record).description || '-' }}
         </template>
         <template v-else-if="column.key === 'origin'">
-          <AppTag :color="DOMAIN_ORIGIN[toDomain(record).origin].color">
-            {{ DOMAIN_ORIGIN[toDomain(record).origin].label }}
+          <AppTag :color="DOMAIN_ORIGIN[toDomain(record).origin]?.color || 'default'">
+            {{ DOMAIN_ORIGIN[toDomain(record).origin]?.label || toDomain(record).origin || '-' }}
           </AppTag>
         </template>
         <template v-else-if="column.key === 'status'">
-          <AppTag :color="DOMAIN_STATUS[toDomain(record).status].color">
-            {{ DOMAIN_STATUS[toDomain(record).status].label }}
+          <AppTag :color="DOMAIN_STATUS[toDomain(record).status]?.color || 'default'">
+            {{ DOMAIN_STATUS[toDomain(record).status]?.label || toDomain(record).status || '-' }}
           </AppTag>
         </template>
         <template v-else-if="column.key === 'certStatus'">
-          <AppTag :color="CERT_STATUS[toDomain(record).certStatus].color">
-            {{ CERT_STATUS[toDomain(record).certStatus].label }}
+          <AppTag :color="CERT_STATUS[toDomain(record).certStatus]?.color || 'default'">
+            {{ CERT_STATUS[toDomain(record).certStatus]?.label || toDomain(record).certStatus || '-' }}
           </AppTag>
         </template>
         <template v-else-if="column.key === 'activatedAt'">

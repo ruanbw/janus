@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 
 import AdminLayout from '@/layouts/AdminLayout.vue';
 import { useAuthStore } from '@/stores/auth';
+import { message } from '@/utils/toast';
 
 const router = createRouter({
   history: createWebHistory(),
@@ -169,6 +170,37 @@ router.beforeEach(async (to) => {
 router.afterEach((to) => {
   const title = to.meta.title as string | undefined;
   document.title = title ? `${title} · CLOAK 后台` : 'CLOAK 后台';
+  try {
+    sessionStorage.removeItem(`chunk_reload_${to.fullPath}`);
+  } catch {
+    // 忽略 sessionStorage 访问限制异常
+  }
+});
+
+// 路由错误捕获：防止前端部署更新或偶发网络抖动导致 Chunk 加载失败卡在白屏
+router.onError((error, to) => {
+  console.error('[Router Error]', error, to);
+  const msg = error instanceof Error ? error.message : String(error);
+  const isChunkLoadFailed =
+    msg.includes('Failed to fetch dynamically imported module') ||
+    msg.includes('Importing a module script failed') ||
+    msg.includes('error loading dynamically imported module') ||
+    msg.includes('Unable to preload CSS') ||
+    (error as { name?: string })?.name === 'ChunkLoadError';
+
+  if (isChunkLoadFailed) {
+    const targetPath = to?.fullPath || window.location.href;
+    const reloadKey = `chunk_reload_${targetPath}`;
+    const reloadCount = parseInt(sessionStorage.getItem(reloadKey) || '0', 10);
+    if (reloadCount < 1) {
+      sessionStorage.setItem(reloadKey, String(reloadCount + 1));
+      window.location.assign(targetPath);
+      return;
+    }
+    // 已尝试自动刷新但仍未成功，提示用户手动重试，避免死循环重载
+    sessionStorage.removeItem(reloadKey);
+    message.error('页面资源加载失败，请检查网络连接后刷新重试');
+  }
 });
 
 export default router;

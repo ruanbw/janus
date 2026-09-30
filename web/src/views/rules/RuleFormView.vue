@@ -114,7 +114,7 @@ const linkOptions = computed(() =>
   linkCatalog.value.map((l) => ({
     value: l.id,
     // 与后端 linkNames 的 `短码@域名` 保持同一形态（短码在租户内不唯一，必须带域名）
-    label: `${l.code}@${l.domains[0] ?? '未关联域名'}`,
+    label: `${l.code}@${l.domains?.[0] ?? '未关联域名'}`,
   })),
 );
 

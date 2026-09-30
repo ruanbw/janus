@@ -13,6 +13,34 @@ import { setUnauthorizedHandler } from '@/utils/request';
 const app = createApp(App);
 const pinia = createPinia();
 
+// 全局 Vue 渲染与运行时错误捕获，避免未处理异常导致渲染树崩溃静默白屏
+app.config.errorHandler = (err, instance, info) => {
+  console.error('[Vue Global Error]', err, info);
+};
+
+// 全局 Promise Rejection 兜底，捕获漏网的 Chunk 加载失败或未捕获的异步异常
+window.addEventListener('unhandledrejection', (event) => {
+  console.error('[Unhandled Promise Rejection]', event.reason);
+  const msg = event.reason instanceof Error ? event.reason.message : String(event.reason || '');
+  if (
+    msg.includes('Failed to fetch dynamically imported module') ||
+    msg.includes('Importing a module script failed') ||
+    msg.includes('error loading dynamically imported module') ||
+    msg.includes('Unable to preload CSS')
+  ) {
+    const reloadKey = `chunk_reload_${window.location.pathname}`;
+    const reloadCount = parseInt(sessionStorage.getItem(reloadKey) || '0', 10);
+    if (reloadCount < 1) {
+      sessionStorage.setItem(reloadKey, String(reloadCount + 1));
+      window.location.reload();
+    }
+  }
+});
+
+window.addEventListener('error', (event) => {
+  console.error('[Global Error]', event.error || event.message);
+});
+
 app.use(pinia);
 app.use(router);
 app.use(UI);

@@ -1,5 +1,4 @@
 <template>
-  <!-- 纵向分割线 -->
   <Separator
     v-if="orientation === 'vertical'"
     orientation="vertical"
@@ -7,8 +6,6 @@
     :class="cn('inline-block h-4 w-px bg-line shrink-0 align-middle mx-2', props.class)"
     :style="style"
   />
-
-  <!-- 横向带文字分割线 -->
   <div
     v-else-if="$slots.default"
     :class="cn('flex items-center gap-3 my-4', props.class)"
@@ -28,8 +25,6 @@
       :class="orientationText === 'right' ? 'w-6 shrink-0' : 'flex-1'"
     />
   </div>
-
-  <!-- 横向纯分割线 -->
   <Separator
     v-else
     orientation="horizontal"

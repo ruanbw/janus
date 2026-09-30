@@ -323,7 +323,7 @@
                           <div class="profile-item">
                             <dt>短链</dt>
                             <dd class="mono truncate">
-                              {{ row.visit.domain || link?.domains[0] || '未知域名' }}/{{ link?.code }}
+                              {{ row.visit.domain || link?.domains?.[0] || '未知域名' }}/{{ link?.code || '-' }}
                             </dd>
                           </div>
                           <div class="profile-item">

@@ -137,10 +137,10 @@
             系统就绪
           </span>
           <span v-if="auth.config?.serverIp" class="badge badge-neutral hidden lg:inline-flex font-mono">
-            节点 IP · {{ auth.config.serverIp }}
+            节点 IP · {{ auth.config?.serverIp }}
           </span>
           <AppTag v-if="auth.tenant?.tier" color="cyan" class="hidden sm:inline-flex">
-            等级 · {{ auth.tenant.tier.name }}
+            等级 · {{ auth.tenant?.tier?.name }}
           </AppTag>
 
           <button
@@ -195,9 +195,30 @@
 
       <!-- 内容宽度跟随侧边栏伸缩:不加固定 max-width,否则宽屏下收缩侧边栏时右侧不会变宽 -->
       <main class="w-full flex-1 px-4 py-5 md:px-6">
-        <router-view v-slot="{ Component }">
+        <!-- 路由子组件渲染异常边界：避免页面抛错时 Transition mode="out-in" 永久空白卡死 -->
+        <div v-if="pageError" class="mx-auto max-w-xl py-12">
+          <div class="rounded-xl border border-line bg-surface p-8 text-center shadow-xs">
+            <div class="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-full bg-err/10 text-err">
+              <AlertTriangle :size="24" />
+            </div>
+            <h3 class="text-base font-semibold text-ink">页面加载或渲染出错</h3>
+            <p class="mt-1.5 text-sm text-ink-muted leading-relaxed">
+              {{ pageError.message || '子组件渲染时发生未捕获异常，请尝试重试或刷新页面' }}
+            </p>
+            <div class="mt-6 flex items-center justify-center gap-3">
+              <AppButton type="primary" @click="handleRetry">
+                <template #icon><RefreshCw :size="14" /></template>
+                重新加载
+              </AppButton>
+              <AppButton @click="handleReload">
+                刷新整页
+              </AppButton>
+            </div>
+          </div>
+        </div>
+        <router-view v-else v-slot="{ Component }">
           <transition name="page" mode="out-in">
-            <component :is="Component" :key="route.fullPath" />
+            <component :is="Component" :key="route.fullPath + '_' + retryKey" />
           </transition>
         </router-view>
       </main>
@@ -208,9 +229,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onErrorCaptured, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
+  AlertTriangle,
   ChevronDown,
   Crown,
   FlaskConical,
@@ -222,6 +244,7 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  RefreshCw,
   Settings,
   Sliders,
   Sun,
@@ -260,6 +283,24 @@ const router = useRouter();
 
 const collapsed = ref(false);
 const drawerOpen = ref(false);
+const pageError = ref<Error | null>(null);
+const retryKey = ref(0);
+
+// 子组件渲染错误捕获保护：拦截向上传播，呈现错误降级卡片
+onErrorCaptured((err: unknown) => {
+  console.error('[AdminLayout ErrorCaptured]', err);
+  pageError.value = err instanceof Error ? err : new Error(String(err));
+  return false;
+});
+
+function handleRetry(): void {
+  pageError.value = null;
+  retryKey.value += 1;
+}
+
+function handleReload(): void {
+  window.location.reload();
+}
 
 // 侧边栏宽度的唯一真源:aside 宽度与主区域左内边距都读 --sidebar-w
 const sidebarStyle = computed<Record<string, string>>(() => ({
@@ -282,6 +323,7 @@ onBeforeUnmount(() => {
 watch(
   () => route.fullPath,
   () => {
+    pageError.value = null;
     drawerOpen.value = false;
   },
 );

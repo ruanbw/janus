@@ -26,8 +26,8 @@ interface VisitFacets {
 const BOT_UA_RE = /bot|spider|crawl|curl|wget|python/i;
 
 /** 来源归类：优先匹配主流广告平台 referrer，未携带来源的流量归入直接访问 */
-function sourceOf(referer: string): string {
-  const ref = referer.toLowerCase();
+function sourceOf(referer?: string | null): string {
+  const ref = (referer || '').toLowerCase();
   if (ref.includes('tiktok')) return 'TikTok Ads';
   if (ref.includes('facebook') || ref.includes('instagram') || ref.includes('meta')) return 'Meta Ads';
   if (ref.includes('google')) return 'Google Ads';
@@ -42,18 +42,20 @@ function sourceOf(referer: string): string {
  * 计进移动端，进而让「移动端占比」被爬虫流量抬高。
  */
 function deviceOf(deviceType: string, ua: string): string {
-  if (BOT_UA_RE.test(ua)) return '爬虫 / 机器人';
-  if (deviceType === 'mobile' || /mobile|iphone|android/i.test(ua)) return '移动端';
-  if (deviceType === 'tablet' || /ipad/i.test(ua)) return '平板';
+  const userAgent = ua || '';
+  if (BOT_UA_RE.test(userAgent)) return '爬虫 / 机器人';
+  if (deviceType === 'mobile' || /mobile|iphone|android/i.test(userAgent)) return '移动端';
+  if (deviceType === 'tablet' || /ipad/i.test(userAgent)) return '平板';
   return '桌面端';
 }
 
-function osOf(osName: string): string {
-  if (/ios/i.test(osName)) return 'iOS';
-  if (/android/i.test(osName)) return 'Android';
-  if (/windows/i.test(osName)) return 'Windows';
-  if (/mac/i.test(osName)) return 'macOS';
-  if (/linux/i.test(osName)) return 'Linux';
+function osOf(osName?: string | null): string {
+  const name = osName || '';
+  if (/ios/i.test(name)) return 'iOS';
+  if (/android/i.test(name)) return 'Android';
+  if (/windows/i.test(name)) return 'Windows';
+  if (/mac/i.test(name)) return 'macOS';
+  if (/linux/i.test(name)) return 'Linux';
   return '其他';
 }
 
@@ -63,21 +65,22 @@ function osOf(osName: string): string {
  * 落到 else 的是各 App 内置 WebView（微信、抖音等）——它对短链运营来说和独立浏览器
  * 是两种投放来源，混在一起会看不清各渠道的真实环境。
  */
-function browserOf(browserName: string): string {
-  if (/chrome|chromium/i.test(browserName)) return 'Chrome / WebKit';
-  if (/safari/i.test(browserName)) return 'Safari';
-  if (/firefox/i.test(browserName)) return 'Firefox';
+function browserOf(browserName?: string | null): string {
+  const name = browserName || '';
+  if (/chrome|chromium/i.test(name)) return 'Chrome / WebKit';
+  if (/safari/i.test(name)) return 'Safari';
+  if (/firefox/i.test(name)) return 'Firefox';
   return '应用内内置';
 }
 
 function facetsOf(v: Visit): VisitFacets {
-  const ua = v.userAgent || '';
+  const ua = v?.userAgent || '';
   const parser = new UAParser(ua);
   return {
-    source: sourceOf(v.referer || ''),
-    device: deviceOf(parser.getDevice().type || '', ua),
-    os: osOf(parser.getOS().name || ''),
-    browser: browserOf(parser.getBrowser().name || ''),
+    source: sourceOf(v?.referer),
+    device: deviceOf(parser.getDevice()?.type || '', ua),
+    os: osOf(parser.getOS()?.name),
+    browser: browserOf(parser.getBrowser()?.name),
   };
 }
 

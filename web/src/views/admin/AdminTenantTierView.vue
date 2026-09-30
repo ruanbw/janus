@@ -30,7 +30,7 @@
             <div class="flex items-center justify-between">
               <span class="text-xs font-medium text-ink-soft">目标租户账号</span>
               <AppTag color="cyan">
-                {{ tenant?.tier?.name ? `当前等级: ${tenant.tier.name}` : '未指定等级' }}
+                {{ tenant?.tier?.name ? `当前等级: ${tenant.tier?.name}` : '未指定等级' }}
               </AppTag>
             </div>
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-xs">
@@ -184,12 +184,12 @@ const selectedTier = computed(() =>
 
 const diffLinks = computed(() => {
   if (!currentTier.value || !selectedTier.value) return 0;
-  return selectedTier.value.maxLinks - currentTier.value.maxLinks;
+  return (selectedTier.value.maxLinks ?? 0) - (currentTier.value.maxLinks ?? 0);
 });
 
 const diffDomains = computed(() => {
   if (!currentTier.value || !selectedTier.value) return 0;
-  return selectedTier.value.maxDomains - currentTier.value.maxDomains;
+  return (selectedTier.value.maxDomains ?? 0) - (currentTier.value.maxDomains ?? 0);
 });
 
 const quotaMessage = computed(() => {

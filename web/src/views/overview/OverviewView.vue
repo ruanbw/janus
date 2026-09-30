@@ -1,18 +1,20 @@
 <template>
   <div class="space-y-5 pb-10">
-    <!-- KPI 卡片网格 (真实数据驱动) -->
-    <section class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    <!-- KPI 卡片网格 (真实数据驱动：3列自适应、高度统一) -->
+    <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
       <div
-        v-for="(kpi, idx) in kpiList"
+        v-for="kpi in kpiList"
         :key="kpi.label"
-        class="kpi"
-        :class="{ 'col-span-2 sm:col-span-1': idx === 4 }"
+        class="kpi relative flex flex-col justify-between h-full min-h-[118px] hover:z-20 focus-within:z-20"
       >
-        <div class="kpi-k">{{ kpi.label }}</div>
-        <div class="kpi-v">
-          {{ kpi.value }}<span v-if="kpi.unit" class="text-[14px] text-muted font-normal ml-1">{{ kpi.unit }}</span>
+        <div>
+          <div class="kpi-k">{{ kpi.label }}</div>
+          <div class="kpi-v flex items-baseline">
+            <span>{{ kpi.value }}</span>
+            <span v-if="kpi.unit" class="text-[14px] text-muted font-normal ml-1">{{ kpi.unit }}</span>
+          </div>
         </div>
-        <div class="kpi-sub">
+        <div class="kpi-sub mt-2">
           {{ kpi.sub }}
         </div>
 
@@ -30,53 +32,6 @@
             {{ kpi.tip }}
           </span>
         </button>
-      </div>
-    </section>
-
-    <!-- 资源配额：整个后台唯一常驻展示配额的地方。原先同一份数字在总览 KPI 副标题、
-         短链列表（KPI 卡 + 表格底栏两处）、域名池顶部和账号设置里各摆了一遍，
-         而只有总览是每次加载都跟 auth.fetchMe() 刷新的，另外几处读的是
-         GET /api/config 的陈旧快照，写操作后还会互相矛盾。
-         告警也跟着搬来：配额是租户级全局事实，在离数字最近的地方提醒一次就够。 -->
-    <section v-if="quotaRows.length" class="panel">
-      <div class="panel-hd">
-        <div>
-          <h2>资源配额</h2>
-          <p>租户可用的短链与自有域名上限，以及当前用量。</p>
-        </div>
-      </div>
-      <div class="panel-bd">
-        <div class="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
-          <div v-for="row in quotaRows" :key="row.key" class="space-y-2">
-            <div class="flex items-baseline justify-between gap-3 text-[13px]">
-              <span class="font-medium text-ink-soft">{{ row.label }}</span>
-              <span
-                class="whitespace-nowrap font-mono tabular-nums font-semibold"
-                :class="row.percent >= 100 ? 'text-err' : 'text-ink'"
-              >
-                {{ row.used }} / {{ row.maxLabel }}
-                <span class="font-sans font-normal text-ink-faint">（{{ row.percent }}%）</span>
-              </span>
-            </div>
-            <AppProgress
-              :percent="row.percent"
-              :status="row.percent >= 100 ? 'exception' : 'active'"
-              :stroke-width="8"
-              :show-info="false"
-            />
-            <p
-              v-if="row.percent >= 100"
-              class="flex items-center gap-1.5 text-[12px] font-medium text-err"
-            >
-              <TriangleAlert :size="13" />
-              {{ row.exhausted }}
-            </p>
-            <p v-else-if="row.percent >= QUOTA_WARN_PERCENT" class="text-[12px] text-warn">
-              {{ row.label }}已达 {{ row.percent }}%，接近上限
-            </p>
-            <p v-else class="text-[12px] text-ink-faint">{{ row.note }}</p>
-          </div>
-        </div>
       </div>
     </section>
 
@@ -384,13 +339,12 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { RefreshCw, TriangleAlert } from '@lucide/vue';
+import { RefreshCw } from '@lucide/vue';
 
 import { listDomains } from '@/api/domains';
 import { listLinks } from '@/api/links';
 import { listVisits } from '@/api/visits';
 import AppButton from '@/components/ui/AppButton.vue';
-import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
 import type { Domain, Link, Visit } from '@/types/api';
 import { message } from '@/utils/toast';
@@ -411,8 +365,6 @@ import {
 const SAMPLE_LINK_LIMIT = 10;
 const SAMPLE_PAGE_SIZE = 50;
 
-const auth = useAuthStore();
-
 const loading = ref(false);
 const links = ref<Link[]>([]);
 const domains = ref<Domain[]>([]);
@@ -424,60 +376,6 @@ const sourceBreakdown = computed(() => sourceDistribution(visits.value));
 const deviceBreakdown = computed(() => deviceDistribution(visits.value));
 const osBreakdown = computed(() => osDistribution(visits.value));
 const browserBreakdown = computed(() => browserDistribution(visits.value));
-
-const quotaUsage = computed(() => auth.tenant?.usage);
-
-/** 达到这个百分比就开始提醒；100% 是硬上限（后端会直接 403） */
-const QUOTA_WARN_PERCENT = 80;
-
-interface QuotaRow {
-  key: 'links' | 'domains';
-  label: string;
-  used: number;
-  max: number;
-  /** max 为 0/缺失时的展示文案，避免把「不限」渲染成 0 */
-  maxLabel: string;
-  percent: number;
-  /** 用满时的告警文案（带具体后果，不只是「已满」） */
-  exhausted: string;
-  /** 未接近上限时的补充说明 */
-  note: string;
-}
-
-const quotaRows = computed<QuotaRow[]>(() => {
-  const usage = quotaUsage.value;
-  if (!usage) return [];
-  const rows: Array<Omit<QuotaRow, 'maxLabel' | 'percent'>> = [
-    {
-      key: 'links',
-      label: '短链配额',
-      used: usage.links ?? 0,
-      max: usage.maxLinks ?? 0,
-      exhausted: '短链配额已用尽，无法创建新短链，请联系管理员升级租户等级',
-      note: '包含已启用与已停用的短链；物理删除后才释放名额',
-    },
-    {
-      key: 'domains',
-      label: '自有域名配额',
-      used: usage.domains ?? 0,
-      max: usage.maxDomains ?? 0,
-      exhausted: '自有域名配额已用尽，无法添加新域名',
-      note: '平台默认域名不计入自有域名配额',
-    },
-  ];
-  return rows.map((row) => {
-    // max 为 0/缺失时当作不限：不算百分比、不标红，否则会用一条空进度条
-    // 谎报「已用尽」
-    if (!row.max) {
-      return { ...row, maxLabel: '不限', percent: 0 };
-    }
-    return {
-      ...row,
-      maxLabel: String(row.max),
-      percent: Math.min(100, Math.round((row.used / row.max) * 100)),
-    };
-  });
-});
 
 // 活跃短链数：真实已启用的短链数量
 const activeLinksCount = computed(() => {
@@ -608,13 +506,13 @@ async function loadData() {
     const [linksRes, domainsRes] = await Promise.all([
       listLinks(1, 100),
       listDomains(),
-      auth.fetchMe(),
     ]);
-    links.value = linksRes.items;
-    domains.value = domainsRes;
+    links.value = linksRes?.items ?? [];
+    domains.value = Array.isArray(domainsRes) ? domainsRes : [];
 
     // 分布图样本：只拉有访问量的短链，按访问量降序取前 N 条
-    sampleLinks.value = [...linksRes.items]
+    const items = linksRes?.items ?? [];
+    sampleLinks.value = [...items]
       .filter((l) => (l.visits || 0) > 0)
       .sort((a, b) => (b.visits || 0) - (a.visits || 0))
       .slice(0, SAMPLE_LINK_LIMIT);
