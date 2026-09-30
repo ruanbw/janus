@@ -1,5 +1,6 @@
 /**
- * 流量结构分布：从访问明细样本聚合出来源 / 设备 / 系统 / 浏览器四张分布图。
+ * 流量结构分布：从访问明细样本聚合出来源 / 设备 / 系统 / 浏览器四张分布图，
+ * 以及世界地图用的国家分布。
  *
  * 纯函数，不依赖路由与组件，便于单独验证。数据来源是「最近若干条短链的最近若干条
  * 访问明细」这个**样本**，不是全量访问，所以调用方必须把样本量一并展示出来——
@@ -7,6 +8,7 @@
  */
 import { UAParser } from 'ua-parser-js';
 
+import { countryName } from '@/constants/countries';
 import type { Visit } from '@/types/api';
 
 export interface BreakdownItem {
@@ -128,4 +130,40 @@ export function browserDistribution(visits: Visit[]): BreakdownItem[] {
     visits.map((v) => facetsOf(v).browser),
     ['Chrome / WebKit', 'Safari', 'Firefox', '应用内内置'],
   );
+}
+
+export interface CountryBreakdown extends BreakdownItem {
+  /** ISO 3166-1 alpha-2 码（后端 visits.country 的原值），世界地图按它上色 */
+  code: string;
+}
+
+/**
+ * 国家分布：直接取 `visits.country`（后端用离线 GeoIP 库解析的 ISO 3166-1 alpha-2 码）。
+ *
+ * 与其余四个维度不同，这里不做兜底归类：解析不出国家的访问（私网/回环地址、
+ * 离线库未收录）既不进任何国家，也不塞进「其他来源」那种筐。「其他来源」是用户
+ * 看得懂的语义，「未知」不是——那批访问的来源确实未知，把它摊到某个国家名下
+ * 等于编数据；而地图上少一块颜色，本就是一个诚实的表达。
+ */
+export function countryDistribution(visits: Visit[]): CountryBreakdown[] {
+  if (visits.length === 0) return [];
+  const counts = new Map<string, number>();
+  for (const v of visits) {
+    const code = (v.country || '').trim().toUpperCase();
+    if (!/^[A-Z]{2}$/.test(code)) continue;
+    counts.set(code, (counts.get(code) ?? 0) + 1);
+  }
+  // 分母是「能定位到国家的访问数」而不是样本总量，否则一个只覆盖海外流量的租户
+  // 会因为私网/回环访问占多数而把所有颜色压到最低档。
+  const total = [...counts.values()].reduce((sum, n) => sum + n, 0);
+  if (total === 0) return [];
+
+  return [...counts.entries()]
+    .map(([code, count]) => ({
+      code,
+      name: countryName(code) || code,
+      count,
+      percent: Math.round((count / total) * 100),
+    }))
+    .sort((a, b) => b.count - a.count);
 }

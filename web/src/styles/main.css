@@ -1236,6 +1236,8 @@ body {
   font-variant-numeric: tabular-nums;
   font-size: 12.5px;
   text-align: right;
+  /* 读数是一个整体，「1204 次 · 44%」拆行看着像坏掉了 */
+  white-space: nowrap;
   color: var(--muted);
 }
 
@@ -1245,6 +1247,119 @@ body {
 
 .bar-row-lg .bar-val {
   color: var(--fg);
+}
+
+/*
+ * 三列卡片里的条形行：按**卡片自身宽度**换挡，而不是按视口宽度。
+ *
+ * 分布面板改成一行三列后，单卡宽度会掉到 250–400px，而 .bar-row-lg 的固定三栏
+ * （标签 124px + 数值 116px + 间距 24px）最少也要 264px，窄卡里会把条形图挤没。
+ * 视口断点看不见「这张卡有多宽」——侧边栏收没收起、卡片是几列都在变——所以这里
+ * 用 container query：.panel-chart 声明自己是容器，条形行按可用宽度换挡。
+ */
+.panel-chart {
+  container-type: inline-size;
+}
+
+@container (max-width: 470px) {
+  .panel-chart .bar-row,
+  .panel-chart .bar-row-lg {
+    /* 数值列改成按内容宽度占位，不再给固定 92px——否则「1204 次 · 44%」会被挤成两行。
+       剩下的宽度在标签与条形之间按 1 : 1.3 分：排行里标签是短链 URL 时能多要一点，
+       标签本来就很短时也不浪费。两个 min 之和 + 数值列仍在 340px 断点之下。 */
+    grid-template-columns: minmax(72px, 1fr) minmax(48px, 1.3fr) max-content;
+  }
+}
+
+/* 再窄就放不下一行三栏了：标签与数值上排、条形独占一行 */
+@container (max-width: 340px) {
+  .panel-chart .bar-row,
+  .panel-chart .bar-row-lg {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'lab val'
+      'track track';
+    row-gap: 5px;
+  }
+  .panel-chart .bar-lab {
+    grid-area: lab;
+  }
+  .panel-chart .bar-track {
+    grid-area: track;
+  }
+  .panel-chart .bar-val {
+    grid-area: val;
+  }
+}
+
+/* ─── 世界地图填色 (World Map Choropleth) ───────────────────────────── */
+.map-shape {
+  stroke: var(--surface);
+  stroke-width: 0.7;
+  /* 地图宽度交给 CSS 自适应（手机约 340px、宽屏约 800px），发丝线不能跟着缩放变粗 */
+  vector-effect: non-scaling-stroke;
+  shape-rendering: geometricPrecision;
+}
+
+.map-shape:hover {
+  stroke: var(--fg);
+  stroke-width: 1.4;
+}
+
+/* 底色：没有访问的国家。留得出与纸面的对比，地图轮廓才不会「消失」 */
+.map-land {
+  background: var(--fg-soft);
+  fill: var(--fg-soft);
+}
+
+/* 四档填色取品牌色梯度：同一色相加深，深浅可比对数量级，不靠色相骗人 */
+.map-lv1 {
+  background: var(--color-brand-100);
+  fill: var(--color-brand-100);
+}
+
+.map-lv2 {
+  background: var(--color-brand-300);
+  fill: var(--color-brand-300);
+}
+
+.map-lv3 {
+  background: var(--color-brand-500);
+  fill: var(--color-brand-500);
+}
+
+.map-lv4 {
+  background: var(--color-brand-700);
+  fill: var(--color-brand-700);
+}
+
+/* 深色下浅色梯度会变成一片亮斑，改成从深到亮往上加 */
+.dark .map-lv1 {
+  background: var(--color-brand-900);
+  fill: var(--color-brand-900);
+}
+
+.dark .map-lv2 {
+  background: var(--color-brand-800);
+  fill: var(--color-brand-800);
+}
+
+.dark .map-lv3 {
+  background: var(--color-brand-600);
+  fill: var(--color-brand-600);
+}
+
+.dark .map-lv4 {
+  background: var(--color-brand-400);
+  fill: var(--color-brand-400);
+}
+
+.dark .map-shape {
+  stroke: var(--bg);
+}
+
+.dark .map-shape:hover {
+  stroke: var(--fg);
 }
 
 .stackbar {

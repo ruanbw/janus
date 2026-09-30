@@ -6,12 +6,14 @@
  * 就是一个用户能选、但永远不命中的死选项（和当初 `asn` 那种假能力一个性质）。
  * 交给维护良好的库，以后新增/更名的国家跟着上游走。
  */
-import { getNames, registerLocale } from 'i18n-iso-countries';
+import { getNames, getNumericCodes, registerLocale } from 'i18n-iso-countries';
 import zhLocale from 'i18n-iso-countries/langs/zh.json';
 
 registerLocale(zhLocale);
 
 const NAMES: Record<string, string> = getNames('zh');
+/** ISO 3166-1 numeric 码 → alpha-2 码，如 `{"840": "US"}`。方向与 NAMES 相反，见 alpha2FromNumeric */
+const ALPHA2_BY_NUMERIC: Record<string, string> = getNumericCodes();
 
 export interface CountryOption {
   /** ISO 3166-1 alpha-2 码，如 US。后端 visits.country 存的就是它 */
@@ -32,4 +34,18 @@ export function countryName(code?: string | null): string {
   const c = (code || '').trim().toUpperCase();
   if (!c) return '';
   return NAMES[c] ?? '';
+}
+
+/**
+ * ISO 3166-1 numeric 码 → alpha-2 码，如 `"840"` → `US`。
+ *
+ * 总览页世界地图的国界数据用 numeric 码当要素 id（Natural Earth 的历史习惯），
+ * 而 visits.country 和规则条件用的都是 alpha-2，两边要对上就得换算这一层。
+ * 换算不出来（南极洲之外的争议领地、库里的占位 id）返回空串：地图上那块地
+ * 画成「无访问」，不按名字猜一个国家上去。
+ */
+export function alpha2FromNumeric(code?: string | number | null): string {
+  const raw = typeof code === 'number' ? String(code) : (code || '').trim();
+  if (!/^\d{1,3}$/.test(raw)) return '';
+  return ALPHA2_BY_NUMERIC[raw.padStart(3, '0')] ?? '';
 }

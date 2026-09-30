@@ -35,10 +35,21 @@
       </div>
     </section>
 
-    <!-- 流量与转化分析 (真实数据驱动 / 优雅空状态) -->
-    <section>
-      <!-- 空状态：当访问量为 0 或无短链时 -->
-      <div v-if="totalVisits === 0" class="panel">
+    <!-- 世界地图：与其他分布图同源，但单独占满一整行。按国家着色需要横向空间，
+         挤进三列网格的一格里，国界会被压成看不清的色块。 -->
+    <WorldMapPanel v-if="visits.length > 0" :visits="visits" />
+
+    <!--
+      分析与分布卡片：宽屏一行三列 / 中屏两列 / 手机一列，用 Tailwind 断点工具类表达，
+      不在 JS 里判断视口（见 AdminLayout 的移动端适配约定）。
+      三列的断点取 xl（1280px）而不是 lg：桌面侧边栏占 224px，1024px 视口下留给内容的
+      只有 ~800px，三等分后每张卡不足 260px，条形图会被标签和读数挤没——那种宽度
+      排两列反而更可读。KPI 卡只放一个数字，用 lg 就够，不跟着变。
+      卡片内部的条形行则按**卡片自身宽度**换挡，靠 .panel-chart 的 container-type，
+      因为同一视口下卡片宽度还会被侧边栏收起与否、列数变化改掉。
+    -->
+    <section class="grid grid-cols-1 items-stretch gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div v-if="totalVisits === 0" class="panel sm:col-span-2 xl:col-span-3">
         <div class="panel-hd">
           <div>
             <h2>流量与转化分析</h2>
@@ -77,248 +88,239 @@
       </div>
 
       <!-- 真实数据构成：当有访问量时展示 -->
-      <div v-else class="cols-2 items-stretch">
-        <!-- 热门短链访问排行 -->
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>热门短链访问排行</h2>
-              <p>按访问量降序排列的短链流量表现。</p>
-            </div>
-            <router-link to="/links" class="btn btn-sm">
-              全部短链 →
-            </router-link>
+      <!-- 热门短链访问排行 -->
+      <div v-if="totalVisits > 0" class="panel panel-chart flex flex-col">
+        <div class="panel-hd">
+          <div>
+            <h2>热门短链访问排行</h2>
+            <p>按访问量降序排列的短链流量表现。</p>
           </div>
-          <div class="panel-bd flex-1">
-            <div class="bars">
-              <div
-                v-for="link in topLinks"
-                :key="link.id"
-                class="bar-row bar-row-lg"
-              >
-                <div class="bar-lab flex items-center gap-1.5 min-w-0" :title="`/${link.code}`">
-                  <span class="mono font-semibold truncate text-[13px]">/{{ link.code }}</span>
-                  <span
-                    class="text-[10px] px-1.5 py-0.5 rounded shrink-0 font-medium leading-none"
-                    :class="link.linkType === 'landing' ? 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'"
-                  >
-                    {{ link.linkType === 'landing' ? '落地页' : '跳转' }}
-                  </span>
-                </div>
-                <span class="bar-track">
-                  <span
-                    class="bar-fill"
-                    :style="{ width: `${Math.min(100, Math.max(2, Math.round(((link.visits || 0) / totalVisits) * 100)))}%` }"
-                  ></span>
-                </span>
-                <span class="bar-val font-mono text-[12px]">
-                  {{ (link.visits || 0).toLocaleString() }} · {{ (((link.visits || 0) / totalVisits) * 100).toFixed(1) }}%
+          <router-link to="/links" class="btn btn-sm">
+            全部短链 →
+          </router-link>
+        </div>
+        <div class="panel-bd flex-1">
+          <div class="bars">
+            <div
+              v-for="link in topLinks"
+              :key="link.id"
+              class="bar-row bar-row-lg"
+            >
+              <div class="bar-lab flex items-center gap-1.5 min-w-0" :title="`/${link.code}`">
+                <span class="mono font-semibold truncate text-[13px]">/{{ link.code }}</span>
+                <span
+                  class="text-[10px] px-1.5 py-0.5 rounded shrink-0 font-medium leading-none"
+                  :class="link.linkType === 'landing' ? 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'"
+                >
+                  {{ link.linkType === 'landing' ? '落地页' : '跳转' }}
                 </span>
               </div>
+              <span class="bar-track">
+                <span
+                  class="bar-fill"
+                  :style="{ width: `${Math.min(100, Math.max(2, Math.round(((link.visits || 0) / totalVisits) * 100)))}%` }"
+                ></span>
+              </span>
+              <span class="bar-val font-mono text-[12px]">
+                {{ (link.visits || 0).toLocaleString() }} · {{ (((link.visits || 0) / totalVisits) * 100).toFixed(1) }}%
+              </span>
             </div>
-          </div>
-          <div class="panel-ft">
-            按单条短链累计访问量排序，反映流量在各投放短码上的集中度。
           </div>
         </div>
+        <div class="panel-ft">
+          按单条短链累计访问量排序，反映流量在各投放短码上的集中度。
+        </div>
+      </div>
 
-        <!-- 短链类型与流量结构 -->
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>短链类型与流量结构</h2>
-              <p>区分直接跳转与落地页承接，合计等于总访问量。</p>
-            </div>
-            <!-- 原来指向已删的「统计」页。访问明细只有一条路:短链列表点那一行的访问列,
-                 所以这里就指到列表页,别再给同一个能力开第二个入口。 -->
-            <router-link to="/links" class="btn btn-sm">
-              查看各短链的访问 →
-            </router-link>
+      <!-- 短链类型与流量结构 -->
+      <div v-if="totalVisits > 0" class="panel panel-chart flex flex-col">
+        <div class="panel-hd">
+          <div>
+            <h2>短链类型与流量结构</h2>
+            <p>区分直接跳转与落地页承接，合计等于总访问量。</p>
           </div>
-          <div class="panel-bd flex-1">
+          <!-- 原来指向已删的「统计」页。访问明细只有一条路:短链列表点那一行的访问列,
+               所以这里就指到列表页,别再给同一个能力开第二个入口。 -->
+          <router-link to="/links" class="btn btn-sm">
+            查看各短链的访问 →
+          </router-link>
+        </div>
+        <div class="panel-bd flex-1">
+          <div
+            class="stackbar"
+            role="img"
+            :aria-label="`跳转型 ${redirectVisits} 次占 ${redirectPercent}%，落地页型 ${landingVisits} 次占 ${landingPercent}%`"
+          >
+            <span class="bg-brand-600" :style="{ width: `${redirectPercent}%` }"></span>
+            <span class="bg-cyan-500" :style="{ width: `${landingPercent}%` }"></span>
+          </div>
+
+          <div class="legend">
+            <span class="legend-item">
+              <span class="legend-key bg-brand-600"></span>
+              跳转型
+            </span>
+            <span class="legend-item">
+              <span class="legend-key bg-cyan-500"></span>
+              落地页型
+            </span>
+          </div>
+
+          <div class="bars mt-4">
+            <div class="bar-row bar-row-lg">
+              <span class="bar-lab">跳转型访问</span>
+              <span class="bar-track">
+                <span class="bar-fill bg-brand-600" :style="{ width: `${redirectPercent}%` }"></span>
+              </span>
+              <span class="bar-val font-mono text-[12px]">{{ redirectVisits.toLocaleString() }} · {{ redirectPercent }}%</span>
+            </div>
+            <div class="bar-row bar-row-lg">
+              <span class="bar-lab">落地页访问</span>
+              <span class="bar-track">
+                <span class="bar-fill bg-cyan-500" :style="{ width: `${landingPercent}%` }"></span>
+              </span>
+              <span class="bar-val font-mono text-[12px]">{{ landingVisits.toLocaleString() }} · {{ landingPercent }}%</span>
+            </div>
+            <div class="bar-row bar-row-lg">
+              <span class="bar-lab">落地页点击</span>
+              <span class="bar-track">
+                <span class="bar-fill bg-emerald-500" :style="{ width: `${landingVisits > 0 ? Math.min(100, Math.round((totalClicks / landingVisits) * 100)) : 0}%` }"></span>
+              </span>
+              <span class="bar-val font-mono text-[12px]">{{ totalClicks.toLocaleString() }} · CTR {{ landingCTR }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel-ft">
+          落地页点击经平台 JS SDK 回传，整体转化率（CTR）反映落地页对目标 URL 的转化效率。
+        </div>
+      </div>
+
+      <div v-if="visits.length > 0" class="panel panel-chart flex flex-col">
+        <div class="panel-hd">
+          <div>
+            <h2>流量来源分布</h2>
+            <p>根据请求 Referrer 与广告点击特征自动归类。</p>
+          </div>
+        </div>
+        <div class="panel-bd flex-1">
+          <div class="bars">
             <div
-              class="stackbar"
-              role="img"
-              :aria-label="`跳转型 ${redirectVisits} 次占 ${redirectPercent}%，落地页型 ${landingVisits} 次占 ${landingPercent}%`"
+              v-for="src in sourceBreakdown"
+              :key="src.name"
+              class="bar-row bar-row-lg"
             >
-              <span class="bg-brand-600" :style="{ width: `${redirectPercent}%` }"></span>
-              <span class="bg-cyan-500" :style="{ width: `${landingPercent}%` }"></span>
-            </div>
-
-            <div class="legend">
-              <span class="legend-item">
-                <span class="legend-key bg-brand-600"></span>
-                跳转型
+              <span class="bar-lab">{{ src.name }}</span>
+              <span class="bar-track">
+                <span
+                  class="bar-fill"
+                  :class="{ 't-accent': src.percent > 30 }"
+                  :style="{ width: `${src.percent}%` }"
+                ></span>
               </span>
-              <span class="legend-item">
-                <span class="legend-key bg-cyan-500"></span>
-                落地页型
-              </span>
-            </div>
-
-            <div class="bars mt-4">
-              <div class="bar-row bar-row-lg">
-                <span class="bar-lab">跳转型访问</span>
-                <span class="bar-track">
-                  <span class="bar-fill bg-brand-600" :style="{ width: `${redirectPercent}%` }"></span>
-                </span>
-                <span class="bar-val font-mono text-[12px]">{{ redirectVisits.toLocaleString() }} · {{ redirectPercent }}%</span>
-              </div>
-              <div class="bar-row bar-row-lg">
-                <span class="bar-lab">落地页访问</span>
-                <span class="bar-track">
-                  <span class="bar-fill bg-cyan-500" :style="{ width: `${landingPercent}%` }"></span>
-                </span>
-                <span class="bar-val font-mono text-[12px]">{{ landingVisits.toLocaleString() }} · {{ landingPercent }}%</span>
-              </div>
-              <div class="bar-row bar-row-lg">
-                <span class="bar-lab">落地页点击</span>
-                <span class="bar-track">
-                  <span class="bar-fill bg-emerald-500" :style="{ width: `${landingVisits > 0 ? Math.min(100, Math.round((totalClicks / landingVisits) * 100)) : 0}%` }"></span>
-                </span>
-                <span class="bar-val font-mono text-[12px]">{{ totalClicks.toLocaleString() }} · CTR {{ landingCTR }}</span>
-              </div>
+              <span class="bar-val">{{ src.count }} 次 · {{ src.percent }}%</span>
             </div>
           </div>
-          <div class="panel-ft">
-            落地页点击经平台 JS SDK 回传，整体转化率（CTR）反映落地页对目标 URL 的转化效率。
+        </div>
+        <div class="panel-ft">
+          优先解析主流广告渠道（Meta / TikTok / Google），未携带来源的流量归入直接访问。
+        </div>
+      </div>
+
+      <div v-if="visits.length > 0" class="panel panel-chart flex flex-col">
+        <div class="panel-hd">
+          <div>
+            <h2>设备类型分布</h2>
+            <p>基于 User-Agent 特征与视口画像解析。</p>
           </div>
+        </div>
+        <div class="panel-bd flex-1">
+          <div class="bars">
+            <div
+              v-for="dev in deviceBreakdown"
+              :key="dev.name"
+              class="bar-row bar-row-lg"
+            >
+              <span class="bar-lab">{{ dev.name }}</span>
+              <span class="bar-track">
+                <span
+                  class="bar-fill"
+                  :class="{ 't-accent': dev.name === '移动端' }"
+                  :style="{ width: `${dev.percent}%` }"
+                ></span>
+              </span>
+              <span class="bar-val">{{ dev.count }} 次 · {{ dev.percent }}%</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel-ft">
+          斗篷准入规则可针对「移动端」进行放行，拦截「桌面端」审查机或爬虫环境。
+        </div>
+      </div>
+
+      <div v-if="visits.length > 0" class="panel panel-chart flex flex-col">
+        <div class="panel-hd">
+          <div>
+            <h2>操作系统分布</h2>
+            <p>终端操作系统内核与主版本统计。</p>
+          </div>
+        </div>
+        <div class="panel-bd flex-1">
+          <div class="bars">
+            <div
+              v-for="os in osBreakdown"
+              :key="os.name"
+              class="bar-row bar-row-lg"
+            >
+              <span class="bar-lab">{{ os.name }}</span>
+              <span class="bar-track">
+                <span
+                  class="bar-fill"
+                  :class="{ 't-accent': os.name.includes('iOS') }"
+                  :style="{ width: `${os.percent}%` }"
+                ></span>
+              </span>
+              <span class="bar-val">{{ os.count }} 次 · {{ os.percent }}%</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel-ft">
+          支持在规则引擎中配置 OS 白名单（如仅放行 iOS 或 Android）。
+        </div>
+      </div>
+
+      <div v-if="visits.length > 0" class="panel panel-chart flex flex-col">
+        <div class="panel-hd">
+          <div>
+            <h2>浏览器分布</h2>
+            <p>独立浏览器与应用内嵌 WebView 占比。</p>
+          </div>
+        </div>
+        <div class="panel-bd flex-1">
+          <div class="bars">
+            <div
+              v-for="br in browserBreakdown"
+              :key="br.name"
+              class="bar-row bar-row-lg"
+            >
+              <span class="bar-lab">{{ br.name }}</span>
+              <span class="bar-track">
+                <span class="bar-fill" :style="{ width: `${br.percent}%` }"></span>
+              </span>
+              <span class="bar-val">{{ br.count }} 次 · {{ br.percent }}%</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel-ft">
+          「应用内内置」指微信、抖音等 App 的 WebView，与独立浏览器分列以便看清各投放渠道的真实环境。
         </div>
       </div>
     </section>
 
-    <!-- 流量结构分布：来源 / 设备 / 操作系统 / 浏览器（四块都来自同一份访问明细样本） -->
-    <template v-if="visits.length > 0">
-      <div class="cols-2 items-stretch">
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>流量来源分布</h2>
-              <p>根据请求 Referrer 与广告点击特征自动归类。</p>
-            </div>
-          </div>
-          <div class="panel-bd flex-1">
-            <div class="bars">
-              <div
-                v-for="src in sourceBreakdown"
-                :key="src.name"
-                class="bar-row bar-row-lg"
-              >
-                <span class="bar-lab">{{ src.name }}</span>
-                <span class="bar-track">
-                  <span
-                    class="bar-fill"
-                    :class="{ 't-accent': src.percent > 30 }"
-                    :style="{ width: `${src.percent}%` }"
-                  ></span>
-                </span>
-                <span class="bar-val">{{ src.count }} 次 · {{ src.percent }}%</span>
-              </div>
-            </div>
-          </div>
-          <div class="panel-ft">
-            优先解析主流广告渠道（Meta / TikTok / Google），未携带来源的流量归入直接访问。
-          </div>
-        </div>
-
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>设备类型分布</h2>
-              <p>基于 User-Agent 特征与视口画像解析。</p>
-            </div>
-          </div>
-          <div class="panel-bd flex-1">
-            <div class="bars">
-              <div
-                v-for="dev in deviceBreakdown"
-                :key="dev.name"
-                class="bar-row bar-row-lg"
-              >
-                <span class="bar-lab">{{ dev.name }}</span>
-                <span class="bar-track">
-                  <span
-                    class="bar-fill"
-                    :class="{ 't-accent': dev.name === '移动端' }"
-                    :style="{ width: `${dev.percent}%` }"
-                  ></span>
-                </span>
-                <span class="bar-val">{{ dev.count }} 次 · {{ dev.percent }}%</span>
-              </div>
-            </div>
-          </div>
-          <div class="panel-ft">
-            斗篷准入规则可针对「移动端」进行放行，拦截「桌面端」审查机或爬虫环境。
-          </div>
-        </div>
-      </div>
-
-      <div class="cols-2 items-stretch">
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>操作系统分布</h2>
-              <p>终端操作系统内核与主版本统计。</p>
-            </div>
-          </div>
-          <div class="panel-bd flex-1">
-            <div class="bars">
-              <div
-                v-for="os in osBreakdown"
-                :key="os.name"
-                class="bar-row bar-row-lg"
-              >
-                <span class="bar-lab">{{ os.name }}</span>
-                <span class="bar-track">
-                  <span
-                    class="bar-fill"
-                    :class="{ 't-accent': os.name.includes('iOS') }"
-                    :style="{ width: `${os.percent}%` }"
-                  ></span>
-                </span>
-                <span class="bar-val">{{ os.count }} 次 · {{ os.percent }}%</span>
-              </div>
-            </div>
-          </div>
-          <div class="panel-ft">
-            支持在规则引擎中配置 OS 白名单（如仅放行 iOS 或 Android）。
-          </div>
-        </div>
-
-        <div class="panel flex flex-col">
-          <div class="panel-hd">
-            <div>
-              <h2>浏览器分布</h2>
-              <p>独立浏览器与应用内嵌 WebView 占比。</p>
-            </div>
-          </div>
-          <div class="panel-bd flex-1">
-            <div class="bars">
-              <div
-                v-for="br in browserBreakdown"
-                :key="br.name"
-                class="bar-row bar-row-lg"
-              >
-                <span class="bar-lab">{{ br.name }}</span>
-                <span class="bar-track">
-                  <span class="bar-fill" :style="{ width: `${br.percent}%` }"></span>
-                </span>
-                <span class="bar-val">{{ br.count }} 次 · {{ br.percent }}%</span>
-              </div>
-            </div>
-          </div>
-          <div class="panel-ft">
-            「应用内内置」指微信、抖音等 App 的 WebView，与独立浏览器分列以便看清各投放渠道的真实环境。
-          </div>
-        </div>
-      </div>
-
-      <!-- 样本量必须写出来：这四张图算的是样本占比，不是全量访问结构 -->
-      <p class="text-[12px] text-muted">
-        样本量：{{ sampleLinks.length }} 条有访问量的短链（按访问量降序取前 {{ SAMPLE_LINK_LIMIT }} 条）各
-        {{ SAMPLE_PAGE_SIZE }} 条访问明细，共 <span class="font-mono text-ink">{{ visits.length }}</span> 条。上方占比按该样本计算，不等于全量访问结构。
-      </p>
-    </template>
+    <!-- 样本量必须写出来：这几张分布图算的是样本占比，不是全量访问结构 -->
+    <p v-if="visits.length > 0" class="text-[12px] text-muted">
+      样本量：{{ sampleLinks.length }} 条有访问量的短链（按访问量降序取前 {{ SAMPLE_LINK_LIMIT }} 条）各
+      {{ SAMPLE_PAGE_SIZE }} 条访问明细，共 <span class="font-mono text-ink">{{ visits.length }}</span> 条。地图与各分布图的占比按该样本计算，不等于全量访问结构。
+    </p>
 
     <!-- 合规提示 -->
     <section class="panel">
@@ -355,6 +357,7 @@ import {
   osDistribution,
   sourceDistribution,
 } from './trafficBreakdown';
+import WorldMapPanel from './WorldMapPanel.vue';
 
 /**
  * 分布图的样本上限：按访问量降序取前 10 条短链，每条取最近 50 条明细。
