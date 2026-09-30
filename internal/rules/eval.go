@@ -285,7 +285,7 @@ func (c *compiledCond) matchSet(ctx VisitorContext, raw string) bool {
 			}
 		}
 	} else if c.litMap != nil {
-		hit = matchLitMap(c.litMap, raw)
+		hit = c.matchLitMap(raw)
 	} else {
 		for _, lit := range c.lits {
 			if equalFoldASCII(raw, lit) {
@@ -303,9 +303,12 @@ func (c *compiledCond) matchSet(ctx VisitorContext, raw string) bool {
 }
 
 // matchLitMap 对已预编译为小写集合的 map 进行 O(1) 匹配。
-// 对 ASCII 字符串在栈缓冲区上小写化,避免分配堆内存。
-func matchLitMap(litMap map[string]struct{}, raw string) bool {
-	if _, ok := litMap[raw]; ok {
+// 对 <=64 字节的纯 ASCII 字符串在栈缓冲区上小写化,避免分配堆内存。
+// 注意:缓冲区快速路径只覆盖 ASCII——长串与非 ASCII 输入(访客自控的 path/ua/utm
+// 才可能落到这里)走下面的线性扫描,以零分配为代价换掉 strings.ToLower 的堆分配;
+// 代价是折叠语义收窄为 strings.EqualFold 的简单折叠(非 Unicode 全量小写映射)。
+func (c *compiledCond) matchLitMap(raw string) bool {
+	if _, ok := c.litMap[raw]; ok {
 		return true
 	}
 	var buf [64]byte
@@ -325,16 +328,20 @@ func matchLitMap(litMap map[string]struct{}, raw string) bool {
 			}
 		}
 		if isASCII {
+			// 全小写时 buf 与 raw 逐字节相同,上面已查过 raw 且未命中,故必不命中。
 			if !hasUpper {
-				_, ok := litMap[raw]
-				return ok
+				return false
 			}
-			_, ok := litMap[string(buf[:len(raw)])]
+			_, ok := c.litMap[string(buf[:len(raw)])]
 			return ok
 		}
 	}
-	_, ok := litMap[strings.ToLower(raw)]
-	return ok
+	for _, lit := range c.lits {
+		if equalFoldASCII(raw, lit) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchContains 处理 contains / not_contains:子串匹配,大小写不敏感
@@ -434,6 +441,8 @@ func containsFold(s, sub string) bool {
 
 // equalFoldASCII 快速比较两个字符串是否在忽略 ASCII 大小写下相等。
 // 针对 ASCII 进行零分配直接比对;遇到非 ASCII 字符时回退至 strings.EqualFold。
+// 回退必须比对整个字符串:循环下标 i 可能落在多字节字符中间,
+// 截断后再 EqualFold 会把不同的字符判成相等。
 func equalFoldASCII(s, t string) bool {
 	if len(s) != len(t) {
 		return false
@@ -445,7 +454,7 @@ func equalFoldASCII(s, t string) bool {
 			continue
 		}
 		if sb >= 0x80 || tb >= 0x80 {
-			return strings.EqualFold(s[i:], t[i:])
+			return strings.EqualFold(s, t)
 		}
 		if sb >= 'A' && sb <= 'Z' {
 			sb += 'a' - 'A'

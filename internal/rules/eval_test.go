@@ -451,6 +451,75 @@ func TestPrecompiledLitMap(t *testing.T) {
 	}
 }
 
+// TestInFallbackNoAlloc 固定 in/not_in 的非 ASCII / 超长输入回退路径:
+// 缓冲区快速路径只覆盖 <=64 字节的纯 ASCII,长串与非 ASCII 一律走线性扫描,
+// 该路径必须与 map 路径同样零分配(旧实现用 strings.ToLower,每次请求都堆分配)。
+func TestInFallbackNoAlloc(t *testing.T) {
+	// 超过 64 字节,走出栈缓冲区快速路径;另含一个非 ASCII 字面量。
+	longPath := "/Promo/Summer-Campaign/2026?utm_source=wechat&utm_medium=social-promo"
+	if len(longPath) <= 64 {
+		t.Fatalf("测试字面量需长于 64 字节,实际 %d", len(longPath))
+	}
+	nonASCII := "/活动/夏季促销"
+	cond := store.RuleCondition{
+		Field:    FieldPath,
+		Operator: OpIn,
+		Values:   []string{longPath, nonASCII},
+	}
+	c, ok := compileCond(cond, 1, discardLog)
+	if !ok {
+		t.Fatal("compileCond failed")
+	}
+	if c.litMap == nil {
+		t.Fatal("expected litMap to be compiled for OpIn")
+	}
+
+	cases := []struct {
+		name string
+		path string
+		want bool
+	}{
+		{"长串原样", longPath, true},
+		{"长串大小写不同", strings.ToUpper(longPath), true},
+		{"长串未命中", "/Promo/Summer-Campaign/2025", false},
+		{"非 ASCII 命中", nonASCII, true},
+		{"非 ASCII 未命中", "/活动/冬季促销", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := c.match(&Fact{Path: tc.path})
+			if got != tc.want {
+				t.Fatalf("match(%q) = %v, want %v", tc.path, got, tc.want)
+			}
+			// Fact 提到循环外:传进 VisitorContext 接口时若在闭包里新建会逃逸到堆,
+			// 测出来的那次分配与回退路径无关。
+			fact := Fact{Path: tc.path}
+			allocs := testing.AllocsPerRun(100, func() {
+				_ = c.match(&fact)
+			})
+			if allocs > 0 {
+				t.Errorf("in 回退路径分配了 %v allocs/op, want 0", allocs)
+			}
+		})
+	}
+
+	// not_in 的极性不能被回退路径重复取反:命中集合的输入不命中 not_in,未命中的命中。
+	notIn, ok := compileCond(store.RuleCondition{
+		Field:    FieldPath,
+		Operator: OpNotIn,
+		Values:   []string{longPath, nonASCII},
+	}, 2, discardLog)
+	if !ok {
+		t.Fatal("compileCond failed for not_in")
+	}
+	for _, tc := range cases {
+		got := notIn.match(&Fact{Path: tc.path})
+		if got == tc.want {
+			t.Errorf("not_in: match(%q) = %v, want %v", tc.path, got, !tc.want)
+		}
+	}
+}
+
 // BenchmarkLazyEvaluate 性能基准测试:对比惰性求值 (LazyVisitorContext) 与贪婪求值 (Fact/FromRequest)
 // 分别在纯国家规则(跳过 UA 解析)与设备规则(按需解析 UA)下的耗时与堆分配。
 func BenchmarkLazyEvaluate(b *testing.B) {
