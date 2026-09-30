@@ -212,6 +212,8 @@ func (s *Snapshot) Evaluate(fact Fact, linkID int64) (dec Decision, matched bool
 			Action:      c.Rule.Action,
 			Destination: c.Rule.Destination,
 			Priority:    c.Rule.Priority,
+			PageMode:    c.Rule.PageMode,
+			CustomHTML:  c.Rule.CustomHTML,
 		}, true
 	}
 	return Decision{}, false

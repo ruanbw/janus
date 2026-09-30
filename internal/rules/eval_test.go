@@ -369,3 +369,26 @@ func TestIPSetEmptyValueNeverMatches(t *testing.T) {
 		t.Fatal("ipattr 为空时 not_in 不该命中")
 	}
 }
+
+func TestDecisionCarriesCustomHTML(t *testing.T) {
+	rule := store.Rule{
+		ID:         1,
+		Name:       "custom-404",
+		Enabled:    true,
+		Scope:      store.RuleScopeGlobal,
+		Action:     store.RuleActionNotfound,
+		PageMode:   "custom",
+		CustomHTML: "<h1>Blocked</h1>",
+	}
+	snap := NewSnapshot([]store.Rule{rule}, discardLog)
+	dec, matched := snap.Evaluate(Fact{}, 123)
+	if !matched {
+		t.Fatal("expected rule to match")
+	}
+	if dec.PageMode != "custom" {
+		t.Errorf("dec.PageMode = %q, want custom", dec.PageMode)
+	}
+	if dec.CustomHTML != "<h1>Blocked</h1>" {
+		t.Errorf("dec.CustomHTML = %q, want <h1>Blocked</h1>", dec.CustomHTML)
+	}
+}

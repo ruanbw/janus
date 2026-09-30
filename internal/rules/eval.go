@@ -57,6 +57,8 @@ type Decision struct {
 	Action      string // pass / redirect / notfound / throttle
 	Destination string // action=redirect 时的改写目标
 	Priority    int
+	PageMode    string // default / custom
+	CustomHTML  string // action=notfound/throttle 且 page_mode=custom 时的专属 HTML
 }
 
 // compiledCond 一条预编译后的条件。字面量按比较语义归一(小写),
