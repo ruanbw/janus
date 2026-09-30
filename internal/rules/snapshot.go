@@ -183,7 +183,7 @@ func (c *Cache) Len() int {
 //
 // fail-open:入口 recover 兜底,panic 时记日志并按"未命中"返回——
 // 风控规则永远不能把线上短链打成 500。空快照(nil 或零规则)直接返回未命中。
-func (s *Snapshot) Evaluate(fact Fact, linkID int64) (dec Decision, matched bool) {
+func (s *Snapshot) Evaluate(ctx VisitorContext, linkID int64) (dec Decision, matched bool) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			log := slog.Default()
@@ -195,7 +195,7 @@ func (s *Snapshot) Evaluate(fact Fact, linkID int64) (dec Decision, matched bool
 			dec, matched = Decision{}, false
 		}
 	}()
-	if s == nil || len(s.Rules) == 0 {
+	if ctx == nil || s == nil || len(s.Rules) == 0 {
 		return Decision{}, false
 	}
 	for i := range s.Rules {
@@ -203,7 +203,7 @@ func (s *Snapshot) Evaluate(fact Fact, linkID int64) (dec Decision, matched bool
 		if !c.applies(linkID) {
 			continue
 		}
-		if !c.matchAll(&fact) {
+		if !c.matchAll(ctx) {
 			continue
 		}
 		return Decision{

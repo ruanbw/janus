@@ -64,14 +64,15 @@ type Decision struct {
 // compiledCond 一条预编译后的条件。字面量按比较语义归一(小写),
 // CIDR/正则/阈值在加载期解析完毕,求值期只做比较。
 type compiledCond struct {
-	field string
-	op    string
-	lits  []string     // 小写归一后的字面量(in/eq/contains/...)
-	ips   []net.IP     // 预解析的单 IP(仅 ip 字段)
-	nets  []*net.IPNet // 预解析的 CIDR(仅 ip 字段)
-	res   []*regexp.Regexp
-	num   float64 // gt/lt 阈值
-	seen  int     // duplicated 阈值
+	field  string
+	op     string
+	lits   []string            // 小写归一后的字面量(in/eq/contains/...)
+	litMap map[string]struct{} // in / not_in 的 O(1) 预编译集合
+	ips    []net.IP            // 预解析的单 IP(仅 ip 字段)
+	nets   []*net.IPNet        // 预解析的 CIDR(仅 ip 字段)
+	res    []*regexp.Regexp
+	num    float64 // gt/lt 阈值
+	seen   int     // duplicated 阈值
 }
 
 // Compiled 一条预编译后的规则。零关联的 scoped 规则在这里表现为
@@ -202,6 +203,12 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 		for i, v := range values {
 			c.lits[i] = strings.ToLower(v)
 		}
+		if cond.Operator == OpIn || cond.Operator == OpNotIn {
+			c.litMap = make(map[string]struct{}, len(c.lits))
+			for _, lit := range c.lits {
+				c.litMap[lit] = struct{}{}
+			}
+		}
 	}
 	return c, true
 }
@@ -209,14 +216,17 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 // match 单条条件是否满足。
 // 关键不变式:字段值取不到(空)时恒不命中——包括 not_in / neq / not_contains。
 // 否则"取不到数据"会变成"全部命中"的反面,把 GeoIP 未接入的规则变成对全租户流量生效的拦截。
-func (c *compiledCond) match(f *Fact) bool {
-	raw, ok := f.value(c.field)
+func (c *compiledCond) match(ctx VisitorContext) bool {
+	if ctx == nil {
+		return false
+	}
+	raw, ok := ctx.Field(c.field)
 	if !ok {
 		return false
 	}
 	switch c.op {
 	case OpIn, OpEq, OpNeq, OpNotIn:
-		return c.matchSet(f, raw)
+		return c.matchSet(ctx, raw)
 	case OpContains, OpNotContains:
 		return c.matchContains(raw)
 	case OpGT, OpLT:
@@ -225,10 +235,13 @@ func (c *compiledCond) match(f *Fact) bool {
 		return c.matchRegex(raw)
 	case OpDuplicated:
 		// 计数来自调用方提供的 Fact.Seen;没有计数数据(=没接数据源)时恒不命中
-		if f.Seen == nil {
-			return false
+		if f, ok := ctx.(*Fact); ok && f.Seen != nil {
+			return f.Seen[SeenKey(c.field, raw)] >= c.seen
 		}
-		return f.Seen[SeenKey(c.field, raw)] >= c.seen
+		if f, ok := ctx.(Fact); ok && f.Seen != nil {
+			return f.Seen[SeenKey(c.field, raw)] >= c.seen
+		}
+		return false
 	}
 	return false
 }
@@ -238,12 +251,24 @@ func (c *compiledCond) match(f *Fact) bool {
 // (配置侧的 IP/CIDR 在加载期就解析好了,求值期只解析访客自己的地址,且只解析一次)。
 // 四个运算符只共用一个 hit("访客 IP 落没落在集合里"),再由 c.op 决定取反不取反——
 // 在 ip 分支里各写各的返回值会漏掉 neq,把它整体判反。
-func (c *compiledCond) matchSet(f *Fact, raw string) bool {
+func (c *compiledCond) matchSet(ctx VisitorContext, raw string) bool {
 	hit := false
 	if c.field == FieldIP {
-		ip := f.parsedIP()
-		if ip == nil {
+		addr := ctx.ClientIP()
+		if !addr.IsValid() {
 			return false
+		}
+		var (
+			a4  [4]byte
+			a16 [16]byte
+			ip  net.IP
+		)
+		if addr.Is4() {
+			a4 = addr.As4()
+			ip = a4[:]
+		} else {
+			a16 = addr.As16()
+			ip = a16[:]
 		}
 		for _, want := range c.ips {
 			if want.Equal(ip) {
@@ -259,9 +284,11 @@ func (c *compiledCond) matchSet(f *Fact, raw string) bool {
 				}
 			}
 		}
+	} else if c.litMap != nil {
+		hit = matchLitMap(c.litMap, raw)
 	} else {
 		for _, lit := range c.lits {
-			if strings.EqualFold(raw, lit) {
+			if equalFoldASCII(raw, lit) {
 				hit = true
 				break
 			}
@@ -273,6 +300,41 @@ func (c *compiledCond) matchSet(f *Fact, raw string) bool {
 	default: // neq / not_in
 		return !hit
 	}
+}
+
+// matchLitMap 对已预编译为小写集合的 map 进行 O(1) 匹配。
+// 对 ASCII 字符串在栈缓冲区上小写化,避免分配堆内存。
+func matchLitMap(litMap map[string]struct{}, raw string) bool {
+	if _, ok := litMap[raw]; ok {
+		return true
+	}
+	var buf [64]byte
+	if len(raw) <= len(buf) {
+		hasUpper := false
+		isASCII := true
+		for i := 0; i < len(raw); i++ {
+			b := raw[i]
+			if b >= 'A' && b <= 'Z' {
+				hasUpper = true
+				buf[i] = b + ('a' - 'A')
+			} else if b < 0x80 {
+				buf[i] = b
+			} else {
+				isASCII = false
+				break
+			}
+		}
+		if isASCII {
+			if !hasUpper {
+				_, ok := litMap[raw]
+				return ok
+			}
+			_, ok := litMap[string(buf[:len(raw)])]
+			return ok
+		}
+	}
+	_, ok := litMap[strings.ToLower(raw)]
+	return ok
 }
 
 // matchContains 处理 contains / not_contains:子串匹配,大小写不敏感
@@ -317,20 +379,20 @@ func (c *compiledCond) matchRegex(raw string) bool {
 // matchAll 条件组是否满足:all 需全部满足,any 需任一满足。
 // 空条件组视为满足(可以配一条"无条件即执行"的规则);但整条规则
 // 不会带着空条件组出现——conditions 非空却被全部丢弃时整条规则已不参与求值。
-func (c *Compiled) matchAll(f *Fact) bool {
+func (c *Compiled) matchAll(ctx VisitorContext) bool {
 	if len(c.conds) == 0 {
 		return true
 	}
 	if c.logicAll {
 		for i := range c.conds {
-			if !c.conds[i].match(f) {
+			if !c.conds[i].match(ctx) {
 				return false
 			}
 		}
 		return true
 	}
 	for i := range c.conds {
-		if c.conds[i].match(f) {
+		if c.conds[i].match(ctx) {
 			return true
 		}
 	}
@@ -353,7 +415,7 @@ func (c *Compiled) applies(linkID int64) bool {
 // containsFold 子串匹配,忽略 ASCII 大小写。
 // 不走 strings.ToLower(s)+Contains:那会在每次访问上为整条 UA 分配一份副本,
 // 而求值在跳转热路径上(spec D7),这里必须零分配。
-// 先按首字节筛候选位置,再用 EqualFold 确认,避免退化到 O(n*m)。
+// 先按首字节筛候选位置,再用 equalFoldASCII 确认,避免退化到 O(n*m)。
 func containsFold(s, sub string) bool {
 	if sub == "" {
 		return true
@@ -363,11 +425,39 @@ func containsFold(s, sub string) bool {
 		if lowerASCII(s[i]) != first {
 			continue
 		}
-		if strings.EqualFold(s[i:i+len(sub)], sub) {
+		if equalFoldASCII(s[i:i+len(sub)], sub) {
 			return true
 		}
 	}
 	return false
+}
+
+// equalFoldASCII 快速比较两个字符串是否在忽略 ASCII 大小写下相等。
+// 针对 ASCII 进行零分配直接比对;遇到非 ASCII 字符时回退至 strings.EqualFold。
+func equalFoldASCII(s, t string) bool {
+	if len(s) != len(t) {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		sb := s[i]
+		tb := t[i]
+		if sb == tb {
+			continue
+		}
+		if sb >= 0x80 || tb >= 0x80 {
+			return strings.EqualFold(s[i:], t[i:])
+		}
+		if sb >= 'A' && sb <= 'Z' {
+			sb += 'a' - 'A'
+		}
+		if tb >= 'A' && tb <= 'Z' {
+			tb += 'a' - 'A'
+		}
+		if sb != tb {
+			return false
+		}
+	}
+	return true
 }
 
 // lowerASCII 只折叠 ASCII 大小写(UA/域名/系统名的判定都只涉及 ASCII;

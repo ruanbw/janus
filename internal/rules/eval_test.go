@@ -392,3 +392,192 @@ func TestDecisionCarriesCustomHTML(t *testing.T) {
 		t.Errorf("dec.CustomHTML = %q, want <h1>Blocked</h1>", dec.CustomHTML)
 	}
 }
+
+// TestPrecompiledLitMap 验证非 IP 字符串集合操作符 (in/not_in) 预编译 hash map 及 O(1) 匹配正确性。
+func TestPrecompiledLitMap(t *testing.T) {
+	cond := store.RuleCondition{
+		Field:    FieldCountry,
+		Operator: OpIn,
+		Values:   []string{"US", "GB", "CA", "DE", "FR"},
+	}
+	c, ok := compileCond(cond, 1, discardLog)
+	if !ok {
+		t.Fatal("compileCond failed")
+	}
+	if c.litMap == nil {
+		t.Fatal("expected litMap to be compiled for OpIn")
+	}
+	if len(c.litMap) != 5 {
+		t.Fatalf("expected litMap len 5, got %d", len(c.litMap))
+	}
+	for _, expected := range []string{"us", "gb", "ca", "de", "fr"} {
+		if _, exists := c.litMap[expected]; !exists {
+			t.Fatalf("expected %q in litMap", expected)
+		}
+	}
+
+	// 匹配大小写不敏感
+	if !c.match(&Fact{Country: "US"}) {
+		t.Fatal("US should match")
+	}
+	if !c.match(&Fact{Country: "us"}) {
+		t.Fatal("us should match")
+	}
+	if !c.match(&Fact{Country: "Us"}) {
+		t.Fatal("Us should match")
+	}
+	if c.match(&Fact{Country: "JP"}) {
+		t.Fatal("JP should not match")
+	}
+
+	// not_in 也是预编译 litMap
+	notInCond := store.RuleCondition{
+		Field:    FieldCountry,
+		Operator: OpNotIn,
+		Values:   []string{"CN", "RU"},
+	}
+	cNotIn, ok := compileCond(notInCond, 2, discardLog)
+	if !ok {
+		t.Fatal("compileCond failed for not_in")
+	}
+	if cNotIn.litMap == nil {
+		t.Fatal("expected litMap to be compiled for OpNotIn")
+	}
+	if !cNotIn.match(&Fact{Country: "US"}) {
+		t.Fatal("US should match not_in [CN, RU]")
+	}
+	if cNotIn.match(&Fact{Country: "cn"}) {
+		t.Fatal("cn should not match not_in [CN, RU]")
+	}
+}
+
+// BenchmarkLazyEvaluate 性能基准测试:对比惰性求值 (LazyVisitorContext) 与贪婪求值 (Fact/FromRequest)
+// 分别在纯国家规则(跳过 UA 解析)与设备规则(按需解析 UA)下的耗时与堆分配。
+func BenchmarkLazyEvaluate(b *testing.B) {
+	ua := "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605 Version/17.0 Mobile/15E148 Safari/604.1"
+	req := mustRequest(b, "https://shop.example.com/promo?utm_source=wechat", "https://www.google.com/", ua)
+	req.RemoteAddr = "203.0.113.5:44321"
+
+	// 场景 1: 仅含地理位置条件的规则(最常见风控场景:拦截特定国家/放行特定国家)
+	countryRule := oneRule(1, store.RuleCondition{
+		Field:    FieldCountry,
+		Operator: OpIn,
+		Values:   []string{"US", "CA", "GB", "DE", "FR"},
+	})
+	snapCountry := NewSnapshot([]store.Rule{countryRule}, discardLog)
+
+	// 场景 2: 包含设备条件的规则(需要解析 UA)
+	deviceRule := oneRule(2, store.RuleCondition{
+		Field:    FieldDevType,
+		Operator: OpIn,
+		Values:   []string{"mobile", "tablet"},
+	})
+	snapDevice := NewSnapshot([]store.Rule{deviceRule}, discardLog)
+
+	b.Run("Lazy_CountryOnly_EvalOnly", func(b *testing.B) {
+		vCtx := AcquireVisitorContext(req, "US", "").WithIP("203.0.113.5")
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, ok := snapCountry.Evaluate(vCtx, 1); !ok {
+				b.Fatal("expected match")
+			}
+		}
+		if vCtx.UAParsed() {
+			b.Fatal("UA parsing should have been skipped")
+		}
+		ReleaseVisitorContext(vCtx)
+	})
+
+	b.Run("Lazy_CountryOnly_FullCycle", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			vCtx := AcquireVisitorContext(req, "US", "").WithIP("203.0.113.5")
+			if _, ok := snapCountry.Evaluate(vCtx, 1); !ok {
+				b.Fatal("expected match")
+			}
+			if vCtx.UAParsed() {
+				b.Fatal("UA parsing should have been skipped")
+			}
+			ReleaseVisitorContext(vCtx)
+		}
+	})
+
+	b.Run("Eager_CountryOnly_FullCycle", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			fact := FromRequest(req)
+			fact.Country = "US"
+			if _, ok := snapCountry.Evaluate(&fact, 1); !ok {
+				b.Fatal("expected match")
+			}
+		}
+	})
+
+	b.Run("Lazy_DeviceRule_FullCycle", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			vCtx := AcquireVisitorContext(req, "US", "").WithIP("203.0.113.5")
+			if _, ok := snapDevice.Evaluate(vCtx, 1); !ok {
+				b.Fatal("expected match")
+			}
+			ReleaseVisitorContext(vCtx)
+		}
+	})
+
+	b.Run("Eager_DeviceRule_FullCycle", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			fact := FromRequest(req)
+			if _, ok := snapDevice.Evaluate(&fact, 1); !ok {
+				b.Fatal("expected match")
+			}
+		}
+	})
+}
+
+// BenchmarkSetOperators 性能基准测试:验证预编译 hash map 在大规模枚举值集合下的 O(1) 查找性能
+func BenchmarkSetOperators(b *testing.B) {
+	countries := []string{
+		"US", "GB", "CA", "DE", "FR", "JP", "KR", "AU", "NZ", "SG",
+		"MY", "TH", "VN", "PH", "ID", "IN", "BR", "MX", "AR", "CL",
+		"CO", "PE", "ZA", "EG", "NG", "KE", "SA", "AE", "TR", "IL",
+		"IT", "ES", "NL", "BE", "SE", "NO", "DK", "FI", "CH", "AT",
+		"IE", "PT", "GR", "PL", "CZ", "HU", "RO", "BG", "UA", "RU",
+	}
+	cond := store.RuleCondition{
+		Field:    FieldCountry,
+		Operator: OpIn,
+		Values:   countries,
+	}
+	rule := oneRule(1, cond)
+	snap := NewSnapshot([]store.Rule{rule}, discardLog)
+	vCtxHit := AcquireVisitorContext(nil, "RU", "") // 集合末尾元素
+	defer ReleaseVisitorContext(vCtxHit)
+	vCtxMiss := AcquireVisitorContext(nil, "CN", "") // 未收录元素
+	defer ReleaseVisitorContext(vCtxMiss)
+
+	b.Run("MapLookup_HitLast", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, ok := snap.Evaluate(vCtxHit, 1); !ok {
+				b.Fatal("expected match")
+			}
+		}
+	})
+
+	b.Run("MapLookup_Miss", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			if _, ok := snap.Evaluate(vCtxMiss, 1); ok {
+				b.Fatal("expected miss")
+			}
+		}
+	})
+}

@@ -305,7 +305,7 @@ func BenchmarkEvaluate10Rules(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, ok := snap.Evaluate(fact, 1); !ok {
+		if _, ok := snap.Evaluate(&fact, 1); !ok {
 			b.Fatal("期望命中")
 		}
 	}
@@ -318,7 +318,7 @@ func BenchmarkEvaluate200Rules(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, ok := snap.Evaluate(fact, 1); !ok {
+		if _, ok := snap.Evaluate(&fact, 1); !ok {
 			b.Fatal("期望命中")
 		}
 	}
@@ -331,7 +331,7 @@ func BenchmarkEvaluate200RulesMiss(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, ok := snap.Evaluate(fact, 1); ok {
+		if _, ok := snap.Evaluate(&fact, 1); ok {
 			b.Fatal("期望不命中")
 		}
 	}

@@ -182,8 +182,7 @@ func (a *API) ruleDecision(c *gin.Context, link *store.Link) rules.Decision {
 	vCtx := rules.AcquireVisitorContext(req, g.Country, g.ASN).WithIP(clientIP(req))
 	defer rules.ReleaseVisitorContext(vCtx)
 
-	fact := vCtx.ToFact()
-	dec, matched := snap.Evaluate(fact, link.ID)
+	dec, matched := snap.Evaluate(vCtx, link.ID)
 	if !matched {
 		return rules.Decision{}
 	}
