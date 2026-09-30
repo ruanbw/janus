@@ -194,7 +194,7 @@
               </th>
               <th class="shrink">短链链接</th>
               <th class="shrink">类型</th>
-              <th>出口目标 URL</th>
+              <th style="width: 278px">出口目标 URL</th>
               <th
                 class="num"
                 title="访问 = 跳转 / 落地页视图的次数(点击行不计入);点击 = 落地页按钮经 SDK 回传的次数。点击数字可查看访问明细"
@@ -306,9 +306,11 @@
                 </span>
               </td>
 
-              <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序 -->
+              <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序。列宽用内层固定 250px 撑住,
+                   不靠 max-width——auto 表格布局会把多余宽度按比例分给「能长」的列,URL 列
+                   以前就是靠 420px 的 max-content 吃掉了大部分富余宽度。完整链接靠悬停 tooltip。 -->
               <td>
-                <div class="stack" style="gap: 3px; min-width: 0; max-width: 420px">
+                <div class="stack" style="gap: 3px; width: 250px">
                   <div
                     v-if="link.targetUrls && link.targetUrls.length > 1"
                     class="tiny muted"
@@ -328,13 +330,12 @@
                     >
                       {{ i + 1 }}
                     </span>
-                    <span
-                      class="mono tiny truncate"
-                      style="max-width: 340px"
+                    <AppTooltip
                       :title="url"
+                      class="max-w-md whitespace-normal break-all"
                     >
-                      {{ url }}
-                    </span>
+                      <span class="mono tiny truncate min-w-0 flex-1">{{ url }}</span>
+                    </AppTooltip>
                   </div>
                   <span
                     v-if="!link.targetUrls || link.targetUrls.length === 0"

@@ -58,10 +58,6 @@ const filteredRules = computed(() => {
   });
 });
 
-const enabledCount = computed(() => rules.value.filter((r) => r.enabled).length);
-const hits24h = computed(() => rules.value.reduce((sum, r) => sum + (r.hits24h || 0), 0));
-/** 零关联短链的规则永远不会命中，必须在列表里就看得见（spec D2） */
-const orphanCount = computed(() => rules.value.filter((r) => r.scope === 'links' && (r.linkCount || 0) === 0).length);
 const hasFilter = computed(
   () => actionFilter.value !== 'all' || statusFilter.value !== 'all' || keyword.value.trim() !== '',
 );
@@ -198,25 +194,6 @@ onMounted(loadRules);
       <AppSelect v-model="actionFilter" :options="ACTION_FILTERS" />
       <AppSelect v-model="statusFilter" :options="STATUS_FILTERS" />
       <AppButton v-if="hasFilter" @click="resetFilters">清空过滤</AppButton>
-    </div>
-
-    <div class="mb-4 grid gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-4">
-      <div class="flex min-w-0 flex-col gap-1 bg-surface px-4 py-3">
-        <span class="text-xs text-ink-faint">规则总数</span>
-        <span class="text-lg font-semibold text-ink">{{ total }}</span>
-      </div>
-      <div class="flex min-w-0 flex-col gap-1 bg-surface px-4 py-3">
-        <span class="text-xs text-ink-faint">本页已启用</span>
-        <span class="text-lg font-semibold text-ink">{{ enabledCount }} / {{ rules.length }}</span>
-      </div>
-      <div class="flex min-w-0 flex-col gap-1 bg-surface px-4 py-3">
-        <span class="text-xs text-ink-faint">本页 24h 命中</span>
-        <span class="text-lg font-semibold text-ink">{{ hits24h }}</span>
-      </div>
-      <div class="flex min-w-0 flex-col gap-1 bg-surface px-4 py-3">
-        <span class="text-xs text-ink-faint">未关联短链</span>
-        <span class="text-lg font-semibold" :class="orphanCount > 0 ? 'text-err' : 'text-ink'">{{ orphanCount }}</span>
-      </div>
     </div>
 
     <AppTable

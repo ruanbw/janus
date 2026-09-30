@@ -12,26 +12,6 @@
       </template>
     </PageHeader>
 
-    <!-- 概览统计 -->
-    <div class="mb-5 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-      <div class="rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong">
-        <span class="text-xs text-ink-faint">租户总数</span>
-        <span class="mt-1.5 block text-2xl font-bold leading-none tabular-nums text-ink">{{ tenants.length }}</span>
-      </div>
-      <div class="rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong">
-        <span class="text-xs text-ink-faint">正常</span>
-        <span class="mt-1.5 block text-2xl font-bold leading-none tabular-nums text-ok">{{ statusCount('active') }}</span>
-      </div>
-      <div class="rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong">
-        <span class="text-xs text-ink-faint">待验证</span>
-        <span class="mt-1.5 block text-2xl font-bold leading-none tabular-nums text-warn">{{ statusCount('pending') }}</span>
-      </div>
-      <div class="rounded-xl border border-line bg-surface p-4 transition-colors hover:border-line-strong">
-        <span class="text-xs text-ink-faint">已封禁</span>
-        <span class="mt-1.5 block text-2xl font-bold leading-none tabular-nums text-err">{{ statusCount('banned') }}</span>
-      </div>
-    </div>
-
     <AppTable
       :columns="columns"
       :data-source="tenants"
@@ -126,10 +106,6 @@ const router = useRouter();
 
 const tenants = ref<Tenant[]>([]);
 const loading = ref(false);
-
-function statusCount(status: TenantStatus): number {
-  return tenants.value.filter((t) => t.status === status).length;
-}
 
 const columns: TableColumn[] = [
   { title: '邮箱', key: 'email', dataIndex: 'email', minWidth: 200, ellipsis: true },
