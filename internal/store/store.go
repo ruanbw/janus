@@ -51,6 +51,8 @@ type Tenant struct {
 	TierID          int64      `json:"-" gorm:"column:tier_id"`
 	Tier            Tier       `json:"tier" gorm:"foreignKey:TierID"`
 	VerifiedAt      *time.Time `json:"-" gorm:"column:verified_at"`
+	Custom404HTML   string     `json:"custom404Html" gorm:"column:custom_404_html"`
+	Custom429HTML   string     `json:"custom429Html" gorm:"column:custom_429_html"`
 	CreatedAt       time.Time  `json:"createdAt" gorm:"column:created_at"`
 	DefaultDomain   string     `json:"defaultDomain" gorm:"-"`             // 平台默认域名,查询后填充
 	FirstLoginSetup bool       `json:"firstLoginSetup,omitempty" gorm:"-"` // 超管首次登录(尚无密码)
@@ -177,6 +179,26 @@ func (s *Store) SetTenantStatus(ctx context.Context, id int64, status string) er
 
 func (s *Store) SetTenantTier(ctx context.Context, id, tierID int64) error {
 	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Update("tier_id", tierID).Error
+}
+
+// UpdateTenantErrorPages 更新租户自定义 404 与 429 错误页面。
+func (s *Store) UpdateTenantErrorPages(ctx context.Context, tenantID int64, page404, page429 string) error {
+	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", tenantID).Updates(map[string]any{
+		"custom_404_html": page404,
+		"custom_429_html": page429,
+	}).Error
+}
+
+// GetTenantErrorPages 获取租户自定义 404 与 429 错误页面。
+func (s *Store) GetTenantErrorPages(ctx context.Context, tenantID int64) (page404, page429 string, err error) {
+	var t Tenant
+	if err := s.db.WithContext(ctx).Select("custom_404_html, custom_429_html").Where("id = ?", tenantID).First(&t).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", "", ErrNotFound
+		}
+		return "", "", err
+	}
+	return t.Custom404HTML, t.Custom429HTML, nil
 }
 
 // UpdateTenantAdmin 平台管理端更新租户状态与/或等级;两个字段在同一事务中生效,

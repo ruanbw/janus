@@ -704,3 +704,80 @@ func TestCountTenantRules(t *testing.T) {
 		t.Fatalf("MaxRulesPerTenant = %d, want 200", MaxRulesPerTenant)
 	}
 }
+
+func TestRuleCustomErrorPages(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+	tenantID := newTenant(t, s, "errpages@test.io")
+
+	r, err := s.CreateRule(ctx, tenantID, Rule{
+		Name:        "404拦下",
+		Enabled:     true,
+		Action:      RuleActionNotfound,
+		PageMode:    "custom",
+		CustomHTML:  "<h1>Denied</h1>",
+	})
+	if err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	if r.PageMode != "custom" || r.CustomHTML != "<h1>Denied</h1>" {
+		t.Fatalf("created rule page = %q / %q, want custom / <h1>Denied</h1>", r.PageMode, r.CustomHTML)
+	}
+
+	got, err := s.GetRule(ctx, tenantID, r.ID)
+	if err != nil {
+		t.Fatalf("get rule: %v", err)
+	}
+	if got.PageMode != "custom" || got.CustomHTML != "<h1>Denied</h1>" {
+		t.Fatalf("got rule page = %q / %q", got.PageMode, got.CustomHTML)
+	}
+
+	// Update Rule pageMode & customHTML
+	newMode := "default"
+	newHTML := "<h2>Default Fallback</h2>"
+	upd, err := s.UpdateRule(ctx, tenantID, r.ID, RuleUpdate{
+		PageMode:   &newMode,
+		CustomHTML: &newHTML,
+	})
+	if err != nil {
+		t.Fatalf("update rule: %v", err)
+	}
+	if upd.PageMode != "default" || upd.CustomHTML != newHTML {
+		t.Fatalf("updated rule page = %q / %q", upd.PageMode, upd.CustomHTML)
+	}
+
+	// RulesForTenant also preserves these fields
+	rules, err := s.RulesForTenant(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("rules for tenant: %v", err)
+	}
+	if len(rules) != 1 || rules[0].PageMode != "default" || rules[0].CustomHTML != newHTML {
+		t.Fatalf("rules for tenant page fields = %+v", rules)
+	}
+}
+
+func TestTenantErrorPages(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+	tenantID := newTenant(t, s, "tenant-errpages@test.io")
+
+	p404, p429, err := s.GetTenantErrorPages(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("get initial error pages: %v", err)
+	}
+	if p404 != "" || p429 != "" {
+		t.Fatalf("initial error pages = %q / %q, want empty", p404, p429)
+	}
+
+	if err := s.UpdateTenantErrorPages(ctx, tenantID, "<h1>Global 404</h1>", "<h1>Global 429</h1>"); err != nil {
+		t.Fatalf("update error pages: %v", err)
+	}
+
+	p404, p429, err = s.GetTenantErrorPages(ctx, tenantID)
+	if err != nil {
+		t.Fatalf("get updated error pages: %v", err)
+	}
+	if p404 != "<h1>Global 404</h1>" || p429 != "<h1>Global 429</h1>" {
+		t.Fatalf("updated error pages = %q / %q", p404, p429)
+	}
+}

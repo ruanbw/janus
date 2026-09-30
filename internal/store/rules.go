@@ -136,6 +136,8 @@ type Rule struct {
 	Logic       string         `json:"logic"`
 	Action      string         `json:"action"`
 	Destination string         `json:"destination"`
+	PageMode    string         `json:"pageMode" gorm:"column:page_mode"`
+	CustomHTML  string         `json:"customHtml" gorm:"column:custom_html"`
 	Conditions  RuleConditions `json:"conditions" gorm:"column:conditions;type:jsonb"`
 	LinkIDs     []int64        `json:"linkIds" gorm:"-"`
 	LinkNames   []string       `json:"linkNames" gorm:"-"`
@@ -278,6 +280,9 @@ func (s *Store) CreateRule(ctx context.Context, tenantID int64, r Rule) (*Rule, 
 	if r.Logic == "" {
 		r.Logic = RuleLogicAll
 	}
+	if r.PageMode == "" {
+		r.PageMode = "default"
+	}
 	r.TenantID = tenantID
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&r).Error; err != nil {
@@ -408,6 +413,8 @@ type RuleUpdate struct {
 	Logic       *string
 	Action      *string
 	Destination *string
+	PageMode    *string
+	CustomHTML  *string
 	Conditions  *RuleConditions
 	LinkIDs     *[]int64
 }
@@ -433,6 +440,8 @@ func (s *Store) UpdateRule(ctx context.Context, tenantID, id int64, upd RuleUpda
 	put("logic", upd.Logic != nil, derefOr(orDefault(cur.Logic, RuleLogicAll), upd.Logic))
 	put("action", upd.Action != nil, derefOr(cur.Action, upd.Action))
 	put("destination", upd.Destination != nil, derefOr(cur.Destination, upd.Destination))
+	put("page_mode", upd.PageMode != nil, derefOr(orDefault(cur.PageMode, "default"), upd.PageMode))
+	put("custom_html", upd.CustomHTML != nil, derefOr(cur.CustomHTML, upd.CustomHTML))
 	if upd.Conditions != nil {
 		fields["conditions"] = *upd.Conditions
 	}
