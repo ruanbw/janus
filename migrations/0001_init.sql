@@ -15,7 +15,6 @@ CREATE TABLE tenants (
     status         TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','active','banned')),
     slug           TEXT NOT NULL UNIQUE,
     is_super_admin BOOLEAN NOT NULL DEFAULT false,
-    code_length    INT NOT NULL DEFAULT 6,  -- 自动生成短码长度(租户级可配)
     verified_at    TIMESTAMPTZ,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );

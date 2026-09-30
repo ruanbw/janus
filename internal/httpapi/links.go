@@ -171,7 +171,7 @@ func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*s
 	}
 	// 自动生成短码:随机生成直到无冲突(生成失败重试 10 次)
 	for i := 0; i < 10; i++ {
-		code := domain.GenerateCode(t.CodeLength)
+		code := domain.GenerateCode(domain.AutoCodeLength)
 		link, err := a.store.CreateLink(c.Request.Context(), t.ID, code, req.TargetURLs, redirectStatus, linkType, landingSource, landingURL, domainIDs)
 		if err == nil {
 			return link, nil

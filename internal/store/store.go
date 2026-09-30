@@ -47,7 +47,6 @@ type Tenant struct {
 	Slug            string     `json:"slug"`
 	Status          string     `json:"status"`
 	IsSuperAdmin    bool       `json:"isSuperAdmin" gorm:"column:is_super_admin"`
-	CodeLength      int        `json:"codeLength" gorm:"column:code_length"`
 	TierID          int64      `json:"-" gorm:"column:tier_id"`
 	Tier            Tier       `json:"tier" gorm:"foreignKey:TierID"`
 	VerifiedAt      *time.Time `json:"-" gorm:"column:verified_at"`
@@ -122,7 +121,7 @@ func (s *Store) CreateTenant(ctx context.Context, email, passwordHash, slug stri
 	}
 	t := Tenant{
 		Email: email, Slug: slug, Status: "pending",
-		IsSuperAdmin: isSuperAdmin, TierID: tier.ID, CodeLength: 6,
+		IsSuperAdmin: isSuperAdmin, TierID: tier.ID,
 	}
 	if passwordHash != "" {
 		t.PasswordHash = &passwordHash
@@ -217,10 +216,6 @@ func (s *Store) UpdateTenantAdmin(ctx context.Context, id int64, status *string,
 		}
 		return nil
 	})
-}
-
-func (s *Store) SetTenantCodeLength(ctx context.Context, id int64, length int) error {
-	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Update("code_length", length).Error
 }
 
 // SetTenantSuperAdmin 标记租户为平台管理员。

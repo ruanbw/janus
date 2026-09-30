@@ -16,6 +16,9 @@ const CodeAlphabet = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 // MaxCodeLen 短码最大长度(自定义短码)。
 const MaxCodeLen = 64
 
+// AutoCodeLength 自动生成短码的固定长度(租户不可配)。
+const AutoCodeLength = 6
+
 // MaxDomainDescriptionLen 域名描述最大长度(按字符计,前端 textarea maxlength 同步此值)。
 const MaxDomainDescriptionLen = 200
 

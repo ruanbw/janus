@@ -26,7 +26,7 @@
               租户信息
             </CardTitle>
             <CardDescription>
-              租户基础账户属性与短码生成偏好
+              租户基础账户属性与当前生效配置
             </CardDescription>
           </CardHeader>
 
@@ -59,35 +59,6 @@
               <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
                 <span class="text-ink-soft">账号当前状态</span>
                 <AppTag :color="statusInfo.color">{{ statusInfo.label }}</AppTag>
-              </div>
-            </div>
-
-            <!-- 自动生成短码长度配置 -->
-            <div class="rounded-xl border border-line bg-surface-muted/40 p-4 space-y-3">
-              <div class="space-y-1">
-                <div class="text-xs font-semibold text-ink">自动生成短码长度偏好</div>
-                <p class="text-[11px] text-ink-faint leading-relaxed">
-                  创建短链时若未自定义短码，系统将按此设定位数自动生成随机字母与数字组合（已剔除易混淆字符 0/O/1/l/I）。
-                </p>
-              </div>
-
-              <div class="flex items-center gap-3">
-                <div class="w-32">
-                  <AppInputNumber
-                    v-model="codeLength"
-                    :min="4"
-                    :max="32"
-                    placeholder="长度 4-32"
-                  />
-                </div>
-                <AppButton
-                  type="primary"
-                  :loading="savingCodeLength"
-                  @click="onSaveCodeLength"
-                >
-                  保存长度配置
-                </AppButton>
-                <span class="text-xs text-ink-faint tabular-nums">范围: 4 - 32 位</span>
               </div>
             </div>
           </CardContent>
@@ -276,7 +247,7 @@ import { message } from '@/utils/toast';
 import type { FormRule } from '@/components/ui/types';
 
 import { changePassword } from '@/api/auth';
-import { fetchMyTenant, updateMyTenant } from '@/api/me';
+import { fetchMyTenant } from '@/api/me';
 import PageHeader from '@/components/PageHeader.vue';
 import ErrorPagesCard from '@/views/settings/ErrorPagesCard.vue';
 import { TENANT_STATUS } from '@/constants/dict';
@@ -284,9 +255,6 @@ import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
 
 const auth = useAuthStore();
-
-const codeLength = ref<number | undefined>(undefined);
-const savingCodeLength = ref(false);
 
 const changingPassword = ref(false);
 const pwdFormRef = ref();
@@ -366,12 +334,8 @@ const rules: Record<string, FormRule[]> = {
 async function load() {
   try {
     const me = await auth.fetchMe();
-    if (me) {
-      codeLength.value = me.codeLength;
-    } else {
-      const fallbackMe = await fetchMyTenant();
-      codeLength.value = fallbackMe.codeLength;
-      auth.tenant = fallbackMe;
+    if (!me) {
+      auth.tenant = await fetchMyTenant();
     }
   } catch (error) {
     if (error instanceof ApiError && error.status !== 401) {
@@ -381,25 +345,6 @@ async function load() {
 }
 
 onMounted(load);
-
-async function onSaveCodeLength() {
-  const value = codeLength.value;
-  if (!value || value < 4 || value > 32) {
-    message.warning('自动生成短码长度须在 4-32 之间');
-    return;
-  }
-  savingCodeLength.value = true;
-  try {
-    const me = await updateMyTenant({ codeLength: value });
-    auth.tenant = me;
-    message.success('自动生成短码长度已成功更新');
-  } catch (error) {
-    if (error instanceof ApiError) message.error(error.message);
-    else message.error('保存失败，请稍后重试');
-  } finally {
-    savingCodeLength.value = false;
-  }
-}
 
 async function submitPasswordForm() {
   try {

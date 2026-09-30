@@ -185,7 +185,6 @@ export interface Tenant {
   slug: string;
   status: TenantStatus;
   isSuperAdmin: boolean;
-  codeLength: number;
   tier: Tier;
   /** 平台默认域名,形如 "<slug>.<平台域名>" */
   defaultDomain: string;

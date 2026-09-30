@@ -611,6 +611,7 @@ import AppCheckbox from '@/components/ui/AppCheckbox.vue';
 import AppTag from '@/components/ui/AppTag.vue';
 import AppTooltip from '@/components/ui/AppTooltip.vue';
 import {
+  AUTO_SHORT_CODE_LENGTH,
   SHORT_CODE_FORBIDDEN_PATTERN,
   SHORT_CODE_MAX_LENGTH,
   SHORT_CODE_PATTERN,
@@ -726,7 +727,9 @@ const validTargetsCount = computed(() => {
 const codeExtra = computed(() =>
   isEdit.value
     ? '短码创建后不可修改。完整短链地址为「https://<域名>/<短码>」，短码即地址最后一段。'
-    : '留空则由系统按账号设置的默认长度自动生成。字符集仅含字母与数字，并去除易混淆字符 0/O/1/l/I。自定义短码最长 ' +
+    : '留空则由系统自动生成 ' +
+      AUTO_SHORT_CODE_LENGTH +
+      ' 位随机短码。字符集仅含字母与数字，并去除易混淆字符 0/O/1/l/I。自定义短码最长 ' +
       SHORT_CODE_MAX_LENGTH +
       ' 位，创建后不可修改。',
 );

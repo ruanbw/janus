@@ -41,7 +41,6 @@ func TestEnforce(t *testing.T) {
 		{"tenant GET /api/domains/5", RoleTenant, http.MethodGet, "/api/domains/5", true},
 		{"tenant PATCH /api/domains/5", RoleTenant, http.MethodPatch, "/api/domains/5", true},
 		{"tenant POST /api/domains/5/recheck", RoleTenant, http.MethodPost, "/api/domains/5/recheck", true},
-		{"tenant PATCH /api/me", RoleTenant, http.MethodPatch, "/api/me", true},
 		{"tenant GET /api/me", RoleTenant, http.MethodGet, "/api/me", true},
 		{"tenant GET /api/me/error-pages", RoleTenant, http.MethodGet, "/api/me/error-pages", true},
 		{"tenant PATCH /api/me/error-pages", RoleTenant, http.MethodPatch, "/api/me/error-pages", true},

@@ -172,7 +172,6 @@ func New(d Deps) http.Handler {
 	prot.PUT("/links/:id/rules", a.handlePutLinkRules)
 	// 06:租户设置
 	prot.GET("/me", a.handleGetMe)
-	prot.PATCH("/me", a.handlePatchMe)
 	prot.GET("/me/error-pages", a.handleGetErrorPages)
 	prot.PATCH("/me/error-pages", a.handlePatchErrorPages)
 	// 前端启动配置:服务器 IP/平台域名/当前租户配额,按租户返回

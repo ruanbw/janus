@@ -72,3 +72,5 @@ export const SHORT_CODE_PATTERN = /^[a-zA-Z0-9]+$/;
 /** 短码中的易混淆字符(后端字符集不含 0/O/1/l/I) */
 export const SHORT_CODE_FORBIDDEN_PATTERN = /[0O1lI]/;
 export const SHORT_CODE_MAX_LENGTH = 64;
+/** 自动生成短码的固定长度(后端 domain.AutoCodeLength) */
+export const AUTO_SHORT_CODE_LENGTH = 6;

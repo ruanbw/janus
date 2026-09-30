@@ -120,9 +120,6 @@ func TestRegisterCreatesPendingTenantWithDefaultDomain(t *testing.T) {
 	if tenant.Tier.Name != "free" || tenant.Tier.MaxLinks != 100 || tenant.Tier.MaxDomains != 10 {
 		t.Errorf("tier = %+v, want free 100/10", tenant.Tier)
 	}
-	if tenant.CodeLength != 6 {
-		t.Errorf("codeLength = %d, want 6", tenant.CodeLength)
-	}
 }
 
 func TestRegisterValidation(t *testing.T) {

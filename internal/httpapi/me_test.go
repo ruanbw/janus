@@ -1,17 +1,18 @@
 package httpapi_test
 
-// 06 — quota-tiers 黑盒测试:配额用量查询(/api/me)、自动短码长度设置、
+// 06 — quota-tiers 黑盒测试:配额用量查询(/api/me)、自动短码固定长度、
 // 平台默认域名不计入域名配额、新租户默认免费档。
 
 import (
 	"net/http"
 	"testing"
 
+	"cloak/internal/domain"
 	"cloak/internal/store"
 	"cloak/internal/testutil"
 )
 
-func TestMeUsageAndCodeLength(t *testing.T) {
+func TestMeUsageAndAutoCodeLength(t *testing.T) {
 	env := testutil.Setup(t)
 	c := loggedInTenant(t, env, "alice")
 
@@ -40,22 +41,11 @@ func TestMeUsageAndCodeLength(t *testing.T) {
 		t.Fatalf("usage = %+v, want 1/1", me.Usage)
 	}
 
-	// 设置自动短码长度 → 新短链使用新长度
-	resp = c.patch("/api/me", map[string]any{"codeLength": 8})
-	assertStatus(t, resp, http.StatusOK)
-	me = decodeBody[store.Tenant](t, resp)
-	if me.CodeLength != 8 {
-		t.Fatalf("codeLength = %d, want 8", me.CodeLength)
-	}
+	// 自动生成的短码固定为 domain.AutoCodeLength 位
 	link := createLink(t, c, map[string]any{"targetUrls": []string{"https://b.example.com"}, "domainIds": ids[:1]})
-	if len(link.Code) != 8 {
-		t.Fatalf("auto code length = %d, want 8", len(link.Code))
+	if len(link.Code) != domain.AutoCodeLength {
+		t.Fatalf("auto code length = %d, want %d", len(link.Code), domain.AutoCodeLength)
 	}
-
-	// 非法长度
-	resp = c.patch("/api/me", map[string]any{"codeLength": 1})
-	assertStatus(t, resp, http.StatusBadRequest)
-	_ = resp.Body.Close()
 }
 
 func TestTenantErrorPagesAPI(t *testing.T) {

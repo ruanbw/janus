@@ -8,11 +8,6 @@ export function fetchMyTenant(): Promise<Tenant> {
   return get<Tenant>('/me');
 }
 
-/** 更新自动生成短码长度 */
-export function updateMyTenant(data: { codeLength: number }): Promise<Tenant> {
-  return patch<Tenant>('/me', data);
-}
-
 /** 获取租户全局错误页面配置 */
 export function fetchTenantErrorPages(): Promise<TenantErrorPages> {
   return get<TenantErrorPages>('/me/error-pages');
