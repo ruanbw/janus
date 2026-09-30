@@ -36,32 +36,16 @@ export function truncateText(text: string, max = 48): string {
   return `${text.slice(0, max)}…`;
 }
 
-// 地区名走浏览器内置的 CLDR 数据(零依赖、零打包体积、自动跟随 ICU 更新)。
-// 单独包一层是因为 Intl.DisplayNames 在个别环境(旧 Node、老浏览器)上不存在,
-// 直接用会把整页渲染打挂 —— 展示层不值得为一次翻译冒这个险。
-let regionNames: Intl.DisplayNames | null | undefined;
-function displayNames(): Intl.DisplayNames | null {
-  if (regionNames === undefined) {
-    try {
-      regionNames = new Intl.DisplayNames(['zh-CN'], { type: 'region' });
-    } catch {
-      regionNames = null;
-    }
-  }
-  return regionNames;
-}
+// 地区名统一走 @/constants/countries（i18n-iso-countries 的 zh 语言包），
+// 与国家下拉的文案同源：两处各用一套名字，列表里写「中国」详情里写「CN」看着就像两个国家。
+import { countryName } from '@/constants/countries';
 
 /** ISO 3166-1 alpha-2 国家码 → 「美国（US）」；查不到时给「—」。 */
 export function formatCountry(code?: string | null): string {
   const c = (code || '').trim().toUpperCase();
   if (!c) return '—';
-  const names = displayNames();
-  // 不是两字母的码(脏数据、占位值)原样返回:猜一个名字比暴露数据问题更糟
-  if (c.length !== 2 || !names) return c;
-  try {
-    const name = names.of(c);
-    return name && name !== c ? `${name}（${c}）` : c;
-  } catch {
-    return c;
-  }
+  // 不是两字母的码（脏数据、占位值）原样返回：猜一个名字比暴露数据问题更糟
+  if (c.length !== 2) return c;
+  const name = countryName(c);
+  return name ? `${name}（${c}）` : c;
 }

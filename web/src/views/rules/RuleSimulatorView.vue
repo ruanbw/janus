@@ -19,6 +19,7 @@ import {
 } from '@lucide/vue';
 
 import PageHeader from '@/components/PageHeader.vue';
+import { COUNTRY_OPTIONS } from '@/constants/countries';
 import type { Rule } from '@/types/api';
 import { message } from '@/utils/toast';
 import { actionTagColor } from './ruleMeta';
@@ -36,6 +37,8 @@ const scopeNote = ref('');
 const verdict = ref<Verdict | null>(null);
 
 const origin = typeof window !== 'undefined' ? window.location.origin : 'https://example.com';
+
+const countryOptions = COUNTRY_OPTIONS.map((c) => ({ value: c.value, label: c.label }));
 
 const simInput = ref<SimInput>({
   url: `${origin}/promo`,
@@ -220,10 +223,16 @@ onMounted(async () => {
             </div>
             <div>
               <label class="mb-1.5 block text-sm font-medium text-ink">国家 / 地区</label>
-              <AppInput v-model="simInput.country" placeholder="US, CN" />
+              <AppSelect
+                v-model="simInput.country"
+                :options="countryOptions"
+                show-search
+                allow-clear
+                placeholder="不选 = 该访客查不到国家"
+              />
               <p class="mt-1 text-[11px] leading-relaxed text-ink-faint">
                 ISO 国家码。浏览器里不解析 IP→国家（真实裁决由后端的离线库给出），
-                这里手填才能验证国家条件；留空按「取不到」处理，该条件恒不命中。
+                这里选一个才能验证国家条件；留空按「取不到」处理，该条件恒不命中。
               </p>
             </div>
             <div>

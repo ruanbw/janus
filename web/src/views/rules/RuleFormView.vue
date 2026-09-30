@@ -25,6 +25,7 @@ import { createRule, deleteRule, getRule, updateRule, type RuleCreatePayload } f
 import PageHeader from '@/components/PageHeader.vue';
 import { confirm } from '@/components/ui/confirm';
 import type { FormRule } from '@/components/ui/types';
+import { COUNTRY_OPTIONS } from '@/constants/countries';
 import type { Rule, RuleCondition, RuleScope } from '@/types/api';
 import { message } from '@/utils/toast';
 import {
@@ -237,9 +238,28 @@ function removeCondition(key: string) {
 function conditionHint(field: string): string {
   const opt = fieldOption(field);
   if (!opt) return '';
-  return opt.pending
-    ? '该字段的数据源尚未接入，现在保存也会恒不命中'
-    : `取值示例：${opt.placeholder}${opt.hint ? ` · ${opt.hint}` : ''}`;
+  if (opt.pending) return '该字段的数据源尚未接入，现在保存也会恒不命中';
+  // country 走下拉，不再让用户对着一个输入框手敲两位国家码
+  if (field === 'country') return '从下拉里选国家 / 地区，可多选 · 查不到国家的 IP 恒不命中';
+  return `取值示例：${opt.placeholder}${opt.hint ? ` · ${opt.hint}` : ''}`;
+}
+
+/**
+ * country 条件与其它字段共用 `raw` 字符串存值（逗号分隔），但编辑器换成下拉多选：
+ * 让人手敲「US, CN」既容易写错，写错了也不报错——直接变成一个永远不命中的条件。
+ * 存法不变，是为了序列化 / 校验 / 摘要三处逻辑不用分叉。
+ */
+const countryOptions = COUNTRY_OPTIONS.map((c) => ({ value: c.value, label: c.label }));
+
+function countryValuesOf(cond: EditableCondition): string[] {
+  return cond.raw
+    .split(/[\n,;]+/)
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+function setCountryValues(cond: EditableCondition, values: unknown): void {
+  cond.raw = (Array.isArray(values) ? (values as string[]) : []).join(', ');
 }
 
 /** 表单态取值 → 后端契约：按换行/逗号/分号切分，丢弃空项 */
@@ -603,7 +623,18 @@ onMounted(init);
                   </div>
 
                   <div class="mt-3">
+                    <AppSelect
+                      v-if="cond.field === 'country'"
+                      :model-value="countryValuesOf(cond)"
+                      :options="countryOptions"
+                      multiple
+                      show-search
+                      :max-tag-count="6"
+                      placeholder="选择国家 / 地区，可多选"
+                      @update:model-value="(v: unknown) => setCountryValues(cond, v)"
+                    />
                     <AppInput
+                      v-else
                       :model-value="cond.raw"
                       placeholder="取值，逗号 / 换行分隔可写多个"
                       @update:model-value="(v: string) => (cond.raw = v)"
