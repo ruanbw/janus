@@ -56,7 +56,7 @@ export type RuleField =
  *
  * `duplicated` 的特殊状态:后端**接受**它(在 ValidOperator 白名单内、求值也已接线到
  * Fact.Seen 通道),但平台目前没有指纹/计数器数据源,Fact.Seen 恒为 nil,该运算符恒不命中。
- * 即“能提交、不能生效”的假能力,故 v1 不在 RuleEngineView 的 OPERATOR_OPTIONS 里放出
+ * 即“能提交、不能生效”的假能力,故 v1 不在 ruleMeta.ts 的 OPERATOR_OPTIONS 里放出
  * (后端接线已完成,接入访问计数滑动窗口后再放出)。保留在类型里是因为接口层确实可能
  * 回传它——经 API 写入的历史数据仍要能读得出来。
  */

@@ -562,12 +562,17 @@ function handleBanIp() {
 function openInSimulator() {
   if (!selectedVisit.value) return;
   router.push({
-    path: '/rules',
+    path: '/rules/simulator',
     query: {
-      tab: 'simulator',
       ip: selectedVisit.value.ip,
       ua: selectedVisit.value.userAgent,
       referrer: selectedVisit.value.referer || undefined,
+      // 必带：模拟器靠 URL 里的短码定位短链，缺了它就找不到短链，
+      // 于是全部 scope='links' 规则被判「不适用」——而这次访问恰恰可能是被它们裁定的。
+      url:
+        selectedVisit.value.domain && selectedVisit.value.linkCode
+          ? `https://${selectedVisit.value.domain}/${selectedVisit.value.linkCode}`
+          : undefined,
     },
   });
 }

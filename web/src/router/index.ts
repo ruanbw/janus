@@ -87,8 +87,26 @@ const router = createRouter({
         {
           path: 'rules',
           name: 'rules',
-          component: () => import('@/views/rules/RuleEngineView.vue'),
+          component: () => import('@/views/rules/RulesListView.vue'),
           meta: { title: '规则引擎' },
+        },
+        {
+          path: 'rules/new',
+          name: 'rule-create',
+          component: () => import('@/views/rules/RuleFormView.vue'),
+          meta: { title: '新建规则' },
+        },
+        {
+          path: 'rules/:id/edit',
+          name: 'rule-edit',
+          component: () => import('@/views/rules/RuleFormView.vue'),
+          meta: { title: '编辑规则' },
+        },
+        {
+          path: 'rules/simulator',
+          name: 'rule-simulator',
+          component: () => import('@/views/rules/RuleSimulatorView.vue'),
+          meta: { title: '规则模拟器' },
         },
         {
           path: 'visit-stream',

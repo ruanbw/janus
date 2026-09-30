@@ -214,6 +214,7 @@ import {
   BarChart3,
   ChevronDown,
   Crown,
+  FlaskConical,
   Globe,
   LayoutDashboard,
   Link2,
@@ -225,7 +226,6 @@ import {
   Radio,
   Send,
   Settings,
-  ShieldCheck,
   Sliders,
   Sun,
   User,
@@ -296,6 +296,7 @@ const navGroups: NavGroup[] = [
       { to: '/overview', label: '总览', icon: LayoutDashboard },
       { to: '/links', label: '短链与目标', icon: Link2 },
       { to: '/rules', label: '规则引擎', icon: Sliders },
+      { to: '/rules/simulator', label: '规则模拟器', icon: FlaskConical },
       { to: '/visit-stream', label: '访问决策流', icon: Radio },
       { to: '/insights', label: '数据洞察', icon: BarChart3 },
     ],
@@ -303,7 +304,6 @@ const navGroups: NavGroup[] = [
   {
     title: '配置',
     items: [
-      { to: '/rules#lists', label: '名单库', icon: ShieldCheck },
       { to: '/domains', label: '域名池', icon: Globe },
       { to: '/insights#postback', label: '转化回传', icon: Send },
     ],
@@ -321,15 +321,31 @@ function visibleItems(group: NavGroup): NavItem[] {
   return group.items.filter((item) => item.superAdmin !== true || auth.isSuperAdmin);
 }
 
-function isActive(to: string): boolean {
+/** 单条菜单项是否命中当前路由（含 hash 精确匹配与子路径前缀） */
+function matchesRoute(to: string): boolean {
   if (to.includes('#')) {
     const [path, hash] = to.split('#');
     return route.path === path && route.hash === '#' + hash;
   }
-  if (route.hash && (to === '/rules' || to === '/insights')) {
-    return false;
-  }
   return route.path === to || (to !== '/' && route.path.startsWith(to + '/'));
+}
+
+/**
+ * 菜单高亮用「最长路径优先」：/rules/simulator 同时匹配 /rules 与自身，
+ * 只认最长的那条，否则侧栏会同时点亮「规则引擎」和「规则模拟器」。
+ * 子路由（/rules/new、/rules/:id/edit）仍归到「规则引擎」，与短链模块的父子高亮一致。
+ */
+const activeItemTo = computed(() => {
+  const candidates = navGroups
+    .flatMap((group) => visibleItems(group))
+    .map((item) => item.to)
+    .filter(matchesRoute)
+    .sort((a, b) => b.length - a.length);
+  return candidates[0] ?? '';
+});
+
+function isActive(to: string): boolean {
+  return activeItemTo.value === to;
 }
 
 const routeTitle = computed(() => (route.meta.title as string | undefined) ?? 'CLOAK 后台');
