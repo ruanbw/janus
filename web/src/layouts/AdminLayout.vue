@@ -1,107 +1,67 @@
 <template>
-  <div class="min-h-screen bg-surface-muted" :style="sidebarStyle">
-    <!-- ================= 桌面侧边栏(≥768px) ================= -->
+  <div class="bg-surface-muted" :style="sidebarStyle">
+    <!-- ================= 桌面侧边栏 =================
+         显隐与宽度全部由 CSS 承担:显隐用 md:,宽度用 --sidebar-w,
+         JS 不参与断点判断,因此不存在「CSS 已切换、JS 还没跟上」的状态。 -->
     <aside
-      class="fixed inset-y-0 left-0 z-30 hidden w-[var(--sidebar-w)] flex-col overflow-hidden bg-[var(--sidebar-bg)] transition-[width] duration-200 md:flex"
+      aria-label="侧边栏"
+      class="fixed inset-y-0 left-0 z-30 hidden w-[var(--sidebar-w)] flex-col overflow-hidden bg-[var(--sidebar-bg)] transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex"
     >
+      <SidebarBrand :collapsed="collapsed" />
+      <NavList :collapsed="collapsed" />
+
       <div
-        class="flex h-14 shrink-0 cursor-pointer select-none items-center gap-2.5 px-3.5"
-        @click="router.push('/overview')"
+        class="border-t border-white/10 px-3.5 py-3"
+        :class="collapsed ? 'flex justify-center' : ''"
+        :title="collapsed ? auth.tenant?.email : undefined"
       >
-        <span
-          class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-ink font-mono text-[13px] font-bold text-surface shadow-xs"
+        <div
+          v-if="!collapsed"
+          class="truncate font-mono text-[10.5px] tracking-wider text-slate-400 uppercase"
         >
-          C
-        </span>
-        <div v-if="!collapsed" class="flex flex-col leading-tight">
-          <span class="text-[14.5px] font-bold tracking-tight text-white">CLOAK</span>
-          <span class="font-mono text-[10px] tracking-wider text-slate-400 uppercase">Cloak Console</span>
+          租户 · {{ tenantName }}
         </div>
-      </div>
-
-      <nav class="flex-1 overflow-y-auto px-2.5 py-2">
-        <template v-for="group in navGroups" :key="group.title">
-          <p v-if="!collapsed" class="px-2.5 pt-3 pb-1.5 font-mono text-[10.5px] font-semibold tracking-wider text-slate-400 uppercase">
-            {{ group.title }}
-          </p>
-          <button
-            v-for="item in visibleItems(group)"
-            :key="item.to"
-            type="button"
-            class="group mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors"
-            :class="
-              isActive(item.to)
-                ? 'bg-brand-600 font-semibold text-white shadow-sm'
-                : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
-            "
-            :title="collapsed ? item.label : undefined"
-            @click="router.push(item.to)"
+        <div class="flex items-center gap-2.5" :class="collapsed ? '' : 'mt-2'">
+          <span
+            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 font-mono text-[11px] font-semibold text-slate-200"
           >
-            <component :is="item.icon" :size="16" class="shrink-0" :class="collapsed ? 'mx-auto' : ''" />
-            <span v-if="!collapsed">{{ item.label }}</span>
-          </button>
-        </template>
-      </nav>
-
-      <div v-if="!collapsed" class="border-t border-white/10 px-3.5 py-3">
-        <div class="truncate font-mono text-[10.5px] tracking-wider text-slate-400 uppercase">
-          租户 · {{ auth.tenant?.slug?.toUpperCase() || auth.tenant?.email?.split('@')[0]?.toUpperCase() || 'TENANT' }}
-        </div>
-        <div class="mt-2 flex items-center gap-2.5">
-          <span class="flex h-7 w-7 items-center justify-center rounded-full bg-white/10 font-mono text-[11px] font-semibold text-slate-200">
             {{ avatarInitial }}
           </span>
-          <div class="min-w-0 text-[12px] leading-tight text-slate-300">
+          <div v-if="!collapsed" class="min-w-0 text-[12px] leading-tight text-slate-300">
             <div>{{ auth.isSuperAdmin ? '超级管理员' : '租户管理员' }}</div>
             <div class="font-mono text-[10px] text-slate-400">{{ auth.tenant?.tier?.name || '标准版' }}</div>
           </div>
         </div>
       </div>
-      <div v-else class="pb-3 pt-2 text-center font-mono text-[10px] text-slate-400">
-        C
-      </div>
     </aside>
 
-    <!-- ================= 移动端抽屉 ================= -->
-    <Transition name="drawer-fade">
-      <div v-if="isMobile && drawerOpen" class="fixed inset-0 z-40 md:hidden">
-        <div class="absolute inset-0 bg-black/45" @click="drawerOpen = false" />
-        <aside class="absolute inset-y-0 left-0 flex w-64 flex-col bg-[var(--sidebar-bg)] shadow-2xl">
-          <div class="flex h-14 shrink-0 items-center justify-between px-4">
-            <div class="flex cursor-pointer items-center gap-2.5" @click="go('/overview')">
-              <span
-                class="flex h-7 w-7 items-center justify-center rounded-lg bg-ink font-mono text-[13px] font-bold text-surface shadow-xs"
-              >
-                C
-              </span>
-              <div class="flex flex-col leading-tight">
-                <span class="text-[14.5px] font-bold tracking-tight text-white">CLOAK</span>
-                <span class="font-mono text-[10px] tracking-wider text-slate-400 uppercase">Cloak Console</span>
-              </div>
-            </div>
-            <button type="button" class="text-slate-400 hover:text-white" @click="drawerOpen = false">
-              <X :size="18" />
-            </button>
-          </div>
-          <nav class="flex-1 overflow-y-auto px-2.5 py-2">
-            <template v-for="group in navGroups" :key="group.title">
-              <p class="px-2.5 pt-3 pb-1.5 font-mono text-[10.5px] font-semibold tracking-wider text-slate-400 uppercase">{{ group.title }}</p>
+    <!-- ================= 移动端抽屉 =================
+         modal=false + 不锁焦点:抽屉的显隐由 md: 决定,而 JS 并不知道当前断点。
+         若开启焦点陷阱,用户在手机上打开抽屉后转屏到 ≥768px,焦点会被锁进
+         display:none 的面板里。关闭键改由 reka 的 Esc / 点外部处理,无需自写。 -->
+    <DialogRoot :open="drawerOpen" :modal="false" @update:open="drawerOpen = $event">
+      <DialogPortal>
+        <DialogOverlay class="drawer-overlay fixed inset-0 z-40 bg-black/45 md:hidden" />
+        <DialogContent
+          class="drawer-panel fixed inset-y-0 left-0 z-50 flex w-[var(--sidebar-w)] max-w-[85vw] flex-col bg-[var(--sidebar-bg)] shadow-2xl outline-none md:hidden"
+        >
+          <div class="flex h-14 shrink-0 items-center justify-between gap-2">
+            <SidebarBrand />
+            <DialogClose as-child>
               <button
-                v-for="item in visibleItems(group)"
-                :key="item.to"
                 type="button"
-                class="mb-0.5 flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors"
-                :class="isActive(item.to) ? 'bg-brand-600 font-semibold text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'"
-                @click="go(item.to)"
+                aria-label="关闭菜单"
+                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
               >
-                <component :is="item.icon" :size="16" class="shrink-0" />
-                {{ item.label }}
+                <X :size="18" />
               </button>
-            </template>
-          </nav>
-        </aside>
-      </div>
-    </Transition>
+            </DialogClose>
+          </div>
+          <NavList />
+          <DialogTitle class="sr-only">主导航</DialogTitle>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
 
     <!-- ================= 主区域 ================= -->
     <!-- 左内边距与侧边栏宽度同源于 --sidebar-w(侧边栏宽度也是它)。
@@ -109,24 +69,39 @@
          的同类任意值」的写法:两个同属性、同断点的任意值工具类会同时挂在元素上,
          最终生效值由样式表先后顺序决定而非 class 顺序,而 Tailwind 产物里展开态
          那条恒排在收起态之后,于是收起后左内边距仍是 224px,右侧宽度纹丝不动。
-         改用 var() 后只剩唯一一条规则,与 class 顺序彻底解耦。 -->
+         改用 var() 后只剩唯一一条规则,与 class 顺序彻底解耦。
+         两条 transition 的时长与缓动也刻意一致,否则侧边栏边缘与内容区边缘
+         会在动画中途分叉。 -->
     <div
-      class="flex min-h-screen flex-col transition-[padding] duration-200 ease-out md:pl-[var(--sidebar-w)]"
+      class="flex min-h-screen flex-col transition-[padding] duration-200 ease-out motion-reduce:transition-none md:pl-[var(--sidebar-w)]"
     >
-      <header class="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-surface/90 px-4 backdrop-blur-md md:px-6">
+      <header
+        class="sticky top-0 z-20 flex h-14 items-center justify-between border-b border-line bg-surface/90 px-4 backdrop-blur-md md:px-6"
+      >
         <div class="flex min-w-0 items-center gap-3">
+          <!-- 移动端:开抽屉。桌面端由 md:hidden 摘掉,无需 JS 区分。 -->
           <button
             type="button"
-            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-surface-strong hover:text-ink"
-            @click="onToggleSidebar"
+            aria-label="打开菜单"
+            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-surface-strong hover:text-ink md:hidden"
+            @click="drawerOpen = true"
           >
-            <PanelLeftClose v-if="!collapsed && !isMobile" :size="17" />
-            <PanelLeftOpen v-else-if="!isMobile" :size="17" />
-            <Menu v-else :size="17" @click="drawerOpen = true" />
+            <Menu :size="17" />
+          </button>
+          <!-- 桌面端:折叠/展开侧边栏。移动端由 hidden 摘掉。 -->
+          <button
+            type="button"
+            :aria-label="collapsed ? '展开侧边栏' : '收起侧边栏'"
+            :aria-expanded="!collapsed"
+            class="hidden h-8 w-8 shrink-0 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-surface-strong hover:text-ink md:flex"
+            @click="collapsed = !collapsed"
+          >
+            <PanelLeftClose v-if="!collapsed" :size="17" />
+            <PanelLeftOpen v-else :size="17" />
           </button>
           <div class="flex min-w-0 items-center gap-2">
-            <span class="font-mono text-xs text-muted">CLOAK</span>
-            <span class="text-muted">/</span>
+            <span class="font-mono text-xs text-ink-faint">CLOAK</span>
+            <span class="text-ink-faint">/</span>
             <h1 class="truncate text-[14.5px] font-semibold text-ink">{{ routeTitle }}</h1>
           </div>
         </div>
@@ -136,7 +111,7 @@
             <span class="dot dot-live"></span>
             系统就绪
           </span>
-          <span v-if="auth.config?.serverIp" class="badge badge-neutral hidden lg:inline-flex font-mono">
+          <span v-if="auth.config?.serverIp" class="badge badge-neutral hidden font-mono lg:inline-flex">
             节点 IP · {{ auth.config?.serverIp }}
           </span>
           <AppTag v-if="auth.tenant?.tier" color="cyan" class="hidden sm:inline-flex">
@@ -145,6 +120,7 @@
 
           <button
             type="button"
+            aria-label="切换主题"
             class="flex h-8 w-8 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-surface-strong hover:text-ink"
             :title="theme.isDark ? '切换到浅色模式' : '切换到深色模式'"
             @click="theme.toggle()"
@@ -159,10 +135,14 @@
                 type="button"
                 class="flex items-center gap-2 rounded-full py-1 pr-1.5 pl-1 transition-colors hover:bg-surface-strong"
               >
-                <span class="flex h-7 w-7 items-center justify-center rounded-full bg-brand-600 text-[12px] font-semibold text-white">
+                <span
+                  class="flex h-7 w-7 items-center justify-center rounded-full bg-brand-600 text-[12px] font-semibold text-white"
+                >
                   {{ avatarInitial }}
                 </span>
-                <span class="hidden max-w-44 truncate text-[13px] text-ink sm:block">{{ auth.tenant?.email }}</span>
+                <span class="hidden max-w-44 truncate text-[13px] text-ink sm:block">
+                  {{ auth.tenant?.email }}
+                </span>
                 <ChevronDown :size="12" class="text-ink-faint" />
               </button>
             </DropdownMenuTrigger>
@@ -195,32 +175,14 @@
 
       <!-- 内容宽度跟随侧边栏伸缩:不加固定 max-width,否则宽屏下收缩侧边栏时右侧不会变宽 -->
       <main class="w-full flex-1 px-4 py-5 md:px-6">
-        <!-- 路由子组件渲染异常边界：避免页面抛错时 Transition mode="out-in" 永久空白卡死 -->
-        <div v-if="pageError" class="mx-auto max-w-xl py-12">
-          <div class="rounded-xl border border-line bg-surface p-8 text-center shadow-xs">
-            <div class="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-full bg-err/10 text-err">
-              <AlertTriangle :size="24" />
-            </div>
-            <h3 class="text-base font-semibold text-ink">页面加载或渲染出错</h3>
-            <p class="mt-1.5 text-sm text-ink-muted leading-relaxed">
-              {{ pageError.message || '子组件渲染时发生未捕获异常，请尝试重试或刷新页面' }}
-            </p>
-            <div class="mt-6 flex items-center justify-center gap-3">
-              <AppButton type="primary" @click="handleRetry">
-                <template #icon><RefreshCw :size="14" /></template>
-                重新加载
-              </AppButton>
-              <AppButton @click="handleReload">
-                刷新整页
-              </AppButton>
-            </div>
-          </div>
-        </div>
-        <router-view v-else v-slot="{ Component }">
-          <transition name="page" mode="out-in">
-            <component :is="Component" :key="route.fullPath + '_' + retryKey" />
-          </transition>
-        </router-view>
+        <!-- 错误边界只包住页面本身:页面抛错时顶栏与侧边栏仍可用,能直接切走 -->
+        <ErrorBoundary v-slot="{ attempt }" :reset-key="route.fullPath">
+          <router-view v-slot="{ Component }">
+            <transition name="page" mode="out-in">
+              <component :is="Component" :key="route.fullPath + '_' + attempt" />
+            </transition>
+          </router-view>
+        </ErrorBoundary>
       </main>
 
       <footer class="pb-5 text-center text-xs text-ink-faint">CLOAK · 自托管短链服务</footer>
@@ -229,29 +191,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onErrorCaptured, onMounted, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { ChevronDown, LogOut, Menu, Moon, PanelLeftClose, PanelLeftOpen, Sun, User, X } from '@lucide/vue';
 import {
-  AlertTriangle,
-  ChevronDown,
-  Crown,
-  FlaskConical,
-  Globe,
-  LayoutDashboard,
-  Link2,
-  LogOut,
-  Menu,
-  Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
-  RefreshCw,
-  Settings,
-  Sliders,
-  Sun,
-  User,
-  X,
-} from '@lucide/vue';
-import {
+  DialogClose,
+  DialogContent,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuPortal,
@@ -260,144 +209,69 @@ import {
   DropdownMenuTrigger,
 } from 'reka-ui';
 
-import BrandMark from '@/components/BrandMark.vue';
+import ErrorBoundary from '@/components/layout/ErrorBoundary.vue';
+import NavList from '@/components/layout/NavList.vue';
+import SidebarBrand from '@/components/layout/SidebarBrand.vue';
+import AppTag from '@/components/ui/AppTag.vue';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
 
-interface NavItem {
-  to: string;
-  label: string;
-  icon: unknown;
-  superAdmin?: boolean;
-}
-
-interface NavGroup {
-  title: string;
-  items: NavItem[];
-}
+/** 收起态与展开态的侧边栏宽度,是 aside 宽度与主区域左内边距的唯一真源 */
+const SIDEBAR_W_EXPANDED = '224px';
+const SIDEBAR_W_COLLAPSED = '64px';
+/** 与 web/src/styles/main.css 的 --sidebar-w 兜底值保持一致(首屏渲染前生效) */
+const COLLAPSE_STORAGE_KEY = 'cloak:sidebar-collapsed';
 
 const auth = useAuthStore();
 const theme = useThemeStore();
 const route = useRoute();
 const router = useRouter();
 
-const collapsed = ref(false);
+const collapsed = ref(readCollapsed());
 const drawerOpen = ref(false);
-const pageError = ref<Error | null>(null);
-const retryKey = ref(0);
 
-// 子组件渲染错误捕获保护：拦截向上传播，呈现错误降级卡片
-onErrorCaptured((err: unknown) => {
-  console.error('[AdminLayout ErrorCaptured]', err);
-  pageError.value = err instanceof Error ? err : new Error(String(err));
-  return false;
-});
-
-function handleRetry(): void {
-  pageError.value = null;
-  retryKey.value += 1;
-}
-
-function handleReload(): void {
-  window.location.reload();
-}
-
-// 侧边栏宽度的唯一真源:aside 宽度与主区域左内边距都读 --sidebar-w
 const sidebarStyle = computed<Record<string, string>>(() => ({
-  '--sidebar-w': collapsed.value ? '64px' : '224px',
+  '--sidebar-w': collapsed.value ? SIDEBAR_W_COLLAPSED : SIDEBAR_W_EXPANDED,
 }));
-const isMobile = ref(window.matchMedia('(max-width: 767px)').matches);
 
-const mql = window.matchMedia('(max-width: 767px)');
-function onMqlChange(event: MediaQueryListEvent): void {
-  isMobile.value = event.matches;
-  if (event.matches) drawerOpen.value = false;
+// 折叠状态属于用户偏好,和主题一样应当跨刷新存活。
+// 移动端不受影响:那里的侧边栏由 md: 摘掉,collapsed 只决定 ≥768px 时的观感。
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSE_STORAGE_KEY) === '1';
+  } catch {
+    return false; // 隐私模式 / 存储被禁用时降级为默认展开
+  }
 }
-onMounted(() => {
-  mql.addEventListener('change', onMqlChange);
-});
-onBeforeUnmount(() => {
-  mql.removeEventListener('change', onMqlChange);
+
+watch(collapsed, (value) => {
+  try {
+    localStorage.setItem(COLLAPSE_STORAGE_KEY, value ? '1' : '0');
+  } catch {
+    /* 写入失败不影响本次会话,忽略 */
+  }
 });
 
 watch(
   () => route.fullPath,
   () => {
-    pageError.value = null;
     drawerOpen.value = false;
   },
 );
 
-const navGroups: NavGroup[] = [
-  {
-    title: '控制台',
-    items: [
-      { to: '/overview', label: '总览', icon: LayoutDashboard },
-      { to: '/links', label: '短链与目标', icon: Link2 },
-      { to: '/rules', label: '规则引擎', icon: Sliders },
-      { to: '/rules/simulator', label: '规则模拟器', icon: FlaskConical },
-    ],
-  },
-  {
-    title: '配置',
-    items: [
-      { to: '/domains', label: '域名池', icon: Globe },
-    ],
-  },
-  {
-    title: '系统',
-    items: [
-      { to: '/account', label: '账号设置', icon: Settings },
-      { to: '/admin/tenants', label: '平台管理', icon: Crown, superAdmin: true },
-    ],
-  },
-];
-
-function visibleItems(group: NavGroup): NavItem[] {
-  return group.items.filter((item) => item.superAdmin !== true || auth.isSuperAdmin);
-}
-
-/** 单条菜单项是否命中当前路由（含 hash 精确匹配与子路径前缀） */
-function matchesRoute(to: string): boolean {
-  if (to.includes('#')) {
-    const [path, hash] = to.split('#');
-    return route.path === path && route.hash === '#' + hash;
-  }
-  return route.path === to || (to !== '/' && route.path.startsWith(to + '/'));
-}
-
-/**
- * 菜单高亮用「最长路径优先」：/rules/simulator 同时匹配 /rules 与自身，
- * 只认最长的那条，否则侧栏会同时点亮「规则引擎」和「规则模拟器」。
- * 子路由（/rules/new、/rules/:id/edit）仍归到「规则引擎」，与短链模块的父子高亮一致。
- */
-const activeItemTo = computed(() => {
-  const candidates = navGroups
-    .flatMap((group) => visibleItems(group))
-    .map((item) => item.to)
-    .filter(matchesRoute)
-    .sort((a, b) => b.length - a.length);
-  return candidates[0] ?? '';
-});
-
-function isActive(to: string): boolean {
-  return activeItemTo.value === to;
-}
-
 const routeTitle = computed(() => (route.meta.title as string | undefined) ?? 'CLOAK 后台');
+
+const tenantName = computed(
+  () =>
+    auth.tenant?.slug?.toUpperCase() ||
+    auth.tenant?.email?.split('@')[0]?.toUpperCase() ||
+    'TENANT',
+);
 
 const avatarInitial = computed(() => {
   const email = auth.tenant?.email ?? '?';
   return email.charAt(0).toUpperCase();
 });
-
-function onToggleSidebar(): void {
-  if (isMobile.value) {
-    drawerOpen.value = true;
-  } else {
-    collapsed.value = !collapsed.value;
-  }
-}
 
 function go(to: string): void {
   router.push(to);
@@ -410,13 +284,51 @@ async function onLogout(): Promise<void> {
 </script>
 
 <style scoped>
-.drawer-fade-enter-active,
-.drawer-fade-leave-active {
-  transition: opacity 0.2s ease;
+/* reka 的 Presence 依据 data-state 决定卸载时机,退出动画走 CSS 即可 */
+.drawer-overlay[data-state='open'] {
+  animation: drawer-fade-in 0.2s ease;
 }
 
-.drawer-fade-enter-from,
-.drawer-fade-leave-to {
-  opacity: 0;
+.drawer-overlay[data-state='closed'] {
+  animation: drawer-fade-out 0.2s ease;
+}
+
+.drawer-panel[data-state='open'] {
+  animation: drawer-slide-in 0.2s ease;
+}
+
+.drawer-panel[data-state='closed'] {
+  animation: drawer-slide-out 0.2s ease;
+}
+
+@keyframes drawer-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes drawer-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes drawer-slide-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
+
+@keyframes drawer-slide-out {
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drawer-overlay[data-state],
+  .drawer-panel[data-state] {
+    animation: none;
+  }
 }
 </style>

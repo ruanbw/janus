@@ -1,0 +1,23 @@
+<template>
+  <RouterLink
+    to="/overview"
+    aria-label="CLOAK 控制台首页"
+    class="flex h-14 shrink-0 items-center gap-2.5 px-3.5 transition-opacity hover:opacity-80"
+  >
+    <BrandMark :size="28" class="shrink-0" />
+    <span v-if="showLabels" class="flex flex-col leading-tight">
+      <span class="text-[14.5px] font-bold tracking-tight text-white">CLOAK</span>
+      <span class="font-mono text-[10px] tracking-wider text-slate-400 uppercase">Cloak Console</span>
+    </span>
+  </RouterLink>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue';
+
+import BrandMark from '@/components/BrandMark.vue';
+
+const props = withDefaults(defineProps<{ collapsed?: boolean }>(), { collapsed: false });
+
+const showLabels = computed(() => !props.collapsed);
+</script>
