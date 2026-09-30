@@ -296,3 +296,76 @@ func TestManualFactIPParsing(t *testing.T) {
 		t.Fatal("非 IP 的 ip 条件不该编译通过")
 	}
 }
+
+// ip 集合比较的四个运算符真值表:in / eq 在集合内命中,neq / not_in 在集合外命中。
+// 回归的 bug:ip 分支只看 op==not_in,导致 neq 的两个方向都反了
+// ("ip neq 203.0.113.7" 会命中落在集合内的访客、放过集合外的访客)。
+func TestIPSetOperatorsTruthTable(t *testing.T) {
+	// 每个 case 只声明语义:访客 IP 落不落在配置集合里,期望由运算符决定。
+	cases := []struct {
+		name   string   // 用例名
+		values []string // 条件里配的 IP 集合
+		ip     string   // 访客 IP
+		inSet  bool     // 该访客 IP 是否落在上面这个集合内
+	}{
+		{"IPv4 字面量-集合内", []string{"203.0.113.7"}, "203.0.113.7", true},
+		{"IPv4 字面量-集合外", []string{"203.0.113.7"}, "203.0.113.8", false},
+		{"IPv4 网段-集合内", []string{"10.0.0.0/8", "192.168.1.0/24"}, "192.168.1.99", true},
+		{"IPv4 网段-集合外", []string{"10.0.0.0/8", "192.168.1.0/24"}, "192.168.2.1", false},
+		{"IPv6 字面量-集合内", []string{"2001:db8::1"}, "2001:0db8:0000::1", true},
+		{"IPv6 字面量-集合外", []string{"2001:db8::1"}, "2001:db8::2", false},
+		{"IPv6 网段-集合内", []string{"2001:db8::/32"}, "2001:db8:1::9", true},
+		{"IPv6 网段-集合外", []string{"2001:db8::/32"}, "2001:db9::1", false},
+	}
+	// 四个集合运算符的真值表:in / eq = 落在集合内;neq / not_in = 落在集合外。
+	ops := []struct {
+		op   string
+		want func(inSet bool) bool
+	}{
+		{OpIn, func(inSet bool) bool { return inSet }},
+		{OpEq, func(inSet bool) bool { return inSet }},
+		{OpNeq, func(inSet bool) bool { return !inSet }},
+		{OpNotIn, func(inSet bool) bool { return !inSet }},
+	}
+	for _, tc := range cases {
+		for _, o := range ops {
+			t.Run(tc.name+"/"+o.op, func(t *testing.T) {
+				f := Fact{IP: tc.ip}
+				got := evalCond(t, f, store.RuleCondition{
+					Field: FieldIP, Operator: o.op, Values: tc.values,
+				})
+				if want := o.want(tc.inSet); got != want {
+					t.Fatalf("访客 %s %s %v(落在集合内=%v)= %v, want %v",
+						tc.ip, o.op, tc.values, tc.inSet, got, want)
+				}
+			})
+		}
+	}
+}
+
+// 取不到访客 IP 时恒不命中——包括 neq / not_in(否则空 ipattr 会被当成"不在集合里"而全部命中)。
+func TestIPSetEmptyValueNeverMatches(t *testing.T) {
+	values := []string{"10.0.0.0/8", "203.0.113.7"}
+	// IP 为空,以及 IP 非法(ipattr 随之为空)两种画像
+	facts := []Fact{{}, {IP: "不是IP"}}
+	for _, f := range facts {
+		for _, op := range []string{OpIn, OpEq, OpNeq, OpNotIn} {
+			if evalCond(t, f, store.RuleCondition{
+				Field: FieldIP, Operator: op, Values: values,
+			}) {
+				t.Fatalf("画像 %+v 的 ip %s 不该命中", f, op)
+			}
+		}
+	}
+	// ipattr 字段本身同理:恒不命中
+	if evalCond(t, Fact{IP: "10.1.2.3"}, store.RuleCondition{
+		Field: FieldIPAttr, Operator: OpNeq, Values: []string{"private"},
+	}) {
+		t.Fatal("ipattr 为空时 neq 不该命中")
+	}
+	if evalCond(t, Fact{IP: "8.8.8.8"}, store.RuleCondition{
+		Field: FieldIPAttr, Operator: OpNotIn, Values: []string{"private"},
+	}) {
+		t.Fatal("ipattr 为空时 not_in 不该命中")
+	}
+}

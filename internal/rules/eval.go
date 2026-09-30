@@ -233,6 +233,8 @@ func (c *compiledCond) match(f *Fact) bool {
 // matchSet 处理 in / eq / neq / not_in:values 里任一相等即满足(大小写不敏感)。
 // ip 字段特殊:比对的是预解析的 IP 集合与 CIDR 集合
 // (配置侧的 IP/CIDR 在加载期就解析好了,求值期只解析访客自己的地址,且只解析一次)。
+// 四个运算符只共用一个 hit("访客 IP 落没落在集合里"),再由 c.op 决定取反不取反——
+// 在 ip 分支里各写各的返回值会漏掉 neq,把它整体判反。
 func (c *compiledCond) matchSet(f *Fact, raw string) bool {
 	hit := false
 	if c.field == FieldIP {
@@ -242,21 +244,24 @@ func (c *compiledCond) matchSet(f *Fact, raw string) bool {
 		}
 		for _, want := range c.ips {
 			if want.Equal(ip) {
-				return c.op != OpNotIn
+				hit = true
+				break
 			}
 		}
-		for _, n := range c.nets {
-			if n.Contains(ip) {
-				return c.op != OpNotIn
+		if !hit {
+			for _, n := range c.nets {
+				if n.Contains(ip) {
+					hit = true
+					break
+				}
 			}
 		}
-		// 没落到任何网段:只有 not_in 满足
-		return c.op == OpNotIn
-	}
-	for _, lit := range c.lits {
-		if strings.EqualFold(raw, lit) {
-			hit = true
-			break
+	} else {
+		for _, lit := range c.lits {
+			if strings.EqualFold(raw, lit) {
+				hit = true
+				break
+			}
 		}
 	}
 	switch c.op {
