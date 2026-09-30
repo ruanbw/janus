@@ -1,20 +1,8 @@
 <template>
   <div class="flex flex-col gap-5 pb-10" data-od-id="links-view">
-    <!-- ==================== 4 个 KPI 指标 ==================== -->
+    <!-- ==================== 3 个 KPI 指标 ==================== -->
     <section class="kpi-grid" data-od-id="links-kpi">
-      <!-- KPI 1: 短链配额 -->
-      <div class="kpi">
-        <div class="kpi-k">短链配额使用</div>
-        <div class="kpi-v">
-          {{ usage?.links ?? total }}
-          <span class="text-[14px] text-muted font-normal">/ {{ usage?.maxLinks ?? '不限' }}</span>
-        </div>
-        <div class="kpi-sub">
-          已用 {{ quotaPercent }}% · 剩余 {{ remainingQuota }}
-        </div>
-      </div>
-
-      <!-- KPI 2: 活跃短链 -->
+      <!-- KPI 1: 活跃短链 -->
       <div class="kpi">
         <div class="kpi-k">活跃服务中</div>
         <div class="kpi-v">
@@ -26,7 +14,7 @@
         </div>
       </div>
 
-      <!-- KPI 3: 累计访问 -->
+      <!-- KPI 2: 累计访问 -->
       <div class="kpi">
         <div class="kpi-k">本页累计访问量</div>
         <div class="kpi-v">
@@ -35,7 +23,7 @@
         <div class="kpi-sub">包含跳转型与落地页访问统计</div>
       </div>
 
-      <!-- KPI 4: 落地页转化与 CTR -->
+      <!-- KPI 3: 落地页转化与 CTR -->
       <div class="kpi">
         <div class="kpi-k">落地页点击转化</div>
         <div class="kpi-v">
@@ -213,18 +201,17 @@
               >
                 访问 / 点击
               </th>
-              <th class="shrink">状态</th>
+              <th class="shrink" style="min-width: 118px">状态</th>
               <th class="shrink" style="width: 220px" title="适用于该短链的规则（全局规则 + 显式关联的规则）">
                 规则
               </th>
-              <th class="shrink">启用</th>
               <th class="shrink col-actions">操作</th>
             </tr>
           </thead>
           <tbody>
             <!-- 加载态 -->
             <tr v-if="loading && links.length === 0">
-              <td colspan="9" class="empty">
+              <td colspan="8" class="empty">
                 <div class="flex items-center justify-center gap-2 text-muted py-6">
                   <RefreshCw class="animate-spin" :size="16" />
                   正在加载短链数据...
@@ -234,7 +221,7 @@
 
             <!-- 空状态 -->
             <tr v-else-if="filteredLinks.length === 0">
-              <td colspan="9" class="py-8">
+              <td colspan="8" class="py-8">
                 <AppEmpty
                   :description="links.length === 0 ? '暂无短链记录，请点击下方按钮创建第一条短链' : '未找到符合当前筛选条件的短链记录'"
                 />
@@ -382,11 +369,28 @@
                 </button>
               </td>
 
-              <!-- 状态 -->
+
+              <!-- 状态：开关与文案同格。原先这里是「状态」徽标 + 「启用」开关两列,
+                   但两者读的都是 link.status,扫一行得看两处才确认得了状态。 -->
               <td class="shrink">
-                <span :class="link.status === 'enabled' ? 'badge badge-ok' : 'badge badge-neutral'">
-                  {{ link.status === 'enabled' ? '已启用' : '已停用' }}
-                </span>
+                <div class="row" style="gap: 8px; flex-wrap: nowrap">
+                  <label class="switch">
+                    <input
+                      type="checkbox"
+                      :checked="link.status === 'enabled'"
+                      :disabled="statusUpdatingId === link.id"
+                      :aria-label="(link.status === 'enabled' ? '停用短链 ' : '启用短链 ') + link.code"
+                      @change="onToggleLinkStatus(link)"
+                    />
+                    <i></i>
+                  </label>
+                  <span
+                    class="tiny whitespace-nowrap"
+                    :class="link.status === 'enabled' ? 'text-ink' : 'text-ink-faint'"
+                  >
+                    {{ link.status === 'enabled' ? '已启用' : '已停用' }}
+                  </span>
+                </div>
               </td>
 
               <!-- 规则:条数 + 前若干个规则名,超出走 +K;单元格不折行 -->
@@ -415,20 +419,6 @@
                   </span>
                 </div>
                 <span v-else class="tiny muted">未关联规则</span>
-              </td>
-
-              <!-- 启用 Switch -->
-              <td class="shrink">
-                <label class="switch">
-                  <input
-                    type="checkbox"
-                    :checked="link.status === 'enabled'"
-                    :disabled="statusUpdatingId === link.id"
-                    :aria-label="'启用短链 ' + link.code"
-                    @change="onToggleLinkStatus(link)"
-                  />
-                  <i></i>
-                </label>
               </td>
 
               <!-- 操作 -->
@@ -471,7 +461,6 @@
       <div class="panel-ft row-between flex-wrap gap-3">
         <div class="row tiny muted" style="gap: 12px">
           <span>共 <strong class="text-ink font-mono">{{ total }}</strong> 条短链</span>
-          <span>配额使用 <strong class="text-ink font-mono">{{ usage?.links ?? total }}</strong> / {{ usage?.maxLinks ?? '不限' }}</span>
         </div>
         <div class="row" style="gap: 10px">
           <div class="row tiny muted" style="gap: 6px">
@@ -620,7 +609,7 @@ import {
 } from '@/api/links';
 import AppEmpty from '@/components/ui/AppEmpty.vue';
 import { confirm } from '@/components/ui/confirm';
-import { useAuthStore } from '@/stores/auth';
+
 import { ApiError } from '@/types/api';
 import type {
   Domain,
@@ -635,7 +624,10 @@ import { message } from '@/utils/toast';
 
 const route = useRoute();
 const router = useRouter();
-const auth = useAuthStore();
+
+// 原先这里有 const auth = useAuthStore()，唯一的用途是「写操作后 await auth.fetchMe()」
+// 刷新配额显示。配额已经只留在总览，这 4 次 fetchMe（每次 3 个请求）成了纯浪费的往返，
+// 删掉后本页面不再依赖 auth store。
 
 const DOMAIN_STATUS_NOTE: Record<string, string> = {
   pending: 'DNS 待验证',
@@ -666,22 +658,6 @@ function visibleRuleNames(link: Link): string[] {
 }
 
 // ==================== 计算用量与 KPI ====================
-const usage = computed(() => auth.config?.usage);
-
-const quotaPercent = computed(() => {
-  const max = usage.value?.maxLinks;
-  if (!max || max <= 0) return 0;
-  const used = usage.value?.links ?? total.value;
-  return Math.min(100, Math.round((used / max) * 100));
-});
-
-const remainingQuota = computed(() => {
-  const max = usage.value?.maxLinks;
-  if (!max) return '不限';
-  const rem = max - (usage.value?.links ?? total.value);
-  return rem > 0 ? `${rem} 条` : '已耗尽';
-});
-
 const activeLinksCount = computed(() => {
   return links.value.filter((l) => l.status === 'enabled').length;
 });
@@ -777,7 +753,7 @@ function selectedCodesSummary(limit = 8): string {
   return codes.length > limit ? `${head} 等 ${codes.length} 条` : head;
 }
 
-/** 批量操作后统一收尾:清空选择、重载列表、刷新配额。ids 为确认时快照的选中项。 */
+/** 批量操作后统一收尾:清空选择、重载列表。ids 为确认时快照的选中项。 */
 async function afterBatchDone(
   ids: number[],
   ops: () => Promise<{ deleted: number }>,
@@ -792,7 +768,6 @@ async function afterBatchDone(
     );
     clearSelection();
     await loadData();
-    await auth.fetchMe();
   } catch (err) {
     if (err instanceof ApiError) message.error(err.message);
     else message.error(`批量${action}失败,请稍后重试`);
@@ -949,7 +924,6 @@ function handleDeleteLink(link: Link) {
         await deleteLink(link.id);
         message.success(`短链「${link.code}」已逻辑删除`);
         await loadData();
-        await auth.fetchMe();
       } catch (err) {
         if (err instanceof ApiError) message.error(err.message);
         else message.error('删除短链失败');
@@ -970,7 +944,6 @@ function handlePurgeLink(link: Link) {
         await purgeLink(link.id);
         message.success(`短链「${link.code}」已彻底清除`);
         await loadData();
-        await auth.fetchMe();
       } catch (err) {
         if (err instanceof ApiError) message.error(err.message);
         else message.error('彻底删除短链失败');
@@ -1125,7 +1098,6 @@ async function executeBatchImport() {
   if (successCount > 0) {
     message.success(`成功导入 ${successCount} 条短链${failCount > 0 ? `，失败 ${failCount} 条` : ''}`);
     await loadData();
-    await auth.fetchMe();
   } else {
     message.error(`导入失败：全部 ${failCount} 条均未成功 (${errors[0] || '未知错误'})`);
   }
