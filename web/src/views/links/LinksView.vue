@@ -159,9 +159,9 @@
                   @change="toggleSelectAll"
                 />
               </th>
-              <th class="shrink">短链链接</th>
+              <th>短链链接</th>
               <th class="shrink">类型</th>
-              <th style="width: 208px">出口目标 URL</th>
+              <th class="shrink" style="width: 208px; max-width: 208px">出口目标 URL</th>
               <th
                 class="num"
                 title="访问 = 跳转 / 落地页视图的次数(点击行不计入);点击 = 落地页按钮经 SDK 回传的次数。点击数字可查看访问明细"
@@ -231,7 +231,7 @@
                 />
               </td>
               <!-- 短链链接:每个关联域名一行完整短链(同短码可被多条域名承载) -->
-              <td class="shrink">
+              <td>
                 <div class="stack" style="gap: 3px">
                   <div
                     v-for="url in linkUrls(link)"
@@ -244,7 +244,7 @@
                       target="_blank"
                       rel="noopener noreferrer"
                       class="linkish mono tiny truncate"
-                      style="max-width: 300px"
+                      style="max-width: min(100%, 450px)"
                       :title="url + '（新标签页打开）'"
                       @click.stop
                     >
@@ -273,10 +273,8 @@
                 </span>
               </td>
 
-              <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序。列宽用内层固定 180px 撑住,
-                   不靠 max-width——auto 表格布局会把多余宽度按比例分给「能长」的列,URL 列
-                   以前就是靠 420px 的 max-content 吃掉了大部分富余宽度。完整链接靠悬停 tooltip。 -->
-              <td>
+              <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序。收窄为固定紧凑列,超长悬停 tooltip -->
+              <td class="shrink" style="max-width: 208px">
                 <div class="stack" style="gap: 3px; width: 180px">
                   <div
                     v-if="link.targetUrls && link.targetUrls.length > 1"

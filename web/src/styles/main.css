@@ -838,6 +838,7 @@ body {
   white-space: nowrap;
 }
 
+.tbl th.shrink,
 .tbl td.shrink {
   width: 1%;
   white-space: nowrap;
