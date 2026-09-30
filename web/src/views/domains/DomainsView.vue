@@ -9,7 +9,9 @@
       </template>
     </PageHeader>
 
-    <QuotaBar :domains-used="usage?.domains" :domains-max="usage?.maxDomains" />
+    <!-- 域名配额条：原先这里常驻一个 <QuotaBar>，与总览、账号设置三处重复。
+         自有域名配额已经只在总览展示（那里是唯一每次加载都刷新的来源），
+         创建超限时表单会直接报 403 并带出实际数字。 -->
 
     <AppTable
       :columns="columns"
@@ -99,23 +101,18 @@ import { CirclePlay, CircleStop, Plus, RefreshCw, Trash2 } from '@lucide/vue';
 
 import { deleteDomain, listDomains, recheckDomain, updateDomainStatus } from '@/api/domains';
 import PageHeader from '@/components/PageHeader.vue';
-import QuotaBar from '@/components/QuotaBar.vue';
 import { confirm } from '@/components/ui/confirm';
 import type { TableColumn } from '@/components/ui/types';
 import { message } from '@/utils/toast';
 import { CERT_STATUS, DOMAIN_ORIGIN, DOMAIN_STATUS } from '@/constants/dict';
-import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
 import type { Domain, DomainStatus } from '@/types/api';
 import { formatDateTime } from '@/utils/format';
 
 const router = useRouter();
-const auth = useAuthStore();
 
 const domains = ref<Domain[]>([]);
 const loading = ref(false);
-
-const usage = computed(() => auth.config?.usage);
 
 /** AppTable 槽位 record 为 Record<string, unknown>,转换为领域类型以访问字段 */
 function toDomain(r: Record<string, unknown>): Domain {

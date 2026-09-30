@@ -2,7 +2,7 @@
   <div class="mx-auto max-w-5xl">
     <PageHeader
       title="账号设置与安全"
-      description="查看租户核心账户信息、实时配额消耗监控，并管理控制台登录密码凭据"
+      description="查看租户核心账户信息，并管理控制台登录密码凭据"
     />
 
     <!-- 平台超管首次登录设置密码提醒 -->
@@ -16,15 +16,15 @@
     />
 
     <div class="grid grid-cols-1 gap-6 lg:grid-cols-2 items-start">
-      <!-- 左卡片:租户信息与配额 -->
+      <!-- 左卡片:租户信息 -->
       <AppCard :padding="false">
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <Layers :size="18" class="text-brand-600 dark:text-brand-400" />
-            租户信息与配额
+            租户信息
           </CardTitle>
           <CardDescription>
-            租户基础账户属性、各资源配额使用进度及短码生成偏好
+            租户基础账户属性与短码生成偏好
           </CardDescription>
         </CardHeader>
 
@@ -60,75 +60,11 @@
             </div>
           </div>
 
-          <!-- 配额进度条监控 -->
-          <div class="space-y-4">
-            <div class="flex items-center justify-between text-xs font-semibold text-ink-soft">
-              <span>资源配额使用监控</span>
-              <span class="text-[11px] text-ink-faint font-normal">已物理删除资源不计入</span>
-            </div>
-
-            <!-- 短链配额 -->
-            <div class="rounded-xl border border-line bg-surface p-4 space-y-2">
-              <div class="flex items-center justify-between text-xs">
-                <span class="font-medium text-ink">短链配额</span>
-                <div class="flex items-center gap-2">
-                  <span
-                    class="tabular-nums"
-                    :class="linkPercent >= 100 ? 'text-err font-bold' : 'text-ink font-semibold'"
-                  >
-                    {{ usage?.links ?? 0 }} / {{ usage?.maxLinks ?? '-' }} 条
-                  </span>
-                  <span class="text-[11px] text-ink-faint tabular-nums">({{ linkPercent }}%)</span>
-                </div>
-              </div>
-
-              <AppProgress
-                :percent="linkPercent"
-                :status="linkPercent >= 100 ? 'exception' : 'active'"
-                :stroke-width="8"
-                :show-info="false"
-              />
-
-              <p v-if="linkPercent >= 100" class="flex items-center gap-1 text-[11px] font-medium text-err">
-                <TriangleAlert :size="12" />
-                短链配额已用尽，无法创建新短链，请联系管理员升级等级
-              </p>
-              <p v-else-if="linkPercent >= 80" class="text-[11px] text-warn">
-                短链配额已达 {{ linkPercent }}%，接近上限
-              </p>
-            </div>
-
-            <!-- 域名配额 -->
-            <div class="rounded-xl border border-line bg-surface p-4 space-y-2">
-              <div class="flex items-center justify-between text-xs">
-                <span class="font-medium text-ink">自有域名配额</span>
-                <div class="flex items-center gap-2">
-                  <span
-                    class="tabular-nums"
-                    :class="domainPercent >= 100 ? 'text-err font-bold' : 'text-ink font-semibold'"
-                  >
-                    {{ usage?.domains ?? 0 }} / {{ usage?.maxDomains ?? '-' }} 个
-                  </span>
-                  <span class="text-[11px] text-ink-faint tabular-nums">({{ domainPercent }}%)</span>
-                </div>
-              </div>
-
-              <AppProgress
-                :percent="domainPercent"
-                :status="domainPercent >= 100 ? 'exception' : 'active'"
-                :stroke-width="8"
-                :show-info="false"
-              />
-
-              <div class="flex items-center justify-between text-[11px]">
-                <span v-if="domainPercent >= 100" class="flex items-center gap-1 font-medium text-err">
-                  <TriangleAlert :size="12" />
-                  自有域名配额已达上限
-                </span>
-                <span v-else class="text-ink-faint">平台默认域名不计入自有域名配额</span>
-              </div>
-            </div>
-          </div>
+          <!-- 配额进度条监控：原先在「租户信息与配额」卡片里常驻展示。
+               现在整个后台只有总览页一处展示配额（配额是租户级全局事实，
+               重复摆在每个资源页只会让人分不清哪份是最新的），
+               临近上限的告警也跟着搬去了总览。创建时的超限由 403 错误提示兜底，
+               那里带的是后端当时的真实数字。 -->
 
           <!-- 自动生成短码长度配置 -->
           <div class="rounded-xl border border-line bg-surface-muted/40 p-4 space-y-3">
@@ -274,7 +210,6 @@ import {
   Layers,
   Lock,
   ShieldCheck,
-  TriangleAlert,
 } from '@lucide/vue';
 import { message } from '@/utils/toast';
 import type { FormRule } from '@/components/ui/types';
@@ -285,11 +220,9 @@ import PageHeader from '@/components/PageHeader.vue';
 import { TENANT_STATUS } from '@/constants/dict';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
-import type { QuotaUsage } from '@/types/api';
 
 const auth = useAuthStore();
 
-const usage = ref<QuotaUsage | undefined>(undefined);
 const codeLength = ref<number | undefined>(undefined);
 const savingCodeLength = ref(false);
 
@@ -302,16 +235,6 @@ const isFirstLogin = computed(() => Boolean(auth.tenant?.firstLoginSetup));
 const statusInfo = computed(() => {
   const s = auth.tenant?.status ?? 'pending';
   return TENANT_STATUS[s] ?? { label: '未知', color: 'default' };
-});
-
-const linkPercent = computed(() => {
-  if (!usage.value || !usage.value.maxLinks) return 0;
-  return Math.round((usage.value.links / usage.value.maxLinks) * 100);
-});
-
-const domainPercent = computed(() => {
-  if (!usage.value || !usage.value.maxDomains) return 0;
-  return Math.round((usage.value.domains / usage.value.maxDomains) * 100);
 });
 
 const rules: Record<string, FormRule[]> = {
@@ -334,7 +257,6 @@ const rules: Record<string, FormRule[]> = {
 async function load() {
   try {
     const me = await fetchMyTenant();
-    usage.value = me.usage;
     codeLength.value = me.codeLength;
     auth.tenant = me;
   } catch (error) {

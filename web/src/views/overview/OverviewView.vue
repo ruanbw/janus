@@ -33,6 +33,53 @@
       </div>
     </section>
 
+    <!-- 资源配额：整个后台唯一常驻展示配额的地方。原先同一份数字在总览 KPI 副标题、
+         短链列表（KPI 卡 + 表格底栏两处）、域名池顶部和账号设置里各摆了一遍，
+         而只有总览是每次加载都跟 auth.fetchMe() 刷新的，另外几处读的是
+         GET /api/config 的陈旧快照，写操作后还会互相矛盾。
+         告警也跟着搬来：配额是租户级全局事实，在离数字最近的地方提醒一次就够。 -->
+    <section v-if="quotaRows.length" class="panel">
+      <div class="panel-hd">
+        <div>
+          <h2>资源配额</h2>
+          <p>租户可用的短链与自有域名上限，以及当前用量。</p>
+        </div>
+      </div>
+      <div class="panel-bd">
+        <div class="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
+          <div v-for="row in quotaRows" :key="row.key" class="space-y-2">
+            <div class="flex items-baseline justify-between gap-3 text-[13px]">
+              <span class="font-medium text-ink-soft">{{ row.label }}</span>
+              <span
+                class="whitespace-nowrap font-mono tabular-nums font-semibold"
+                :class="row.percent >= 100 ? 'text-err' : 'text-ink'"
+              >
+                {{ row.used }} / {{ row.maxLabel }}
+                <span class="font-sans font-normal text-ink-faint">（{{ row.percent }}%）</span>
+              </span>
+            </div>
+            <AppProgress
+              :percent="row.percent"
+              :status="row.percent >= 100 ? 'exception' : 'active'"
+              :stroke-width="8"
+              :show-info="false"
+            />
+            <p
+              v-if="row.percent >= 100"
+              class="flex items-center gap-1.5 text-[12px] font-medium text-err"
+            >
+              <TriangleAlert :size="13" />
+              {{ row.exhausted }}
+            </p>
+            <p v-else-if="row.percent >= QUOTA_WARN_PERCENT" class="text-[12px] text-warn">
+              {{ row.label }}已达 {{ row.percent }}%，接近上限
+            </p>
+            <p v-else class="text-[12px] text-ink-faint">{{ row.note }}</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- 流量与转化分析 (真实数据驱动 / 优雅空状态) -->
     <section>
       <!-- 空状态：当访问量为 0 或无短链时 -->
@@ -337,7 +384,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { RefreshCw } from '@lucide/vue';
+import { RefreshCw, TriangleAlert } from '@lucide/vue';
 
 import { listDomains } from '@/api/domains';
 import { listLinks } from '@/api/links';
@@ -379,6 +426,58 @@ const osBreakdown = computed(() => osDistribution(visits.value));
 const browserBreakdown = computed(() => browserDistribution(visits.value));
 
 const quotaUsage = computed(() => auth.tenant?.usage);
+
+/** 达到这个百分比就开始提醒；100% 是硬上限（后端会直接 403） */
+const QUOTA_WARN_PERCENT = 80;
+
+interface QuotaRow {
+  key: 'links' | 'domains';
+  label: string;
+  used: number;
+  max: number;
+  /** max 为 0/缺失时的展示文案，避免把「不限」渲染成 0 */
+  maxLabel: string;
+  percent: number;
+  /** 用满时的告警文案（带具体后果，不只是「已满」） */
+  exhausted: string;
+  /** 未接近上限时的补充说明 */
+  note: string;
+}
+
+const quotaRows = computed<QuotaRow[]>(() => {
+  const usage = quotaUsage.value;
+  if (!usage) return [];
+  const rows: Array<Omit<QuotaRow, 'maxLabel' | 'percent'>> = [
+    {
+      key: 'links',
+      label: '短链配额',
+      used: usage.links ?? 0,
+      max: usage.maxLinks ?? 0,
+      exhausted: '短链配额已用尽，无法创建新短链，请联系管理员升级租户等级',
+      note: '包含已启用与已停用的短链；物理删除后才释放名额',
+    },
+    {
+      key: 'domains',
+      label: '自有域名配额',
+      used: usage.domains ?? 0,
+      max: usage.maxDomains ?? 0,
+      exhausted: '自有域名配额已用尽，无法添加新域名',
+      note: '平台默认域名不计入自有域名配额',
+    },
+  ];
+  return rows.map((row) => {
+    // max 为 0/缺失时当作不限：不算百分比、不标红，否则会用一条空进度条
+    // 谎报「已用尽」
+    if (!row.max) {
+      return { ...row, maxLabel: '不限', percent: 0 };
+    }
+    return {
+      ...row,
+      maxLabel: String(row.max),
+      percent: Math.min(100, Math.round((row.used / row.max) * 100)),
+    };
+  });
+});
 
 // 活跃短链数：真实已启用的短链数量
 const activeLinksCount = computed(() => {
@@ -467,18 +566,14 @@ const kpiList = computed<KPIItem[]>(() => [
     label: '活跃短链',
     value: activeLinksCount.value.toLocaleString(),
     unit: '条',
-    sub: quotaUsage.value?.maxLinks
-      ? `已启用 · 配额 ${quotaUsage.value.links}/${quotaUsage.value.maxLinks}`
-      : `已启用 · 共 ${links.value.length} 条短链`,
+    sub: `已启用 · 共 ${links.value.length} 条短链`,
     tip: '状态为「启用」的短链数量。已停用的短链不计入，不参与重定向与流量承接。',
   },
   {
     label: '承载域名',
     value: activeDomainsCount.value.toLocaleString(),
     unit: '个',
-    sub: quotaUsage.value?.maxDomains
-      ? `已激活 · 配额 ${quotaUsage.value.domains}/${quotaUsage.value.maxDomains}`
-      : `已激活 · 共 ${domains.value.length} 个域名`,
+    sub: `已激活 · 共 ${domains.value.length} 个域名`,
     tip: 'DNS 解析已指向本服务器且状态为「已激活」的域名数量，可正常签发证书并承载短链跳转。',
   },
   {
