@@ -175,10 +175,14 @@ func (a *API) ruleDecision(c *gin.Context, link *store.Link) rules.Decision {
 	// 地理值也在这之前查完并挂到请求的副本上:求值期必须零 IO(ADR 0009),
 	// 查库的动作只能发生在这里。取不到就填空值,不填默认国家。
 	req := c.Request
-	if g := a.visitGeo(c); g.Country != "" || g.ASN != "" {
+	g := a.visitGeo(c)
+	if g.Country != "" || g.ASN != "" {
 		req = req.WithContext(rules.WithGeo(req.Context(), g.Country, g.ASN))
 	}
-	fact := rules.FromRequest(req).WithIP(clientIP(req))
+	vCtx := rules.AcquireVisitorContext(req, g.Country, g.ASN).WithIP(clientIP(req))
+	defer rules.ReleaseVisitorContext(vCtx)
+
+	fact := vCtx.ToFact()
 	dec, matched := snap.Evaluate(fact, link.ID)
 	if !matched {
 		return rules.Decision{}

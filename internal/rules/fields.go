@@ -18,8 +18,10 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 )
 
 // 条件字段(spec D5 的 13 个,库内以字符串落库)。
@@ -137,6 +139,278 @@ func (f *Fact) value(field string) (string, bool) {
 	return "", false
 }
 
+// VisitorContext 访客画像上下文抽象接口。
+// 支持零分配与惰性求值:仅在规则引擎真正访问字段时才解析对应数据。
+type VisitorContext interface {
+	ClientIP() netip.Addr
+	Field(name string) (string, bool)
+}
+
+var (
+	_ VisitorContext = (*LazyVisitorContext)(nil)
+	_ VisitorContext = (*Fact)(nil)
+	_ VisitorContext = Fact{}
+)
+
+// ClientIP 返回请求来源 IP(netip.Addr 16 字节值类型,零堆分配)。
+func (f Fact) ClientIP() netip.Addr {
+	if f.netIP != nil {
+		if addr, ok := netip.AddrFromSlice(f.netIP); ok {
+			return addr.Unmap()
+		}
+	}
+	if addr, err := netip.ParseAddr(f.IP); err == nil {
+		return addr.Unmap()
+	}
+	return netip.Addr{}
+}
+
+// Field 按字段名获取求值所需的属性值。未命中或无数据时 ok 为 false。
+func (f Fact) Field(name string) (string, bool) {
+	return f.value(name)
+}
+
+const (
+	flagIP uint32 = 1 << iota
+	flagIPAttr
+	flagLang
+	flagRef
+	flagUTM
+	flagUA
+	flagUAParsed
+	flagPath
+	flagDomain
+)
+
+// LazyVisitorContext 惰性求值的访客画像上下文。
+// 通过 bitmask 记录各字段的解析状态,仅在规则引擎真正访问字段时才执行解析。
+// 在多数无需 UA/设备判定的规则场景下,UA 小写化与特征词扫描完全跳过。
+type LazyVisitorContext struct {
+	req     *http.Request
+	country string
+	asn     string
+
+	flags uint32
+
+	clientIP netip.Addr
+	ipStr    string
+	ipAttr   string
+	lang     string
+	ref      string
+	utm      string
+	ua       string
+	devType  string
+	os       string
+	browser  string
+	path     string
+	domain   string
+}
+
+var visitorContextPool = sync.Pool{
+	New: func() any {
+		return &LazyVisitorContext{}
+	},
+}
+
+// AcquireVisitorContext 从对象池获取一个惰性访客上下文。
+// 调用方需在请求处理完毕后通过 ReleaseVisitorContext 归还。
+func AcquireVisitorContext(r *http.Request, country, asn string) *LazyVisitorContext {
+	ctx := visitorContextPool.Get().(*LazyVisitorContext)
+	ctx.req = r
+	ctx.country = country
+	ctx.asn = asn
+	return ctx
+}
+
+// ReleaseVisitorContext 重置并将惰性上下文归还到对象池。
+func ReleaseVisitorContext(ctx *LazyVisitorContext) {
+	if ctx == nil {
+		return
+	}
+	ctx.reset()
+	visitorContextPool.Put(ctx)
+}
+
+func (c *LazyVisitorContext) reset() {
+	*c = LazyVisitorContext{}
+}
+
+// WithIP 显式覆盖来源 IP(如写入访问明细的已解析 IP)。
+func (c *LazyVisitorContext) WithIP(ip string) *LazyVisitorContext {
+	c.ipStr = ip
+	if addr, err := netip.ParseAddr(ip); err == nil {
+		c.clientIP = addr.Unmap()
+	} else {
+		c.clientIP = netip.Addr{}
+	}
+	c.flags |= flagIP
+	c.ipAttr = ipAttrFromAddr(c.clientIP)
+	c.flags |= flagIPAttr
+	return c
+}
+
+// UAParsed 返回 UA 是否已执行过设备/系统/浏览器解析(测试与观测用)。
+func (c *LazyVisitorContext) UAParsed() bool {
+	return c.flags&flagUAParsed != 0
+}
+
+func (c *LazyVisitorContext) rawUA() string {
+	if c.flags&flagUA == 0 {
+		c.flags |= flagUA
+		if c.req != nil {
+			c.ua = c.req.UserAgent()
+		}
+	}
+	return c.ua
+}
+
+func (c *LazyVisitorContext) ensureUAParsed() {
+	if c.flags&flagUAParsed != 0 {
+		return
+	}
+	c.flags |= flagUAParsed
+	ua := c.rawUA()
+	if ua == "" {
+		return
+	}
+	c.devType, c.os, c.browser = uaFacts(ua)
+}
+
+// ClientIP 返回请求来源 IP(netip.Addr 16 字节值类型,零堆分配)。
+func (c *LazyVisitorContext) ClientIP() netip.Addr {
+	if c.flags&flagIP == 0 {
+		c.flags |= flagIP
+		if c.req != nil {
+			c.clientIP = extractClientIP(c.req)
+		}
+	}
+	return c.clientIP
+}
+
+// Field 按字段名获取求值所需的属性值。未命中或无数据时 ok 为 false。
+func (c *LazyVisitorContext) Field(name string) (string, bool) {
+	switch name {
+	case FieldIP:
+		if c.ipStr == "" {
+			ip := c.ClientIP()
+			if ip.IsValid() {
+				c.ipStr = ip.String()
+			} else if c.req != nil {
+				c.ipStr = hostOnly(c.req.RemoteAddr)
+			}
+		}
+		return c.ipStr, c.ipStr != ""
+
+	case FieldIPAttr:
+		if c.flags&flagIPAttr == 0 {
+			c.flags |= flagIPAttr
+			c.ipAttr = ipAttrFromAddr(c.ClientIP())
+		}
+		return c.ipAttr, c.ipAttr != ""
+
+	case FieldCountry:
+		return c.country, c.country != ""
+
+	case FieldASN:
+		return c.asn, c.asn != ""
+
+	case FieldLang:
+		if c.flags&flagLang == 0 {
+			c.flags |= flagLang
+			if c.req != nil {
+				c.lang = firstLangTag(c.req.Header.Get("Accept-Language"))
+			}
+		}
+		return c.lang, c.lang != ""
+
+	case FieldRef:
+		if c.flags&flagRef == 0 {
+			c.flags |= flagRef
+			if c.req != nil {
+				c.ref = refererHost(c.req.Header.Get("Referer"))
+			}
+		}
+		return c.ref, c.ref != ""
+
+	case FieldUTM:
+		if c.flags&flagUTM == 0 {
+			c.flags |= flagUTM
+			if c.req != nil && c.req.URL != nil {
+				c.utm = utmSource(c.req.URL.RawQuery)
+			}
+		}
+		return c.utm, c.utm != ""
+
+	case FieldUA:
+		ua := c.rawUA()
+		return ua, ua != ""
+
+	case FieldDevType:
+		c.ensureUAParsed()
+		return c.devType, c.devType != ""
+
+	case FieldOS:
+		c.ensureUAParsed()
+		return c.os, c.os != ""
+
+	case FieldBrowser:
+		c.ensureUAParsed()
+		return c.browser, c.browser != ""
+
+	case FieldPath:
+		if c.flags&flagPath == 0 {
+			c.flags |= flagPath
+			if c.req != nil && c.req.URL != nil {
+				c.path = c.req.URL.Path
+			}
+		}
+		return c.path, c.path != ""
+
+	case FieldDomain:
+		if c.flags&flagDomain == 0 {
+			c.flags |= flagDomain
+			if c.req != nil {
+				c.domain = hostOnly(c.req.Host)
+			}
+		}
+		return c.domain, c.domain != ""
+	}
+	return "", false
+}
+
+// ToFact 将惰性画像折成完整的 Fact 结构(向后兼容现有调用方与测试)。
+func (c *LazyVisitorContext) ToFact() Fact {
+	c.ensureUAParsed()
+	ipStr, _ := c.Field(FieldIP)
+	ipAttrVal, _ := c.Field(FieldIPAttr)
+	lang, _ := c.Field(FieldLang)
+	ref, _ := c.Field(FieldRef)
+	utm, _ := c.Field(FieldUTM)
+	ua, _ := c.Field(FieldUA)
+	path, _ := c.Field(FieldPath)
+	domain, _ := c.Field(FieldDomain)
+
+	f := Fact{
+		IP:      ipStr,
+		IPAttr:  ipAttrVal,
+		Country: c.country,
+		ASN:     c.asn,
+		Lang:    lang,
+		Ref:     ref,
+		UTM:     utm,
+		UA:      ua,
+		DevType: c.devType,
+		OS:      c.os,
+		Browser: c.browser,
+		Path:    path,
+		Domain:  domain,
+	}
+	if ipStr != "" {
+		f.netIP = net.ParseIP(ipStr)
+	}
+	return f
+}
+
 // WithIP 返回一份改写了来源 IP 的画像。
 // 跳转链路建议用它:把"已经写进访问明细的那个 IP"传给求值,
 // 保证访问明细与规则裁决看到同一个来源 IP,不会因为解析口径不同而对不上。
@@ -159,38 +433,87 @@ func (f *Fact) parsedIP() net.IP {
 // FromRequest 从请求抽出访客画像。
 // 纯内存:只读头、URL 与 RemoteAddr,不做任何 IO。
 func FromRequest(r *http.Request) Fact {
-	f := Fact{
-		IP:   sourceIP(r),
-		UA:   r.UserAgent(),
-		Path: r.URL.Path,
-	}
-	f.netIP = net.ParseIP(f.IP)
-	f.IPAttr = ipAttr(f.IP)
-	f.Lang = firstLangTag(r.Header.Get("Accept-Language"))
-	f.Ref = refererHost(r.Header.Get("Referer"))
-	f.Domain = hostOnly(r.Host)
-	f.UTM = utmSource(r.URL.RawQuery)
-	f.DevType, f.OS, f.Browser = uaFacts(f.UA)
+	var country, asn string
 	if geo, ok := r.Context().Value(geoKey{}).(Geo); ok {
-		f.Country = geo.Country
-		f.ASN = geo.ASN
+		country = geo.Country
+		asn = geo.ASN
 	}
-	return f
+	ctx := AcquireVisitorContext(r, country, asn)
+	defer ReleaseVisitorContext(ctx)
+	return ctx.ToFact()
 }
 
 // sourceIP 解析请求来源 IP:仅当直连来源是内网/回环(即部署前置反代)时才信任
 // X-Forwarded-For 首段,公网直连时忽略该头,防止访客伪造来源 IP 骗过规则。
 // 口径与 httpapi 写入访问明细的 clientIP 保持一致(同一处判定,避免明细与裁决对不上)。
 func sourceIP(r *http.Request) string {
-	peer := net.ParseIP(hostOnly(r.RemoteAddr))
-	if peer != nil && (peer.IsLoopback() || peer.IsPrivate()) {
-		for _, part := range strings.Split(r.Header.Get("X-Forwarded-For"), ",") {
-			if ip := net.ParseIP(strings.TrimSpace(part)); ip != nil {
-				return ip.String()
+	ip := extractClientIP(r)
+	if ip.IsValid() {
+		return ip.String()
+	}
+	return hostOnly(r.RemoteAddr)
+}
+
+// extractClientIP 从请求解析来源 IP(netip.Addr 16 字节值类型,零堆分配)。
+// 仅当直连来源是内网/回环(部署前置反代)时才信任 X-Forwarded-For 首段,公网直连时忽略该头。
+func extractClientIP(r *http.Request) netip.Addr {
+	if r == nil {
+		return netip.Addr{}
+	}
+	peer := parseIPFromHostPort(r.RemoteAddr)
+	if peer.IsValid() && (peer.IsLoopback() || peer.IsPrivate()) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if addr, ok := parseFirstForwardedIP(xff); ok {
+				return addr
 			}
 		}
 	}
-	return hostOnly(r.RemoteAddr)
+	return peer
+}
+
+// parseFirstForwardedIP 零堆分配解析 X-Forwarded-For 中首个合法的 IP 地址。
+func parseFirstForwardedIP(xff string) (netip.Addr, bool) {
+	for len(xff) > 0 {
+		var part string
+		if idx := strings.IndexByte(xff, ','); idx >= 0 {
+			part = strings.TrimSpace(xff[:idx])
+			xff = xff[idx+1:]
+		} else {
+			part = strings.TrimSpace(xff)
+			xff = ""
+		}
+		if part == "" {
+			continue
+		}
+		if addr, err := netip.ParseAddr(part); err == nil {
+			return addr.Unmap(), true
+		}
+	}
+	return netip.Addr{}, false
+}
+
+// parseIPFromHostPort 从 "host:port" 或 "ip" 零堆分配提取 IP 地址。
+func parseIPFromHostPort(h string) netip.Addr {
+	if h == "" {
+		return netip.Addr{}
+	}
+	// 尝试 ParseAddrPort(无分配)
+	if ap, err := netip.ParseAddrPort(h); err == nil {
+		return ap.Addr().Unmap()
+	}
+	// 尝试 ParseAddr(例如去掉可能存在的括号)
+	trimmed := strings.Trim(h, "[]")
+	if addr, err := netip.ParseAddr(trimmed); err == nil {
+		return addr.Unmap()
+	}
+	// 兜底 net.SplitHostPort
+	if host, _, err := net.SplitHostPort(h); err == nil {
+		host = strings.Trim(host, "[]")
+		if addr, err := netip.ParseAddr(host); err == nil {
+			return addr.Unmap()
+		}
+	}
+	return netip.Addr{}
 }
 
 // hostOnly 去掉端口并小写(Host/RemoteAddr 通用)。
@@ -206,21 +529,29 @@ func hostOnly(h string) string {
 	return strings.ToLower(strings.TrimSpace(h))
 }
 
-// ipAttr 由 IP 判定属性(私网/回环/链路本地);IP 非法时返回空。
-func ipAttr(ip string) string {
-	parsed := net.ParseIP(ip)
-	if parsed == nil {
+// ipAttrFromAddr 根据 netip.Addr 判断属性(私网/回环/链路本地)。
+func ipAttrFromAddr(addr netip.Addr) string {
+	if !addr.IsValid() {
 		return ""
 	}
 	switch {
-	case parsed.IsLoopback():
+	case addr.IsLoopback():
 		return IPAttrLoopback
-	case parsed.IsLinkLocalUnicast() || parsed.IsLinkLocalMulticast():
+	case addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast():
 		return IPAttrLinkLocal
-	case parsed.IsPrivate():
+	case addr.IsPrivate():
 		return IPAttrPrivate
 	}
 	return ""
+}
+
+// ipAttr 由 IP 判定属性(私网/回环/链路本地);IP 非法时返回空。
+func ipAttr(ip string) string {
+	addr, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ""
+	}
+	return ipAttrFromAddr(addr)
 }
 
 // firstLangTag 取 Accept-Language 的首个标签并小写化

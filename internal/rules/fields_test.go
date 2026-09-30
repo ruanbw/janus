@@ -5,6 +5,7 @@ package rules
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
@@ -205,4 +206,174 @@ func TestUTMSource(t *testing.T) {
 			t.Errorf("utmSource(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
+}
+
+func TestLazyVisitorContext(t *testing.T) {
+	t.Run("UASkippedIfNotQueried", func(t *testing.T) {
+		ua := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+		r := httptest.NewRequest(http.MethodGet, "https://example.com/test?utm_source=google", nil)
+		r.Header.Set("User-Agent", ua)
+		r.Header.Set("Accept-Language", "en-US,en;q=0.9")
+		r.RemoteAddr = "203.0.113.10:1234"
+
+		ctx := AcquireVisitorContext(r, "US", "")
+		defer ReleaseVisitorContext(ctx)
+
+		if ctx.UAParsed() {
+			t.Fatal("expected UA not parsed upon acquisition")
+		}
+
+		// Querying non-device fields should not trigger UA parsing
+		if country, ok := ctx.Field(FieldCountry); !ok || country != "US" {
+			t.Fatalf("expected country US, got %q (ok=%v)", country, ok)
+		}
+		if ctx.UAParsed() {
+			t.Fatal("expected UA not parsed after querying country")
+		}
+
+		if ip, ok := ctx.Field(FieldIP); !ok || ip != "203.0.113.10" {
+			t.Fatalf("expected ip 203.0.113.10, got %q (ok=%v)", ip, ok)
+		}
+		if ctx.UAParsed() {
+			t.Fatal("expected UA not parsed after querying IP")
+		}
+
+		if utm, ok := ctx.Field(FieldUTM); !ok || utm != "google" {
+			t.Fatalf("expected utm google, got %q (ok=%v)", utm, ok)
+		}
+		if ctx.UAParsed() {
+			t.Fatal("expected UA not parsed after querying UTM")
+		}
+
+		// Querying device field SHOULD trigger UA parsing
+		if dev, ok := ctx.Field(FieldDevType); !ok || dev != DevTypeDesktop {
+			t.Fatalf("expected devtype %s, got %q (ok=%v)", DevTypeDesktop, dev, ok)
+		}
+		if !ctx.UAParsed() {
+			t.Fatal("expected UA parsed after querying FieldDevType")
+		}
+
+		// Subsequent queries to OS and Browser should use cached UA facts
+		if os, ok := ctx.Field(FieldOS); !ok || os != "macOS" {
+			t.Fatalf("expected os macOS, got %q (ok=%v)", os, ok)
+		}
+		if browser, ok := ctx.Field(FieldBrowser); !ok || browser != "Chrome" {
+			t.Fatalf("expected browser Chrome, got %q (ok=%v)", browser, ok)
+		}
+	})
+
+	t.Run("NetipAddrParsing", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			remoteAddr string
+			wantIP     string
+			wantAttr   string
+		}{
+			{"IPv4 public", "203.0.113.9:5555", "203.0.113.9", ""},
+			{"IPv4 private 10.x", "10.0.0.1:80", "10.0.0.1", IPAttrPrivate},
+			{"IPv4 private 192.168.x", "192.168.1.1:443", "192.168.1.1", IPAttrPrivate},
+			{"IPv4 private 172.16.x", "172.16.0.1:8080", "172.16.0.1", IPAttrPrivate},
+			{"IPv4 loopback", "127.0.0.1:9090", "127.0.0.1", IPAttrLoopback},
+			{"IPv4 link-local", "169.254.1.1:80", "169.254.1.1", IPAttrLinkLocal},
+			{"IPv6 loopback", "[::1]:1234", "::1", IPAttrLoopback},
+			{"IPv6 link-local", "[fe80::1]:1234", "fe80::1", IPAttrLinkLocal},
+			{"IPv6 private ULA", "[fd00::1]:1234", "fd00::1", IPAttrPrivate},
+			{"IPv6 public", "[2001:db8::1]:1234", "2001:db8::1", ""},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				r := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
+				r.RemoteAddr = tt.remoteAddr
+				ctx := AcquireVisitorContext(r, "", "")
+				defer ReleaseVisitorContext(ctx)
+
+				addr := ctx.ClientIP()
+				if !addr.IsValid() {
+					t.Fatalf("ClientIP() returned invalid addr for %s", tt.remoteAddr)
+				}
+				wantAddr := netip.MustParseAddr(tt.wantIP)
+				if addr != wantAddr {
+					t.Errorf("ClientIP() = %v, want %v", addr, wantAddr)
+				}
+				gotAttr, _ := ctx.Field(FieldIPAttr)
+				if gotAttr != tt.wantAttr {
+					t.Errorf("FieldIPAttr = %q, want %q", gotAttr, tt.wantAttr)
+				}
+			})
+		}
+	})
+
+	t.Run("XForwardedForZeroAlloc", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
+		r.RemoteAddr = "127.0.0.1:1234"
+		r.Header.Set("X-Forwarded-For", "203.0.113.195, 10.0.0.1")
+
+		ctx := AcquireVisitorContext(r, "", "")
+		defer ReleaseVisitorContext(ctx)
+
+		ip := ctx.ClientIP()
+		if ip.String() != "203.0.113.195" {
+			t.Fatalf("expected XFF IP 203.0.113.195, got %s", ip.String())
+		}
+
+		// Warm up pool
+		for i := 0; i < 5; i++ {
+			c := AcquireVisitorContext(r, "", "")
+			_ = c.ClientIP()
+			ReleaseVisitorContext(c)
+		}
+
+		allocs := testing.AllocsPerRun(100, func() {
+			c := AcquireVisitorContext(r, "", "")
+			_ = c.ClientIP()
+			ReleaseVisitorContext(c)
+		})
+		if allocs > 0 {
+			t.Errorf("AcquireVisitorContext + ClientIP + ReleaseVisitorContext allocated %v allocs/op, want 0", allocs)
+		}
+	})
+
+	t.Run("PoolAcquireAndRelease", func(t *testing.T) {
+		r1 := httptest.NewRequest(http.MethodGet, "http://shop.example.com/p1?utm_source=fb", nil)
+		r1.RemoteAddr = "127.0.0.1:80"
+		r1.Header.Set("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)")
+		r1.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+
+		ctx1 := AcquireVisitorContext(r1, "US", "AS1234")
+		if country, _ := ctx1.Field(FieldCountry); country != "US" {
+			t.Fatalf("expected US, got %s", country)
+		}
+		if asn, _ := ctx1.Field(FieldASN); asn != "AS1234" {
+			t.Fatalf("expected AS1234, got %s", asn)
+		}
+		dev, _ := ctx1.Field(FieldDevType)
+		if dev != DevTypeMobile {
+			t.Fatalf("expected mobile, got %s", dev)
+		}
+		if !ctx1.UAParsed() {
+			t.Fatal("expected UAParsed true")
+		}
+
+		ReleaseVisitorContext(ctx1)
+
+		r2 := httptest.NewRequest(http.MethodGet, "http://blog.example.com/p2", nil)
+		r2.RemoteAddr = "203.0.113.50:443"
+		ctx2 := AcquireVisitorContext(r2, "CN", "AS5678")
+
+		if ctx2.UAParsed() {
+			t.Fatal("expected ctx2 to have UAParsed=false after reset from pool")
+		}
+		if country, _ := ctx2.Field(FieldCountry); country != "CN" {
+			t.Fatalf("expected CN, got %s", country)
+		}
+		if asn, _ := ctx2.Field(FieldASN); asn != "AS5678" {
+			t.Fatalf("expected AS5678, got %s", asn)
+		}
+		if ip, _ := ctx2.Field(FieldIP); ip != "203.0.113.50" {
+			t.Fatalf("expected 203.0.113.50, got %s", ip)
+		}
+
+		ReleaseVisitorContext(ctx2)
+	})
 }
