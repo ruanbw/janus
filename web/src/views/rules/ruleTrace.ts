@@ -105,28 +105,48 @@ export async function buildDecisionTrace(
   }
 
   const all = await loadAllRules();
-  const candidates = all
-    .filter((r) => r.enabled)
+  // 停用的规则**照样列在链里**（标成「已停用」），但不为它拉详情：它永远不参与求值，
+  // 拉详情只会白打一遍 getRule。原先直接 filter 掉的后果是：页面上既看不到它、也分不清
+  // 「它被停用了」和「它压根没加载到」——这两种情况对排障的意义完全不同。
+  const ordered = all
     .filter((r) => opts.onlyRuleId == null || r.id === opts.onlyRuleId)
     .sort((a, b) => a.priority - b.priority);
 
-  // 列表接口不带 conditions：按需取详情（取不到就退出求值，而不是当空条件糊过去）
-  const detailed = await mapWithConcurrency(candidates, 8, async (r) => {
-    if (r.conditions && r.conditions.length > 0) return r;
-    try {
-      return await getRule(r.id);
-    } catch {
-      return r;
-    }
-  });
+  const detailed = await mapWithConcurrency(
+    ordered.filter((r) => r.enabled),
+    8,
+    async (r) => {
+      if (r.conditions && r.conditions.length > 0) return r;
+      try {
+        return await getRule(r.id);
+      } catch {
+        return r;
+      }
+    },
+  );
+  const detailOf = new Map(detailed.map((r) => [r.id, r]));
   const skippedForDetail = detailed.filter((r) => (r.conditions?.length ?? 0) === 0).length;
   const evaluableCount = detailed.length - skippedForDetail;
 
   const steps: TraceStep[] = [];
   let matched: Rule | null = null;
 
-  for (const rule of detailed) {
+  for (const listed of ordered) {
+    const rule = detailOf.get(listed.id) ?? listed;
     const key = `step-${rule.id}`;
+    // 先判停用：停用与作用域无关，即便作用域命中也不参与求值，标停用比标「不适用」更贴近真实原因
+    if (!rule.enabled) {
+      steps.push({
+        key,
+        ruleId: rule.id,
+        ruleName: rule.name,
+        status: 'disabled',
+        statusText: '已停用',
+        facts: [],
+        whyText: '规则已停用：后端求值时在快照里直接跳过，不会命中任何访问。',
+      });
+      continue;
+    }
     const inScope = rule.scope === 'global' || (applicable ? applicable.has(rule.id) : false);
     if (!inScope) {
       steps.push({

@@ -54,7 +54,7 @@ export interface TraceStep {
   key: string;
   ruleId: number;
   ruleName: string;
-  status: 'hit' | 'block' | 'skip';
+  status: 'hit' | 'block' | 'skip' | 'disabled';
   statusText: string;
   facts: TraceFact[];
   whyText: string;

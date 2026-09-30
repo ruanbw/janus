@@ -60,6 +60,7 @@ const ruleOptions = computed(() =>
 function stepToneClass(status: TraceStep['status']): string {
   if (status === 'block') return 'border-err/40 bg-danger-soft';
   if (status === 'hit') return 'border-brand-500/40 bg-accent-soft';
+  if (status === 'disabled') return 'border-line bg-surface-muted opacity-70';
   return 'border-line bg-surface';
 }
 

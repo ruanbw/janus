@@ -1383,6 +1383,13 @@ body {
   border-color: var(--border);
 }
 
+/* 停用规则的节点画成空心虚线：它永远不参与求值，与「求值过但没命中」一眼能分开 */
+.trace-step.disabled .trace-node {
+  border-color: var(--border);
+  border-style: dashed;
+  background: transparent;
+}
+
 .trace-name {
   font-size: 13px;
   font-weight: 600;
