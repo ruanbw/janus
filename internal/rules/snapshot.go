@@ -12,9 +12,11 @@ package rules
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"runtime/debug"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,10 +95,7 @@ func NewSnapshot(rules []store.Rule, log *slog.Logger) *Snapshot {
 	sorted := make([]store.Rule, len(rules))
 	copy(sorted, rules)
 	sort.SliceStable(sorted, func(i, j int) bool {
-		if sorted[i].Priority != sorted[j].Priority {
-			return sorted[i].Priority < sorted[j].Priority
-		}
-		return sorted[i].ID < sorted[j].ID
+		return ruleBefore(&sorted[i], &sorted[j])
 	})
 	snap := &Snapshot{BuiltAt: time.Now(), log: log}
 	for _, r := range sorted {
@@ -108,6 +107,20 @@ func NewSnapshot(rules []store.Rule, log *slog.Logger) *Snapshot {
 		}
 	}
 	return snap
+}
+
+// ruleBefore 求值顺序:优先级升序,同优先级按 id 升序。
+// 快照构造与仿真链路共用它——顺序错一次,首命中即裁决的诊断结论就是假的。
+func ruleBefore(a, b *store.Rule) bool {
+	if a.Priority != b.Priority {
+		return a.Priority < b.Priority
+	}
+	// 未保存的草稿没有 id,排在同优先级的存量规则之后:它还不存在,
+	// 没理由抢在存量规则前面改变裁决顺序。
+	if (a.ID == 0) != (b.ID == 0) {
+		return b.ID == 0
+	}
+	return a.ID < b.ID
 }
 
 // Get 取某租户的快照:命中缓存直接返回,否则加载一份并整体原子替换(惰性加载)。
@@ -206,15 +219,352 @@ func (s *Snapshot) Evaluate(ctx VisitorContext, linkID int64) (dec Decision, mat
 		if !c.matchAll(ctx) {
 			continue
 		}
-		return Decision{
-			RuleID:      c.Rule.ID,
-			Name:        c.Rule.Name,
-			Action:      c.Rule.Action,
-			Destination: c.Rule.Destination,
-			Priority:    c.Rule.Priority,
-			PageMode:    c.Rule.PageMode,
-			CustomHTML:  c.Rule.CustomHTML,
-		}, true
+		return decisionOf(c), true
 	}
 	return Decision{}, false
+}
+
+// decisionOf 由命中的规则展开裁决。
+// Evaluate 与 Simulate 共用这一个构造函数:两份结论只要有一个字段对不上,
+// "模拟器说的"和"线上做的"就等于两套行为,那是最难查的一类错。
+func decisionOf(c *Compiled) Decision {
+	return Decision{
+		RuleID:      c.Rule.ID,
+		Name:        c.Rule.Name,
+		Action:      c.Rule.Action,
+		Destination: c.Rule.Destination,
+		Priority:    c.Rule.Priority,
+		PageMode:    c.Rule.PageMode,
+		CustomHTML:  c.Rule.CustomHTML,
+	}
+}
+
+// 规则仿真(诊断链路):同一份快照、同一套条件求值,额外把"每条规则为什么
+// 命中/不命中"记下来,供 POST /api/rules/simulate 回答
+// 「这个访客会命中哪条规则、凭什么」。
+//
+// 与 Evaluate 的关系只有一条:结论必须一致。Simulate 不是第二套判定,
+// 它是 Evaluate 的同源旁路——命中的判定来自同一个 (*Compiled).matchAll,
+// 条件明细来自同一个 (*compiledCond).match。顺序也共用同一个比较器,
+// 否则"首条命中即裁决"的诊断结果就是假的。
+const (
+	// StepStatusHit 首条命中,裁决就是这条规则。
+	StepStatusHit = "hit"
+	// StepStatusSkip 不产生裁决:未命中、不适用于该短链,或已被首条命中盖过。
+	StepStatusSkip = "skip"
+	// StepStatusDisabled 规则已停用(只可能来自草稿:存量停用规则不进快照)。
+	StepStatusDisabled = "disabled"
+)
+
+// ConditionTrace 单条条件的求值痕迹:这次比的是"实际值"对"期望值"。
+type ConditionTrace struct {
+	Field     string   `json:"field"`
+	Operator  string   `json:"operator"`
+	Expected  []string `json:"expected"`
+	Actual    string   `json:"actual"`
+	Available bool     `json:"available"`
+	Matched   bool     `json:"matched"`
+	Seen      int      `json:"seen,omitempty"`
+	// Description 一句人能读的解释。判定在前端复刻一遍就会漂,文案由后端出。
+	Description string `json:"description"`
+}
+
+// StepTrace 决策链上的一条规则(按求值顺序排列)。
+type StepTrace struct {
+	RuleID     int64            `json:"ruleId"`
+	RuleName   string           `json:"ruleName"`
+	Priority   int              `json:"priority"`
+	Scope      string           `json:"scope"`
+	Action     string           `json:"action"`
+	Status     string           `json:"status"`
+	Reason     string           `json:"reason"`
+	Logic      string           `json:"logic,omitempty"`
+	Draft      bool             `json:"draft,omitempty"`
+	Conditions []ConditionTrace `json:"conditions,omitempty"`
+}
+
+// SimulationResult 一次仿真的结果。
+type SimulationResult struct {
+	Verdict Decision    // 命中规则展开的裁决(未命中时是零值)
+	Matched bool        // 是否命中
+	Steps   []StepTrace // 决策链
+	// Error 求值期异常被兜住时的说明。诊断接口如实上报,线上 Evaluate 仍然 fail-open。
+	Error string `json:"error,omitempty"`
+}
+
+// Simulate 按 Evaluate 的顺序与语义回放一遍求值,并记录过程。
+//
+// linkID 是这次访问命中的短链(0 = 没有具体短链,只按全局规则推演);
+// onlyRuleID 非空时只看这一条存量规则(诊断"单条规则自己生效吗");
+// draft 是未保存的草稿规则,按 id 顶替同 id 的存量规则,不写回快照。
+// 草稿没启用时也会占一步并标成 disabled:租户需要看到"停用了就不会拦"。
+func (s *Snapshot) Simulate(ctx VisitorContext, linkID int64, onlyRuleID *int64, draft *Compiled) (res SimulationResult) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			res.Error = fmt.Sprintf("求值异常,已按未命中处理: %v", rec)
+			if s != nil && s.log != nil {
+				s.log.Error("规则仿真异常,按未命中处理", "panic", rec, "stack", string(debug.Stack()))
+			}
+		}
+	}()
+	if ctx == nil || s == nil {
+		return SimulationResult{}
+	}
+	for _, item := range s.simChain(onlyRuleID, draft) {
+		if res.Matched {
+			// Evaluate 在这里就 return 了:后面的规则线上根本不看,更不该被求值。
+			res.Steps = append(res.Steps, StepTrace{
+				RuleID:   item.rule.Rule.ID,
+				RuleName: item.rule.Rule.Name,
+				Priority: item.rule.Rule.Priority,
+				Scope:    item.rule.Rule.Scope,
+				Action:   item.rule.Rule.Action,
+				Status:   StepStatusSkip,
+				Reason:   "前一条规则已命中(首命中即裁决),线上不会再求值这条。",
+				Draft:    item.draft,
+			})
+			continue
+		}
+		step := traceRule(item.rule, ctx, linkID, item.draft)
+		res.Steps = append(res.Steps, step)
+		if step.Status == StepStatusHit {
+			res.Verdict = decisionOf(item.rule)
+			res.Matched = true
+		}
+	}
+	return res
+}
+
+// simChainItem 决策链上的一项:存量规则,或顶替/插入链路的草稿。
+type simChainItem struct {
+	rule  *Compiled
+	draft bool
+}
+
+// simChain 组装决策链。取值只读快照:草稿不进 s.Rules,仿真不写回任何共享状态。
+func (s *Snapshot) simChain(onlyRuleID *int64, draft *Compiled) []simChainItem {
+	items := make([]simChainItem, 0, len(s.Rules)+1)
+	for i := range s.Rules {
+		c := &s.Rules[i]
+		if onlyRuleID != nil && c.Rule.ID != *onlyRuleID {
+			continue
+		}
+		if draft != nil && draft.Rule.ID != 0 && draft.Rule.ID == c.Rule.ID {
+			items = append(items, simChainItem{rule: draft, draft: true})
+			continue
+		}
+		items = append(items, simChainItem{rule: c})
+	}
+	// 草稿不只顶替存量:只回放一条规则(onlyRuleID)时,草稿也必须参与,
+	// 否则"这条草稿生效吗"永远得到空链路。
+	if draft != nil && !chainHasRuleID(items, draft.Rule.ID) {
+		items = append(items, simChainItem{rule: draft, draft: true})
+	}
+	// 草稿可能带来新的优先级/新 id,按快照同一套顺序重排一次。
+	sort.SliceStable(items, func(i, j int) bool {
+		return ruleBefore(&items[i].rule.Rule, &items[j].rule.Rule)
+	})
+	return items
+}
+
+func chainHasRuleID(items []simChainItem, id int64) bool {
+	if id == 0 {
+		return false
+	}
+	for _, it := range items {
+		if it.rule.Rule.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// traceRule 回放一条规则:先按权威路径判命中(Evaluate 用的同一个 matchAll),
+// 再用同一个 compiledCond.match 逐条留痕,两者不可能各说各话。
+func traceRule(c *Compiled, ctx VisitorContext, linkID int64, draft bool) StepTrace {
+	step := StepTrace{
+		RuleID:   c.Rule.ID,
+		RuleName: c.Rule.Name,
+		Priority: c.Rule.Priority,
+		Scope:    c.Rule.Scope,
+		Action:   c.Rule.Action,
+		Draft:    draft,
+	}
+	if !c.Rule.Enabled {
+		step.Status = StepStatusDisabled
+		step.Reason = "规则已停用:线上求值时停用规则不进快照,不参与裁决。"
+		return step
+	}
+	if !c.applies(linkID) {
+		step.Status = StepStatusSkip
+		if !c.appliesAll && len(c.linkIDs) == 0 {
+			step.Reason = "「指定短链」但一条短链都没关联:零关联的规则恒不命中,不兜底成全局。"
+		} else {
+			step.Reason = fmt.Sprintf("该短链不在规则的关联列表里(规则只关联了 %d 条短链),线上不参与求值。", len(c.linkIDs))
+		}
+		return step
+	}
+	step.Logic = c.Rule.Logic
+	matched := c.matchAll(ctx)
+	step.Conditions = traceConds(c.conds, ctx)
+	if matched {
+		step.Status = StepStatusHit
+		step.Reason = "首条命中即裁决(First-Match-Wins):后面的规则不再求值。"
+		return step
+	}
+	step.Status = StepStatusSkip
+	step.Reason = logicMissReason(c, step.Conditions)
+	return step
+}
+
+// traceConds 逐条条件留痕。只读快照与画像,不改判定。
+func traceConds(conds []compiledCond, ctx VisitorContext) []ConditionTrace {
+	out := make([]ConditionTrace, 0, len(conds))
+	for i := range conds {
+		cc := &conds[i]
+		tr := ConditionTrace{Field: cc.field, Operator: cc.op, Expected: cc.raw}
+		tr.Actual, tr.Available = ctx.Field(cc.field)
+		if cc.op == OpDuplicated {
+			tr.Seen = seenCount(ctx, cc.field, tr.Actual)
+		}
+		tr.Matched = cc.match(ctx)
+		tr.Description = describeCond(&tr)
+		out = append(out, tr)
+	}
+	return out
+}
+
+// logicMissReason 解释"为什么没命中":成立了几条、缺数据的有几条。
+func logicMissReason(c *Compiled, conds []ConditionTrace) string {
+	hits, missing := 0, 0
+	for _, t := range conds {
+		if t.Matched {
+			hits++
+		}
+		if !t.Available {
+			missing++
+		}
+	}
+	need := "全部条件都要成立"
+	if !c.logicAll {
+		need = "任一条件成立即可"
+	}
+	msg := fmt.Sprintf("%s,实际成立 %d/%d 条。", need, hits, len(conds))
+	if missing > 0 {
+		msg += fmt.Sprintf("其中 %d 条字段取不到数据,恒不成立。", missing)
+	}
+	return msg
+}
+
+// describeCond 把一次条件比较翻成人话。
+func describeCond(t *ConditionTrace) string {
+	name := fieldLabel(t.Field)
+	if !t.Available {
+		// 取不到数据是本引擎最关键的不变式:空值既不是"匹配",也不是"不匹配的反面"。
+		return fmt.Sprintf("%s 本次没有数据源,条件恒不成立。", name)
+	}
+	if t.Operator == OpDuplicated {
+		verdict := "未达到"
+		if t.Matched {
+			verdict = "已达到"
+		}
+		return fmt.Sprintf("%s「%s」出现 %d 次,%s阈值 %s 次。", name, t.Actual, t.Seen, verdict, t.Expected[0])
+	}
+	phrase := comparePhrase(t.Operator, t.Expected)
+	if t.Matched {
+		return fmt.Sprintf("%s 实际为「%s」,满足条件(%s)。", name, t.Actual, phrase)
+	}
+	return fmt.Sprintf("%s 实际为「%s」,不满足条件(%s)。", name, t.Actual, phrase)
+}
+
+func comparePhrase(op string, expected []string) string {
+	values := strings.Join(expected, " / ")
+	switch op {
+	case OpIn:
+		return "在 " + values + " 中"
+	case OpNotIn:
+		return "不在 " + values + " 中"
+	case OpEq:
+		return "等于 " + values
+	case OpNeq:
+		return "不等于 " + values
+	case OpContains:
+		return "包含 " + values
+	case OpNotContains:
+		return "不包含 " + values
+	case OpGT:
+		return "大于 " + values
+	case OpLT:
+		return "小于 " + values
+	case OpRegex:
+		return "匹配正则 " + values
+	case OpDuplicated:
+		return "出现次数达到 " + values
+	}
+	return op + " " + values
+}
+
+// fieldLabel 字段的中文名(诊断文案用;判定仍以字段常量为准)。
+func fieldLabel(field string) string {
+	switch field {
+	case FieldIP:
+		return "来源 IP"
+	case FieldIPAttr:
+		return "IP 归属"
+	case FieldCountry:
+		return "国家/地区"
+	case FieldASN:
+		return "ASN"
+	case FieldLang:
+		return "语言"
+	case FieldRef:
+		return "来源站点"
+	case FieldUTM:
+		return "UTM 来源"
+	case FieldUA:
+		return "UserAgent"
+	case FieldDevType:
+		return "设备类型"
+	case FieldOS:
+		return "操作系统"
+	case FieldBrowser:
+		return "浏览器"
+	case FieldPath:
+		return "请求路径"
+	case FieldDomain:
+		return "域名"
+	}
+	return field
+}
+
+// seenCount 读"重复出现"计数,与 (*compiledCond).match 的 duplicated 分支同一份键空间。
+func seenCount(ctx VisitorContext, field, value string) int {
+	if value == "" {
+		return 0
+	}
+	key := SeenKey(field, value)
+	switch f := ctx.(type) {
+	case *Fact:
+		if f.Seen != nil {
+			return f.Seen[key]
+		}
+	case Fact:
+		if f.Seen != nil {
+			return f.Seen[key]
+		}
+	}
+	return 0
+}
+
+// CompileDraft 预编译一条未保存的草稿规则(规则编辑器的"改完先试一遍")。
+// 与存量规则走同一套编译逻辑:草稿编译不出来,就不给结论。
+func CompileDraft(r store.Rule, log *slog.Logger) (*Compiled, bool) {
+	if log == nil {
+		log = slog.Default()
+	}
+	c, ok := compileRule(r, log)
+	if !ok {
+		return nil, false
+	}
+	return &c, true
 }

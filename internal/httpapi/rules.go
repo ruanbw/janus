@@ -25,6 +25,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -696,4 +698,364 @@ func derefIDs(ids *[]int64) []int64 {
 		return nil
 	}
 	return *ids
+}
+
+// ---------- 规则仿真(诊断) ----------
+
+// 规则仿真只回答一个问题:「这个访客会被哪条规则拦下,凭什么」。
+// 它不是第二套判定:结论来自 rules.Snapshot.Simulate,而 Simulate 走的是
+// Evaluate 同一套顺序与同一批 compiledCond.match。所以这里只做三件事:
+// 把请求里的访客画像拼成一个"假想请求"、定位它命中的短链、把裁决翻成人话。
+//
+// 三条不能破的线:
+//  1. 租户来自会话,不来自请求体:拿别人 tenant 的规则集试规则等于越权。
+//  2. 访客画像全部由调用方给定,GeoIP 也只在建上下文那一刻注入一次,
+//     求值期内零 IO(引擎是纯内存的,诊断不能比线上还慢)。
+//  3. 只读快照:草稿与 onlyRuleId 只在这一条推演里生效,绝不写回热路径共享的快照。
+
+// simTarget 目标 URL 拆出来的东西:域名 + 短码 + 路径/查询串。
+type simTarget struct {
+	host  string
+	code  string
+	path  string
+	query string
+}
+
+// maxSimURLLen 目标 URL 长度上限(与 validTargetURL 的 4096 同一量级)。
+const maxSimURLLen = 4096
+
+// scopeNoteGlobal 没定位到短链时的统一说明。
+const scopeNoteGlobal = "本次仅按 scope=global 的全局规则求值;「指定短链」的规则不在推演范围内。"
+
+type simulateReq struct {
+	// URL 必填:完整 URL(https://域名/短码?x=1)或单个短码(/短码、短码)。
+	URL string `json:"url"`
+	// IP 为空时取当前请求的来源 IP(再兜底 127.0.0.1)。
+	IP string `json:"ip"`
+	// UserAgent / AcceptLanguage / Referrer 为空即"这次访客没有这个头"。
+	UserAgent      string `json:"userAgent"`
+	AcceptLanguage string `json:"acceptLanguage"`
+	Referrer       string `json:"referrer"`
+	// ManualCountry 手工指定国家码:诊断环境常常拿不到真实 GeoIP。
+	// 只作用于本次推演,不写入任何持久数据。
+	ManualCountry string `json:"manualCountry"`
+	// OnlyRuleID 只回放这一条存量规则(诊断"单条规则自己生效吗")。
+	OnlyRuleID *int64 `json:"onlyRuleId"`
+	// DraftRule 未保存的草稿规则:按 id 顶替同 id 的存量规则参与本次推演。
+	DraftRule *simulateDraftRule `json:"draftRule"`
+}
+
+// simulateDraftRule 未落库的规则草稿。字段与创建/更新接口同构:
+// 省略即沿用现值(PATCH 语义),所以"只改了一个字段"也能试。
+type simulateDraftRule struct {
+	ID *int64 `json:"id"`
+	ruleReq
+}
+
+// simulateResp 诊断结果。facts 原样回显这次访客的 13 个可求值字段。
+type simulateResp struct {
+	Facts     map[string]string   `json:"facts"`
+	ScopeNote string              `json:"scopeNote"`
+	Steps     []rules.StepTrace   `json:"steps"`
+	Verdict   simulateVerdictResp `json:"verdict"`
+	Error     string              `json:"error,omitempty"`
+}
+
+// simulateVerdictResp 裁决结论。Blocked = 会直接掐断访问(notfound / throttle)。
+type simulateVerdictResp struct {
+	Matched     bool   `json:"matched"`
+	Blocked     bool   `json:"blocked"`
+	RuleID      int64  `json:"ruleId"`
+	RuleName    string `json:"ruleName"`
+	Action      string `json:"action"`
+	Destination string `json:"destination"`
+	Priority    int    `json:"priority"`
+	Message     string `json:"message"`
+}
+
+func (a *API) handleSimulateRules(c *gin.Context) {
+	t, sess, ok := a.requireSession(c)
+	if !ok {
+		return
+	}
+	if !a.requireCSRF(c, sess) {
+		return
+	}
+	var req simulateReq
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
+		return
+	}
+	target, err := parseSimTarget(req.URL)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	ip, err := simClientIP(c, req.IP)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	country, err := simManualCountry(req.ManualCountry)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	var asn string
+	if country == "" && a.geo != nil {
+		// GeoIP 只在这里查一次:求值器本身不碰任何 IO。
+		info := a.geo.Lookup(ip)
+		country, asn = info.Country, info.ASN
+	}
+	onlyID, err := a.simOnlyRuleID(c, t.ID, req.OnlyRuleID)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	draft, err := a.simDraft(c, t.ID, req.DraftRule)
+	if err != nil {
+		writeAPIError(c, err)
+		return
+	}
+	link, note := a.simResolveLink(c.Request.Context(), t.ID, target)
+	var linkID int64
+	if link != nil {
+		linkID = link.ID
+	}
+
+	// 假想请求走的是 LazyVisitorContext:UA/语言/来源站点的解析路径与线上跳转完全一致,
+	// 仿真不会另造一套解析(另造一套迟早会和线上分叉)。
+	vctx := rules.AcquireVisitorContext(
+		target.request(req.UserAgent, req.AcceptLanguage, req.Referrer), country, asn).WithIP(ip)
+	defer rules.ReleaseVisitorContext(vctx)
+
+	res := a.ruleCache.Get(c.Request.Context(), t.ID).Simulate(vctx, linkID, onlyID, draft)
+	steps := res.Steps
+	if steps == nil {
+		steps = []rules.StepTrace{}
+	}
+	writeJSON(c, http.StatusOK, simulateResp{
+		Facts:     vctx.ToFact().Fields(),
+		ScopeNote: note,
+		Steps:     steps,
+		Verdict:   simVerdict(res, link),
+		Error:     res.Error,
+	})
+}
+
+// parseSimTarget 解析目标 URL。两种写法都接受:完整 URL,或光秃秃的短码。
+// 后者没有域名——path 仍参与 path 条件求值,但解析不出短链归属,
+// 也就无法把 domain 条件与短链作用域对上(scopeNote 会讲清楚)。
+func parseSimTarget(raw string) (simTarget, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return simTarget{}, ruleErr("url 不能为空")
+	}
+	if len(raw) > maxSimURLLen {
+		return simTarget{}, ruleErr("url 过长(上限 4096 字符)")
+	}
+	if !strings.Contains(raw, "://") {
+		code := strings.Trim(raw, "/")
+		if code == "" || strings.Contains(code, "/") {
+			return simTarget{}, ruleErr("url 需要是完整 URL(如 https://域名/短码)或单个短码")
+		}
+		return simTarget{code: code, path: "/" + code}, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return simTarget{}, ruleErr("url 不合法")
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return simTarget{}, ruleErr("url 只支持 http/https")
+	}
+	host := hostOnly(u.Host)
+	if host == "" {
+		return simTarget{}, ruleErr("url 缺少域名")
+	}
+	path := u.Path
+	if path == "" {
+		path = "/"
+	}
+	code := strings.Trim(path, "/")
+	if i := strings.Index(code, "/"); i >= 0 {
+		code = code[:i]
+	}
+	return simTarget{host: host, code: code, path: path, query: u.RawQuery}, nil
+}
+
+// request 把目标 URL 拼成一个"假想访问",交给访客上下文求值。
+func (t simTarget) request(ua, lang, referrer string) *http.Request {
+	r := &http.Request{
+		Method: http.MethodGet,
+		Host:   t.host,
+		URL:    &url.URL{Path: t.path, RawQuery: t.query},
+		Header: make(http.Header, 3),
+	}
+	if ua != "" {
+		r.Header.Set("User-Agent", ua)
+	}
+	if lang != "" {
+		r.Header.Set("Accept-Language", lang)
+	}
+	if referrer != "" {
+		r.Header.Set("Referer", referrer)
+	}
+	return r
+}
+
+// simClientIP 校验访客 IP;为空时取当前请求来源 IP(诊断页多半在本机打开)。
+func simClientIP(c *gin.Context, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		if ip, err := netip.ParseAddr(clientIP(c.Request)); err == nil {
+			return ip.String(), nil
+		}
+		return "127.0.0.1", nil
+	}
+	if len(raw) > 64 {
+		return "", ruleErr("ip 过长")
+	}
+	ip, err := netip.ParseAddr(raw)
+	if err != nil {
+		return "", ruleErr("ip 不合法")
+	}
+	return ip.String(), nil
+}
+
+// simManualCountry 校验手工指定的国家码(两位字母,大小写不敏感)。
+func simManualCountry(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if len(raw) != 2 || !isAlpha(raw) {
+		return "", ruleErr("manualCountry 必须是两位国家码(如 CN)")
+	}
+	return strings.ToUpper(raw), nil
+}
+
+func isAlpha(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+			return false
+		}
+	}
+	return true
+}
+
+// simOnlyRuleID 校验 onlyRuleId:只允许回放本租户自己的规则。
+func (a *API) simOnlyRuleID(c *gin.Context, tenantID int64, id *int64) (*int64, error) {
+	if id == nil {
+		return nil, nil
+	}
+	if *id <= 0 {
+		return nil, ruleErr("onlyRuleId 必须是正整数")
+	}
+	if _, err := a.store.GetRule(c.Request.Context(), tenantID, *id); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, apiErr{status: http.StatusNotFound, code: errNotFound, message: "rule not found"}
+		}
+		return nil, err
+	}
+	return id, nil
+}
+
+// simDraft 把草稿合成为完整规则并预编译。校验与落库走同一个 resolveRule:
+// "试过了"必须等价于"存得下",否则诊断接口就成了比线上宽松的另一套校验。
+// 草稿带 id 时顶替同 id 的存量规则;停用的草稿会占一步并标成 disabled。
+func (a *API) simDraft(c *gin.Context, tenantID int64, d *simulateDraftRule) (*rules.Compiled, error) {
+	if d == nil {
+		return nil, nil
+	}
+	ctx := c.Request.Context()
+	var cur *store.Rule
+	var id int64
+	if d.ID != nil && *d.ID > 0 {
+		got, err := a.store.GetRule(ctx, tenantID, *d.ID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, apiErr{status: http.StatusNotFound, code: errNotFound, message: "rule not found"}
+			}
+			return nil, err
+		}
+		cur, id = got, got.ID
+	}
+	w, err := a.resolveRule(ctx, tenantID, cur, d.ruleReq)
+	if err != nil {
+		return nil, err
+	}
+	draft, ok := rules.CompileDraft(store.Rule{
+		ID: id, Name: w.name, Description: w.description, Priority: w.priority,
+		Scope: w.scope, Enabled: w.enabled, Logic: w.logic, Action: w.action,
+		Destination: w.destination, Conditions: w.conditions, LinkIDs: derefIDs(w.linkIDs),
+		PageMode: w.pageMode, CustomHTML: w.customHTML,
+	}, nil)
+	if !ok {
+		return nil, ruleErr("草稿规则的条件全部不可求值(检查字段与运算符),无法推演")
+	}
+	return draft, nil
+}
+
+// simResolveLink 定位目标 URL 命中的短链。只在本租户的 active 域名下找:
+// 别的租户的短链 id 不该出现在本租户的诊断结果里。
+// 取不到不是错误——诊断一个还没建出来的短链是正常用法,scopeNote 会说明推演范围。
+func (a *API) simResolveLink(ctx context.Context, tenantID int64, target simTarget) (*store.Link, string) {
+	if target.host == "" || target.code == "" {
+		return nil, "URL 里没有短码," + scopeNoteGlobal
+	}
+	d, err := a.store.GetDomainByFQDN(ctx, target.host)
+	if err != nil || d.Status != "active" || d.TenantID != tenantID {
+		return nil, fmt.Sprintf("域名 %s 不在本租户(或未激活),%s", target.host, scopeNoteGlobal)
+	}
+	link, _, reason, err := a.store.LookupLinkForVisit(ctx, d.ID, target.code)
+	if err != nil || link == nil || link.TenantID != tenantID {
+		return nil, fmt.Sprintf("未在本租户找到短链 /%s,%s", target.code, scopeNoteGlobal)
+	}
+	if reason != "" {
+		return link, fmt.Sprintf("短链 /%s 当前不可用(%s),线上不会走到这一步;以下按它的关联规则推演。",
+			target.code, reason)
+	}
+	note := fmt.Sprintf("URL 命中短链 /%s(ID %d),已按该短链实际适用的规则(含全局继承)求值。", target.code, link.ID)
+	if !link.RulesEnabled {
+		note += "该短链已关闭规则求值(rulesEnabled=false),线上不会应用任何规则。"
+	}
+	return link, note
+}
+
+// simVerdict 把裁决翻成人话。短链关闭了规则求值时结论按"无线上规则"给:
+// 跳转热路径会先看 link.RulesEnabled,诊断不能报一个线上不会发生的拦截。
+func simVerdict(res rules.SimulationResult, link *store.Link) simulateVerdictResp {
+	var v simulateVerdictResp
+	if link != nil && !link.RulesEnabled {
+		v.Message = "该短链已关闭规则求值(rulesEnabled=false),线上访客按原目标正常跳转,不会应用任何规则。"
+		return v
+	}
+	if !res.Matched {
+		v.Message = "该访客不命中任何规则,按原目标正常跳转。"
+		return v
+	}
+	v.Matched = true
+	v.Blocked = res.Verdict.Action == store.RuleActionNotfound || res.Verdict.Action == store.RuleActionThrottle
+	v.RuleID = res.Verdict.RuleID
+	v.RuleName = res.Verdict.Name
+	v.Action = res.Verdict.Action
+	v.Destination = res.Verdict.Destination
+	v.Priority = res.Verdict.Priority
+	v.Message = fmt.Sprintf("命中「%s」(优先级 %d):%s", res.Verdict.Name, res.Verdict.Priority, actionVerdict(res.Verdict))
+	return v
+}
+
+func actionVerdict(d rules.Decision) string {
+	switch d.Action {
+	case store.RuleActionRedirect:
+		return fmt.Sprintf("跳转到 %s。", d.Destination)
+	case store.RuleActionNotfound:
+		return "直接返回 404。"
+	case store.RuleActionThrottle:
+		return "限流,返回 429。"
+	default:
+		return "放行,按原目标正常跳转。"
+	}
 }

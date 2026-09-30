@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -374,3 +376,399 @@ func BenchmarkFromRequest(b *testing.B) {
 		FromRequest(r)
 	}
 }
+
+// simFact 造一个可预期的访客画像:中国 IP、爬虫设备、/promo 路径。
+func simFact() Fact {
+	return Fact{
+		IP: "203.0.113.7", IPAttr: "public", Country: "CN", Lang: "zh-cn",
+		Ref: "news.example.com", UTM: "wechat", DevType: "bot",
+		Path: "/promo", Domain: "shop.example.com",
+	}
+}
+
+// simCtx 造一个可求值的画像指针(Simulate/Evaluate 都吃 VisitorContext)。
+func simCtx() *Fact {
+	f := simFact()
+	return &f
+}
+
+// simRules 一条"美国访客 404"与一条"/promo 放行"的全局规则。
+// 优先级 10 的规则在前,首条命中即裁决(First-Match-Wins)。
+func simRules() []store.Rule {
+	return []store.Rule{
+		{
+			ID: 1, Name: "美国访客拦截", Priority: 10, Enabled: true,
+			Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
+			Action: store.RuleActionNotfound,
+			Conditions: store.RuleConditions{
+				{Field: FieldCountry, Operator: OpIn, Values: []string{"US", "CA"}},
+			},
+		},
+		{
+			ID: 2, Name: "活动页放行", Priority: 20, Enabled: true,
+			Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
+			Action: store.RuleActionPass,
+			Conditions: store.RuleConditions{
+				{Field: FieldPath, Operator: OpContains, Values: []string{"/promo"}},
+			},
+		},
+	}
+}
+
+// TestSnapshotSimulateTracesConditions 逐条件记录"实际值 / 期望值 / 是否成立",
+// 并按真实求值顺序给出首条命中。
+func TestSnapshotSimulateTracesConditions(t *testing.T) {
+	lg, _ := logBuf()
+	snap := NewSnapshot(simRules(), lg)
+
+	res := snap.Simulate(simCtx(), 0, nil, nil)
+
+	if res.Error != "" {
+		t.Fatalf("不该有求值错误, got %q", res.Error)
+	}
+	if !res.Matched || res.Verdict.RuleID != 2 {
+		t.Fatalf("赢家 = %+v matched=%v, want rule 2", res.Verdict, res.Matched)
+	}
+	if len(res.Steps) != 2 {
+		t.Fatalf("steps = %d 条, want 2(每条规则一步)", len(res.Steps))
+	}
+
+	first := res.Steps[0]
+	if first.RuleID != 1 || first.Status != StepStatusSkip || first.Reason == "" {
+		t.Fatalf("step1 = %+v, want rule1/skip + 说明", first)
+	}
+	if len(first.Conditions) != 1 {
+		t.Fatalf("step1 条件明细 = %d 条, want 1", len(first.Conditions))
+	}
+	c := first.Conditions[0]
+	if c.Field != FieldCountry || c.Operator != OpIn {
+		t.Fatalf("条件 = %+v, want country in", c)
+	}
+	if c.Actual != "CN" || !c.Available {
+		t.Fatalf("条件实际值 = %q available=%v, want CN/true", c.Actual, c.Available)
+	}
+	if c.Matched {
+		t.Fatal("CN 不在 [US,CA] 内,条件不应成立")
+	}
+	// 期望值回显租户写下的原始字面量(不是求值时小写化的内部形态)。
+	if len(c.Expected) != 2 || c.Expected[0] != "US" || c.Expected[1] != "CA" {
+		t.Fatalf("expected = %v, want [US CA]", c.Expected)
+	}
+	if c.Description == "" {
+		t.Fatal("每个条件都要有一句人能读的解释")
+	}
+
+	second := res.Steps[1]
+	if second.RuleID != 2 || second.Status != StepStatusHit || !second.Conditions[0].Matched {
+		t.Fatalf("step2 = %+v, want rule2/hit", second)
+	}
+}
+
+// TestSnapshotSimulateEmptyFieldNeverMatches 取不到的字段恒不命中,
+// 仿真必须把它标成 unavailable 而不是"条件不成立"。
+func TestSnapshotSimulateEmptyFieldNeverMatches(t *testing.T) {
+	lg, _ := logBuf()
+	snap := NewSnapshot([]store.Rule{{
+		ID: 7, Name: "美国访客拦截", Priority: 10, Enabled: true,
+		Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
+		Action: store.RuleActionNotfound,
+		Conditions: store.RuleConditions{
+			{Field: FieldCountry, Operator: OpNotIn, Values: []string{"CN"}},
+		},
+	}}, lg)
+
+	// 没有 GeoIP 值:country 恒为空 ⇒ not_in 也恒不成立(关键不变式)。
+	res := snap.Simulate(&Fact{IP: "203.0.113.7"}, 0, nil, nil)
+	if res.Matched {
+		t.Fatalf("country 取不到时不应命中, got %+v", res.Verdict)
+	}
+	c := res.Steps[0].Conditions[0]
+	if c.Available || c.Matched || c.Actual != "" {
+		t.Fatalf("条件 = %+v, want unavailable/未成立/空值", c)
+	}
+	if c.Description == "" {
+		t.Fatal("空字段也要有解释")
+	}
+}
+
+// TestSnapshotSimulateDisabledDraft 草稿规则没启用时,链路里应显示 disabled
+// 且不参与裁决(否则租户会以为停用的规则还在拦人)。
+func TestSnapshotSimulateDisabledDraft(t *testing.T) {
+	lg, _ := logBuf()
+	snap := NewSnapshot(simRules(), lg)
+
+	draft, ok := compileRule(store.Rule{
+		ID: 3, Name: "未启用的草稿", Priority: 5, Enabled: false,
+		Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
+		Action: store.RuleActionNotfound,
+		Conditions: store.RuleConditions{
+			{Field: FieldPath, Operator: OpEq, Values: []string{"/promo"}},
+		},
+	}, lg)
+	if !ok {
+		t.Fatal("草稿编译失败")
+	}
+
+	res := snap.Simulate(simCtx(), 0, nil, &draft)
+	if !res.Matched || res.Verdict.RuleID != 2 {
+		t.Fatalf("停用草稿不该改变裁决, got %+v", res.Verdict)
+	}
+	if len(res.Steps) != 3 {
+		t.Fatalf("steps = %d, want 3(草稿也要占一步)", len(res.Steps))
+	}
+	if res.Steps[0].Status != StepStatusDisabled || !res.Steps[0].Draft {
+		t.Fatalf("草稿步骤 = %+v, want disabled 且标记 draft", res.Steps[0])
+	}
+}
+
+// TestSnapshotSimulateAgreesWithEvaluate 核心不变式:同一份快照 + 同一份画像,
+// Simulate 的裁决必须与 Evaluate 完全一致(赢家、动作、命中与否)。
+func TestSnapshotSimulateAgreesWithEvaluate(t *testing.T) {
+	lg, _ := logBuf()
+
+	scoped := func(id int64, priority int, linkIDs ...int64) store.Rule {
+		return store.Rule{
+			ID: id, Name: fmt.Sprintf("scoped-%d", id), Priority: priority, Enabled: true,
+			Scope: store.RuleScopeLinks, Logic: store.RuleLogicAll,
+			Action: store.RuleActionThrottle,
+			Conditions: store.RuleConditions{
+				{Field: FieldDomain, Operator: OpEq, Values: []string{"shop.example.com"}},
+			},
+			LinkIDs: linkIDs,
+		}
+	}
+
+	sets := map[string][]store.Rule{
+		"全局两条":    simRules(),
+		"零关联不命中":  append(simRules(), scoped(3, 5), scoped(4, 1)),
+		"同优先级按id": {withPriority(simRules()[0], 10), withPriority(simRules()[1], 10)},
+		"逻辑any": {{
+			ID: 1, Name: "任一成立即命中", Priority: 10, Enabled: true,
+			Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAny,
+			Action: store.RuleActionRedirect, Destination: "https://blocked.example.com",
+			Conditions: store.RuleConditions{
+				{Field: FieldCountry, Operator: OpIn, Values: []string{"US"}},
+				{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}},
+			},
+		}},
+		"无���件恒命中": {{
+			ID: 1, Name: "无条件", Priority: 10, Enabled: true,
+			Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
+			Action: store.RuleActionNotfound,
+		}},
+		"只有对某链生效": {scoped(1, 10, 7)},
+	}
+
+	facts := map[string]Fact{
+		"爬虫CN": simFact(),
+		"访客US": {IP: "198.51.100.9", Country: "US", DevType: "desktop", Path: "/x", Domain: "shop.example.com"},
+		"无画像":  {},
+		"纯IP":  {IP: "203.0.113.7"},
+	}
+	linkIDs := []int64{0, 7, 8}
+
+	for setName, rs := range sets {
+		snap := NewSnapshot(rs, lg)
+		for factName, fact := range facts {
+			for _, linkID := range linkIDs {
+				f := fact
+				dec, matched := snap.Evaluate(&f, linkID)
+				res := snap.Simulate(&f, linkID, nil, nil)
+				if res.Error != "" {
+					t.Fatalf("[%s/%s/link=%d] 仿真报错: %s", setName, factName, linkID, res.Error)
+				}
+				if res.Matched != matched || res.Verdict != dec {
+					t.Fatalf("[%s/%s/link=%d] 仿真 %+v(%v) != 线上 %+v(%v)",
+						setName, factName, linkID, res.Verdict, res.Matched, dec, matched)
+				}
+			}
+		}
+	}
+}
+
+// withPriority 复制一条规则并改优先级(测试构造用)。
+func withPriority(r store.Rule, priority int) store.Rule {
+	r.Priority = priority
+	return r
+}
+
+// TestSnapshotSimulateOnlyRule 只看一条规则时,链路上就只有它,
+// 它的命中与否直接就是结论(诊断"某条规则单独生效吗")。
+func TestSnapshotSimulateOnlyRule(t *testing.T) {
+	lg, _ := logBuf()
+	snap := NewSnapshot(simRules(), lg)
+
+	only := int64(1)
+	res := snap.Simulate(simCtx(), 0, &only, nil)
+	if len(res.Steps) != 1 || res.Steps[0].RuleID != 1 {
+		t.Fatalf("steps = %+v, want 只剩 rule 1", res.Steps)
+	}
+	if res.Matched {
+		t.Fatalf("CN 访客不该命中美国规则, got %+v", res.Verdict)
+	}
+	// 与 Evaluate 单独看这条规则的结论一致(线上不存在 only,但语义相同)。
+	onlySnap := NewSnapshot([]store.Rule{simRules()[0]}, lg)
+	dec, matched := onlySnap.Evaluate(simCtx(), 0)
+	if res.Matched != matched || res.Verdict != dec {
+		t.Fatalf("onlyRuleId 仿真 %+v != 单独求值 %+v", res.Verdict, dec)
+	}
+}
+
+// TestSnapshotSimulateDraftReplacesRule 草稿与同 id 的存量规则二选一,
+// 且仿真不得改写快照(诊断请求绝不能影响线上跳转)。
+func TestSnapshotSimulateDraftReplacesRule(t *testing.T) {
+	lg, _ := logBuf()
+	snap := NewSnapshot(simRules(), lg)
+	before := len(snap.Rules)
+
+	// 草稿把规则 1 改成"中国访客 404":改了之后赢家应当是规则 1。
+	draft, ok := compileRule(store.Rule{
+		ID: 1, Name: "中国访客拦截", Priority: 10, Enabled: true,
+		Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
+		Action: store.RuleActionNotfound,
+		Conditions: store.RuleConditions{
+			{Field: FieldCountry, Operator: OpIn, Values: []string{"CN"}},
+		},
+	}, lg)
+	if !ok {
+		t.Fatal("草稿编译失败")
+	}
+
+	res := snap.Simulate(simCtx(), 0, nil, &draft)
+	if !res.Matched || res.Verdict.RuleID != 1 || res.Verdict.Name != "中国访客拦截" {
+		t.Fatalf("草稿裁决 = %+v, want 草稿版 rule 1", res.Verdict)
+	}
+	if len(res.Steps) != 2 {
+		t.Fatalf("steps = %d, want 2(草稿顶替存量,不新增一条)", len(res.Steps))
+	}
+	if !res.Steps[0].Draft {
+		t.Fatalf("step1 = %+v, want 标记为草稿", res.Steps[0])
+	}
+	// 草稿不写回快照:线上 Evaluate 的结论必须还是原来的规则 2。
+	if len(snap.Rules) != before {
+		t.Fatalf("仿真改写了快照: %d -> %d 条", before, len(snap.Rules))
+	}
+	dec, matched := snap.Evaluate(simCtx(), 0)
+	if !matched || dec.RuleID != 2 || dec.Name != "活动页放行" {
+		t.Fatalf("仿真污染了快照,线上现在是 %+v(matched=%v)", dec, matched)
+	}
+}
+
+// TestSnapshotSimulateDraftNewRule 草稿是新规则(存量没有同 id)时,
+// 按优先级插进链路;id 为 0 的未保存草稿排在同优先级末尾。
+func TestSnapshotSimulateDraftNewRule(t *testing.T) {
+	lg, _ := logBuf()
+	snap := NewSnapshot(simRules(), lg)
+
+	draft, ok := compileRule(store.Rule{
+		ID: 0, Name: "新草稿", Priority: 20, Enabled: true,
+		Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
+		Action: store.RuleActionThrottle,
+		Conditions: store.RuleConditions{
+			{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}},
+		},
+	}, lg)
+	if !ok {
+		t.Fatal("草稿编译失败")
+	}
+
+	res := snap.Simulate(simCtx(), 0, nil, &draft)
+	if len(res.Steps) != 3 {
+		t.Fatalf("steps = %d, want 3", len(res.Steps))
+	}
+	// priority 同为 20,存量 id=2 在前(新草稿排在同优先级末尾)。
+	if res.Steps[1].RuleID != 2 || res.Steps[2].RuleID != 0 {
+		t.Fatalf("排序 = %d,%d, want 2,0(同优先级新草稿在后)", res.Steps[1].RuleID, res.Steps[2].RuleID)
+	}
+	if !res.Matched || res.Verdict.RuleID != 2 {
+		t.Fatalf("裁决 = %+v, want 规则 2 先命中", res.Verdict)
+	}
+	if res.Steps[2].Status != StepStatusSkip || !strings.Contains(res.Steps[2].Reason, "命中") {
+		t.Fatalf("首条命中后的草稿 = %+v, want skip 并说明已被首条命中盖过", res.Steps[2])
+	}
+}
+
+// TestSnapshotSimulateNeverPanics 诊断接口不能把 panic 抛给调用方:
+// 取字段炸了也要把错误如实报出来,并且不给出命中结论。
+func TestSnapshotSimulateNeverPanics(t *testing.T) {
+	lg, _ := logBuf()
+	snap := NewSnapshot(simRules(), lg)
+
+	res := snap.Simulate(boomCtx{}, 0, nil, nil)
+	if res.Matched {
+		t.Fatal("求值炸了不得给出命中结论")
+	}
+	if res.Error == "" {
+		t.Fatal("panic 应当记进 Error 供诊断")
+	}
+	// nil 画像 / nil 快照都是"没有规则适用",不是崩溃。
+	if res := snap.Simulate(nil, 0, nil, nil); res.Matched || res.Error != "" {
+		t.Fatalf("nil 画像 = %+v", res)
+	}
+	var nilSnap *Snapshot
+	if res := nilSnap.Simulate(simCtx(), 0, nil, nil); res.Matched || len(res.Steps) != 0 {
+		t.Fatalf("nil 快照 = %+v", res)
+	}
+}
+
+// TestSnapshotSimulateConcurrent 诊断与跳转热路径并发跑:
+// 仿真只读快照,不能与 Evaluate 抢写(go test -race 会抓)。
+func TestSnapshotSimulateConcurrent(t *testing.T) {
+	lg, _ := logBuf()
+	rules := make([]store.Rule, 0, 20)
+	for i := 1; i <= 20; i++ {
+		rules = append(rules, store.Rule{
+			ID: int64(i), Name: fmt.Sprintf("r%d", i), Priority: i, Enabled: true,
+			Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
+			Action: store.RuleActionNotfound,
+			Conditions: store.RuleConditions{
+				{Field: FieldUA, Operator: OpContains, Values: []string{"bot"}},
+			},
+		})
+	}
+	snap := NewSnapshot(rules, lg)
+	bot := simFact()
+	bot.UA = "Googlebot/2.1 (+http://www.google.com/bot.html)"
+	human := simFact()
+	human.UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				f, want := bot, true
+				if j%2 == 1 {
+					f, want = human, false
+				}
+				res := snap.Simulate(&f, int64(j), nil, nil)
+				if res.Matched != want {
+					t.Errorf("仿真结论漂移: matched=%v want=%v %+v", res.Matched, want, res.Verdict)
+					return
+				}
+				if want && res.Verdict.RuleID != 1 {
+					t.Errorf("命中的不是优先级最高的规则: %+v", res.Verdict)
+					return
+				}
+				dec, ok := snap.Evaluate(&f, int64(j))
+				if ok != res.Matched || (ok && dec != res.Verdict) {
+					t.Errorf("仿真与线上求值结论不一致: sim=%+v/%v eval=%+v/%v",
+						res.Verdict, res.Matched, dec, ok)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if len(snap.Rules) != 20 {
+		t.Fatalf("快照被改写: %d 条", len(snap.Rules))
+	}
+}
+
+// boomCtx 取字段时炸掉的画像(模拟第三方 VisitorContext 实现出问题)。
+type boomCtx struct{}
+
+func (boomCtx) ClientIP() netip.Addr { return netip.Addr{} }
+
+func (boomCtx) Field(string) (string, bool) { panic("boom") }

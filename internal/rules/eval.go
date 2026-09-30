@@ -66,6 +66,7 @@ type Decision struct {
 type compiledCond struct {
 	field  string
 	op     string
+	raw    []string            // 租户写下的原始字面量(去空白、未小写),仿真回显"期望值"用
 	lits   []string            // 小写归一后的字面量(in/eq/contains/...)
 	litMap map[string]struct{} // in / not_in 的 O(1) 预编译集合
 	ips    []net.IP            // 预解析的单 IP(仅 ip 字段)
@@ -150,7 +151,7 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 	if len(values) == 0 {
 		return drop("values 为空")
 	}
-	c := compiledCond{field: cond.Field, op: cond.Operator}
+	c := compiledCond{field: cond.Field, op: cond.Operator, raw: values}
 	// ip 字段的集合比较(不属于)走预解析的 IP/CIDR:单个 IP 与网段都支持。
 	// 其余运算符(ip contains / ip regex 等)对 ip 按普通字符串处理。
 	if cond.Field == FieldIP {

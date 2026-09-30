@@ -414,6 +414,20 @@ func (c *LazyVisitorContext) ToFact() Fact {
 // WithIP 返回一份改写了来源 IP 的画像。
 // 跳转链路建议用它:把"已经写进访问明细的那个 IP"传给求值,
 // 保证访问明细与规则裁决看到同一个来源 IP,不会因为解析口径不同而对不上。
+// Fields 按 13 个可求值字段摊平成一张表,给诊断接口原样回显。
+// 取不到数据的字段值是空串(与 Field() 的 ok=false 语义一致:空串=没有数据,不是"匹配空串")。
+func (f Fact) Fields() map[string]string {
+	out := make(map[string]string, 13)
+	for _, name := range []string{
+		FieldIP, FieldIPAttr, FieldCountry, FieldASN, FieldLang, FieldRef, FieldUTM,
+		FieldUA, FieldDevType, FieldOS, FieldBrowser, FieldPath, FieldDomain,
+	} {
+		v, _ := f.Field(name)
+		out[name] = v
+	}
+	return out
+}
+
 func (f Fact) WithIP(ip string) Fact {
 	f.IP = ip
 	f.netIP = net.ParseIP(ip)

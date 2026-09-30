@@ -11,9 +11,11 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"cloak/internal/httpapi"
+	"cloak/internal/rules"
 	"cloak/internal/store"
 	"cloak/internal/testutil"
 )
@@ -871,4 +873,424 @@ func TestRuleErrorPagePayload(t *testing.T) {
 	})
 	assertStatus(t, badResp, http.StatusBadRequest)
 	_ = badResp.Body.Close()
+}
+
+// ---------- 规则仿真(诊断) ----------
+
+// 仿真接口的契约测试。核心是最后一条:推演结论必须与真实跳转一致——
+// 诊断页如果说"会拦",线上就必须真拦,否则租户会照着一个假的裁决改配置。
+
+// simCond 单条条件的求值留痕。
+type simCond struct {
+	Field       string   `json:"field"`
+	Operator    string   `json:"operator"`
+	Expected    []string `json:"expected"`
+	Actual      string   `json:"actual"`
+	Available   bool     `json:"available"`
+	Matched     bool     `json:"matched"`
+	Description string   `json:"description"`
+}
+
+// simStep 决策链上的一条规则。
+type simStep struct {
+	RuleID     int64     `json:"ruleId"`
+	RuleName   string    `json:"ruleName"`
+	Priority   int       `json:"priority"`
+	Scope      string    `json:"scope"`
+	Action     string    `json:"action"`
+	Status     string    `json:"status"`
+	Reason     string    `json:"reason"`
+	Logic      string    `json:"logic"`
+	Draft      bool      `json:"draft"`
+	Conditions []simCond `json:"conditions"`
+}
+
+// simVerdict 裁决结论。
+type simVerdict struct {
+	Matched     bool   `json:"matched"`
+	Blocked     bool   `json:"blocked"`
+	RuleID      int64  `json:"ruleId"`
+	RuleName    string `json:"ruleName"`
+	Action      string `json:"action"`
+	Destination string `json:"destination"`
+	Priority    int    `json:"priority"`
+	Message     string `json:"message"`
+}
+
+// simResp POST /api/rules/simulate 响应体。
+type simResp struct {
+	Facts     map[string]string `json:"facts"`
+	ScopeNote string            `json:"scopeNote"`
+	Steps     []simStep         `json:"steps"`
+	Verdict   simVerdict        `json:"verdict"`
+	Error     string            `json:"error"`
+}
+
+// simulate POST /api/rules/simulate 并断言 200。
+func simulate(t *testing.T, c *testClient, body map[string]any) simResp {
+	t.Helper()
+	resp := c.post("/api/rules/simulate", body)
+	assertStatus(t, resp, http.StatusOK)
+	return decodeBody[simResp](t, resp)
+}
+
+const simBotUA = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+
+// TestSimulateRulesTracesDecisionChain 决策链三态(不适用/命中/未命中)与逐条条件留痕,
+// 以及首命中之后不再求值。
+func TestSimulateRulesTracesDecisionChain(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "simpath", "targetUrls": []string{"https://t1.example.com"}, "domainIds": []int64{lid}})
+	other := createLink(t, c, map[string]any{
+		"code": "simothr", "targetUrls": []string{"https://t1.example.com"}, "domainIds": []int64{lid}})
+
+	// 优先级 5:只关联别的短链 → 不适用(零关联/非关联都不该命中)
+	scoped := createRule(t, c, map[string]any{
+		"name": "只管别的短链", "priority": 5, "action": store.RuleActionNotfound, "scope": store.RuleScopeLinks,
+		"linkIds":    []int64{other.ID},
+		"conditions": []map[string]any{{"field": "devtype", "operator": "eq", "values": []string{"bot"}}},
+	})
+	// 优先级 10:全局,本访客命中
+	hit := createRule(t, c, map[string]any{
+		"name": "拦截爬虫", "priority": 10, "action": store.RuleActionNotfound,
+		"conditions": []map[string]any{{"field": "devtype", "operator": "eq", "values": []string{"bot"}}},
+	})
+	// 优先级 20:全局,但条件不成立(依赖 country,测试环境没有 GeoIP)
+	miss := createRule(t, c, map[string]any{
+		"name": "拦美国访客", "priority": 20, "action": store.RuleActionNotfound,
+		"conditions": []map[string]any{{"field": "country", "operator": "in", "values": []string{"US", "CA"}}},
+	})
+
+	got := simulate(t, c, map[string]any{
+		"url":            "https://localhost/" + link.Code,
+		"ip":             "203.0.113.7",
+		"userAgent":      simBotUA,
+		"acceptLanguage": "zh-CN,zh;q=0.9",
+		"referrer":       "https://news.example.com/post",
+	})
+
+	// 1. facts 是这次访客的 13 个字段,原样回显
+	wantFacts := map[string]string{
+		// 公网 IP 没有 ipattr(引擎只标私网/回环/链路本地),这里刻意不猜 "public"
+		"ip": "203.0.113.7", "ipattr": "", "devtype": "bot",
+		"lang": "zh-cn", "ref": "news.example.com", "path": "/" + link.Code, "domain": "localhost",
+	}
+	for k, want := range wantFacts {
+		if got.Facts[k] != want {
+			t.Errorf("facts[%s] = %q, want %q", k, got.Facts[k], want)
+		}
+	}
+
+	// 2. 短链定位到了 → scopeNote 说明推演范围
+	if !strings.Contains(got.ScopeNote, "/"+link.Code) {
+		t.Errorf("scopeNote = %q, want 提到短链 %s", got.ScopeNote, link.Code)
+	}
+
+	// 3. 决策链按优先级升序:不适用 → 命中 → 命中后不再求值
+	if len(got.Steps) != 3 {
+		t.Fatalf("steps = %d, want 3(%+v)", len(got.Steps), got.Steps)
+	}
+	if got.Steps[0].RuleID != scoped.ID || got.Steps[0].Status != rules.StepStatusSkip {
+		t.Errorf("step[0] = %+v, want scoped rule skipped", got.Steps[0])
+	}
+	if got.Steps[1].RuleID != hit.ID || got.Steps[1].Status != rules.StepStatusHit {
+		t.Fatalf("step[1] = %+v, want hit rule", got.Steps[1])
+	}
+	if len(got.Steps[1].Conditions) != 1 {
+		t.Fatalf("step[1].conditions = %+v, want 1", got.Steps[1].Conditions)
+	}
+	cond := got.Steps[1].Conditions[0]
+	if cond.Field != "devtype" || cond.Operator != "eq" || cond.Actual != "bot" ||
+		!cond.Available || !cond.Matched || cond.Description == "" {
+		t.Errorf("condition trace = %+v, want devtype/bot 命中并带说明", cond)
+	}
+	if got.Steps[2].RuleID != miss.ID || got.Steps[2].Status != rules.StepStatusSkip ||
+		!strings.Contains(got.Steps[2].Reason, "首命中即裁决") {
+		t.Errorf("step[2] = %+v, want 首命中后不再求值", got.Steps[2])
+	}
+
+	// 4. 裁决
+	if !got.Verdict.Matched || !got.Verdict.Blocked || got.Verdict.RuleID != hit.ID ||
+		got.Verdict.Action != store.RuleActionNotfound || got.Verdict.Priority != 10 {
+		t.Fatalf("verdict = %+v, want 命中 notfound 规则 %d", got.Verdict, hit.ID)
+	}
+
+	// 5. 换个访客(不是爬虫):命中规则不成立,继续往下求值
+	got2 := simulate(t, c, map[string]any{
+		"url": "https://localhost/" + link.Code, "ip": "203.0.113.7",
+		"userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+	})
+	if got2.Verdict.Matched {
+		t.Fatalf("桌面访客不该命中: %+v", got2.Verdict)
+	}
+	if len(got2.Steps) != 3 || got2.Steps[0].RuleID != scoped.ID || got2.Steps[1].RuleID != hit.ID ||
+		got2.Steps[1].Status != rules.StepStatusSkip {
+		t.Fatalf("桌面访客 steps = %+v, want [scoped skip, 拦截爬虫 skip, 拦美国IP skip]", got2.Steps)
+	}
+	if got2.Steps[1].Conditions[0].Actual != "desktop" {
+		t.Errorf("未命中条件留痕 = %+v, want 实际值 desktop", got2.Steps[1].Conditions[0])
+	}
+	if !strings.Contains(got2.Steps[1].Reason, "0/1") {
+		t.Errorf("未命中理由 = %q, want 说明成立 0/1 条", got2.Steps[1].Reason)
+	}
+	// 拿不到数据的字段恒不成立(引擎最关键的不变式),且必须说明原因
+	missStep := got2.Steps[2]
+	if missStep.RuleID != miss.ID || len(missStep.Conditions) != 1 {
+		t.Fatalf("step[2] = %+v, want 拦美国访客的逐条留痕", missStep)
+	}
+	missCond := missStep.Conditions[0]
+	if missCond.Available || missCond.Matched || missCond.Actual != "" ||
+		!strings.Contains(missCond.Description, "没有数据源") ||
+		!strings.Contains(missStep.Reason, "取不到数据") {
+		t.Errorf("country 无数据时的留痕 = %+v / reason=%q", missCond, missStep.Reason)
+	}
+	if got2.Error != "" {
+		t.Errorf("error = %q, want 空", got2.Error)
+	}
+
+	// 6. manualCountry:手工注入的国家码进画像,country 条件照常求值(不写库)
+	got3 := simulate(t, c, map[string]any{
+		"url": "https://localhost/" + link.Code, "ip": "203.0.113.7",
+		"userAgent":     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+		"manualCountry": "cn",
+	})
+	if got3.Facts["country"] != "CN" {
+		t.Errorf("facts.country = %q, want CN(manualCountry 归一化成大写)", got3.Facts["country"])
+	}
+	gotCond := got3.Steps[2].Conditions[0]
+	if !gotCond.Available || gotCond.Matched || gotCond.Actual != "CN" {
+		t.Errorf("注入国家码后的 country 留痕 = %+v, want 有值且未命中", gotCond)
+	}
+	if got3.Verdict.Matched {
+		t.Errorf("CN 访客不该命中美国规则: %+v", got3.Verdict)
+	}
+}
+
+// TestSimulateRulesValidatesInput 非法输入必须是 400/404,不能是 500,
+// 也不能把别的租户的规则拉进推演。
+func TestSimulateRulesValidatesInput(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	bob := loggedInTenant(t, env, "bob")
+	bobRule := createRule(t, bob, baseRuleBody("bob 的规则"))
+
+	cases := []struct {
+		name string
+		body any
+		want int
+	}{
+		{"空 body", map[string]any{}, http.StatusBadRequest},
+		{"url 为空", map[string]any{"url": "  "}, http.StatusBadRequest},
+		{"url 是路径而不是短码", map[string]any{"url": "/a/b"}, http.StatusBadRequest},
+		{"url 非 http 协议", map[string]any{"url": "ftp://localhost/x"}, http.StatusBadRequest},
+		{"ip 不合法", map[string]any{"url": "https://localhost/x", "ip": "999.1.1.1"}, http.StatusBadRequest},
+		{"国家码不合法", map[string]any{"url": "https://localhost/x", "manualCountry": "CHN"}, http.StatusBadRequest},
+		{"onlyRuleId 非正", map[string]any{"url": "https://localhost/x", "onlyRuleId": 0}, http.StatusBadRequest},
+		{"onlyRuleId 不存在", map[string]any{"url": "https://localhost/x", "onlyRuleId": int64(999999)}, http.StatusNotFound},
+		{"onlyRuleId 越权", map[string]any{"url": "https://localhost/x", "onlyRuleId": bobRule.ID}, http.StatusNotFound},
+		{"body 不是 JSON", "not-json", http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := c.post("/api/rules/simulate", tc.body)
+			assertStatus(t, resp, tc.want)
+			_ = resp.Body.Close()
+		})
+	}
+}
+
+// TestSimulateRulesDraftAndOnlyRule onlyRuleId 只回放一条存量规则;
+// draftRule 顶替同 id 规则参与推演但绝不落库;非法草稿与落库校验一致。
+func TestSimulateRulesDraftAndOnlyRule(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "simdraft", "targetUrls": []string{"https://t1.example.com"}, "domainIds": []int64{lid}})
+	r := createRule(t, c, map[string]any{
+		"name": "原规则", "priority": 50, "action": store.RuleActionNotfound,
+		"conditions": []map[string]any{{"field": "path", "operator": "eq", "values": []string{"/" + link.Code}}},
+	})
+	url := "https://localhost/" + link.Code
+
+	// 1. onlyRuleId:只看这一条
+	got := simulate(t, c, map[string]any{"url": url, "ip": "203.0.113.7", "onlyRuleId": r.ID})
+	if len(got.Steps) != 1 || got.Steps[0].RuleID != r.ID || !got.Verdict.Matched {
+		t.Fatalf("onlyRuleId 推演 = %+v / %+v, want 只回放规则 %d 且命中", got.Steps, got.Verdict, r.ID)
+	}
+	// 换个短链:只有这一条规则时条件不成立
+	got = simulate(t, c, map[string]any{"url": "https://localhost/nosuch", "ip": "203.0.113.7", "onlyRuleId": r.ID})
+	if got.Verdict.Matched {
+		t.Fatalf("不成立的路径不该命中: %+v", got.Verdict)
+	}
+
+	// 2. draftRule 顶替同 id 规则:结论按草稿算,存量规则不动
+	got = simulate(t, c, map[string]any{"url": url, "ip": "203.0.113.7", "draftRule": map[string]any{
+		"id": r.ID, "action": store.RuleActionRedirect, "destination": "https://alt.example.com/x",
+		"conditions": []map[string]any{{"field": "path", "operator": "eq", "values": []string{"/" + link.Code}}},
+	}})
+	if got.Verdict.RuleID != r.ID || got.Verdict.Action != store.RuleActionRedirect ||
+		got.Verdict.Destination != "https://alt.example.com/x" {
+		t.Fatalf("草稿裁决 = %+v, want redirect 到 alt", got.Verdict)
+	}
+	if len(got.Steps) != 1 || !got.Steps[0].Draft {
+		t.Fatalf("steps = %+v, want 唯一一步且标为草稿", got.Steps)
+	}
+	if gotRule := getRule(t, c, r.ID); gotRule.Action != store.RuleActionNotfound {
+		t.Fatalf("草稿落库了?存量规则 action = %q", gotRule.Action)
+	}
+
+	// 3. 草稿未启用:占一步并标 disabled,裁决继续往下走
+	got = simulate(t, c, map[string]any{"url": url, "ip": "203.0.113.7", "draftRule": map[string]any{
+		"id": r.ID, "enabled": false, "conditions": []map[string]any{
+			{"field": "path", "operator": "eq", "values": []string{"/" + link.Code}}},
+	}})
+	if len(got.Steps) != 1 || got.Steps[0].Status != rules.StepStatusDisabled {
+		t.Fatalf("steps = %+v, want 唯一一步且 disabled", got.Steps)
+	}
+	if got.Verdict.Matched {
+		t.Fatalf("停用草稿不该命中: %+v", got.Verdict)
+	}
+
+	// 4. 新草稿(无 id)按优先级插入决策链
+	got = simulate(t, c, map[string]any{"url": url, "ip": "203.0.113.7", "draftRule": map[string]any{
+		"name": "新草稿", "priority": 1, "action": store.RuleActionNotfound,
+		"conditions": []map[string]any{{"field": "path", "operator": "eq", "values": []string{"/" + link.Code}}},
+	}})
+	if len(got.Steps) != 2 || got.Steps[0].RuleID != 0 || !got.Steps[0].Draft ||
+		got.Steps[0].Status != rules.StepStatusHit {
+		t.Fatalf("steps = %+v, want 草稿以优先级 1 插到链首并命中", got.Steps)
+	}
+	if got.Verdict.RuleID != 0 || got.Verdict.RuleName != "新草稿" {
+		t.Fatalf("verdict = %+v, want 命中新草稿", got.Verdict)
+	}
+
+	// 5. 非法草稿与落库同样被拒(400)
+	for name, draft := range map[string]map[string]any{
+		"动作非法": {"name": "x", "action": "bogus"},
+		"字段非法": {"name": "x", "conditions": []map[string]any{{"field": "nope", "operator": "eq", "values": []string{"1"}}}},
+		"重定向目标含控制字符": {"name": "x", "action": store.RuleActionRedirect,
+			"destination": "https://a.example.com/\r\nSet-Cookie: x=1"},
+		"条件全不可求值": {"name": "x", "conditions": []map[string]any{
+			{"field": "ip", "operator": "eq", "values": []string{"不是 IP"}}}},
+	} {
+		t.Run("草稿/"+name, func(t *testing.T) {
+			resp := c.post("/api/rules/simulate", map[string]any{"url": url, "ip": "203.0.113.7", "draftRule": draft})
+			assertStatus(t, resp, http.StatusBadRequest)
+			_ = resp.Body.Close()
+		})
+	}
+}
+
+// TestSimulateRulesDisabledLinkBypass 短链关掉规则求值时,线上不会应用任何规则,
+// 诊断也不能报一个线上不会发生的拦截。
+func TestSimulateRulesDisabledLinkBypass(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "simbypass", "targetUrls": []string{"https://t1.example.com"}, "domainIds": []int64{lid}})
+	createRule(t, c, map[string]any{
+		"name": "本该拦住", "priority": 10, "action": store.RuleActionNotfound,
+		"conditions": []map[string]any{{"field": "path", "operator": "eq", "values": []string{"/" + link.Code}}},
+	})
+
+	before := redirectGet(t, env, "localhost", "/"+link.Code)
+	assertStatus(t, before, http.StatusNotFound)
+
+	resp := c.patch("/api/links/"+strconv.FormatInt(link.ID, 10), map[string]any{"rulesEnabled": false})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	got := simulate(t, c, map[string]any{"url": "https://localhost/" + link.Code, "ip": "203.0.113.7"})
+	if got.Verdict.Matched || got.Verdict.Blocked {
+		t.Fatalf("rulesEnabled=false 时不该报命中: %+v", got.Verdict)
+	}
+	if !strings.Contains(got.ScopeNote, "rulesEnabled") {
+		t.Errorf("scopeNote = %q, want 解释规则求值已关闭", got.ScopeNote)
+	}
+	after := redirectGet(t, env, "localhost", "/"+link.Code)
+	assertStatus(t, after, http.StatusFound)
+}
+
+// TestSimulateMatchesRealRedirect 最重要的一条:同一条规则、同一组访客数据,
+// 推演结论必须与真实跳转一致(命中/放行、命中哪条、判不拦截)。
+func TestSimulateMatchesRealRedirect(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "simredir", "targetUrls": []string{"https://target.example.com/x"}, "domainIds": []int64{lid}})
+
+	// 优先级 5:UA 里出现特定串才命中 —— 真实 UA 走不通,只有模拟访客能命中
+	byUA := createRule(t, c, map[string]any{
+		"name": "按 UA 改写", "priority": 5, "action": store.RuleActionRedirect,
+		"destination": "https://low.example.com/ua",
+		"conditions":  []map[string]any{{"field": "ua", "operator": "contains", "values": []string{"NoSuchAgentXYZ"}}},
+	})
+	// 优先级 10:本短链一访问就 404 —— 优先级更高的兜底规则
+	byPath := createRule(t, c, map[string]any{
+		"name": "本短链直接 404", "priority": 10, "action": store.RuleActionNotfound,
+		"conditions": []map[string]any{{"field": "path", "operator": "eq", "values": []string{"/" + link.Code}}},
+	})
+	url := "https://localhost/" + link.Code
+
+	cases := []struct {
+		name        string
+		ua          string
+		wantMatched bool
+		wantBlocked bool
+		wantRule    int64
+		wantStatus  int
+		wantLoc     string
+	}{
+		{
+			name: "普通访客:命中兜底 notfound", ua: simBotUA,
+			wantMatched: true, wantBlocked: true, wantRule: byPath.ID, wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "特殊 UA:命中优先级更小的改写规则", ua: "curl/8.0 NoSuchAgentXYZ",
+			wantMatched: true, wantBlocked: false, wantRule: byUA.ID, wantStatus: http.StatusFound,
+			wantLoc: "https://low.example.com/ua",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := simulate(t, c, map[string]any{"url": url, "ip": "203.0.113.7", "userAgent": tc.ua})
+			if got.Verdict.Matched != tc.wantMatched || got.Verdict.Blocked != tc.wantBlocked ||
+				got.Verdict.RuleID != tc.wantRule {
+				t.Fatalf("推演 = %+v, want matched=%v blocked=%v rule=%d",
+					got.Verdict, tc.wantMatched, tc.wantBlocked, tc.wantRule)
+			}
+			resp := redirectGetWithHeaders(t, env, "localhost", "/"+link.Code,
+				map[string]string{"User-Agent": tc.ua})
+			assertStatus(t, resp, tc.wantStatus)
+			if tc.wantLoc != "" && resp.Header.Get("Location") != tc.wantLoc {
+				t.Fatalf("真实跳转 Location = %q, want %q", resp.Header.Get("Location"), tc.wantLoc)
+			}
+		})
+	}
+
+	// 未命中任何规则:推演说不命中,真实跳转照常 302。
+	free := createLink(t, c, map[string]any{
+		"code": "simok", "targetUrls": []string{"https://target.example.com/free"}, "domainIds": []int64{lid}})
+	got := simulate(t, c, map[string]any{"url": "https://localhost/" + free.Code, "ip": "203.0.113.7"})
+	if got.Verdict.Matched {
+		t.Fatalf("无关短链不该命中: %+v", got.Verdict)
+	}
+	if !strings.Contains(got.ScopeNote, "/"+free.Code) {
+		t.Errorf("scopeNote = %q, want 提到短链 %s", got.ScopeNote, free.Code)
+	}
+	resp := redirectGet(t, env, "localhost", "/"+free.Code)
+	assertStatus(t, resp, http.StatusFound)
+	if loc := resp.Header.Get("Location"); loc != "https://target.example.com/free" {
+		t.Fatalf("Location = %q, want 原目标", loc)
+	}
 }
