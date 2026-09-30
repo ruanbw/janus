@@ -70,6 +70,7 @@ func TestIPAttr(t *testing.T) {
 		{"10.1.2.3", IPAttrPrivate},
 		{"192.168.0.1", IPAttrPrivate},
 		{"172.16.0.1", IPAttrPrivate},
+		{"::ffff:10.0.0.1", IPAttrPrivate},
 		{"127.0.0.1", IPAttrLoopback},
 		{"::1", IPAttrLoopback},
 		{"169.254.1.1", IPAttrLinkLocal},

@@ -534,6 +534,7 @@ func ipAttrFromAddr(addr netip.Addr) string {
 	if !addr.IsValid() {
 		return ""
 	}
+	addr = addr.Unmap()
 	switch {
 	case addr.IsLoopback():
 		return IPAttrLoopback
