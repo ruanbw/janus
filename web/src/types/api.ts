@@ -217,6 +217,8 @@ export interface Link {
   /** 落地页地址(仅 landing+url 来源非空) */
   landingUrl: string;
   status: LinkStatus;
+  /** 短链级别规则开关：是否启用规则裁决 */
+  rulesEnabled: boolean;
   /** 关联域名列表 */
   domains: string[];
   /** 访问数 */

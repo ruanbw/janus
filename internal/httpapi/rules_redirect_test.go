@@ -541,3 +541,42 @@ func TestRuleCountryConditionUsesInjectedGeo(t *testing.T) {
 		t.Fatalf("查不到时 country = %q, want 空(不能填猜测值)", vp.Items[0].Country)
 	}
 }
+
+// TestLinkRulesEnabledToggleBypassesRule 测试短链 rulesEnabled 开关:
+// rulesEnabled=false 时跳过规则求值直接重定向; rulesEnabled=true 正常执行规则裁决。
+func TestLinkRulesEnabledToggleBypassesRule(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "bypass", "targetUrls": []string{"https://dest.example.com"}, "domainIds": []int64{lid},
+	})
+	if !link.RulesEnabled {
+		t.Fatalf("link.RulesEnabled 默认值应当为 true")
+	}
+
+	// 创建一条拦截该短链的全局规则
+	createRule(t, c, map[string]any{
+		"name": "全局拦截", "action": store.RuleActionNotfound, "conditions": ruleOnPath(link.Code),
+	})
+
+	// 规则启用且短链 rulesEnabled=true: 应当被规则拦截为 404
+	assertStatus(t, redirectGet(t, env, "localhost", "/"+link.Code), http.StatusNotFound)
+
+	// 将短链 rulesEnabled 置为 false
+	resp := c.patch("/api/links/"+strconv.FormatInt(link.ID, 10), map[string]any{"rulesEnabled": false})
+	assertStatus(t, resp, http.StatusOK)
+	upd := decodeBody[store.Link](t, resp)
+	if upd.RulesEnabled {
+		t.Fatalf("PATCH rulesEnabled=false 后返回的 RulesEnabled 应当为 false")
+	}
+
+	// 再次访问短链: 应当跳过规则求值, 直接 302 重定向到目标
+	assertStatus(t, redirectGet(t, env, "localhost", "/"+link.Code), http.StatusFound)
+
+	// 恢复 rulesEnabled=true: 应当再次被规则拦截为 404
+	resp = c.patch("/api/links/"+strconv.FormatInt(link.ID, 10), map[string]any{"rulesEnabled": true})
+	assertStatus(t, resp, http.StatusOK)
+	assertStatus(t, redirectGet(t, env, "localhost", "/"+link.Code), http.StatusNotFound)
+}

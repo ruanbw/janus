@@ -642,6 +642,14 @@ body {
   outline-offset: 2px;
 }
 
+.switch input:disabled {
+  cursor: not-allowed;
+}
+
+.switch input:disabled + i {
+  opacity: 0.5;
+}
+
 /* ─── 选项卡 (Tabs) ──────────────────────────────────────────────────── */
 .tabs {
   display: flex;

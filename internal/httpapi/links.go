@@ -270,6 +270,7 @@ type patchLinkReq struct {
 	LandingSource  *string         `json:"landingSource"`
 	LandingURL     *string         `json:"landingUrl"`
 	Status         *string         `json:"status"`
+	RulesEnabled   *bool           `json:"rulesEnabled"`
 }
 
 func (a *API) handlePatchLink(c *gin.Context) {
@@ -333,6 +334,9 @@ func (a *API) handlePatchLink(c *gin.Context) {
 			return
 		}
 		upd.Status = req.Status
+	}
+	if req.RulesEnabled != nil {
+		upd.RulesEnabled = req.RulesEnabled
 	}
 	if req.DomainIDs != nil {
 		ids, err := a.validateLinkDomains(c, t.ID, *req.DomainIDs)

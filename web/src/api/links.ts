@@ -35,6 +35,7 @@ function normalizeLink(link: Link): Link {
     ruleCount: typeof link.ruleCount === 'number' ? link.ruleCount : 0,
     ruleNames: Array.isArray(link.ruleNames) ? link.ruleNames : [],
     rules: Array.isArray(link.rules) ? link.rules : [],
+    rulesEnabled: link.rulesEnabled !== false,
   };
 }
 
@@ -79,6 +80,7 @@ export function updateLink(
     domainIds?: number[];
     redirectStatus?: RedirectStatus;
     status?: LinkStatus;
+    rulesEnabled?: boolean;
     linkType?: LinkType;
     landingSource?: LandingSource;
     landingUrl?: string;

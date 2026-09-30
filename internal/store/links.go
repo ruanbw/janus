@@ -20,6 +20,7 @@ type Link struct {
 	LandingSource  string         `json:"landingSource" gorm:"column:landing_source"`
 	LandingURL     string         `json:"landingUrl" gorm:"column:landing_url"`
 	Status         string         `json:"status"`
+	RulesEnabled   bool           `json:"rulesEnabled" gorm:"column:rules_enabled"`
 	Clicks         int64          `json:"clicks" gorm:"column:clicks"`
 	DeletedAt      *time.Time     `json:"-" gorm:"column:deleted_at"`
 	Domains        []string       `json:"domains" gorm:"-"`
@@ -253,7 +254,8 @@ func (s *Store) CreateLink(ctx context.Context, tenantID int64, code string, tar
 	var linkID int64
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		link := Link{TenantID: tenantID, Code: code, RedirectStatus: redirectStatus,
-			LinkType: linkType, LandingSource: landingSource, LandingURL: landingURL, Status: "enabled"}
+			LinkType: linkType, LandingSource: landingSource, LandingURL: landingURL, Status: "enabled",
+			RulesEnabled: true}
 		if err := tx.Create(&link).Error; err != nil {
 			return err
 		}
@@ -321,6 +323,7 @@ type LinkUpdate struct {
 	LandingSource  *string
 	LandingURL     *string
 	Status         *string
+	RulesEnabled   *bool
 	// DomainIDs 非空时整体替换关联域名(空数组 = 清空关联,由调用方保证不合法场景已拦截)。
 	DomainIDs *[]int64
 }
@@ -334,11 +337,15 @@ func (s *Store) UpdateLink(ctx context.Context, tenantID, id int64, upd LinkUpda
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		redirectStatus, status := cur.RedirectStatus, cur.Status
 		linkType, landingSource, landingURL := cur.LinkType, cur.LandingSource, cur.LandingURL
+		rulesEnabled := cur.RulesEnabled
 		if upd.RedirectStatus != nil {
 			redirectStatus = *upd.RedirectStatus
 		}
 		if upd.Status != nil {
 			status = *upd.Status
+		}
+		if upd.RulesEnabled != nil {
+			rulesEnabled = *upd.RulesEnabled
 		}
 		if upd.LinkType != nil {
 			linkType = *upd.LinkType
@@ -351,7 +358,8 @@ func (s *Store) UpdateLink(ctx context.Context, tenantID, id int64, upd LinkUpda
 		}
 		if err := tx.Model(&Link{}).Where("id = ? AND tenant_id = ?", id, tenantID).
 			Updates(map[string]any{"redirect_status": redirectStatus, "status": status,
-				"link_type": linkType, "landing_source": landingSource, "landing_url": landingURL}).Error; err != nil {
+				"link_type": linkType, "landing_source": landingSource, "landing_url": landingURL,
+				"rules_enabled": rulesEnabled}).Error; err != nil {
 			return err
 		}
 		// TargetURLs 非空时整体替换目标列表(先删后插,保持 position 顺序)
@@ -481,6 +489,7 @@ type lookupRow struct {
 	LandingSource   string
 	LandingURL      string
 	LinkStatus      string
+	LinkRulesEnabled bool
 	LinkDeletedAt   *time.Time
 	LinkCreatedAt   time.Time
 	DomainID        int64
@@ -500,7 +509,7 @@ func (r lookupRow) link(targets []string) *Link {
 		ID: r.LinkID, TenantID: r.LinkTenantID, Code: r.Code,
 		RedirectStatus: r.RedirectStatus, LinkType: r.LinkType,
 		LandingSource: r.LandingSource, LandingURL: r.LandingURL,
-		Status: r.LinkStatus, DeletedAt: r.LinkDeletedAt,
+		Status: r.LinkStatus, RulesEnabled: r.LinkRulesEnabled, DeletedAt: r.LinkDeletedAt,
 		CreatedAt: r.LinkCreatedAt, TargetURLs: targets,
 	}
 }
@@ -526,7 +535,7 @@ func (s *Store) lookupLink(ctx context.Context, domainID int64, code string, str
 	// linkCond 只由上面两个常量分支拼接,不拼接任何外部输入。
 	sql := `SELECT l.id AS link_id, l.tenant_id AS link_tenant_id, l.code,
 	        l.redirect_status, l.link_type, l.landing_source, l.landing_url,
-	        l.status AS link_status, l.deleted_at AS link_deleted_at, l.created_at AS link_created_at,
+	        l.status AS link_status, l.rules_enabled AS link_rules_enabled, l.deleted_at AS link_deleted_at, l.created_at AS link_created_at,
 	        d.id AS domain_id, d.tenant_id AS domain_tenant_id, d.fqdn, d.description,
 	        d.origin, d.status AS domain_status, d.cert_status, d.activated_at,
 	        d.created_at AS domain_created_at

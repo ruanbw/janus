@@ -1,38 +1,5 @@
 <template>
   <div class="flex flex-col gap-5 pb-10" data-od-id="links-view">
-    <!-- ==================== 3 个 KPI 指标 ==================== -->
-    <section class="kpi-grid" data-od-id="links-kpi">
-      <!-- KPI 1: 活跃短链 -->
-      <div class="kpi">
-        <div class="kpi-k">活跃服务中</div>
-        <div class="kpi-v">
-          {{ activeLinksCount }}<span class="text-[14px] text-muted font-normal"> 条</span>
-        </div>
-        <div class="kpi-sub">
-          <span class="dot dot-live" style="display: inline-block; color: var(--accent)"></span>
-          已启用短链正常对外重定向
-        </div>
-      </div>
-
-      <!-- KPI 2: 累计访问 -->
-      <div class="kpi">
-        <div class="kpi-k">本页累计访问量</div>
-        <div class="kpi-v">
-          {{ totalVisits.toLocaleString() }}<span class="text-[14px] text-muted font-normal"> 次</span>
-        </div>
-        <div class="kpi-sub">包含跳转型与落地页访问统计</div>
-      </div>
-
-      <!-- KPI 3: 落地页转化与 CTR -->
-      <div class="kpi">
-        <div class="kpi-k">落地页点击转化</div>
-        <div class="kpi-v">
-          {{ totalClicks.toLocaleString() }}<span class="text-[14px] text-muted font-normal"> 次</span>
-        </div>
-        <div class="kpi-sub">落地页综合转化率 {{ overallCtr }}</div>
-      </div>
-    </section>
-
     <!-- ==================== 短链列表主面板 ==================== -->
     <section class="panel" data-od-id="link-list">
       <div class="panel-hd">
@@ -194,7 +161,7 @@
               </th>
               <th class="shrink">短链链接</th>
               <th class="shrink">类型</th>
-              <th style="width: 278px">出口目标 URL</th>
+              <th style="width: 208px">出口目标 URL</th>
               <th
                 class="num"
                 title="访问 = 跳转 / 落地页视图的次数(点击行不计入);点击 = 落地页按钮经 SDK 回传的次数。点击数字可查看访问明细"
@@ -306,11 +273,11 @@
                 </span>
               </td>
 
-              <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序。列宽用内层固定 250px 撑住,
+              <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序。列宽用内层固定 180px 撑住,
                    不靠 max-width——auto 表格布局会把多余宽度按比例分给「能长」的列,URL 列
                    以前就是靠 420px 的 max-content 吃掉了大部分富余宽度。完整链接靠悬停 tooltip。 -->
               <td>
-                <div class="stack" style="gap: 3px; width: 250px">
+                <div class="stack" style="gap: 3px; width: 180px">
                   <div
                     v-if="link.targetUrls && link.targetUrls.length > 1"
                     class="tiny muted"
@@ -394,53 +361,86 @@
                 </div>
               </td>
 
-              <!-- 规则:显式关联的每条都带开关(专属于本短链才给开关),其余走 +K / 全局说明 -->
+              <!-- 规则：短链维度开关 + 适用规则摘要 -->
               <td class="shrink">
-                <div
-                  v-if="link.ruleCount > 0"
-                  class="row"
-                  style="gap: 4px; flex-wrap: nowrap; max-width: 216px; overflow: hidden"
-                >
-                  <span
-                    v-for="rule in ruleChips(link)"
-                    :key="rule.id"
-                    class="rule-switch-chip"
-                    :class="rule.enabled ? '' : 'rule-switch-chip-off'"
-                    :title="rule.name + (rule.enabled ? '' : '(已停用)')"
+                <div class="row items-center" style="gap: 8px; flex-wrap: nowrap">
+                  <label
+                    class="switch"
+                    :title="
+                      link.ruleCount === 0
+                        ? '未关联规则'
+                        : link.rulesEnabled
+                          ? '点击停用当前短链的规则'
+                          : '点击启用当前短链的规则'
+                    "
                   >
-                    <span class="truncate">{{ rule.name }}</span>
-                    <button
-                      type="button"
-                      role="switch"
-                      :aria-checked="rule.enabled"
-                      :aria-label="(rule.enabled ? '停用规则 ' : '启用规则 ') + rule.name"
-                      :disabled="ruleToggleKey === link.id + ':' + rule.id"
-                      class="relative h-[18px] w-[30px] shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-                      :class="rule.enabled ? 'bg-brand-500' : 'bg-line-strong'"
-                      @click.stop="toggleLinkRule(link, rule, !rule.enabled)"
+                    <input
+                      type="checkbox"
+                      :checked="link.rulesEnabled"
+                      :disabled="rulesUpdatingId === link.id"
+                      :aria-label="(link.rulesEnabled ? '停用短链规则 ' : '启用短链规则 ') + link.code"
+                      @change="onToggleLinkRules(link)"
+                    />
+                    <i></i>
+                  </label>
+                  <template v-if="!link.rulesEnabled">
+                    <span
+                      class="tiny text-ink-faint whitespace-nowrap"
+                      :title="
+                        link.ruleCount > 0
+                          ? '当前短链规则已停用（适用 ' +
+                            (link.ruleNames || []).join('、') +
+                            (link.ruleCount > (link.ruleNames || []).length
+                              ? ' 等 ' + link.ruleCount + ' 条'
+                              : '') +
+                            '）'
+                          : '未关联规则'
+                      "
+                    >
+                      已停用{{ link.ruleCount > 0 ? ` (${link.ruleCount} 条)` : '' }}
+                    </span>
+                  </template>
+                  <template v-else-if="link.ruleCount === 0">
+                    <span class="tiny muted whitespace-nowrap">未关联规则</span>
+                  </template>
+                  <template v-else>
+                    <div
+                      class="row"
+                      style="gap: 4px; flex-wrap: nowrap; max-width: 160px; overflow: hidden"
+                      :title="
+                        '适用规则：' +
+                        (link.ruleNames || []).join('、') +
+                        (link.ruleCount > (link.ruleNames || []).length
+                          ? ' 等 ' + link.ruleCount + ' 条'
+                          : '')
+                      "
                     >
                       <span
-                        class="absolute top-0.5 h-[14px] w-[14px] rounded-full bg-white shadow transition-all"
-                        :class="rule.enabled ? 'left-[13px]' : 'left-0.5'"
-                      />
-                    </button>
-                  </span>
-                  <span
-                    v-if="hiddenRuleCount(link) > 0"
-                    class="mono micro shrink-0 text-ink-faint"
-                    :title="'还有 ' + hiddenRuleCount(link) + ' 条关联规则: ' + hiddenRuleNames(link).join('、')"
-                  >
-                    +{{ hiddenRuleCount(link) }}
-                  </span>
-                  <span
-                    v-if="inheritedRuleCount(link) > 0"
-                    class="micro shrink-0 text-ink-faint"
-                    title="全局规则对所有短链生效,开关在规则页"
-                  >
-                    · {{ inheritedRuleCount(link) }} 条全局
-                  </span>
+                        v-for="name in visibleRuleNames(link)"
+                        :key="name"
+                        class="badge badge-neutral micro min-w-0 truncate"
+                        style="max-width: 75px"
+                        :title="name"
+                      >
+                        {{ name }}
+                      </span>
+                      <span
+                        v-if="link.ruleCount > visibleRuleNames(link).length"
+                        class="mono micro shrink-0 text-ink-faint"
+                        :title="'还有 ' + (link.ruleCount - visibleRuleNames(link).length) + ' 条规则'"
+                      >
+                        +{{ link.ruleCount - visibleRuleNames(link).length }}
+                      </span>
+                      <span
+                        v-if="inheritedRuleCount(link) > 0 && (link.rules || []).length === 0"
+                        class="micro shrink-0 text-ink-faint"
+                        title="全局规则对所有短链生效"
+                      >
+                        · {{ inheritedRuleCount(link) }} 条全局
+                      </span>
+                    </div>
+                  </template>
                 </div>
-                <span v-else class="tiny muted">未关联规则</span>
               </td>
 
               <!-- 操作 -->
@@ -631,14 +631,12 @@ import {
 } from '@/api/links';
 import AppEmpty from '@/components/ui/AppEmpty.vue';
 import { confirm } from '@/components/ui/confirm';
-import { updateRule } from '@/api/rules';
 
 import { ApiError } from '@/types/api';
 import type {
   Domain,
   LandingSource,
   Link,
-  LinkRuleBrief,
   LinkStatus,
   LinkType,
   RedirectStatus,
@@ -649,9 +647,7 @@ import { message } from '@/utils/toast';
 const route = useRoute();
 const router = useRouter();
 
-// 原先这里有 const auth = useAuthStore()，唯一的用途是「写操作后 await auth.fetchMe()」
-// 刷新配额显示。配额已经只留在总览，这 4 次 fetchMe（每次 3 个请求）成了纯浪费的往返，
-// 删掉后本页面不再依赖 auth store。
+// 配额统一在账号设置展示，本页面不再依赖 auth store。
 
 const DOMAIN_STATUS_NOTE: Record<string, string> = {
   pending: 'DNS 待验证',
@@ -673,68 +669,39 @@ const typeFilter = ref<string>('all');
 const statusFilter = ref<string>('all');
 const statusUpdatingId = ref<number | null>(null);
 
-// ==================== 规则列:行内开关 ====================
-// 关联的规则直接带在列表数据里(link.rules),所以开关不需要二次请求、不需要展开层。
-// 展示条数有限,超出的走 +K:开关必须看得见才有用,塞满一格反而没人敢点。
-const RULE_SWITCH_VISIBLE = 2;
+// ==================== 规则列: 短链级别规则开关与摘要 ====================
+const RULE_NAME_VISIBLE = 2;
+const rulesUpdatingId = ref<number | null>(null);
 
-/** 单元格内带开关的规则(取前几条,顺序 = 后端 priority 升序 = 真实求值顺序) */
-function ruleChips(link: Link): LinkRuleBrief[] {
-  return (link.rules || []).slice(0, RULE_SWITCH_VISIBLE);
+function visibleRuleNames(link: Link): string[] {
+  return (link.ruleNames || []).slice(0, RULE_NAME_VISIBLE);
 }
 
-function hiddenRuleCount(link: Link): number {
-  return Math.max((link.rules || []).length - RULE_SWITCH_VISIBLE, 0);
-}
-
-function hiddenRuleNames(link: Link): string[] {
-  return (link.rules || []).slice(RULE_SWITCH_VISIBLE).map((r) => r.name);
-}
-
-/** 继承自全局的规则条数(没有开关:enabled 是规则级开关,在这里改会改掉所有短链) */
+/** 继承自全局的规则条数 */
 function inheritedRuleCount(link: Link): number {
   return Math.max(link.ruleCount - (link.rules || []).length, 0);
 }
 
-const ruleToggleKey = ref<string | null>(null);
-
-async function toggleLinkRule(link: Link, rule: LinkRuleBrief, next: boolean): Promise<void> {
-  const key = link.id + ':' + rule.id;
-  if (ruleToggleKey.value === key) return;
-  ruleToggleKey.value = key;
+async function onToggleLinkRules(link: Link): Promise<void> {
+  if (rulesUpdatingId.value === link.id) return;
+  const next = !link.rulesEnabled;
   const label = next ? '启用' : '停用';
+
+  rulesUpdatingId.value = link.id;
   try {
-    // 用后端回传的 enabled 落盘,而不是本地乐观翻转
-    const updated = await updateRule(rule.id, { enabled: next });
-    rule.enabled = updated.enabled;
-    message.success(`规则「${rule.name}」已${label}`);
+    const updated = await updateLink(link.id, { rulesEnabled: next });
+    link.rulesEnabled = updated.rulesEnabled;
+    message.success(`短链「${link.code}」规则已${label}`);
   } catch (error) {
-    message.error(error instanceof ApiError ? error.message : `${label}规则失败，请稍后重试`);
+    if (error instanceof ApiError) {
+      message.error(error.message);
+    } else {
+      message.error(`${label}规则失败，请稍后重试`);
+    }
   } finally {
-    ruleToggleKey.value = null;
+    rulesUpdatingId.value = null;
   }
 }
-
-// ==================== 计算用量与 KPI ====================
-const activeLinksCount = computed(() => {
-  return links.value.filter((l) => l.status === 'enabled').length;
-});
-
-const totalVisits = computed(() => {
-  return links.value.reduce((acc, l) => acc + (l.visits || 0), 0);
-});
-
-const totalClicks = computed(() => {
-  return links.value.reduce((acc, l) => acc + (l.linkType === 'landing' ? l.clicks || 0 : 0), 0);
-});
-
-const overallCtr = computed(() => {
-  const landingVisits = links.value
-    .filter((l) => l.linkType === 'landing')
-    .reduce((acc, l) => acc + (l.visits || 0), 0);
-  if (landingVisits === 0 || totalClicks.value === 0) return '—';
-  return `${((totalClicks.value / landingVisits) * 100).toFixed(2)}%`;
-});
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 

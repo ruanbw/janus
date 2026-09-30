@@ -161,6 +161,9 @@ func (a *API) redirectToTarget(c *gin.Context, link *store.Link, targetURL strin
 // 快照加载失败与求值 panic 都在 rules 包内 fail-open(记日志后按未命中返回),
 // 这里不需要也不能"重试一次"——重试只是把同一份故障再打一遍。
 func (a *API) ruleDecision(c *gin.Context, link *store.Link) rules.Decision {
+	if !link.RulesEnabled {
+		return rules.Decision{}
+	}
 	snap := a.ruleCache.Get(c.Request.Context(), link.TenantID)
 	if snap == nil || len(snap.Rules) == 0 {
 		return rules.Decision{}
