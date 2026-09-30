@@ -222,7 +222,6 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
-  Radio,
   Settings,
   Sliders,
   Sun,
@@ -295,7 +294,6 @@ const navGroups: NavGroup[] = [
       { to: '/links', label: '短链与目标', icon: Link2 },
       { to: '/rules', label: '规则引擎', icon: Sliders },
       { to: '/rules/simulator', label: '规则模拟器', icon: FlaskConical },
-      { to: '/visit-stream', label: '访问决策流', icon: Radio },
     ],
   },
   {

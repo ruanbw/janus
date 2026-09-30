@@ -18,44 +18,22 @@ import {
   User,
 } from '@lucide/vue';
 
-import { listLinks } from '@/api/links';
-import { getRule, listLinkRules, listRules } from '@/api/rules';
 import PageHeader from '@/components/PageHeader.vue';
-import type { Link, LinkRule, Rule } from '@/types/api';
+import type { Rule } from '@/types/api';
 import { message } from '@/utils/toast';
-import { actionLabel, actionTagColor, isBlockingAction } from './ruleMeta';
-import {
-  buildVisitorFacts,
-  evalCondition,
-  mapWithConcurrency,
-  parseSimTarget,
-  visitorFieldViews,
-  type SimInput,
-  type TraceStep,
-  type VisitorFacts,
-} from './ruleSim';
+import { actionTagColor } from './ruleMeta';
+import { buildDecisionTrace, verdictOf, type Verdict } from './ruleTrace';
+import { visitorFieldViews, type SimInput, type TraceStep, type VisitorFacts } from './ruleSim';
 
 const route = useRoute();
 const router = useRouter();
-
-/** 后端 pageSize 上限 100；租户规则上限 200、短链配额上限 500，故最多翻 3 / 5 页 */
-const PAGE_SIZE = 100;
-const MAX_RULE_PAGES = 3;
-const MAX_LINK_PAGES = 5;
 
 const isSimulating = ref(false);
 const previewRuleId = ref<number | null>(null);
 const traceSteps = ref<TraceStep[]>([]);
 const profile = ref<VisitorFacts | null>(null);
 const scopeNote = ref('');
-const verdict = ref<{
-  title: string;
-  action: string;
-  actionText: string;
-  detailText: string;
-  matched: boolean;
-  blocking: boolean;
-} | null>(null);
+const verdict = ref<Verdict | null>(null);
 
 const origin = typeof window !== 'undefined' ? window.location.origin : 'https://example.com';
 
@@ -89,177 +67,21 @@ function verdictToneClass(): string {
     : 'border-brand-500/40 bg-accent-soft';
 }
 
-/** 拉全量规则（租户上限 200 条），避免「只能预览列表当前页」这种半吊子预览 */
-async function loadAllRules(): Promise<Rule[]> {
-  const items: Rule[] = [];
-  for (let page = 1; page <= MAX_RULE_PAGES; page += 1) {
-    const res = await listRules({ page, pageSize: PAGE_SIZE });
-    items.push(...res.items);
-    if (items.length >= res.total || res.items.length < PAGE_SIZE) break;
-  }
-  return items;
-}
-
-/** 按短码 + Host 定位本租户短链：短码在租户内不唯一，必须连域名一起匹配 */
-async function resolveLink(hostname: string, code: string): Promise<Link | undefined> {
-  if (!code) return undefined;
-  for (let page = 1; page <= MAX_LINK_PAGES; page += 1) {
-    const res = await listLinks({ page, pageSize: PAGE_SIZE });
-    const found = res.items.find(
-      (l) => l.code === code && (l.domains.length === 0 || l.domains.includes(hostname)),
-    );
-    if (found) return found;
-    if (res.items.length < PAGE_SIZE) break;
-  }
-  return undefined;
-}
-
 async function runSimulation() {
   isSimulating.value = true;
   try {
-    const facts = buildVisitorFacts(simInput.value);
-    profile.value = facts;
-
-    // 适用范围：能定位到短链时，以该短链实际的适用规则为准（含全局继承项）
-    const { hostname, code } = parseSimTarget(simInput.value.url);
-    const link = await resolveLink(hostname, code);
-    let applicable: Set<number> | null = null;
-    if (link) {
-      const items: LinkRule[] = await listLinkRules(link.id);
-      applicable = new Set(items.map((i) => i.id));
-      scopeNote.value = `URL 命中短链 /${link.code}，已按该短链实际的适用规则（含全局继承）求值。`;
-    } else {
-      scopeNote.value = code
-        ? `未在本租户找到短码 /${code}，本次仅按 scope=global 的全局规则求值；「指定短链」的规则不在预览范围内。`
-        : 'URL 里没有短码，本次仅按 scope=global 的全局规则求值；「指定短链」的规则不在预览范围内。';
-    }
-
-    const all = await loadAllRules();
-    const candidates = all
-      .filter((r) => r.enabled)
-      .filter((r) => previewRuleId.value === null || r.id === previewRuleId.value)
-      .sort((a, b) => a.priority - b.priority);
-
-    // 列表接口不带 conditions：按需取详情（取不到就退出求值，而不是当空条件糊过去）
-    const detailed = await mapWithConcurrency(candidates, 8, async (r) => {
-      if (r.conditions && r.conditions.length > 0) return r;
-      try {
-        return await getRule(r.id);
-      } catch {
-        return r;
-      }
-    });
-    const conditionless = detailed.filter((r) => (r.conditions?.length ?? 0) === 0);
-    if (conditionless.length > 0) {
+    // 求值逻辑在 ruleTrace.ts：规则模拟器与短链访问明细页共用同一份实现，
+    // 两处各算一次必然漂移，而漂移一次的决策链会让人照着假结论改规则。
+    const trace = await buildDecisionTrace(simInput.value, { onlyRuleId: previewRuleId.value });
+    profile.value = trace.facts;
+    scopeNote.value = trace.scopeNote;
+    traceSteps.value = trace.steps;
+    if (trace.skippedForDetail > 0) {
       message.warning(
-        `${conditionless.length} 条规则未取到条件（未配置条件或详情接口失败），未参与本次求值`,
+        `${trace.skippedForDetail} 条规则未取到条件（未配置条件或详情接口失败），未参与本次求值`,
       );
     }
-
-    const steps: TraceStep[] = [];
-    let matched: Rule | null = null;
-
-    for (const rule of detailed) {
-      const key = `step-${rule.id}`;
-      const inScope = rule.scope === 'global' || (applicable ? applicable.has(rule.id) : false);
-      if (!inScope) {
-        steps.push({
-          key,
-          ruleId: rule.id,
-          ruleName: rule.name,
-          status: 'skip',
-          statusText: '不适用',
-          facts: [],
-          whyText:
-            rule.scope === 'links' && rule.linkCount === 0
-              ? '未关联短链 · 不会命中（不会退化为全局规则）'
-              : '作用域为「指定短链」，本次请求的短链不在其关联列表中',
-        });
-        continue;
-      }
-      if (matched) {
-        steps.push({
-          key,
-          ruleId: rule.id,
-          ruleName: rule.name,
-          status: 'skip',
-          statusText: '已跳过',
-          facts: [],
-          whyText: '首条命中即裁决（First-Match-Wins），后续规则不再求值',
-        });
-        continue;
-      }
-
-      const factsOfConds = (rule.conditions ?? []).map((c) => evalCondition(c, facts));
-      // 空条件组后端视为「无条件即执行」(eval.go matchAll: len(conds)==0 → true),
-      // 而且 conditions:[] 是合法落库状态。所以这里必须当命中处理,
-      // 否则一条 action=notfound 的空条件规则会显示「无规则命中」而线上拦下全部流量。
-      const ruleMatched =
-        factsOfConds.length === 0 ||
-        (rule.logic === 'all' ? factsOfConds.every((f) => f.hit) : factsOfConds.some((f) => f.hit));
-
-      if (ruleMatched) {
-        matched = rule;
-        const isBlock = isBlockingAction(rule.action);
-        steps.push({
-          key,
-          ruleId: rule.id,
-          ruleName: rule.name,
-          status: isBlock ? 'block' : 'hit',
-          statusText: '命中 · 裁决',
-          facts: factsOfConds,
-          whyText:
-            factsOfConds.length === 0
-              ? `无任何条件，后端视为「无条件即执行」，直接执行动作：${actionLabel(rule.action)}${
-                  rule.action === 'redirect' ? ` → ${rule.destination || '（未填写目标）'}` : ''
-                }`
-              : `条件${rule.logic === 'all' ? '全部' : '任一'}满足，执行动作：${actionLabel(rule.action)}${
-                  rule.action === 'redirect' ? ` → ${rule.destination || '（未填写目标）'}` : ''
-                }`,
-        });
-      } else {
-        steps.push({
-          key,
-          ruleId: rule.id,
-          ruleName: rule.name,
-          status: 'skip',
-          statusText: '未命中',
-          facts: factsOfConds,
-          whyText: '条件不满足，继续求值下一条规则',
-        });
-      }
-    }
-
-    traceSteps.value = steps;
-
-    if (matched) {
-      const blocking = isBlockingAction(matched.action);
-      verdict.value = {
-        title: `命中 #${matched.id} · ${actionLabel(matched.action)}`,
-        action: matched.action,
-        matched: true,
-        blocking,
-        actionText:
-          matched.action === 'redirect'
-            ? `${actionLabel(matched.action)} → ${matched.destination || '（未填写目标）'}`
-            : actionLabel(matched.action),
-        detailText: `依据规则「${matched.name}」（优先级 ${matched.priority}）判定；命中只计 visits，动作不灌水访问量。`,
-      };
-    } else {
-      const evaluableCount = detailed.filter((r) => (r.conditions?.length ?? 0) > 0).length;
-      verdict.value = {
-        title: '无规则命中',
-        action: 'pass',
-        matched: false,
-        blocking: false,
-        actionText: evaluableCount === 0 ? '无可用规则（没有已启用且带条件的规则）' : '未命中任何规则',
-        detailText:
-          evaluableCount === 0
-            ? '本租户没有已启用且带条件的规则，请先在规则列表中创建并启用。'
-            : '全部适用规则均未命中，按 spec D4 继续走短链自身的目标选择流程。',
-      };
-    }
-
+    verdict.value = verdictOf(trace);
     message.success('规则链模拟求值完成');
   } catch (error) {
     message.error(error instanceof Error ? error.message : '模拟求值失败，请稍后重试');
@@ -325,7 +147,9 @@ onMounted(async () => {
   const ruleId = Number(Array.isArray(ruleRaw) ? ruleRaw[0] : ruleRaw);
   previewRuleId.value = Number.isInteger(ruleId) && ruleId > 0 ? ruleId : null;
 
-  // 访问决策流的「用此访客在模拟器打开」会带 ip / ua / referrer 进来，直接替用户填好并跑一次
+  // 短链访问明细页的「用此访客在模拟器打开」会带 ip / ua / referrer / url / lang 进来，
+  // 直接替用户填好并跑一次。url 必带：模拟器靠它里的短码定位短链，
+  // 缺了就找不到短链，于是全部 scope='links' 规则被判「不适用」。
   const pick = (key: string): string => {
     const v = route.query[key];
     return String(Array.isArray(v) ? v[0] ?? '' : v ?? '');
@@ -333,10 +157,14 @@ onMounted(async () => {
   const ip = pick('ip');
   const ua = pick('ua');
   const referrer = pick('referrer');
+  const url = pick('url');
+  const lang = pick('lang');
   if (ip) simInput.value.ip = ip;
   if (ua) simInput.value.ua = ua;
   if (referrer) simInput.value.ref = referrer;
-  if (ip || ua || referrer) await runSimulation();
+  if (url) simInput.value.url = url;
+  if (lang) simInput.value.lang = lang;
+  if (ip || ua || referrer || url) await runSimulation();
 });
 </script>
 

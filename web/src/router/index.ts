@@ -109,12 +109,6 @@ const router = createRouter({
           meta: { title: '规则模拟器' },
         },
         {
-          path: 'visit-stream',
-          name: 'visit-stream',
-          component: () => import('@/views/visits/VisitStreamView.vue'),
-          meta: { title: '访问决策流' },
-        },
-        {
           path: 'stats',
           name: 'stats',
           component: () => import('@/views/stats/StatsView.vue'),

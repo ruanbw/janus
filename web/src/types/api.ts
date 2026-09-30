@@ -234,8 +234,17 @@ export interface Visit {
   isDatacenter: boolean;
   /** 自治系统号(地理占位,当前恒为空字符串) */
   asn: string;
-  /** Accept-Language 首标签,如 zh-CN(空表示未携带该请求头) */
+  /** Accept-Language 首标签，如 zh-CN（空表示未携带该请求头） */
   lang: string;
+  /**
+   * 本次访问真实命中的规则 ID（无规则参与时为 null）。
+   *
+   * 可空是因为规则被删后 ON DELETE SET NULL：历史明细保留，但不再指向任何规则。
+   * 这是后端当时记下的事实，不是前端重算的结果。
+   */
+  ruleId: number | null;
+  /** 本次访问真实执行的规则动作：pass / redirect / notfound / throttle（无规则参与时为空） */
+  ruleAction: string;
   createdAt: string;
 }
 

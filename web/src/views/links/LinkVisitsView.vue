@@ -179,11 +179,17 @@
                   </td>
                 </tr>
 
-                <!-- 明细行 -->
+                <!-- 明细行：点开看这一次访问的决策链 -->
+                <template v-for="row in filteredRows" :key="row.visit.id">
                 <tr
-                  v-for="row in filteredRows"
-                  :key="row.visit.id"
                   :data-outcome="row.visit.outcome"
+                  :data-open="expandedId === row.visit.id"
+                  class="row-openable"
+                  tabindex="0"
+                  :aria-expanded="expandedId === row.visit.id"
+                  @click="toggleRow(row)"
+                  @keydown.enter.prevent="toggleRow(row)"
+                  @keydown.space.prevent="toggleRow(row)"
                 >
                   <!-- 时间 -->
                   <td class="shrink">
@@ -286,6 +292,129 @@
                     </div>
                   </td>
                 </tr>
+
+                <!-- ==================== 展开行：真实裁决 + 规则回放 ==================== -->
+                <tr v-if="expandedId === row.visit.id" :class="'trace-row'">
+                  <td colspan="6">
+                    <div class="trace-cell">
+                      <!-- ① 真实裁决：后端当时记下的事实 -->
+                      <div class="trace-sec">
+                        <span class="mono micro muted">真实裁决 · 后端记录</span>
+                        <div class="row flex-wrap" style="gap: 6px; align-items: center">
+                          <span :class="['badge', realVerdictOf(row).badge]">
+                            {{ realVerdictOf(row).text }}
+                          </span>
+                          <span :class="['badge', row.visit.outcome === 'failed' ? 'badge-danger' : 'badge-ok']">
+                            {{ row.visit.outcome === 'failed' ? '✗ 失败' : '✓ 成功' }}
+                          </span>
+                          <span v-if="row.reasonText" class="tiny" style="color: var(--danger)">
+                            {{ row.reasonText }}
+                          </span>
+                          <span v-if="row.visit.ruleId == null" class="tiny muted">
+                            没有规则参与，或命中后规则已被删除
+                          </span>
+                        </div>
+                      </div>
+
+                      <!-- ② 规则回放：按当前规则集重算一遍 -->
+                      <div class="trace-sec">
+                        <div class="row-between" style="gap: 8px; align-items: baseline">
+                          <span class="mono micro muted">规则回放 · 按当前规则集</span>
+                          <span class="tiny muted">规则改过之后，回放可能与当时的裁决不一致</span>
+                        </div>
+
+                        <div v-if="traceStateOf(row.visit.id)?.loading" class="row" style="gap: 8px">
+                          <RefreshCw class="animate-spin" :size="14" />
+                          <span class="tiny muted">正在回放规则链…</span>
+                        </div>
+
+                        <p v-else-if="traceStateOf(row.visit.id).error" class="tiny" style="color: var(--danger)">
+                          回放失败：{{ traceStateOf(row.visit.id).error }}
+                        </p>
+
+                        <template v-else-if="traceStateOf(row.visit.id).trace">
+                          <div class="row flex-wrap" style="gap: 6px; align-items: center">
+                            <span
+                              :class="[
+                                'badge',
+                                traceStateOf(row.visit.id).verdict!.matched
+                                  ? traceStateOf(row.visit.id).verdict!.blocking
+                                    ? 'badge-danger'
+                                    : 'badge-ok'
+                                  : 'badge-neutral',
+                              ]"
+                            >
+                              {{ traceStateOf(row.visit.id).verdict!.title }}
+                            </span>
+                            <span class="tiny muted">{{ traceStateOf(row.visit.id).trace!.scopeNote }}</span>
+                          </div>
+
+                          <!-- 回放与历史不一致：多半是规则在这之后被改过 -->
+                          <p
+                            v-if="replayDiffers(row)"
+                            class="tiny"
+                            style="color: var(--warn)"
+                          >
+                            回放与当时的裁决不一致：当时是
+                            {{ row.visit.ruleId == null ? '无规则命中' : `命中 #${row.visit.ruleId}` }}，
+                            当前规则下会{{ traceStateOf(row.visit.id).verdict!.matched
+                              ? `命中 #${traceStateOf(row.visit.id).trace!.matched!.id}`
+                              : '无规则命中' }}。
+                          </p>
+
+                          <ul class="trace-list">
+                            <li
+                              v-for="step in traceStateOf(row.visit.id).trace!.steps"
+                              :key="step.key"
+                              :class="['trace-step', step.status]"
+                            >
+                              <span class="mono tiny" style="color: var(--ink-faint)">#{{ step.ruleId }}</span>
+                              <span class="tiny" style="color: var(--ink); font-weight: 500">{{ step.ruleName }}</span>
+                              <span
+                                :class="[
+                                  'badge',
+                                  step.status === 'block'
+                                    ? 'badge-danger'
+                                    : step.status === 'hit'
+                                      ? 'badge-ok'
+                                      : 'badge-neutral',
+                                ]"
+                              >
+                                {{ step.statusText }}
+                              </span>
+                              <span class="tiny muted" style="flex-basis: 100%">{{ step.whyText }}</span>
+                              <template v-if="step.facts.length > 0">
+                                <span
+                                  v-for="(fact, i) in step.facts"
+                                  :key="i"
+                                  class="mono tiny"
+                                  :style="fact.hit ? 'color: var(--ink)' : 'color: var(--ink-faint)'"
+                                >{{ fact.hit ? '✓' : '✗' }} {{ fact.text }}</span>
+                              </template>
+                            </li>
+                          </ul>
+
+                          <p
+                            v-if="traceStateOf(row.visit.id).trace!.skippedForDetail > 0"
+                            class="tiny muted"
+                          >
+                            {{ traceStateOf(row.visit.id).trace!.skippedForDetail }} 条规则未取到条件，未参与本次回放
+                          </p>
+                        </template>
+                      </div>
+
+                      <!-- ③ 带着这个访客去模拟器改规则 -->
+                      <div class="trace-sec row" style="gap: 8px">
+                        <button type="button" class="btn btn-sm" @click.stop="openInSimulator(row)">
+                          <FlaskConical :size="13" />
+                          用此访客在模拟器打开
+                        </button>
+                        <span class="tiny muted">在模拟器里改条件验一遍，再回到这里看真实流量怎么走</span>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+                </template>
               </tbody>
             </table>
           </div>
@@ -347,7 +476,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ArrowLeft, RefreshCw, Search, X } from '@lucide/vue';
+import { ArrowLeft, FlaskConical, RefreshCw, Search, X } from '@lucide/vue';
 
 import { getLink } from '@/api/links';
 import { getLinkStats, listVisits } from '@/api/visits';
@@ -361,6 +490,11 @@ import { formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 import { getDeviceBadgeClass, parseUserAgent } from '@/utils/userAgent';
 import type { ParsedUA } from '@/utils/userAgent';
+import { actionLabel, isBlockingAction } from '@/views/rules/ruleMeta';
+import { buildDecisionTrace, verdictOf } from '@/views/rules/ruleTrace';
+import type { DecisionTrace, Verdict } from '@/views/rules/ruleTrace';
+import type { SimInput } from '@/views/rules/ruleSim';
+import type { RuleAction } from '@/types/api';
 
 const route = useRoute();
 const router = useRouter();
@@ -471,6 +605,9 @@ async function loadVisits() {
     });
     visits.value = res.items;
     total.value = res.total;
+    // 重取后旧回放作废：规则可能已经改过，再展示旧链会误导
+    expandedId.value = null;
+    traceStates.value = {};
   } catch (error) {
     if (error instanceof ApiError) message.error(error.message);
     else message.error('加载访问明细失败,请稍后重试');
@@ -519,7 +656,7 @@ function toRow(visit: Visit): VisitRow {
 
 const rows = computed<VisitRow[]>(() => visits.value.map(toRow));
 
-/** 本地过滤:只看失败 + IP / UA / 来源 / 目标 关键词(与访问决策流一致,仅限当前页) */
+/** 本地过滤:只看失败 + IP / UA / 来源 / 目标 关键词(仅限当前页) */
 const filteredRows = computed<VisitRow[]>(() => {
   const q = keyword.value.trim().toLowerCase();
   return rows.value.filter((row) => {
@@ -575,6 +712,105 @@ function onPageSizeChange() {
   loadVisits();
 }
 
+// ==================== 决策链：真实裁决 + 规则回放 ====================
+/** 展开行的回放结果：懒加载一次后缓存，重复展开同一行不再拉规则 */
+interface TraceState {
+  loading: boolean;
+  error: string | null;
+  trace: DecisionTrace | null;
+  verdict: Verdict | null;
+}
+
+const expandedId = ref<number | null>(null);
+const traceStates = ref<Record<number, TraceState>>({});
+
+/** 尚未回放时的空状态：让模板可以直接取，不用到处判空 */
+const EMPTY_TRACE: TraceState = { loading: false, error: null, trace: null, verdict: null };
+
+function traceStateOf(id: number): TraceState {
+  return traceStates.value[id] ?? EMPTY_TRACE;
+}
+
+/**
+ * 用这条访问明细当时的请求头拼出模拟器输入。
+ *
+ * 域名优先取明细记录的 domain（当时实际命中的域名），明细没记就退到短链的第一个
+ * 域名；两个都没有就只给路径——此时 domain 作用域的规则本就不该命中，不要伪造域名。
+ */
+function simInputOf(row: VisitRow): SimInput {
+  const v = row.visit;
+  const code = link.value?.code ?? '';
+  const host = v.domain || link.value?.domains?.[0] || '';
+  return {
+    url: host && code ? `https://${host}/${code}` : `/${code}`,
+    ip: v.ip || '',
+    ua: v.userAgent || '',
+    lang: v.lang || '',
+    ref: v.referer || '',
+  };
+}
+
+async function loadTrace(row: VisitRow) {
+  const id = row.visit.id;
+  if (traceStates.value[id]) return;
+  traceStates.value = { ...traceStates.value, [id]: { loading: true, error: null, trace: null, verdict: null } };
+  try {
+    const trace = await buildDecisionTrace(simInputOf(row), { link: link.value ?? undefined });
+    if (trace.skippedForDetail > 0) {
+      message.warning(`${trace.skippedForDetail} 条规则未取到条件，未参与本次回放`);
+    }
+    traceStates.value = {
+      ...traceStates.value,
+      [id]: { loading: false, error: null, trace, verdict: verdictOf(trace) },
+    };
+  } catch (error) {
+    traceStates.value = {
+      ...traceStates.value,
+      [id]: {
+        loading: false,
+        error: error instanceof Error ? error.message : '回放失败',
+        trace: null,
+        verdict: null,
+      },
+    };
+  }
+}
+
+function toggleRow(row: VisitRow) {
+  if (expandedId.value === row.visit.id) {
+    expandedId.value = null;
+    return;
+  }
+  expandedId.value = row.visit.id;
+  loadTrace(row);
+}
+
+/** 后端当时记下的真实裁决：这是事实，回放不是 */
+function realVerdictOf(row: VisitRow): { text: string; badge: string } {
+  if (row.visit.ruleId == null) return { text: '无规则参与', badge: 'badge-neutral' };
+  const action = row.visit.ruleAction as RuleAction;
+  const label = actionLabel(action) || action || '未知动作';
+  return {
+    text: `命中 #${row.visit.ruleId} · ${label}`,
+    badge: isBlockingAction(action) ? 'badge-danger' : 'badge-ok',
+  };
+}
+
+/** 回放结果与历史裁决不一致——规则多半在这次访问之后被改过 */
+function replayDiffers(row: VisitRow): boolean {
+  const replay = traceStateOf(row.visit.id).trace;
+  if (!replay) return false;
+  return (replay.matched?.id ?? null) !== row.visit.ruleId;
+}
+
+function openInSimulator(row: VisitRow) {
+  const input = simInputOf(row);
+  router.push({
+    path: '/rules/simulator',
+    query: { ip: input.ip, ua: input.ua, referrer: input.ref, url: input.url, lang: input.lang },
+  });
+}
+
 function goBack() {
   router.push({ name: 'links' });
 }
@@ -604,5 +840,73 @@ watch(linkId, () => {
 
 .tbl tbody tr[data-outcome='failed']:hover {
   background: color-mix(in srgb, var(--danger) 18%, var(--surface));
+}
+
+/* 可展开行:整行是展开开关,鼠标/键盘都给出手型 */
+.row-openable {
+  cursor: pointer;
+}
+
+.row-openable:hover {
+  background: var(--surface-muted);
+}
+
+.row-openable[data-open='true'] {
+  background: var(--surface-muted);
+  box-shadow: inset 2px 0 0 var(--brand-500);
+}
+
+.row-openable:focus-visible {
+  outline: 2px solid var(--brand-500);
+  outline-offset: -2px;
+}
+
+/* 决策链展开区：与表格主体用一条细线区隔 */
+.trace-row > td {
+  padding: 0;
+  background: var(--surface-muted);
+  border-top: 1px solid var(--line);
+}
+
+.trace-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.trace-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.trace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trace-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+/* 命中/拦截行比跳过的行更显眼 */
+.trace-step.hit {
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--line));
+}
+
+.trace-step.block {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
 }
 </style>
