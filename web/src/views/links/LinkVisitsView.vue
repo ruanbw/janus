@@ -44,30 +44,12 @@
     </div>
 
     <template v-else>
-      <!-- ==================== 摘要条:访问 / 点击 / CTR ==================== -->
-      <section
-        class="kpi-grid"
-        style="grid-template-columns: repeat(3, minmax(0, 1fr))"
-        data-od-id="link-visits-summary"
-      >
-        <div class="kpi">
-          <div class="kpi-k">访问次数</div>
-          <div class="kpi-v">{{ visitsCount.toLocaleString() }}<span class="text-[14px] text-ink-soft font-normal"> 次</span></div>
-          <div class="kpi-sub">跳转 / 落地页视图次数,点击行不计入</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-k">点击次数</div>
-          <div class="kpi-v">{{ clicksCount.toLocaleString() }}<span class="text-[14px] text-ink-soft font-normal"> 次</span></div>
-          <div class="kpi-sub">落地页按钮经 SDK 回传的点击次数</div>
-        </div>
-        <div class="kpi">
-          <div class="kpi-k">点击转化率 (CTR)</div>
-          <div class="kpi-v">{{ ctr }}</div>
-          <div class="kpi-sub">{{ isLanding ? '点击 / 访问,仅落地页型有意义' : '非落地页型短链不统计点击' }}</div>
-        </div>
-      </section>
-
       <!-- ==================== 访问明细主面板 ==================== -->
+      <!--
+        这里原本挂着一排「访问次数 / 点击次数 / CTR」卡片,已移除:这三个数就是短链列表里
+        那一行的两列,用户是点着它进来的,再摆一遍只占首屏。点击与访问的对比在列表页看;
+        要按动作拆,下方表格的「动作与结果」列里有。
+      -->
       <section class="panel" data-od-id="link-visits-list">
         <div class="panel-hd">
           <div>
@@ -549,7 +531,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ArrowLeft, Copy, FlaskConical, RefreshCw, Search, X } from '@lucide/vue';
 
 import { getLink } from '@/api/links';
-import { getLinkStats, listVisits } from '@/api/visits';
+import { listVisits } from '@/api/visits';
 import PageHeader from '@/components/PageHeader.vue';
 import AppEmpty from '@/components/ui/AppEmpty.vue';
 import AppResult from '@/components/ui/AppResult.vue';
@@ -648,7 +630,6 @@ interface VisitRow {
 
 // ==================== 响应式状态 ====================
 const link = ref<Link | null>(null);
-const stats = ref<{ visits: number; clicks: number } | null>(null);
 const visits = ref<Visit[]>([]);
 const total = ref(0);
 const page = ref(1);
@@ -695,13 +676,6 @@ async function loadLink() {
           ? error.message
           : '加载短链信息失败,请稍后重试。';
     return;
-  }
-
-  // 摘要统计:接口异常时回退到短链自带的计数,不影响明细列表展示
-  try {
-    stats.value = await getLinkStats(linkId.value);
-  } catch {
-    stats.value = { visits: link.value.visits || 0, clicks: link.value.clicks || 0 };
   }
 }
 
@@ -791,18 +765,6 @@ function resetLocalFilters() {
   onlyFailed.value = false;
   deviceFilter.value = 'all';
 }
-
-// ==================== 摘要指标 ====================
-const visitsCount = computed(() => stats.value?.visits ?? link.value?.visits ?? 0);
-const clicksCount = computed(() => stats.value?.clicks ?? link.value?.clicks ?? 0);
-
-/** CTR 口径与短链列表一致:非落地页型或访问为 0 时不展示百分比 */
-const ctr = computed(() => {
-  if (!isLanding.value) return '—';
-  if (!visitsCount.value) return '—';
-  if (!clicksCount.value) return '0.00%';
-  return `${((clicksCount.value / visitsCount.value) * 100).toFixed(2)}%`;
-});
 
 // ==================== 分页与筛选交互 ====================
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
@@ -945,7 +907,6 @@ onMounted(() => {
 // 同一组件实例内切换短链(如浏览器前进/后退):清空旧数据后重拉
 watch(linkId, () => {
   link.value = null;
-  stats.value = null;
   visits.value = [];
   total.value = 0;
   page.value = 1;

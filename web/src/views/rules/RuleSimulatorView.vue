@@ -169,7 +169,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="mx-auto max-w-7xl">
+  <!-- 内容型页面与短链列表、总览一致：占满内容区，不居中限宽 -->
+  <div>
     <PageHeader
       title="规则模拟器"
       description="用一次假想访问跑遍规则链，看清每条规则为什么命中或被跳过。改动规则前先在这里验一遍，比上线后翻访问日志快得多。"
