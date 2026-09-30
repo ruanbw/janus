@@ -879,6 +879,13 @@ body {
   width: auto;
 }
 
+/* 分页底栏同理：.select 默认 width:100%（表单里要铺满），
+   留在 .row 横向控件条里会把「每页」「条」挤到下一行，看起来像竖排。
+   本文件未进 @layer，优先级高于 Tailwind 工具类，故不用 w-auto 覆盖。 */
+.panel-ft .select {
+  width: auto;
+}
+
 .toolbar .input {
   min-height: 32px;
 }
