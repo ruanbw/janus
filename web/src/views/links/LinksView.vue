@@ -161,7 +161,7 @@
               </th>
               <th>短链链接</th>
               <th class="shrink">类型</th>
-              <th class="shrink" style="width: 208px; max-width: 208px">出口目标 URL</th>
+              <th>出口目标 URL</th>
               <th
                 class="num"
                 title="访问 = 跳转 / 落地页视图的次数(点击行不计入);点击 = 落地页按钮经 SDK 回传的次数。点击数字可查看访问明细"
@@ -273,9 +273,9 @@
                 </span>
               </td>
 
-              <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序。收窄为固定紧凑列,超长悬停 tooltip -->
-              <td class="shrink" style="max-width: 208px">
-                <div class="stack" style="gap: 3px; width: 180px">
+              <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序。自动适应宽度,超长悬停 tooltip -->
+              <td>
+                <div class="stack" style="gap: 3px">
                   <div
                     v-if="link.targetUrls && link.targetUrls.length > 1"
                     class="tiny muted"
