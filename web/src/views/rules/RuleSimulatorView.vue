@@ -11,13 +11,16 @@ import { useRoute, useRouter } from 'vue-router';
 import {
   ArrowLeft,
   CircleAlert,
+  Eye,
   FlaskConical,
   Globe,
   Play,
   RotateCcw,
   User,
+  X,
 } from '@lucide/vue';
 
+import { fetchTenantErrorPages } from '@/api/me';
 import PageHeader from '@/components/PageHeader.vue';
 import { COUNTRY_OPTIONS } from '@/constants/countries';
 import type { Rule } from '@/types/api';
@@ -35,6 +38,53 @@ const traceSteps = ref<TraceStep[]>([]);
 const profile = ref<VisitorFacts | null>(null);
 const scopeNote = ref('');
 const verdict = ref<Verdict | null>(null);
+
+const previewModalVisible = ref(false);
+const previewModalTitle = ref('');
+const previewModalHtml = ref('');
+const loadingPreview = ref(false);
+
+async function previewVisitorBlockedPage() {
+  if (!verdict.value) return;
+  const action = verdict.value.action;
+  const rule = verdict.value.matchedRule;
+  loadingPreview.value = true;
+  try {
+    previewModalTitle.value = action === 'notfound' ? '404 访客拦截页面预览' : '429 访客限流页面预览';
+
+    // 1. 规则专属自定义页面
+    if (rule?.pageMode === 'custom' && rule.customHtml) {
+      previewModalHtml.value = rule.customHtml;
+      previewModalVisible.value = true;
+      return;
+    }
+
+    // 2. 租户全局自定义页面
+    const ep = await fetchTenantErrorPages();
+    if (action === 'notfound' && ep.custom404Html) {
+      previewModalHtml.value = ep.custom404Html;
+      previewModalVisible.value = true;
+      return;
+    }
+    if (action === 'throttle' && ep.custom429Html) {
+      previewModalHtml.value = ep.custom429Html;
+      previewModalVisible.value = true;
+      return;
+    }
+
+    // 3. 系统默认页面
+    if (action === 'throttle') {
+      previewModalHtml.value = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>429 - 请求过多</title><style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0f172a;color:#f8fafc;text-align:center;}h1{font-size:5rem;margin:0;color:#f59e0b;}p{color:#94a3b8;font-size:1.1rem;}</style></head><body><div><h1>429</h1><p>请求过于频繁，请稍后再试</p></div></body></html>`;
+    } else {
+      previewModalHtml.value = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>404 - 页面未找到</title><style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0f172a;color:#f8fafc;text-align:center;}h1{font-size:5rem;margin:0;color:#38bdf8;}p{color:#94a3b8;font-size:1.1rem;}</style></head><body><div><h1>404</h1><p>页面不存在或链接已失效</p></div></body></html>`;
+    }
+    previewModalVisible.value = true;
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '加载拦截页面失败');
+  } finally {
+    loadingPreview.value = false;
+  }
+}
 
 const origin = typeof window !== 'undefined' ? window.location.origin : 'https://example.com';
 
@@ -374,10 +424,57 @@ onMounted(async () => {
               </div>
               <div class="mt-2 text-lg font-semibold text-ink">{{ verdict.actionText }}</div>
               <p class="mt-1 text-[13px] leading-relaxed text-ink-soft">{{ verdict.detailText }}</p>
+
+              <!-- 404 / 429 访客页面预览操作 -->
+              <div
+                v-if="verdict.action === 'notfound' || verdict.action === 'throttle'"
+                class="mt-3 pt-3 border-t border-line/60 flex items-center justify-between"
+              >
+                <span class="text-xs text-ink-faint">
+                  访客端将收到 HTTP {{ verdict.action === 'notfound' ? '404' : '429' }} 网页响应
+                </span>
+                <AppButton size="small" :loading="loadingPreview" @click="previewVisitorBlockedPage">
+                  <template #icon><Eye :size="14" /></template>
+                  预览访客端拦截页面
+                </AppButton>
+              </div>
             </div>
           </CardContent>
         </AppCard>
       </div>
     </div>
+
+    <!-- 访客拦截页面沙箱预览弹窗 -->
+    <Teleport to="body">
+      <div
+        v-if="previewModalVisible"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
+        @click.self="previewModalVisible = false"
+      >
+        <div class="flex h-[85vh] w-full max-w-4xl flex-col rounded-xl border border-line bg-surface shadow-2xl overflow-hidden">
+          <div class="flex items-center justify-between border-b border-line px-5 py-3 bg-surface-muted/50">
+            <div class="flex items-center gap-2">
+              <Eye :size="16" class="text-brand-600 dark:text-brand-400" />
+              <span class="text-sm font-semibold text-ink">{{ previewModalTitle }}</span>
+              <span class="text-xs text-ink-faint">已开启 sandbox 安全隔离</span>
+            </div>
+            <button
+              type="button"
+              class="rounded p-1 text-ink-soft hover:bg-surface-muted hover:text-ink"
+              @click="previewModalVisible = false"
+            >
+              <X :size="18" />
+            </button>
+          </div>
+          <div class="flex-1 p-3 bg-line/20">
+            <iframe
+              :srcdoc="previewModalHtml"
+              sandbox="allow-same-origin"
+              class="h-full w-full rounded border border-line bg-white shadow-xs"
+            />
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

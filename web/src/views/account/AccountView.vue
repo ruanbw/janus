@@ -254,6 +254,11 @@
         </CardFooter>
       </AppCard>
     </div>
+
+    <!-- 访客端错误页面配置卡片 -->
+    <div class="mt-6">
+      <ErrorPagesCard />
+    </div>
   </div>
 </template>
 
@@ -273,6 +278,7 @@ import type { FormRule } from '@/components/ui/types';
 import { changePassword } from '@/api/auth';
 import { fetchMyTenant, updateMyTenant } from '@/api/me';
 import PageHeader from '@/components/PageHeader.vue';
+import ErrorPagesCard from '@/views/settings/ErrorPagesCard.vue';
 import { TENANT_STATUS } from '@/constants/dict';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';

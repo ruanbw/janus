@@ -43,6 +43,8 @@ export type RuleLogic = 'all' | 'any';
 /** 命中动作:pass 记录命中并走原目标 / redirect 改写目标 URL /
  *  notfound 直接 404 / throttle 限流 429 */
 export type RuleAction = 'pass' | 'redirect' | 'notfound' | 'throttle';
+/** 规则错误响应页面模式: default 继承系统/租户全局设置 / custom 自定义专属页面 */
+export type RulePageMode = 'default' | 'custom';
 /** 短链侧规则的来源:inherited 继承自 scope=global 的全局规则 / scoped 来自 rule_links 显式关联 */
 export type RuleSource = 'inherited' | 'scoped';
 /** 条件判定字段:v1 收敛到后端从请求即可真实求值的 13 个
@@ -102,6 +104,10 @@ export interface Rule {
   /** action=redirect 时的改写目标,其余动作为空串 */
   destination: string;
   conditions?: RuleCondition[];
+  /** 错误页面模式: default 继承系统/租户全局设置 / custom 规则专属页面 */
+  pageMode?: RulePageMode;
+  /** 规则专属自定义 HTML(限 512KB) */
+  customHtml?: string;
   /** scope=links 时已关联的短链数(全局规则恒为 0) */
   linkCount: number;
   /** 已关联短链的可读标识，形如 `短码@域名`(短码在租户内不唯一，必须带域名)，列表最多回传前 3 个 */
@@ -188,6 +194,17 @@ export interface Tenant {
   firstLoginSetup?: boolean;
   /** 用量(仅 /api/me 与超管列表返回) */
   usage?: QuotaUsage;
+}
+
+/** 租户全局错误页面配置(GET/PATCH /api/me/error-pages) */
+export interface TenantErrorPages {
+  custom404Html: string;
+  custom429Html: string;
+}
+
+export interface TenantErrorPagesUpdatePayload {
+  custom404Html?: string;
+  custom429Html?: string;
 }
 
 /** 域名 */

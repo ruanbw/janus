@@ -12,12 +12,15 @@ import {
   Ban,
   Check,
   CirclePlay,
+  Eye,
   Filter,
   FlaskConical,
   Globe,
   Link2,
   Plus,
   Trash2,
+  Upload,
+  X,
 } from '@lucide/vue';
 
 import { listLinks } from '@/api/links';
@@ -26,7 +29,7 @@ import PageHeader from '@/components/PageHeader.vue';
 import { confirm } from '@/components/ui/confirm';
 import type { FormRule } from '@/components/ui/types';
 import { COUNTRY_OPTIONS } from '@/constants/countries';
-import type { Rule, RuleCondition, RuleScope } from '@/types/api';
+import type { Rule, RuleCondition, RulePageMode, RuleScope } from '@/types/api';
 import { message } from '@/utils/toast';
 import {
   ACTION_OPTIONS,
@@ -69,6 +72,8 @@ const form = reactive({
   logic: 'all',
   action: 'pass',
   destination: '',
+  pageMode: 'default' as RulePageMode,
+  customHtml: '',
   linkIds: [] as number[],
   conditions: [] as EditableCondition[],
 });
@@ -137,6 +142,47 @@ async function loadLinkCatalog(append = false) {
 }
 
 // ---- 表单状态 ----
+const ruleFileInput = ref<HTMLInputElement | null>(null);
+const previewRuleHtmlVisible = ref(false);
+
+function htmlByteLength(str: string): number {
+  return new Blob([str]).size;
+}
+
+function formatHtmlSize(str: string): string {
+  const bytes = htmlByteLength(str);
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toFixed(1)} KB`;
+}
+
+function isHtmlOverLimit(str: string): boolean {
+  return htmlByteLength(str) > 512 * 1024;
+}
+
+function handleRuleFileUpload(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+
+  if (file.size > 512 * 1024) {
+    message.error(`文件大小 (${(file.size / 1024).toFixed(1)} KB) 超过 512 KB 限制`);
+    input.value = '';
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    form.customHtml = String(e.target?.result ?? '');
+    form.pageMode = 'custom';
+    message.success(`${file.name} 载入成功`);
+  };
+  reader.onerror = () => {
+    message.error('读取文件失败');
+  };
+  reader.readAsText(file);
+  input.value = '';
+}
+
 function newCondition(): EditableCondition {
   return { key: nextKey('cond'), field: 'ip', operator: 'in', raw: '' };
 }
@@ -150,6 +196,8 @@ function resetForm() {
   form.logic = 'all';
   form.action = 'pass';
   form.destination = '';
+  form.pageMode = 'default';
+  form.customHtml = '';
   form.linkIds = [];
   form.conditions = [newCondition()];
 }
@@ -188,6 +236,8 @@ function applyRule(rule: Rule) {
   form.logic = rule.logic;
   form.action = rule.action;
   form.destination = rule.destination;
+  form.pageMode = rule.pageMode || 'default';
+  form.customHtml = rule.customHtml || '';
   form.linkIds = (rule.linkIds || []).slice();
   form.conditions = (
     rule.conditions && rule.conditions.length > 0
@@ -362,6 +412,15 @@ async function onSubmit() {
     return;
   }
 
+  if (
+    (form.action === 'notfound' || form.action === 'throttle') &&
+    form.pageMode === 'custom' &&
+    isHtmlOverLimit(form.customHtml)
+  ) {
+    message.error('自定义 HTML 大小超过 512 KB 上限');
+    return;
+  }
+
   // 编辑器与后端状态精确一致（关联直接回填自 rule.linkIds），因此始终提交完整的 linkIds：
   // 传即整体替换，不传则不动关联；scope=global 传空数组，与后端「切回全局即清空关联」的语义一致。
   const linkIds = form.scope === 'links' ? [...form.linkIds] : [];
@@ -379,6 +438,11 @@ async function onSubmit() {
     logic: form.logic as RuleCreatePayload['logic'],
     action: form.action as RuleCreatePayload['action'],
     destination: form.action === 'redirect' ? form.destination.trim() : '',
+    pageMode: form.action === 'notfound' || form.action === 'throttle' ? form.pageMode : 'default',
+    customHtml:
+      (form.action === 'notfound' || form.action === 'throttle') && form.pageMode === 'custom'
+        ? form.customHtml.trim()
+        : '',
     conditions,
     linkIds,
   };
@@ -680,6 +744,54 @@ onMounted(init);
                 >
                   <AppInput v-model="form.destination" placeholder="https://example.com/black-friday" />
                 </AppFormItem>
+
+                <!-- 错误响应页面自定义设置 -->
+                <div
+                  v-if="form.action === 'notfound' || form.action === 'throttle'"
+                  class="space-y-3 rounded-xl border border-line bg-surface-muted/30 p-4"
+                >
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <span class="text-xs font-semibold text-ink">
+                      {{ form.action === 'notfound' ? '404 响应页面：' : '429 响应页面：' }}
+                    </span>
+                    <AppRadioGroup v-model="form.pageMode" class="flex gap-4">
+                      <AppRadio value="default">继承全局设置（租户或系统默认）</AppRadio>
+                      <AppRadio value="custom">此规则专属自定义 HTML</AppRadio>
+                    </AppRadioGroup>
+                  </div>
+
+                  <div v-if="form.pageMode === 'custom'" class="space-y-3 pt-2 border-t border-line/60">
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                      <div class="flex items-center gap-2">
+                        <input
+                          ref="ruleFileInput"
+                          type="file"
+                          accept=".html,.htm"
+                          class="hidden"
+                          @change="handleRuleFileUpload"
+                        />
+                        <AppButton size="small" @click="ruleFileInput?.click()">
+                          <template #icon><Upload :size="14" /></template>
+                          上传 HTML 文件
+                        </AppButton>
+                        <AppButton size="small" :disabled="!form.customHtml" @click="previewRuleHtmlVisible = true">
+                          <template #icon><Eye :size="14" /></template>
+                          预览页面
+                        </AppButton>
+                      </div>
+                      <div class="text-xs" :class="isHtmlOverLimit(form.customHtml) ? 'text-err font-bold' : 'text-ink-faint'">
+                        大小: {{ formatHtmlSize(form.customHtml) }} / 512 KB
+                      </div>
+                    </div>
+
+                    <AppTextarea
+                      v-model="form.customHtml"
+                      :rows="8"
+                      placeholder="<!DOCTYPE html><html><body><h1>Access Denied</h1></body></html>"
+                      class="font-mono text-xs leading-relaxed"
+                    />
+                  </div>
+                </div>
               </CardContent>
             </AppCard>
           </div>
@@ -756,5 +868,38 @@ onMounted(init);
         </div>
       </AppForm>
     </AppSpin>
+
+    <!-- 专属 HTML 预览弹窗 -->
+    <Teleport to="body">
+      <div
+        v-if="previewRuleHtmlVisible"
+        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
+        @click.self="previewRuleHtmlVisible = false"
+      >
+        <div class="flex h-[85vh] w-full max-w-4xl flex-col rounded-xl border border-line bg-surface shadow-2xl overflow-hidden">
+          <div class="flex items-center justify-between border-b border-line px-5 py-3 bg-surface-muted/50">
+            <div class="flex items-center gap-2">
+              <Eye :size="16" class="text-brand-600 dark:text-brand-400" />
+              <span class="text-sm font-semibold text-ink">规则专属拦截页面沙箱预览</span>
+              <span class="text-xs text-ink-faint">已开启 sandbox 安全隔离</span>
+            </div>
+            <button
+              type="button"
+              class="rounded p-1 text-ink-soft hover:bg-surface-muted hover:text-ink"
+              @click="previewRuleHtmlVisible = false"
+            >
+              <X :size="18" />
+            </button>
+          </div>
+          <div class="flex-1 p-3 bg-line/20">
+            <iframe
+              :srcdoc="form.customHtml"
+              sandbox="allow-same-origin"
+              class="h-full w-full rounded border border-line bg-white shadow-xs"
+            />
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

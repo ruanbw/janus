@@ -226,6 +226,7 @@ export interface Verdict {
   blocking: boolean;
   actionText: string;
   detailText: string;
+  matchedRule?: Rule | null;
 }
 
 /** 把回放结论整理成一句话裁决，模拟器与访问明细页共用同一套措辞 */
@@ -239,6 +240,7 @@ export function verdictOf(trace: DecisionTrace): Verdict {
       action: matched.action,
       matched: true,
       blocking,
+      matchedRule: matched,
       actionText:
         matched.action === 'redirect'
           ? `${actionLabel(matched.action)} → ${matched.destination || '（未填写目标）'}`
@@ -251,6 +253,7 @@ export function verdictOf(trace: DecisionTrace): Verdict {
     action: 'pass',
     matched: false,
     blocking: false,
+    matchedRule: null,
     actionText: evaluableCount === 0 ? '无可用规则（没有已启用且带条件的规则）' : '未命中任何规则',
     detailText:
       evaluableCount === 0

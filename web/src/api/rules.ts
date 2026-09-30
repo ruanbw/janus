@@ -11,6 +11,7 @@ import type {
   RuleCondition,
   RuleLogic,
   RuleOption,
+  RulePageMode,
   RuleScope,
 } from '@/types/api';
 
@@ -30,6 +31,10 @@ export interface RuleCreatePayload {
   action: RuleAction;
   /** action='redirect' 时的改写目标 */
   destination?: string;
+  /** 错误响应页面模式: default 继承全局 / custom 专属页面 */
+  pageMode?: RulePageMode;
+  /** 专属自定义 HTML(限 512KB) */
+  customHtml?: string;
   conditions: RuleCondition[];
   linkIds?: number[];
 }
@@ -53,6 +58,8 @@ function normalizeRule(rule: Rule): Rule {
     logic: rule.logic === 'any' ? 'any' : 'all',
     action: rule.action || 'pass',
     destination: rule.destination || '',
+    pageMode: rule.pageMode === 'custom' ? 'custom' : 'default',
+    customHtml: rule.customHtml || '',
     conditions: Array.isArray(rule.conditions) ? rule.conditions : [],
     linkCount: typeof rule.linkCount === 'number' ? rule.linkCount : 0,
     linkNames: Array.isArray(rule.linkNames) ? rule.linkNames : [],
