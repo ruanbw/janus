@@ -43,6 +43,7 @@ const simInput = ref<SimInput>({
   ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
   lang: typeof navigator !== 'undefined' ? navigator.language : '',
   ref: '',
+  country: '',
 });
 
 const fieldViews = computed(() => visitorFieldViews(profile.value));
@@ -96,6 +97,7 @@ const SAMPLES: { label: string; input: SimInput }[] = [
     input: {
       url: `${origin}/promo?fbclid=IwAR27abc`,
       ip: '157.240.1.35',
+      country: 'US',
       ua: 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)',
       lang: 'en-US,en;q=0.9',
       ref: 'https://www.facebook.com/',
@@ -106,6 +108,7 @@ const SAMPLES: { label: string; input: SimInput }[] = [
     input: {
       url: `${origin}/promo`,
       ip: '52.95.245.14',
+      country: 'US',
       ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       lang: 'de-DE,de;q=0.9,en;q=0.8',
       ref: 'https://news.ycombinator.com/',
@@ -116,6 +119,7 @@ const SAMPLES: { label: string; input: SimInput }[] = [
     input: {
       url: `${origin}/promo?utm_source=wechat`,
       ip: '189.45.71.13',
+      country: 'BR',
       ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1',
       lang: 'pt-BR,pt;q=0.9,en-US;q=0.8',
       ref: 'https://www.google.com/',
@@ -135,6 +139,7 @@ function resetInput() {
     ua: typeof navigator !== 'undefined' ? navigator.userAgent : '',
     lang: typeof navigator !== 'undefined' ? navigator.language : '',
     ref: '',
+    country: '',
   };
 }
 
@@ -147,9 +152,10 @@ onMounted(async () => {
   const ruleId = Number(Array.isArray(ruleRaw) ? ruleRaw[0] : ruleRaw);
   previewRuleId.value = Number.isInteger(ruleId) && ruleId > 0 ? ruleId : null;
 
-  // 短链访问明细页的「用此访客在模拟器打开」会带 ip / ua / referrer / url / lang 进来，
+  // 短链访问明细页的「用此访客在模拟器打开」会带 ip / ua / referrer / url / lang / country 进来，
   // 直接替用户填好并跑一次。url 必带：模拟器靠它里的短码定位短链，
   // 缺了就找不到短链，于是全部 scope='links' 规则被判「不适用」。
+  // country 也带：那条链路上后端已经查出了真实国家码，带过来回放才和当时的裁决对得上。
   const pick = (key: string): string => {
     const v = route.query[key];
     return String(Array.isArray(v) ? v[0] ?? '' : v ?? '');
@@ -159,11 +165,13 @@ onMounted(async () => {
   const referrer = pick('referrer');
   const url = pick('url');
   const lang = pick('lang');
+  const country = pick('country');
   if (ip) simInput.value.ip = ip;
   if (ua) simInput.value.ua = ua;
   if (referrer) simInput.value.ref = referrer;
   if (url) simInput.value.url = url;
   if (lang) simInput.value.lang = lang;
+  if (country) simInput.value.country = country;
   if (ip || ua || referrer || url) await runSimulation();
 });
 </script>
@@ -209,6 +217,14 @@ onMounted(async () => {
             <div>
               <label class="mb-1.5 block text-sm font-medium text-ink">访客 IP</label>
               <AppInput v-model="simInput.ip" placeholder="203.0.113.7" />
+            </div>
+            <div>
+              <label class="mb-1.5 block text-sm font-medium text-ink">国家 / 地区</label>
+              <AppInput v-model="simInput.country" placeholder="US, CN" />
+              <p class="mt-1 text-[11px] leading-relaxed text-ink-faint">
+                ISO 国家码。浏览器里不解析 IP→国家（真实裁决由后端的离线库给出），
+                这里手填才能验证国家条件；留空按「取不到」处理，该条件恒不命中。
+              </p>
             </div>
             <div>
               <label class="mb-1.5 block text-sm font-medium text-ink">User-Agent</label>

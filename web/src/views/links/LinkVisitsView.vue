@@ -125,7 +125,7 @@
                 <tr>
                   <th class="shrink" title="服务端记录的访问时间">时间</th>
                   <th class="shrink" title="来访 IP:X-Forwarded-For 优先,回退 RemoteAddr">IP</th>
-                  <th title="地理数据源待接入(0008 已预留字段):国家 / 数据中心 / 语言">地理位置</th>
+                  <th title="国家由后端内嵌的离线 GeoIP 库按访客 IP 解析；数据中心与 ASN 暂无数据源">地理位置</th>
                   <th title="由 User-Agent 解析:设备型号 · 操作系统 · 浏览器">设备型号</th>
                   <th class="shrink" title="本次触发的动作与结果;失败的动作不计入访问次数">动作</th>
                   <th title="本次动作最终抵达的地址,缺省时回退显示来源页">目标 / 来源</th>
@@ -189,10 +189,15 @@
                     </span>
                   </td>
 
-                  <!-- 地理位置:国家 / 数据中心 / 语言(数据源待接入) -->
+                  <!-- 地理位置:国家 / 数据中心 / 语言
+                       国家由后端内嵌的离线 GeoIP 库(ip2region)按访客 IP 解析;
+                       私网/回环/未收录网段查不到,此时留空而不是猜一个。 -->
                   <td>
                     <div class="stack" style="gap: 2px; min-width: 0">
-                      <span class="tiny truncate" :title="row.country || '地理数据源待接入(0008 已预留字段)'">
+                      <span
+                        class="tiny truncate"
+                        :title="row.country === '—' ? '该 IP 查不到国家（私网/回环/库中未收录），依赖国家的条件不成立' : row.visit.country"
+                      >
                         国家:{{ row.country }}
                       </span>
                       <span>
@@ -538,7 +543,7 @@ import AppResult from '@/components/ui/AppResult.vue';
 import AppSpin from '@/components/ui/AppSpin.vue';
 import { ApiError } from '@/types/api';
 import type { Link, Visit, VisitAction, VisitReason } from '@/types/api';
-import { formatClock, formatDateTime } from '@/utils/format';
+import { formatClock, formatCountry, formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 import { getDeviceBadgeClass, parseUserAgent } from '@/utils/userAgent';
 import type { ParsedUA } from '@/utils/userAgent';
@@ -721,14 +726,16 @@ function toRow(visit: Visit): VisitRow {
     hasUa,
     // 解析结果带缓存,重复 UA 不会重复构造解析器
     parsedUa: parseUserAgent(visit.userAgent || ''),
-    country: visit.country || '—',
+    // 国家码译成「美国（US）」:库里存的是 ISO 码,给运营看原样代码没意义,
+    // 但翻译失败要回退到原码而不是显示空
+    country: formatCountry(visit.country),
     lang: visit.lang || '—',
     network: visit.isDatacenter
       ? { text: '数据中心', badge: 'badge-warn', title: visit.asn ? `ASN ${visit.asn}` : '数据中心出口' }
       : {
           text: '住宅/未知',
           badge: 'badge-neutral',
-          title: visit.asn ? `ASN ${visit.asn}` : '地理数据源待接入(0008 已预留字段)',
+          title: visit.asn ? `ASN ${visit.asn}` : '未标记为数据中心出口(该字段暂无数据源)',
         },
     action: meta,
     reasonText: reasonTextOf(visit),
@@ -817,6 +824,9 @@ function simInputOf(row: VisitRow): SimInput {
     ua: v.userAgent || '',
     lang: v.lang || '',
     ref: v.referer || '',
+    // 把后端当时查到的国家码一起带过去:模拟器自己解析不了 IP,
+    // 不带的话规则回放里 country 恒空,国家类规则会假「未命中」
+    country: v.country || '',
   };
 }
 
@@ -892,7 +902,14 @@ function openInSimulator(row: VisitRow) {
   const input = simInputOf(row);
   router.push({
     path: '/rules/simulator',
-    query: { ip: input.ip, ua: input.ua, referrer: input.ref, url: input.url, lang: input.lang },
+    query: {
+      ip: input.ip,
+      ua: input.ua,
+      referrer: input.ref,
+      url: input.url,
+      lang: input.lang,
+      country: input.country,
+    },
   });
 }
 

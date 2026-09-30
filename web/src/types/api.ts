@@ -46,7 +46,7 @@ export type RuleAction = 'pass' | 'redirect' | 'notfound' | 'throttle';
 /** 短链侧规则的来源:inherited 继承自 scope=global 的全局规则 / scoped 来自 rule_links 显式关联 */
 export type RuleSource = 'inherited' | 'scoped';
 /** 条件判定字段:v1 收敛到后端从请求即可真实求值的 13 个
- *  (country / asn 依赖 GeoIP 数据源,接入前恒不命中) */
+ *  (country 由后端内嵌的离线 GeoIP 库解析;asn 仍无数据源,恒不命中) */
 export type RuleField =
   | 'ip'
   | 'ipattr'
@@ -238,7 +238,8 @@ export interface Visit {
   reason: string;
   /** 本次动作最终抵达的地址(跳转目标 / 落地页 URL / 点击后的目标) */
   targetUrl: string;
-  /** 国家(地理占位,数据源待接入,当前恒为空字符串) */
+  /** 国家:ISO 3166-1 alpha-2 码(US / CN)。后端按访客 IP 查离线库得出,
+   *  私网/回环/库中未收录的网段查不到,为空字符串 */
   country: string;
   /** 是否数据中心出口(地理占位,当前恒为 false) */
   isDatacenter: boolean;

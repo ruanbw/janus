@@ -6,7 +6,9 @@
  * 因此既能喂给规则模拟器页面,也能被将来任何「解释某条规则为什么命中」的功能直接复用。
  *
  * 前端等价实现的边界必须写在代码里(而不是留给用户猜):
- * - 地理字段(country / asn)恒空,依赖它们的条件恒不命中,与后端一致;
+ * - country 后端已接离线 GeoIP 库(真实裁决看访问明细),但浏览器里没法离线把 IP 解析成国家,
+ *   所以它和其他几个事实一样是「手填」的:不填就按取不到处理,恒不命中;
+ * - asn 无数据源,恒空,恒不命中,与后端一致;
  * - 正则后端是 RE2 且大小写敏感,JS 的近似见 evalCondition 的 regex 分支;
  * - 后端求值发生在短链可用性之后,这里只看规则侧。
  */
@@ -20,6 +22,9 @@ export interface SimInput {
   ua: string;
   lang: string;
   ref: string;
+  /** ISO 3166-1 alpha-2 国家码。手填:浏览器里没有 IP→国家的离线库,
+   *  而假装能算出来只会让模拟结果与真实裁决对不上。 */
+  country: string;
 }
 
 /** 从请求中解析出的 13 个可判定字段 */
@@ -175,8 +180,10 @@ export function buildVisitorFacts(input: SimInput): VisitorFacts {
   return {
     ip: input.ip.trim(),
     ipattr: classifyIpAttr(input.ip),
-    // GeoIP / ASN 数据源未接入,恒空 → 依赖这两个字段的条件恒不命中(spec D5)
-    country: '',
+    // 手填值,后端存的就是这个形态的码(ISO 3166-1 alpha-2);
+    // 留空 = 取不到 = 依赖它的条件恒不命中,与后端同一条不变式。
+    country: input.country.trim().toUpperCase(),
+    // 当前无 ASN 数据源,恒空 → 依赖它的条件恒不命中(ADR 0009)
     asn: '',
     lang: firstLangTag(input.lang),
     ref,
@@ -212,7 +219,14 @@ export function visitorFieldViews(facts: VisitorFacts | null): VisitorFieldView[
       note: f?.ipattr ? '' : '非 private / loopback / linklocal · 该字段空值恒不命中',
       pending: false,
     },
-    { field: 'country', label: '国家 / 地区', value: '—', note: '数据源待接入 · 恒不命中', pending: true },
+    {
+      field: 'country',
+      label: '国家 / 地区',
+      // 显示原始国家码而不是中文名:条件里配的就是码,翻译过反而对不上
+      value: f?.country || '—',
+      note: f?.country ? '' : '浏览器里不解析 IP→国家 · 可手填国家码,留空则恒不命中',
+      pending: false,
+    },
     { field: 'asn', label: 'ASN / 运营商', value: '—', note: '数据源待接入 · 恒不命中', pending: true },
     { field: 'lang', label: '语言', value: f?.lang || '—', note: '', pending: false },
     { field: 'ref', label: 'Referrer 主机', value: f?.ref || '—', note: '', pending: false },
