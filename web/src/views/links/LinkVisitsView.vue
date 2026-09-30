@@ -44,488 +44,613 @@
     </div>
 
     <template v-else>
-      <!-- ==================== 访问明细主面板 ==================== -->
-      <!--
-        这里原本挂着一排「访问次数 / 点击次数 / CTR」卡片,已移除:这三个数就是短链列表里
-        那一行的两列,用户是点着它进来的,再摆一遍只占首屏。点击与访问的对比在列表页看;
-        要按动作拆,下方表格的「动作与结果」列里有。
-      -->
-      <section class="panel" data-od-id="link-visits-list">
-        <div class="panel-hd">
-          <div>
-            <h2>访问明细</h2>
-            <p>逐条记录该短链每次{{ isLanding ? '落地页视图与按钮点击' : '跳转' }}的动作与结果，点行展开决策链。</p>
-          </div>
-          <div class="btn-row">
-            <span class="badge badge-neutral mono">共 {{ total }} 条</span>
-          </div>
-        </div>
-
-        <!-- 工具栏:设备类型筛选 / 只看失败 / 关键词(均仅在当前页数据内过滤) -->
-        <div class="panel-bd">
-          <div class="toolbar">
-            <div class="seg-filter" role="group" aria-label="按设备类型筛选">
-              <button
-                v-for="opt in DEVICE_OPTIONS"
-                :key="opt.value"
-                type="button"
-                :aria-pressed="deviceFilter === opt.value"
-                @click="deviceFilter = opt.value"
-              >
-                {{ opt.label }}
-              </button>
+      <!-- ==================== 左右分栏布局：左表格 + 右画像及规则回放 ==================== -->
+      <div class="grid grid-cols-1 gap-5 xl:grid-cols-12 items-start" data-od-id="link-visits-split-layout">
+        <!-- 左侧：访问明细列表 -->
+        <section class="panel xl:col-span-7 flex flex-col min-w-0" data-od-id="link-visits-list">
+          <div class="panel-hd">
+            <div>
+              <h2>访问明细</h2>
+              <p>逐条记录该短链每次{{ isLanding ? '落地页视图与按钮点击' : '跳转' }}的动作与结果，点击列表行在右侧查看访客画像与规则回放。</p>
             </div>
-
-            <div class="row" style="gap: 6px">
-              <label class="switch" title="仅显示失败的动作(前端过滤,不影响总数)">
-                <input v-model="onlyFailed" type="checkbox" aria-label="只看失败" />
-                <i></i>
-              </label>
-              <span class="tiny">只看失败</span>
+            <div class="btn-row">
+              <span class="badge badge-neutral mono">共 {{ total }} 条</span>
             </div>
-
-            <div class="relative grow min-w-[220px]">
-              <input
-                v-model="keyword"
-                class="input input-icon"
-                id="visitSearch"
-                placeholder="搜索 IP、User-Agent、来源或目标 URL…"
-                aria-label="搜索访问明细"
-              />
-              <Search
-                :size="14"
-                class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
-              />
-            </div>
-
-            <button
-              v-if="hasLocalFilter"
-              type="button"
-              class="btn btn-sm btn-ghost text-muted hover:text-fg"
-              @click="resetLocalFilters"
-            >
-              <X :size="13" />
-              清空过滤
-            </button>
-
-            <!--
-              设备、搜索与「只看失败」都是页内过滤，这里常驻一行说明，
-              避免用户把页内命中当成全量统计。
-            -->
-            <span v-if="hasLocalFilter" class="tiny muted" data-od-id="visit-filter-scope-hint">
-              设备、搜索与「只看失败」仅筛选当前页，切换分页后请重新确认
-            </span>
           </div>
-        </div>
 
-        <AppSpin :spinning="loading">
-          <div class="tbl-wrap">
-            <table class="tbl" id="linkVisitTable">
-              <thead>
-                <tr>
-                  <th class="shrink" title="服务端记录的访问时间">时间</th>
-                  <th class="shrink" title="来访 IP:X-Forwarded-For 优先,回退 RemoteAddr">IP</th>
-                  <th title="国家由后端内嵌的离线 GeoIP 库按访客 IP 解析；数据中心与 ASN 暂无数据源">地理位置</th>
-                  <th title="由 User-Agent 解析:设备型号 · 操作系统 · 浏览器">设备型号</th>
-                  <th class="shrink" title="本次触发的动作与结果;失败的动作不计入访问次数">动作</th>
-                  <th title="本次动作最终抵达的地址,缺省时回退显示来源页">目标 / 来源</th>
-                </tr>
-              </thead>
-              <tbody>
-                <!-- 加载态 -->
-                <tr v-if="loading && rows.length === 0">
-                  <td colspan="6" class="empty">
-                    <div class="flex items-center justify-center gap-2 py-6">
-                      <RefreshCw class="animate-spin" :size="16" />
-                      正在加载访问明细...
-                    </div>
-                  </td>
-                </tr>
-
-                <!-- 该短链从未被访问 -->
-                <tr v-else-if="rows.length === 0">
-                  <td colspan="6" class="py-8">
-                    <AppEmpty description="该短链暂无访问记录,短链被访问后明细将在此处逐条呈现" />
-                  </td>
-                </tr>
-
-                <!-- 当前页经本地过滤后无命中 -->
-                <tr v-else-if="filteredRows.length === 0">
-                  <td colspan="6" class="py-8">
-                    <AppEmpty description="当前页没有符合筛选条件的记录(搜索与「只看失败」仅在当前页数据内过滤)" />
-                    <div class="flex justify-center">
-                      <button type="button" class="btn btn-sm" @click="resetLocalFilters">
-                        重置本地过滤
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-
-                <!-- 明细行：点开看这一次访问的决策链 -->
-                <template v-for="row in filteredRows" :key="row.visit.id">
-                <tr
-                  :data-outcome="row.visit.outcome"
-                  :data-open="expandedId === row.visit.id"
-                  class="row-openable"
-                  tabindex="0"
-                  :aria-expanded="expandedId === row.visit.id"
-                  @click="toggleRow(row)"
-                  @keydown.enter.prevent="toggleRow(row)"
-                  @keydown.space.prevent="toggleRow(row)"
+          <!-- 工具栏:设备类型筛选 / 只看失败 / 关键词(均仅在当前页数据内过滤) -->
+          <div class="panel-bd">
+            <div class="toolbar">
+              <div class="seg-filter" role="group" aria-label="按设备类型筛选">
+                <button
+                  v-for="opt in DEVICE_OPTIONS"
+                  :key="opt.value"
+                  type="button"
+                  :aria-pressed="deviceFilter === opt.value"
+                  @click="deviceFilter = opt.value"
                 >
-                  <!-- 时间:列里只给时分秒,完整年月日悬停看(同一页的记录基本是同一天) -->
-                  <td class="shrink">
-                    <AppTooltip :title="formatDateTime(row.visit.createdAt)">
-                      <span class="mono tiny cursor-help underline decoration-dotted underline-offset-2">
-                        {{ formatClock(row.visit.createdAt) }}
-                      </span>
-                    </AppTooltip>
-                  </td>
+                  {{ opt.label }}
+                </button>
+              </div>
 
-                  <!-- 来访 IP -->
-                  <td class="shrink">
-                    <span class="mono tiny" :title="row.visit.ip || '未知 IP'">
-                      {{ row.visit.ip || '—' }}
-                    </span>
-                  </td>
+              <div class="row" style="gap: 6px">
+                <label class="switch" title="仅显示失败的动作(前端过滤,不影响总数)">
+                  <input v-model="onlyFailed" type="checkbox" aria-label="只看失败" />
+                  <i></i>
+                </label>
+                <span class="tiny">只看失败</span>
+              </div>
 
-                  <!-- 地理位置:国家 / 数据中心 / 语言
-                       国家由后端内嵌的离线 GeoIP 库(ip2region)按访客 IP 解析;
-                       私网/回环/未收录网段查不到,此时留空而不是猜一个。 -->
-                  <td>
-                    <div class="stack" style="gap: 2px; min-width: 0">
-                      <span
-                        class="tiny truncate"
-                        :title="row.country === '—' ? '该 IP 查不到国家（私网/回环/库中未收录），依赖国家的条件不成立' : row.visit.country"
-                      >
-                        国家:{{ row.country }}
+              <div class="relative grow min-w-[200px]">
+                <input
+                  v-model="keyword"
+                  class="input input-icon"
+                  id="visitSearch"
+                  placeholder="搜索 IP、UA、来源或目标…"
+                  aria-label="搜索访问明细"
+                />
+                <Search
+                  :size="14"
+                  class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
+                />
+              </div>
+
+              <button
+                v-if="hasLocalFilter"
+                type="button"
+                class="btn btn-sm btn-ghost text-muted hover:text-fg"
+                @click="resetLocalFilters"
+              >
+                <X :size="13" />
+                清空过滤
+              </button>
+
+              <span v-if="hasLocalFilter" class="tiny muted" data-od-id="visit-filter-scope-hint">
+                设备、搜索与「只看失败」仅筛选当前页
+              </span>
+            </div>
+          </div>
+
+          <AppSpin :spinning="loading">
+            <div class="tbl-wrap">
+              <table class="tbl" id="linkVisitTable">
+                <thead>
+                  <tr>
+                    <th class="shrink" title="服务端记录的访问时间">时间</th>
+                    <th class="shrink" title="来访 IP:X-Forwarded-For 优先,回退 RemoteAddr">IP</th>
+                    <th title="国家由后端内嵌离线 GeoIP 库解析">地理位置</th>
+                    <th title="由 User-Agent 解析:设备型号 · 操作系统 · 浏览器">设备型号</th>
+                    <th class="shrink" title="本次触发的动作与结果;失败的动作不计入访问次数">动作与结果</th>
+                    <th title="本次动作最终抵达的地址,缺省时回退显示来源页">目标 / 来源</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <!-- 加载态 -->
+                  <tr v-if="loading && rows.length === 0">
+                    <td colspan="6" class="empty">
+                      <div class="flex items-center justify-center gap-2 py-6">
+                        <RefreshCw class="animate-spin" :size="16" />
+                        正在加载访问明细...
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- 该短链从未被访问 -->
+                  <tr v-else-if="rows.length === 0">
+                    <td colspan="6" class="py-8">
+                      <AppEmpty description="该短链暂无访问记录,短链被访问后明细将在此处逐条呈现" />
+                    </td>
+                  </tr>
+
+                  <!-- 当前页经本地过滤后无命中 -->
+                  <tr v-else-if="filteredRows.length === 0">
+                    <td colspan="6" class="py-8">
+                      <AppEmpty description="当前页没有符合筛选条件的记录(搜索与「只看失败」仅在当前页数据内过滤)" />
+                      <div class="flex justify-center">
+                        <button type="button" class="btn btn-sm" @click="resetLocalFilters">
+                          重置本地过滤
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- 明细行：点击选中，右侧查看访客画像与规则决策链 -->
+                  <tr
+                    v-for="row in filteredRows"
+                    :key="row.visit.id"
+                    :data-outcome="row.visit.outcome"
+                    :data-selected="selectedId === row.visit.id"
+                    class="row-selectable"
+                    tabindex="0"
+                    :aria-selected="selectedId === row.visit.id"
+                    @click="selectRow(row)"
+                    @keydown.enter.prevent="selectRow(row)"
+                    @keydown.space.prevent="selectRow(row)"
+                  >
+                    <!-- 时间:列里只给时分秒,完整年月日悬停看 -->
+                    <td class="shrink">
+                      <AppTooltip :title="formatDateTime(row.visit.createdAt)">
+                        <span class="mono tiny cursor-help underline decoration-dotted underline-offset-2">
+                          {{ formatClock(row.visit.createdAt) }}
+                        </span>
+                      </AppTooltip>
+                    </td>
+
+                    <!-- 来访 IP -->
+                    <td class="shrink">
+                      <span class="mono tiny" :title="row.visit.ip || '未知 IP'">
+                        {{ row.visit.ip || '—' }}
                       </span>
-                      <span>
+                    </td>
+
+                    <!-- 地理位置:国家 / 数据中心 / 语言 -->
+                    <td>
+                      <div class="stack" style="gap: 2px; min-width: 0">
                         <span
-                          :class="['badge', row.network.badge]"
-                          :title="row.network.title"
+                          class="tiny truncate"
+                          :title="row.country === '—' ? '该 IP 查不到国家（私网/回环/库中未收录）' : row.visit.country"
                         >
-                          {{ row.network.text }}
+                          国家:{{ row.country }}
                         </span>
-                      </span>
-                      <span class="tiny muted truncate" :title="row.lang || '未携带 Accept-Language'">
-                        语言:{{ row.lang }}
-                      </span>
-                    </div>
-                  </td>
-
-                  <!-- 设备型号 -->
-                  <td>
-                    <div v-if="row.hasUa" class="stack" style="gap: 2px; min-width: 0">
-                      <div class="row" style="gap: 5px; flex-wrap: nowrap; min-width: 0">
-                        <span :class="['badge', getDeviceBadgeClass(row.parsedUa.deviceType)]">
-                          {{ row.parsedUa.deviceType }}
+                        <span>
+                          <span
+                            :class="['badge', row.network.badge]"
+                            :title="row.network.title"
+                          >
+                            {{ row.network.text }}
+                          </span>
                         </span>
-                        <span class="tiny truncate" :title="row.parsedUa.deviceModel">
-                          {{ row.parsedUa.deviceModel }}
+                        <span class="tiny muted truncate" :title="row.lang || '未携带 Accept-Language'">
+                          语言:{{ row.lang }}
                         </span>
                       </div>
-                      <span
-                        class="tiny muted truncate"
-                        :title="row.parsedUa.os + ' · ' + row.parsedUa.browser"
+                    </td>
+
+                    <!-- 设备型号 -->
+                    <td>
+                      <div v-if="row.hasUa" class="stack" style="gap: 2px; min-width: 0">
+                        <div class="row" style="gap: 5px; flex-wrap: nowrap; min-width: 0">
+                          <span :class="['badge', getDeviceBadgeClass(row.parsedUa.deviceType)]">
+                            {{ row.parsedUa.deviceType }}
+                          </span>
+                          <span class="tiny truncate" :title="row.parsedUa.deviceModel">
+                            {{ row.parsedUa.deviceModel }}
+                          </span>
+                        </div>
+                        <span
+                          class="tiny muted truncate"
+                          :title="row.parsedUa.os + ' · ' + row.parsedUa.browser"
+                        >
+                          {{ row.parsedUa.os }} · {{ row.parsedUa.browser }}
+                        </span>
+                      </div>
+                      <span v-else class="tiny muted">未知设备</span>
+                    </td>
+
+                    <!-- 动作与结果：清楚显示具体命中的失败规则名称与具体命中的条件 -->
+                    <td class="shrink">
+                      <div class="stack" style="gap: 3px; max-width: 220px">
+                        <div class="row" style="gap: 4px; flex-wrap: nowrap">
+                          <span :class="['badge', row.action.badge]">{{ row.action.text }}</span>
+                          <span
+                            :class="[
+                              'badge',
+                              row.visit.outcome === 'failed' ? 'badge-danger' : 'badge-ok',
+                            ]"
+                          >
+                            {{ row.visit.outcome === 'failed' ? '✗ 失败' : '✓ 成功' }}
+                          </span>
+                        </div>
+                        <span
+                          v-if="row.reasonText"
+                          class="tiny truncate"
+                          style="color: var(--danger)"
+                          :title="row.reasonTooltip"
+                        >
+                          {{ row.reasonText }}
+                        </span>
+                      </div>
+                    </td>
+
+                    <!-- 目标 / 来源 -->
+                    <td>
+                      <div class="stack" style="gap: 2px; min-width: 0; max-width: 320px">
+                        <span
+                          v-if="row.visit.targetUrl"
+                          class="mono tiny truncate"
+                          :title="row.visit.targetUrl"
+                        >
+                          {{ row.visit.targetUrl }}
+                        </span>
+                        <span
+                          v-else-if="row.visit.referer"
+                          class="tiny truncate"
+                          :title="row.visit.referer"
+                        >
+                          {{ row.visit.referer }}
+                        </span>
+                        <span v-else class="tiny muted">直接访问</span>
+                        <span
+                          v-if="row.visit.targetUrl && row.visit.referer"
+                          class="tiny muted truncate"
+                          :title="'来源页:' + row.visit.referer"
+                        >
+                          来自 {{ row.visit.referer }}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </AppSpin>
+
+          <!-- 底栏与真实分页 -->
+          <div class="panel-ft row-between flex-wrap gap-3">
+            <div class="row tiny muted" style="gap: 12px">
+              <span>共 <strong class="text-ink font-mono">{{ total }}</strong> 条访问明细</span>
+              <span v-if="hasLocalFilter">
+                当前页命中 <strong class="text-ink font-mono">{{ filteredRows.length }}</strong> / {{ rows.length }} 条
+              </span>
+            </div>
+            <div class="row" style="gap: 10px">
+              <div class="row tiny muted" style="gap: 6px">
+                <span>每页</span>
+                <select
+                  v-model.number="pageSize"
+                  class="select"
+                  style="min-height: 28px; padding: 2px 20px 2px 8px; font-size: 12px"
+                  aria-label="每页条数"
+                  @change="onPageSizeChange"
+                >
+                  <option :value="10">10</option>
+                  <option :value="20">20</option>
+                  <option :value="50">50</option>
+                  <option :value="100">100</option>
+                </select>
+                <span>条</span>
+              </div>
+              <div class="row" style="gap: 6px">
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  :disabled="page <= 1 || loading"
+                  @click="goToPage(page - 1)"
+                >
+                  上一页
+                </button>
+                <span class="mono tiny muted self-center px-1">
+                  {{ page }} / {{ totalPages }}
+                </span>
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  :disabled="page >= totalPages || loading"
+                  @click="goToPage(page + 1)"
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 右侧：访客画像与规则回放详情卡片 -->
+        <section
+          class="panel xl:col-span-5 sticky top-20 flex flex-col min-w-0 max-h-[calc(100vh-6rem)]"
+          data-od-id="link-visit-detail-panel"
+        >
+          <!-- 未选择行时的引导提示 -->
+          <div
+            v-if="!selectedRow"
+            class="flex flex-col items-center justify-center p-10 text-center my-auto min-h-[380px]"
+          >
+            <div class="flex h-12 w-12 items-center justify-center rounded-full bg-brand-500/10 text-brand-600 mb-3">
+              <MousePointerClick :size="22" />
+            </div>
+            <h3 class="text-sm font-semibold text-ink">选择访问记录</h3>
+            <p class="text-xs text-muted mt-1.5 max-w-[260px] leading-relaxed">
+              在左侧列表中点击任意一行，即可在此查看该次请求的完整访客画像、真实裁决以及按当前规则集的决策链路回放。
+            </p>
+          </div>
+
+          <!-- 选中行时的详情展示 -->
+          <template v-else>
+            <div class="panel-hd shrink-0 border-b border-line">
+              <div class="min-w-0">
+                <div class="row" style="gap: 8px; align-items: center">
+                  <h2>访客画像与规则回放</h2>
+                  <span
+                    :class="[
+                      'badge',
+                      selectedRow.visit.outcome === 'failed' ? 'badge-danger' : 'badge-ok',
+                    ]"
+                  >
+                    {{ selectedRow.visit.outcome === 'failed' ? '✗ 访问失败' : '✓ 访问成功' }}
+                  </span>
+                </div>
+                <p class="truncate mono tiny muted mt-0.5">
+                  ID #{{ selectedRow.visit.id }} · {{ formatDateTime(selectedRow.visit.createdAt) }}
+                </p>
+              </div>
+              <div class="btn-row">
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  title="带着这个访客去模拟器改规则"
+                  @click="openInSimulator(selectedRow)"
+                >
+                  <FlaskConical :size="13" />
+                  模拟器打开
+                </button>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-ghost text-muted hover:text-fg"
+                  title="关闭详情"
+                  aria-label="关闭详情"
+                  @click="selectedId = null"
+                >
+                  <X :size="14" />
+                </button>
+              </div>
+            </div>
+
+            <!-- 可滚动的明细主体 -->
+            <div class="panel-bd flex-1 overflow-y-auto space-y-5 p-4">
+              <!-- ① 访客画像 -->
+              <div class="trace-sec">
+                <div class="row-between" style="gap: 8px; align-items: baseline">
+                  <span class="mono micro font-semibold text-ink-soft">访客画像 · 本次请求</span>
+                  <span class="tiny muted">规则条件匹配的字段明细</span>
+                </div>
+                <dl class="profile">
+                  <div class="profile-item">
+                    <dt>访问时间</dt>
+                    <dd class="mono">{{ formatDateTime(selectedRow.visit.createdAt) }}</dd>
+                  </div>
+                  <div class="profile-item">
+                    <dt>来访 IP</dt>
+                    <dd class="mono">{{ selectedRow.visit.ip || '—' }}</dd>
+                  </div>
+                  <div class="profile-item">
+                    <dt>国家 / 地区</dt>
+                    <dd>
+                      <span :class="['badge', selectedRow.country === '—' ? 'badge-neutral' : 'badge-ok']">
+                        {{ selectedRow.country }}
+                      </span>
+                    </dd>
+                  </div>
+                  <div class="profile-item">
+                    <dt>网络属性</dt>
+                    <dd>
+                      <span :class="['badge', selectedRow.network.badge]" :title="selectedRow.network.title">
+                        {{ selectedRow.network.text }}
+                      </span>
+                    </dd>
+                  </div>
+                  <div class="profile-item">
+                    <dt>语言 (Accept-Language)</dt>
+                    <dd class="mono truncate" :title="selectedRow.lang">{{ selectedRow.lang }}</dd>
+                  </div>
+                  <div class="profile-item">
+                    <dt>设备类型与型号</dt>
+                    <dd>
+                      <span :class="['badge', getDeviceBadgeClass(selectedRow.parsedUa.deviceType)]">
+                        {{ selectedRow.parsedUa.deviceType }}
+                      </span>
+                      <span class="tiny muted truncate" :title="selectedRow.parsedUa.deviceModel">
+                        {{ selectedRow.parsedUa.deviceModel }}
+                      </span>
+                    </dd>
+                  </div>
+                  <div class="profile-item">
+                    <dt>系统 / 浏览器</dt>
+                    <dd class="truncate" :title="selectedRow.parsedUa.os + ' / ' + selectedRow.parsedUa.browser">
+                      {{ selectedRow.parsedUa.os }}
+                      <span class="muted">/</span>
+                      {{ selectedRow.parsedUa.browser }}
+                    </dd>
+                  </div>
+                  <div class="profile-item">
+                    <dt>短链</dt>
+                    <dd class="mono truncate" :title="(selectedRow.visit.domain || link?.domains?.[0] || '') + '/' + (link?.code || '-')">
+                      {{ selectedRow.visit.domain || link?.domains?.[0] || '未知域名' }}/{{ link?.code || '-' }}
+                    </dd>
+                  </div>
+                  <div class="profile-item">
+                    <dt>短链类型</dt>
+                    <dd>{{ linkTypeLabel }} → {{ selectedRow.action.text }}</dd>
+                  </div>
+                  <div class="profile-item">
+                    <dt>来源页 (Referer)</dt>
+                    <dd class="truncate" :title="selectedRow.visit.referer || '直接访问'">
+                      {{ selectedRow.visit.referer || '直接访问' }}
+                    </dd>
+                  </div>
+                  <div class="profile-item">
+                    <dt>最终抵达</dt>
+                    <dd class="mono truncate" :title="selectedRow.visit.targetUrl || '—'">
+                      {{ selectedRow.visit.targetUrl || '—' }}
+                    </dd>
+                  </div>
+                  <div class="profile-item profile-wide">
+                    <dt>
+                      完整 User-Agent
+                      <button
+                        type="button"
+                        class="mini-btn"
+                        aria-label="复制完整 User-Agent"
+                        @click.stop="copyUa(selectedRow)"
                       >
-                        {{ row.parsedUa.os }} · {{ row.parsedUa.browser }}
+                        <Copy class="size-3" aria-hidden="true" /> 复制
+                      </button>
+                    </dt>
+                    <dd class="mono ua-box">{{ selectedRow.visit.userAgent || '（无 UA 头）' }}</dd>
+                  </div>
+                </dl>
+              </div>
+
+              <!-- 分隔线 -->
+              <div class="border-t border-line pt-4 space-y-4">
+                <!-- ② 真实裁决：后端当时记下的事实 -->
+                <div class="trace-sec">
+                  <div class="row-between" style="gap: 8px; align-items: baseline">
+                    <span class="mono micro font-semibold text-ink-soft">真实裁决 · 后端记录</span>
+                    <span class="tiny muted">后端处理该请求时的实际处置结果</span>
+                  </div>
+
+                  <!-- 命中的规则卡片 -->
+                  <div
+                    v-if="selectedRow.matchedRule"
+                    class="rounded-lg border border-line bg-surface p-3 space-y-1.5 shadow-2xs"
+                  >
+                    <div class="row-between text-xs">
+                      <span class="font-medium text-ink">
+                        命中规则 #{{ selectedRow.matchedRule.id }} · {{ selectedRow.matchedRule.name }}
+                      </span>
+                      <span class="badge" :class="selectedRow.matchedRule.enabled ? 'badge-ok' : 'badge-neutral'">
+                        {{ selectedRow.matchedRule.enabled ? '规则当前启用' : '规则当前已停用' }}
                       </span>
                     </div>
-                    <span v-else class="tiny muted">未知设备</span>
-                  </td>
+                    <!-- 只展示具体命中的条件，不展示全部条件 -->
+                    <div v-if="selectedRow.hitConditionText" class="mono tiny leading-relaxed" style="color: var(--danger)">
+                      <span class="font-medium">命中条件：</span>{{ selectedRow.hitConditionText }}
+                    </div>
+                    <div v-else-if="selectedRow.matchedRule.conditions?.length" class="mono tiny text-ink-soft leading-relaxed">
+                      <span class="font-medium">规则条件：</span>{{ conditionSummary(selectedRow.matchedRule) }}
+                    </div>
+                  </div>
 
-                  <!-- 动作与结果 -->
-                  <td class="shrink">
-                    <div class="stack" style="gap: 3px">
-                      <div class="row" style="gap: 4px; flex-wrap: nowrap">
-                        <span :class="['badge', row.action.badge]">{{ row.action.text }}</span>
+                  <div class="row flex-wrap" style="gap: 6px; align-items: center">
+                    <span :class="['badge', realVerdictOf(selectedRow).badge]">
+                      {{ realVerdictOf(selectedRow).text }}
+                    </span>
+                    <span :class="['badge', selectedRow.visit.outcome === 'failed' ? 'badge-danger' : 'badge-ok']">
+                      {{ selectedRow.visit.outcome === 'failed' ? '✗ 失败' : '✓ 成功' }}
+                    </span>
+                    <span v-if="selectedRow.reasonText" class="tiny" style="color: var(--danger)">
+                      {{ selectedRow.reasonText }}
+                    </span>
+                    <span v-if="selectedRow.visit.ruleId == null && selectedRow.visit.outcome !== 'failed'" class="tiny muted">
+                      没有规则参与，按默认短链配置放行
+                    </span>
+                  </div>
+                </div>
+
+                <!-- ③ 规则回放：按当前规则集重算一遍 -->
+                <div class="trace-sec">
+                  <div class="row-between" style="gap: 8px; align-items: baseline">
+                    <span class="mono micro font-semibold text-ink-soft">规则回放 · 按当前规则集</span>
+                    <span class="tiny muted">规则若被改动过，回放可能与历史裁决不同</span>
+                  </div>
+
+                  <div v-if="traceStateOf(selectedRow.visit.id)?.loading" class="row py-3" style="gap: 8px">
+                    <RefreshCw class="animate-spin text-brand-500" :size="14" />
+                    <span class="tiny muted">正在回放规则链…</span>
+                  </div>
+
+                  <p v-else-if="traceStateOf(selectedRow.visit.id).error" class="tiny" style="color: var(--danger)">
+                    回放失败：{{ traceStateOf(selectedRow.visit.id).error }}
+                  </p>
+
+                  <template v-else-if="traceStateOf(selectedRow.visit.id).trace">
+                    <div class="row flex-wrap" style="gap: 6px; align-items: center">
+                      <span
+                        :class="[
+                          'badge',
+                          traceStateOf(selectedRow.visit.id).verdict!.matched
+                            ? traceStateOf(selectedRow.visit.id).verdict!.blocking
+                              ? 'badge-danger'
+                              : 'badge-ok'
+                            : 'badge-neutral',
+                        ]"
+                      >
+                        {{ traceStateOf(selectedRow.visit.id).verdict!.title }}
+                      </span>
+                      <span class="tiny muted">{{ traceStateOf(selectedRow.visit.id).trace!.scopeNote }}</span>
+                    </div>
+
+                    <!-- 回放与历史不一致提示 -->
+                    <div
+                      v-if="replayDiffers(selectedRow)"
+                      class="rounded-lg border border-amber-300/40 bg-amber-50/50 p-2.5 text-xs text-amber-800 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-300 leading-relaxed"
+                    >
+                      回放与当时的裁决不一致：当时是
+                      {{ selectedRow.visit.ruleId == null ? '无规则命中' : `命中 #${selectedRow.visit.ruleId}` }}，
+                      当前规则下会{{ traceStateOf(selectedRow.visit.id).verdict!.matched
+                        ? `命中 #${traceStateOf(selectedRow.visit.id).trace!.matched!.id}`
+                        : '无规则命中' }}。
+                    </div>
+
+                    <ul class="trace-list">
+                      <li
+                        v-for="step in traceStateOf(selectedRow.visit.id).trace!.steps"
+                        :key="step.key"
+                        :class="['trace-step', step.status]"
+                      >
+                        <span class="mono tiny" style="color: var(--ink-faint)">#{{ step.ruleId }}</span>
+                        <span class="tiny" style="color: var(--ink); font-weight: 500">{{ step.ruleName }}</span>
                         <span
                           :class="[
                             'badge',
-                            row.visit.outcome === 'failed' ? 'badge-danger' : 'badge-ok',
+                            step.status === 'block'
+                              ? 'badge-danger'
+                              : step.status === 'hit'
+                                ? 'badge-ok'
+                                : 'badge-neutral',
                           ]"
                         >
-                          {{ row.visit.outcome === 'failed' ? '✗ 失败' : '✓ 成功' }}
+                          {{ step.statusText }}
                         </span>
-                      </div>
-                      <span v-if="row.reasonText" class="tiny" style="color: var(--danger)">
-                        {{ row.reasonText }}
-                      </span>
-                    </div>
-                  </td>
-
-                  <!-- 目标 / 来源 -->
-                  <td>
-                    <div class="stack" style="gap: 2px; min-width: 0; max-width: 420px">
-                      <span
-                        v-if="row.visit.targetUrl"
-                        class="mono tiny truncate"
-                        :title="row.visit.targetUrl"
-                      >
-                        {{ row.visit.targetUrl }}
-                      </span>
-                      <span
-                        v-else-if="row.visit.referer"
-                        class="tiny truncate"
-                        :title="row.visit.referer"
-                      >
-                        {{ row.visit.referer }}
-                      </span>
-                      <span v-else class="tiny muted">直接访问</span>
-                      <span
-                        v-if="row.visit.targetUrl && row.visit.referer"
-                        class="tiny muted truncate"
-                        :title="'来源页:' + row.visit.referer"
-                      >
-                        来自 {{ row.visit.referer }}
-                      </span>
-                    </div>
-                  </td>
-                </tr>
-
-                <!-- ==================== 展开行：真实裁决 + 规则回放 ==================== -->
-                <tr v-if="expandedId === row.visit.id" :class="'trace-row'">
-                  <td colspan="6">
-                    <div class="trace-cell">
-                      <!-- 访客画像:表格行里只留摘要(设备徽标 / IP),规则条件能匹配的字段在这里给全 -->
-                      <div class="trace-sec">
-                        <div class="row flex-wrap" style="gap: 8px; align-items: baseline">
-                          <span class="mono micro muted">访客画像 · 本次请求</span>
-                          <span class="tiny muted">写「包含 UA」「国家」「IP」类条件时，核对这些字段</span>
-                        </div>
-                        <dl class="profile">
-                          <div class="profile-item">
-                            <dt>访问时间</dt>
-                            <dd class="mono">{{ formatDateTime(row.visit.createdAt) }}</dd>
-                          </div>
-                          <div class="profile-item">
-                            <dt>来访 IP</dt>
-                            <dd class="mono">{{ row.visit.ip || '—' }}</dd>
-                          </div>
-                          <div class="profile-item">
-                            <dt>设备</dt>
-                            <dd>
-                              <span :class="['badge', getDeviceBadgeClass(row.parsedUa.deviceType)]">
-                                {{ row.parsedUa.deviceType }}
-                              </span>
-                              <span class="tiny muted">{{ row.parsedUa.deviceModel }}</span>
-                            </dd>
-                          </div>
-                          <div class="profile-item">
-                            <dt>系统 / 浏览器</dt>
-                            <dd>
-                              {{ row.parsedUa.os }}
-                              <span class="muted">/</span>
-                              {{ row.parsedUa.browser }}
-                            </dd>
-                          </div>
-                          <div class="profile-item">
-                            <dt>短链</dt>
-                            <dd class="mono truncate">
-                              {{ row.visit.domain || link?.domains?.[0] || '未知域名' }}/{{ link?.code || '-' }}
-                            </dd>
-                          </div>
-                          <div class="profile-item">
-                            <dt>短链类型</dt>
-                            <dd>{{ linkTypeLabel }} → {{ row.action.text }}</dd>
-                          </div>
-                          <div class="profile-item">
-                            <dt>来源页</dt>
-                            <dd class="truncate">{{ row.visit.referer || '直接访问' }}</dd>
-                          </div>
-                          <div class="profile-item">
-                            <dt>最终抵达</dt>
-                            <dd class="mono truncate">{{ row.visit.targetUrl || '—' }}</dd>
-                          </div>
-                          <div class="profile-item profile-wide">
-                            <dt>
-                              完整 User-Agent
-                              <button
-                                type="button"
-                                class="mini-btn"
-                                aria-label="复制完整 User-Agent"
-                                @click.stop="copyUa(row)"
-                              >
-                                <Copy class="size-3" aria-hidden="true" /> 复制
-                              </button>
-                            </dt>
-                            <dd class="mono ua-box">{{ row.visit.userAgent || '（无 UA 头）' }}</dd>
-                          </div>
-                        </dl>
-                      </div>
-                      <!-- ① 真实裁决：后端当时记下的事实 -->
-                      <div class="trace-sec">
-                        <span class="mono micro muted">真实裁决 · 后端记录</span>
-                        <div class="row flex-wrap" style="gap: 6px; align-items: center">
-                          <span :class="['badge', realVerdictOf(row).badge]">
-                            {{ realVerdictOf(row).text }}
-                          </span>
-                          <span :class="['badge', row.visit.outcome === 'failed' ? 'badge-danger' : 'badge-ok']">
-                            {{ row.visit.outcome === 'failed' ? '✗ 失败' : '✓ 成功' }}
-                          </span>
-                          <span v-if="row.reasonText" class="tiny" style="color: var(--danger)">
-                            {{ row.reasonText }}
-                          </span>
-                          <span v-if="row.visit.ruleId == null" class="tiny muted">
-                            没有规则参与，或命中后规则已被删除
-                          </span>
-                        </div>
-                      </div>
-
-                      <!-- ② 规则回放：按当前规则集重算一遍 -->
-                      <div class="trace-sec">
-                        <div class="row-between" style="gap: 8px; align-items: baseline">
-                          <span class="mono micro muted">规则回放 · 按当前规则集</span>
-                          <span class="tiny muted">规则改过之后，回放可能与当时的裁决不一致</span>
-                        </div>
-
-                        <div v-if="traceStateOf(row.visit.id)?.loading" class="row" style="gap: 8px">
-                          <RefreshCw class="animate-spin" :size="14" />
-                          <span class="tiny muted">正在回放规则链…</span>
-                        </div>
-
-                        <p v-else-if="traceStateOf(row.visit.id).error" class="tiny" style="color: var(--danger)">
-                          回放失败：{{ traceStateOf(row.visit.id).error }}
-                        </p>
-
-                        <template v-else-if="traceStateOf(row.visit.id).trace">
-                          <div class="row flex-wrap" style="gap: 6px; align-items: center">
+                        <span class="tiny muted" style="flex-basis: 100%">{{ step.whyText }}</span>
+                        <!-- 命中的规则只展示具体命中的条件，不展示未命中的其余条件 -->
+                        <template v-if="step.facts.length > 0">
+                          <template v-if="step.status === 'hit' || step.status === 'block'">
                             <span
-                              :class="[
-                                'badge',
-                                traceStateOf(row.visit.id).verdict!.matched
-                                  ? traceStateOf(row.visit.id).verdict!.blocking
-                                    ? 'badge-danger'
-                                    : 'badge-ok'
-                                  : 'badge-neutral',
-                              ]"
-                            >
-                              {{ traceStateOf(row.visit.id).verdict!.title }}
-                            </span>
-                            <span class="tiny muted">{{ traceStateOf(row.visit.id).trace!.scopeNote }}</span>
-                          </div>
-
-                          <!-- 回放与历史不一致：多半是规则在这之后被改过 -->
-                          <p
-                            v-if="replayDiffers(row)"
-                            class="tiny"
-                            style="color: var(--warn)"
-                          >
-                            回放与当时的裁决不一致：当时是
-                            {{ row.visit.ruleId == null ? '无规则命中' : `命中 #${row.visit.ruleId}` }}，
-                            当前规则下会{{ traceStateOf(row.visit.id).verdict!.matched
-                              ? `命中 #${traceStateOf(row.visit.id).trace!.matched!.id}`
-                              : '无规则命中' }}。
-                          </p>
-
-                          <ul class="trace-list">
-                            <li
-                              v-for="step in traceStateOf(row.visit.id).trace!.steps"
-                              :key="step.key"
-                              :class="['trace-step', step.status]"
-                            >
-                              <span class="mono tiny" style="color: var(--ink-faint)">#{{ step.ruleId }}</span>
-                              <span class="tiny" style="color: var(--ink); font-weight: 500">{{ step.ruleName }}</span>
-                              <span
-                                :class="[
-                                  'badge',
-                                  step.status === 'block'
-                                    ? 'badge-danger'
-                                    : step.status === 'hit'
-                                      ? 'badge-ok'
-                                      : 'badge-neutral',
-                                ]"
-                              >
-                                {{ step.statusText }}
-                              </span>
-                              <span class="tiny muted" style="flex-basis: 100%">{{ step.whyText }}</span>
-                              <template v-if="step.facts.length > 0">
-                                <span
-                                  v-for="(fact, i) in step.facts"
-                                  :key="i"
-                                  class="mono tiny"
-                                  :style="fact.hit ? 'color: var(--ink)' : 'color: var(--ink-faint)'"
-                                >{{ fact.hit ? '✓' : '✗' }} {{ fact.text }}</span>
-                              </template>
-                            </li>
-                          </ul>
-
-                          <p
-                            v-if="traceStateOf(row.visit.id).trace!.skippedForDetail > 0"
-                            class="tiny muted"
-                          >
-                            {{ traceStateOf(row.visit.id).trace!.skippedForDetail }} 条规则未取到条件，未参与本次回放
-                          </p>
+                              v-for="(fact, i) in step.facts.filter((f) => f.hit)"
+                              :key="i"
+                              class="mono tiny"
+                              style="color: var(--ink)"
+                            >✓ {{ fact.text }}</span>
+                          </template>
+                          <template v-else>
+                            <span
+                              v-for="(fact, i) in step.facts"
+                              :key="i"
+                              class="mono tiny"
+                              :style="fact.hit ? 'color: var(--ink)' : 'color: var(--ink-faint)'"
+                            >{{ fact.hit ? '✓' : '✗' }} {{ fact.text }}</span>
+                          </template>
                         </template>
-                      </div>
+                      </li>
+                    </ul>
 
-                      <!-- ③ 带着这个访客去模拟器改规则 -->
-                      <div class="trace-sec row" style="gap: 8px">
-                        <button type="button" class="btn btn-sm" @click.stop="openInSimulator(row)">
-                          <FlaskConical :size="13" />
-                          用此访客在模拟器打开
-                        </button>
-                        <span class="tiny muted">在模拟器里改条件验一遍，再回到这里看真实流量怎么走</span>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-                </template>
-              </tbody>
-            </table>
-          </div>
-        </AppSpin>
+                    <p
+                      v-if="traceStateOf(selectedRow.visit.id).trace!.skippedForDetail > 0"
+                      class="tiny muted"
+                    >
+                      {{ traceStateOf(selectedRow.visit.id).trace!.skippedForDetail }} 条规则未取到条件，未参与本次回放
+                    </p>
+                  </template>
+                </div>
 
-        <!-- 底栏与真实分页 -->
-        <div class="panel-ft row-between flex-wrap gap-3">
-          <div class="row tiny muted" style="gap: 12px">
-            <span>共 <strong class="text-ink font-mono">{{ total }}</strong> 条访问明细</span>
-            <span v-if="hasLocalFilter">
-              当前页命中 <strong class="text-ink font-mono">{{ filteredRows.length }}</strong> / {{ rows.length }} 条
-            </span>
-          </div>
-          <div class="row" style="gap: 10px">
-            <div class="row tiny muted" style="gap: 6px">
-              <span>每页</span>
-              <select
-                v-model.number="pageSize"
-                class="select"
-                style="min-height: 28px; padding: 2px 20px 2px 8px; font-size: 12px"
-                aria-label="每页条数"
-                @change="onPageSizeChange"
-              >
-                <option :value="10">10</option>
-                <option :value="20">20</option>
-                <option :value="50">50</option>
-                <option :value="100">100</option>
-              </select>
-              <span>条</span>
+                <!-- ④ 带着这个访客去模拟器改规则 -->
+                <div class="trace-sec pt-2">
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-primary w-full justify-center"
+                    @click="openInSimulator(selectedRow)"
+                  >
+                    <FlaskConical :size="13" />
+                    用此访客在模拟器打开
+                  </button>
+                  <span class="tiny muted text-center">在模拟器里改条件验一遍，再回到这里看真实流量怎么走</span>
+                </div>
+              </div>
             </div>
-            <div class="row" style="gap: 6px">
-              <button
-                type="button"
-                class="btn btn-sm"
-                :disabled="page <= 1 || loading"
-                @click="goToPage(page - 1)"
-              >
-                上一页
-              </button>
-              <span class="mono tiny muted self-center px-1">
-                {{ page }} / {{ totalPages }}
-              </span>
-              <button
-                type="button"
-                class="btn btn-sm"
-                :disabled="page >= totalPages || loading"
-                @click="goToPage(page + 1)"
-              >
-                下一页
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
+          </template>
+        </section>
+      </div>
     </template>
   </div>
 </template>
@@ -533,7 +658,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ArrowLeft, Copy, FlaskConical, RefreshCw, Search, X } from '@lucide/vue';
+import { ArrowLeft, Copy, FlaskConical, MousePointerClick, RefreshCw, Search, X } from '@lucide/vue';
 
 import { getLink } from '@/api/links';
 import { listVisits } from '@/api/visits';
@@ -541,78 +666,49 @@ import PageHeader from '@/components/PageHeader.vue';
 import AppEmpty from '@/components/ui/AppEmpty.vue';
 import AppResult from '@/components/ui/AppResult.vue';
 import AppSpin from '@/components/ui/AppSpin.vue';
+import AppTooltip from '@/components/ui/AppTooltip.vue';
 import { ApiError } from '@/types/api';
-import type { Link, Visit, VisitAction, VisitReason } from '@/types/api';
+import type { Link, Rule, RuleAction, RuleCondition, Visit, VisitAction, VisitReason } from '@/types/api';
 import { formatClock, formatCountry, formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 import { getDeviceBadgeClass, parseUserAgent } from '@/utils/userAgent';
 import type { ParsedUA } from '@/utils/userAgent';
-import { actionLabel, isBlockingAction } from '@/views/rules/ruleMeta';
-import { buildDecisionTrace, verdictOf } from '@/views/rules/ruleTrace';
+import { actionLabel, conditionSummary, describeCondition, isBlockingAction } from '@/views/rules/ruleMeta';
+import { buildDecisionTrace, loadAllRules, verdictOf } from '@/views/rules/ruleTrace';
 import type { DecisionTrace, Verdict } from '@/views/rules/ruleTrace';
+import { buildVisitorFacts, evalCondition } from '@/views/rules/ruleSim';
 import type { SimInput } from '@/views/rules/ruleSim';
-import type { RuleAction } from '@/types/api';
 
 const route = useRoute();
 const router = useRouter();
 
 // ==================== 展示文案映射 ====================
-/** 动作 → 徽标文案/配色(后端枚举与前端一一对应,未知值兜底展示原值) */
+/** 动作 → 徽标文案/配色 */
 const ACTION_META: Record<VisitAction, { text: string; badge: string }> = {
   redirect: { text: '跳转', badge: 'badge-neutral' },
   landing_view: { text: '落地页', badge: 'badge-warn' },
   click: { text: '点击', badge: 'badge-ok' },
 };
 
-/** 动作筛选项:全部 = 不传 action,由后端返回该短链的全部动作 */
-const ACTION_OPTIONS: { value: 'all' | VisitAction; label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: 'redirect', label: '跳转' },
-  { value: 'landing_view', label: '落地页' },
-  { value: 'click', label: '点击' },
-];
-
 /**
- * 失败原因 → 中文文案。
- *
- * 分两类：短链自身不可用（排在规则之前，明细里没有规则字段），与规则裁决
- * （一定带 rule_id / rule_action，见 internal/store/visits.go）。规则类的文案在
- * toRow 里拼上规则编号，否则用户只看到「返回 404」却不知道是哪条规则干的。
+ * 非规则类的固定失败原因说明。
+ * 规则类的失败拦截由 formatFailureReason 按命中的具体条件动态生成，不再展示模糊的「规则判定为不存在」。
  */
 const REASON_TEXT: Record<VisitReason, string> = {
   link_disabled: '短链已停用',
   link_deleted: '短链已删除',
   no_target: '无可用目标',
   landing_missing: '落地页文件缺失',
-  rule_blocked: '规则判定为不存在',
-  rule_throttled: '规则判定为限流',
+  rule_blocked: '规则拦截（HTTP 404）',
+  rule_throttled: '规则限流（HTTP 429）',
 };
 
-/** 规则类失败原因：带规则编号与 HTTP 状态，点开看是哪个条件命中的 */
 const RULE_REASON_HTTP: Partial<Record<VisitReason, string>> = {
   rule_blocked: '404',
   rule_throttled: '429',
 };
 
-function reasonTextOf(visit: Visit): string {
-  if (visit.outcome !== 'failed') return '';
-  const reason = visit.reason as VisitReason;
-  const http = RULE_REASON_HTTP[reason];
-  if (http) {
-    return visit.ruleId != null
-      ? `命中规则 #${visit.ruleId}：${REASON_TEXT[reason]}（HTTP ${http}）`
-      : `${REASON_TEXT[reason]}（HTTP ${http}）`;
-  }
-  return REASON_TEXT[reason] || visit.reason || '未知原因';
-}
-
-/**
- * 设备类型筛选项。
- *
- * 取代原先的「跳转 / 落地页 / 点击」动作 tab——短链类型在进页面时就已经定了，
- * 跳转型只可能有跳转、落地页型只可能有落地页/点击，那三个 tab 里至少有两个永远为空。
- * 设备类型对同一条短链是真的有区分度。
- */
+/** 设备类型筛选项 */
 const DEVICE_OPTIONS: { value: 'all' | ParsedUA['deviceType']; label: string }[] = [
   { value: 'all', label: '全部设备' },
   { value: '移动端', label: '移动端' },
@@ -630,7 +726,10 @@ interface VisitRow {
   lang: string;
   network: { text: string; badge: string; title: string };
   action: { text: string; badge: string };
+  matchedRule?: Rule;
   reasonText: string;
+  reasonTooltip: string;
+  hitConditionText: string;
 }
 
 // ==================== 响应式状态 ====================
@@ -640,13 +739,15 @@ const total = ref(0);
 const page = ref(1);
 const pageSize = ref(20);
 
+/** 租户规则列表缓存，用于将明细中的 ruleId 快速映射到规则名与具体条件 */
+const rulesList = ref<Rule[]>([]);
+const rulesMap = computed(() => new Map(rulesList.value.map((r) => [r.id, r])));
+
 const deviceFilter = ref<'all' | ParsedUA['deviceType']>('all');
-/** 只看失败:后端没有按结果过滤的接口,失败筛选在前端当前页内完成,保持接口契约不变 */
 const onlyFailed = ref(false);
 const keyword = ref('');
 
 const loading = ref(false);
-/** 是否已成功发起过首次加载(用于区分「首次骨架」与「翻页刷新」) */
 const loaded = ref(false);
 const loadError = ref<string | null>(null);
 
@@ -664,8 +765,109 @@ const headerDescription = computed(() => {
   return `承载域名 ${domain} · 短码 ${link.value.code} · 逐条查看来访 IP、地理、设备与动作结果。`;
 });
 
+function simInputOf(rowOrVisit: Visit | VisitRow): SimInput {
+  const v = 'visit' in rowOrVisit ? rowOrVisit.visit : rowOrVisit;
+  const code = link.value?.code ?? '';
+  const host = v.domain || link.value?.domains?.[0] || '';
+  return {
+    url: host && code ? `https://${host}/${code}` : `/${code}`,
+    ip: v.ip || '',
+    ua: v.userAgent || '',
+    lang: v.lang || '',
+    ref: v.referer || '',
+    country: v.country || '',
+  };
+}
+
+/**
+ * 提取某个访问真实命中的那条（或那些）条件。
+ * 用户要求：“一个规则中会有多个条件 只展示命中的那个条件就可以了 不用展示全部条件”。
+ */
+function getHitConditions(rule: Rule, visit: Visit): RuleCondition[] {
+  if (!rule.conditions || rule.conditions.length === 0) return [];
+  const facts = buildVisitorFacts(simInputOf(visit));
+  return rule.conditions.filter((cond) => {
+    return evalCondition(cond, facts).hit;
+  });
+}
+
+function getHitConditionsSummary(rule: Rule, visit: Visit): { hitCondsText: string; isHit: boolean } {
+  const hitConds = getHitConditions(rule, visit);
+  if (hitConds.length > 0) {
+    return {
+      hitCondsText: hitConds.map(describeCondition).join(' · '),
+      isHit: true,
+    };
+  }
+  // 兜底：如果规则被修改过导致当前条件未命中，退化展示原规则条件
+  return {
+    hitCondsText: conditionSummary(rule),
+    isHit: false,
+  };
+}
+
+/**
+ * 格式化失败原因：清楚说明命中的是哪个规则及具体命中的那个条件，杜绝直接展示生硬的「规则判定为不存在」。
+ */
+function formatFailureReason(
+  visit: Visit,
+  rule?: Rule,
+): { text: string; tooltip: string; hitConditionText: string } {
+  if (visit.outcome !== 'failed') return { text: '', tooltip: '', hitConditionText: '' };
+  const reason = visit.reason as VisitReason;
+  const http = RULE_REASON_HTTP[reason];
+
+  if (visit.ruleId != null) {
+    if (rule) {
+      const { hitCondsText, isHit } = getHitConditionsSummary(rule, visit);
+      const hasConds = hitCondsText && hitCondsText !== '—';
+      const httpText = http ? `（HTTP ${http}）` : '';
+
+      // 提取核心描述：只展示命中的那个条件，避免把未命中的多条规则全部摆出来
+      let detail = rule.name;
+      if (hasConds) {
+        const nameClean = rule.name.toLowerCase().replace(/[\s\-_]+/g, '');
+        const condClean = hitCondsText.toLowerCase().replace(/[\s\-_]+/g, '');
+        if (nameClean.includes(condClean) || condClean.includes(nameClean)) {
+          detail = rule.name;
+        } else {
+          detail = `${rule.name}：${hitCondsText}`;
+        }
+      }
+      return {
+        text: `命中 #${rule.id} ${detail}`,
+        tooltip: `命中规则 #${rule.id}「${rule.name}」${hasConds ? (isHit ? ' · 命中条件：' : ' · 条件：') + hitCondsText : ''}${httpText}`,
+        hitConditionText: isHit && hasConds ? hitCondsText : '',
+      };
+    }
+    const httpText = http ? `（HTTP ${http}）` : '';
+    return {
+      text: `命中规则 #${visit.ruleId}（规则已删除）`,
+      tooltip: `命中规则 #${visit.ruleId}${httpText}，该规则后续已被删除`,
+      hitConditionText: '',
+    };
+  }
+
+  if (reason === 'rule_blocked') {
+    return {
+      text: '规则拦截（HTTP 404）',
+      tooltip: '触发规则拦截返回 404，无具体规则记录或规则已被删除',
+      hitConditionText: '',
+    };
+  }
+  if (reason === 'rule_throttled') {
+    return {
+      text: '规则限流（HTTP 429）',
+      tooltip: '触发限流返回 429，无具体规则记录或规则已被删除',
+      hitConditionText: '',
+    };
+  }
+
+  const base = REASON_TEXT[reason] || visit.reason || '未知原因';
+  return { text: base, tooltip: base, hitConditionText: '' };
+}
+
 // ==================== 数据加载 ====================
-/** 拉取短链基本信息与摘要统计;失败(多为 404:短链已被硬删)时给出明确提示而非空白页 */
 async function loadLink() {
   if (!Number.isInteger(linkId.value) || linkId.value <= 0) {
     loadError.value = '链接参数不合法:缺少短链 ID。';
@@ -680,11 +882,17 @@ async function loadLink() {
         : error instanceof ApiError
           ? error.message
           : '加载短链信息失败,请稍后重试。';
-    return;
   }
 }
 
-/** 拉取当前页访问明细(action 过滤交给后端) */
+async function loadRules() {
+  try {
+    rulesList.value = await loadAllRules();
+  } catch (err) {
+    console.error('Failed to load rules for visit failure mapping', err);
+  }
+}
+
 async function loadVisits() {
   if (loadError.value) return;
   try {
@@ -694,8 +902,7 @@ async function loadVisits() {
     });
     visits.value = res.items;
     total.value = res.total;
-    // 重取后旧回放作废：规则可能已经改过，再展示旧链会误导
-    expandedId.value = null;
+    selectedId.value = null;
     traceStates.value = {};
   } catch (error) {
     if (error instanceof ApiError) message.error(error.message);
@@ -708,8 +915,7 @@ async function loadVisits() {
 async function loadData() {
   loading.value = true;
   try {
-    await loadLink();
-    await loadVisits();
+    await Promise.all([loadLink(), loadVisits(), loadRules()]);
   } finally {
     loading.value = false;
     loaded.value = true;
@@ -720,14 +926,13 @@ async function loadData() {
 function toRow(visit: Visit): VisitRow {
   const hasUa = Boolean(visit.userAgent && visit.userAgent.trim());
   const meta = ACTION_META[visit.action] ?? { text: visit.action || '未知动作', badge: 'badge-neutral' };
+  const rule = visit.ruleId != null ? rulesMap.value.get(visit.ruleId) : undefined;
+  const { text: reasonText, tooltip: reasonTooltip, hitConditionText } = formatFailureReason(visit, rule);
 
   return {
     visit,
     hasUa,
-    // 解析结果带缓存,重复 UA 不会重复构造解析器
     parsedUa: parseUserAgent(visit.userAgent || ''),
-    // 国家码译成「美国（US）」:库里存的是 ISO 码,给运营看原样代码没意义,
-    // 但翻译失败要回退到原码而不是显示空
     country: formatCountry(visit.country),
     lang: visit.lang || '—',
     network: visit.isDatacenter
@@ -738,17 +943,19 @@ function toRow(visit: Visit): VisitRow {
           title: visit.asn ? `ASN ${visit.asn}` : '未标记为数据中心出口(该字段暂无数据源)',
         },
     action: meta,
-    reasonText: reasonTextOf(visit),
+    matchedRule: rule,
+    reasonText,
+    reasonTooltip,
+    hitConditionText,
   };
 }
 
 const rows = computed<VisitRow[]>(() => visits.value.map(toRow));
 
-/** 本地过滤:设备类型 + 只看失败 + IP / UA / 来源 / 目标 关键词(仅限当前页) */
+/** 本地过滤:设备类型 + 只看失败 + 搜索(仅限当前页) */
 const filteredRows = computed<VisitRow[]>(() => {
   const q = keyword.value.trim().toLowerCase();
   return rows.value.filter((row) => {
-    // 无 UA 的行无法判设备，不归入任何设备桶（parseUserAgent 对空 UA 会返回「桌面端」）
     if (deviceFilter.value !== 'all') {
       if (!row.hasUa || row.parsedUa.deviceType !== deviceFilter.value) return false;
     }
@@ -773,24 +980,23 @@ function resetLocalFilters() {
   deviceFilter.value = 'all';
 }
 
-// ==================== 分页与筛选交互 ====================
+// ==================== 分页交互 ====================
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
-
-/** 切换动作筛选:已移除——短链类型在进页面时就定了,动作 tab 至少有一半永远为空 */
 
 function goToPage(p: number) {
   if (p < 1 || p > totalPages.value || p === page.value) return;
   page.value = p;
+  selectedId.value = null;
   loadVisits();
 }
 
 function onPageSizeChange() {
   page.value = 1;
+  selectedId.value = null;
   loadVisits();
 }
 
 // ==================== 决策链：真实裁决 + 规则回放 ====================
-/** 展开行的回放结果：懒加载一次后缓存，重复展开同一行不再拉规则 */
 interface TraceState {
   loading: boolean;
   error: string | null;
@@ -798,36 +1004,18 @@ interface TraceState {
   verdict: Verdict | null;
 }
 
-const expandedId = ref<number | null>(null);
+const selectedId = ref<number | null>(null);
+const selectedRow = computed<VisitRow | null>(() => {
+  if (selectedId.value == null) return null;
+  return filteredRows.value.find((r) => r.visit.id === selectedId.value) ?? null;
+});
+
 const traceStates = ref<Record<number, TraceState>>({});
 
-/** 尚未回放时的空状态：让模板可以直接取，不用到处判空 */
 const EMPTY_TRACE: TraceState = { loading: false, error: null, trace: null, verdict: null };
 
 function traceStateOf(id: number): TraceState {
   return traceStates.value[id] ?? EMPTY_TRACE;
-}
-
-/**
- * 用这条访问明细当时的请求头拼出模拟器输入。
- *
- * 域名优先取明细记录的 domain（当时实际命中的域名），明细没记就退到短链的第一个
- * 域名；两个都没有就只给路径——此时 domain 作用域的规则本就不该命中，不要伪造域名。
- */
-function simInputOf(row: VisitRow): SimInput {
-  const v = row.visit;
-  const code = link.value?.code ?? '';
-  const host = v.domain || link.value?.domains?.[0] || '';
-  return {
-    url: host && code ? `https://${host}/${code}` : `/${code}`,
-    ip: v.ip || '',
-    ua: v.userAgent || '',
-    lang: v.lang || '',
-    ref: v.referer || '',
-    // 把后端当时查到的国家码一起带过去:模拟器自己解析不了 IP,
-    // 不带的话规则回放里 country 恒空,国家类规则会假「未命中」
-    country: v.country || '',
-  };
 }
 
 async function loadTrace(row: VisitRow) {
@@ -856,34 +1044,38 @@ async function loadTrace(row: VisitRow) {
   }
 }
 
-function toggleRow(row: VisitRow) {
-  if (expandedId.value === row.visit.id) {
-    expandedId.value = null;
-    return;
-  }
-  expandedId.value = row.visit.id;
+function selectRow(row: VisitRow) {
+  selectedId.value = row.visit.id;
   loadTrace(row);
 }
 
-/** 后端当时记下的真实裁决：这是事实，回放不是 */
+/** 后端当时记下的真实裁决 */
 function realVerdictOf(row: VisitRow): { text: string; badge: string } {
-  if (row.visit.ruleId == null) return { text: '无规则参与', badge: 'badge-neutral' };
+  if (row.visit.ruleId == null) {
+    if (row.visit.reason === 'rule_blocked') {
+      return { text: '规则拦截 · 直接 404', badge: 'badge-danger' };
+    }
+    if (row.visit.reason === 'rule_throttled') {
+      return { text: '规则限流 · 429', badge: 'badge-danger' };
+    }
+    return { text: '无规则参与', badge: 'badge-neutral' };
+  }
   const action = row.visit.ruleAction as RuleAction;
   const label = actionLabel(action) || action || '未知动作';
+  const rule = row.matchedRule;
+  const namePart = rule ? `「${rule.name}」` : '';
   return {
-    text: `命中 #${row.visit.ruleId} · ${label}`,
+    text: `命中 #${row.visit.ruleId} ${namePart} · ${label}`,
     badge: isBlockingAction(action) ? 'badge-danger' : 'badge-ok',
   };
 }
 
-/** 回放结果与历史裁决不一致——规则多半在这次访问之后被改过 */
 function replayDiffers(row: VisitRow): boolean {
   const replay = traceStateOf(row.visit.id).trace;
   if (!replay) return false;
   return (replay.matched?.id ?? null) !== row.visit.ruleId;
 }
 
-/** 复制完整 UA：写「包含 UA」条件时不用手动选中一长串去粘 */
 async function copyUa(row: VisitRow) {
   const ua = row.visit.userAgent;
   if (!ua) {
@@ -921,12 +1113,12 @@ onMounted(() => {
   loadData();
 });
 
-// 同一组件实例内切换短链(如浏览器前进/后退):清空旧数据后重拉
 watch(linkId, () => {
   link.value = null;
   visits.value = [];
   total.value = 0;
   page.value = 1;
+  selectedId.value = null;
   loadError.value = null;
   loaded.value = false;
   loadData();
@@ -934,7 +1126,7 @@ watch(linkId, () => {
 </script>
 
 <style scoped>
-/* 失败动作整行淡红底:直接给行加语义,方便一眼扫出「没跳出去」的访问 */
+/* 失败动作整行淡红底 */
 .tbl tbody tr[data-outcome='failed'] {
   background: var(--danger-soft);
 }
@@ -943,43 +1135,35 @@ watch(linkId, () => {
   background: color-mix(in srgb, var(--danger) 18%, var(--surface));
 }
 
-/* 可展开行:整行是展开开关,鼠标/键盘都给出手型 */
-.row-openable {
+/* 选中行样式：左侧指示条与主题高亮底色 */
+.row-selectable {
   cursor: pointer;
+  transition: background-color 0.12s ease;
 }
 
-.row-openable:hover {
+.row-selectable:hover {
   background: var(--surface-muted);
 }
 
-.row-openable[data-open='true'] {
-  background: var(--surface-muted);
-  box-shadow: inset 2px 0 0 var(--brand-500);
+.row-selectable[data-selected='true'] {
+  background: color-mix(in srgb, var(--brand-500) 10%, var(--surface)) !important;
+  box-shadow: inset 3px 0 0 var(--brand-500);
 }
 
-.row-openable:focus-visible {
+.tbl tbody tr[data-outcome='failed'][data-selected='true'] {
+  background: color-mix(in srgb, var(--danger) 22%, var(--surface)) !important;
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+.row-selectable:focus-visible {
   outline: 2px solid var(--brand-500);
   outline-offset: -2px;
-}
-
-/* 决策链展开区：与表格主体用一条细线区隔 */
-.trace-row > td {
-  padding: 0;
-  background: var(--surface-muted);
-  border-top: 1px solid var(--line);
-}
-
-.trace-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 14px 16px;
 }
 
 .trace-sec {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .trace-list {
@@ -996,17 +1180,17 @@ watch(linkId, () => {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--surface);
 }
 
-/* 访客画像：自适应列数的紧凑网格，不按表格列排版，避免长 UA 撑破布局 */
+/* 访客画像：自适应网格，适应右侧卡片宽度 */
 .profile {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 8px 16px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px 14px;
   margin: 0;
 }
 
@@ -1020,12 +1204,12 @@ watch(linkId, () => {
   gap: 6px;
   font-size: var(--fs-micro);
   color: var(--muted);
-  margin-bottom: 1px;
+  margin-bottom: 2px;
 }
 
 .profile-item > dd {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--fg);
   display: flex;
   align-items: center;
@@ -1033,7 +1217,7 @@ watch(linkId, () => {
   min-width: 0;
 }
 
-/* UA 独占整行：它是最长的字段，挤在半列里会被截断成看不出规律的碎片 */
+/* UA 独占整行 */
 .profile-wide {
   grid-column: 1 / -1;
 }
