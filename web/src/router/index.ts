@@ -109,12 +109,6 @@ const router = createRouter({
           meta: { title: '规则模拟器' },
         },
         {
-          path: 'stats',
-          name: 'stats',
-          component: () => import('@/views/stats/StatsView.vue'),
-          meta: { title: '统计' },
-        },
-        {
           path: 'account',
           name: 'account',
           component: () => import('@/views/account/AccountView.vue'),

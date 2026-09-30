@@ -127,8 +127,10 @@
               <h2>短链类型与流量结构</h2>
               <p>区分直接跳转与落地页承接，合计等于总访问量。</p>
             </div>
-            <router-link to="/stats" class="btn btn-sm">
-              查看统计 →
+            <!-- 原来指向已删的「统计」页。访问明细只有一条路:短链列表点那一行的访问列,
+                 所以这里就指到列表页,别再给同一个能力开第二个入口。 -->
+            <router-link to="/links" class="btn btn-sm">
+              查看各短链的访问 →
             </router-link>
           </div>
           <div class="panel-bd flex-1">
