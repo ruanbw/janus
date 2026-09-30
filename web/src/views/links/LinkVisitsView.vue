@@ -72,23 +72,23 @@
         <div class="panel-hd">
           <div>
             <h2>访问明细</h2>
-            <p>逐条记录该短链每次跳转、落地页视图与按钮点击的动作与结果。</p>
+            <p>逐条记录该短链每次{{ isLanding ? '落地页视图与按钮点击' : '跳转' }}的动作与结果，点行展开决策链。</p>
           </div>
           <div class="btn-row">
             <span class="badge badge-neutral mono">共 {{ total }} 条</span>
           </div>
         </div>
 
-        <!-- 工具栏:动作筛选 / 只看失败 / 关键词(后两项仅在当前页数据内过滤) -->
+        <!-- 工具栏:设备类型筛选 / 只看失败 / 关键词(均仅在当前页数据内过滤) -->
         <div class="panel-bd">
           <div class="toolbar">
-            <div class="seg-filter" role="group" aria-label="按动作筛选">
+            <div class="seg-filter" role="group" aria-label="按设备类型筛选">
               <button
-                v-for="opt in ACTION_OPTIONS"
+                v-for="opt in DEVICE_OPTIONS"
                 :key="opt.value"
                 type="button"
-                :aria-pressed="actionFilter === opt.value"
-                @click="setAction(opt.value)"
+                :aria-pressed="deviceFilter === opt.value"
+                @click="deviceFilter = opt.value"
               >
                 {{ opt.label }}
               </button>
@@ -127,11 +127,11 @@
             </button>
 
             <!--
-              搜索与「只看失败」是页内过滤(动作筛选才走后端),
-              这里常驻一行说明,避免用户把页内命中当成全量统计。
+              设备、搜索与「只看失败」都是页内过滤，这里常驻一行说明，
+              避免用户把页内命中当成全量统计。
             -->
             <span v-if="hasLocalFilter" class="tiny muted" data-od-id="visit-filter-scope-hint">
-              搜索与「只看失败」仅筛选当前页,切换分页后请重新确认
+              设备、搜索与「只看失败」仅筛选当前页，切换分页后请重新确认
             </span>
           </div>
         </div>
@@ -191,9 +191,13 @@
                   @keydown.enter.prevent="toggleRow(row)"
                   @keydown.space.prevent="toggleRow(row)"
                 >
-                  <!-- 时间 -->
+                  <!-- 时间:列里只给时分秒,完整年月日悬停看(同一页的记录基本是同一天) -->
                   <td class="shrink">
-                    <span class="mono tiny">{{ formatDateTime(row.visit.createdAt) }}</span>
+                    <AppTooltip :title="formatDateTime(row.visit.createdAt)">
+                      <span class="mono tiny cursor-help underline decoration-dotted underline-offset-2">
+                        {{ formatClock(row.visit.createdAt) }}
+                      </span>
+                    </AppTooltip>
                   </td>
 
                   <!-- 来访 IP -->
@@ -297,6 +301,72 @@
                 <tr v-if="expandedId === row.visit.id" :class="'trace-row'">
                   <td colspan="6">
                     <div class="trace-cell">
+                      <!-- 访客画像:表格行里只留摘要(设备徽标 / IP),规则条件能匹配的字段在这里给全 -->
+                      <div class="trace-sec">
+                        <div class="row flex-wrap" style="gap: 8px; align-items: baseline">
+                          <span class="mono micro muted">访客画像 · 本次请求</span>
+                          <span class="tiny muted">写「包含 UA」「国家」「IP」类条件时，核对这些字段</span>
+                        </div>
+                        <dl class="profile">
+                          <div class="profile-item">
+                            <dt>访问时间</dt>
+                            <dd class="mono">{{ formatDateTime(row.visit.createdAt) }}</dd>
+                          </div>
+                          <div class="profile-item">
+                            <dt>来访 IP</dt>
+                            <dd class="mono">{{ row.visit.ip || '—' }}</dd>
+                          </div>
+                          <div class="profile-item">
+                            <dt>设备</dt>
+                            <dd>
+                              <span :class="['badge', getDeviceBadgeClass(row.parsedUa.deviceType)]">
+                                {{ row.parsedUa.deviceType }}
+                              </span>
+                              <span class="tiny muted">{{ row.parsedUa.deviceModel }}</span>
+                            </dd>
+                          </div>
+                          <div class="profile-item">
+                            <dt>系统 / 浏览器</dt>
+                            <dd>
+                              {{ row.parsedUa.os }}
+                              <span class="muted">/</span>
+                              {{ row.parsedUa.browser }}
+                            </dd>
+                          </div>
+                          <div class="profile-item">
+                            <dt>短链</dt>
+                            <dd class="mono truncate">
+                              {{ row.visit.domain || link?.domains[0] || '未知域名' }}/{{ link?.code }}
+                            </dd>
+                          </div>
+                          <div class="profile-item">
+                            <dt>短链类型</dt>
+                            <dd>{{ linkTypeLabel }} → {{ row.action.text }}</dd>
+                          </div>
+                          <div class="profile-item">
+                            <dt>来源页</dt>
+                            <dd class="truncate">{{ row.visit.referer || '直接访问' }}</dd>
+                          </div>
+                          <div class="profile-item">
+                            <dt>最终抵达</dt>
+                            <dd class="mono truncate">{{ row.visit.targetUrl || '—' }}</dd>
+                          </div>
+                          <div class="profile-item profile-wide">
+                            <dt>
+                              完整 User-Agent
+                              <button
+                                type="button"
+                                class="mini-btn"
+                                aria-label="复制完整 User-Agent"
+                                @click.stop="copyUa(row)"
+                              >
+                                <Copy class="size-3" aria-hidden="true" /> 复制
+                              </button>
+                            </dt>
+                            <dd class="mono ua-box">{{ row.visit.userAgent || '（无 UA 头）' }}</dd>
+                          </div>
+                        </dl>
+                      </div>
                       <!-- ① 真实裁决：后端当时记下的事实 -->
                       <div class="trace-sec">
                         <span class="mono micro muted">真实裁决 · 后端记录</span>
@@ -476,7 +546,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ArrowLeft, FlaskConical, RefreshCw, Search, X } from '@lucide/vue';
+import { ArrowLeft, Copy, FlaskConical, RefreshCw, Search, X } from '@lucide/vue';
 
 import { getLink } from '@/api/links';
 import { getLinkStats, listVisits } from '@/api/visits';
@@ -486,7 +556,7 @@ import AppResult from '@/components/ui/AppResult.vue';
 import AppSpin from '@/components/ui/AppSpin.vue';
 import { ApiError } from '@/types/api';
 import type { Link, Visit, VisitAction, VisitReason } from '@/types/api';
-import { formatDateTime } from '@/utils/format';
+import { formatClock, formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 import { getDeviceBadgeClass, parseUserAgent } from '@/utils/userAgent';
 import type { ParsedUA } from '@/utils/userAgent';
@@ -515,13 +585,54 @@ const ACTION_OPTIONS: { value: 'all' | VisitAction; label: string }[] = [
   { value: 'click', label: '点击' },
 ];
 
-/** 失败原因 → 中文文案(仅 outcome=failed 时展示;后端新增枚举值时回退展示原值) */
+/**
+ * 失败原因 → 中文文案。
+ *
+ * 分两类：短链自身不可用（排在规则之前，明细里没有规则字段），与规则裁决
+ * （一定带 rule_id / rule_action，见 internal/store/visits.go）。规则类的文案在
+ * toRow 里拼上规则编号，否则用户只看到「返回 404」却不知道是哪条规则干的。
+ */
 const REASON_TEXT: Record<VisitReason, string> = {
   link_disabled: '短链已停用',
   link_deleted: '短链已删除',
   no_target: '无可用目标',
   landing_missing: '落地页文件缺失',
+  rule_blocked: '规则判定为不存在',
+  rule_throttled: '规则判定为限流',
 };
+
+/** 规则类失败原因：带规则编号与 HTTP 状态，点开看是哪个条件命中的 */
+const RULE_REASON_HTTP: Partial<Record<VisitReason, string>> = {
+  rule_blocked: '404',
+  rule_throttled: '429',
+};
+
+function reasonTextOf(visit: Visit): string {
+  if (visit.outcome !== 'failed') return '';
+  const reason = visit.reason as VisitReason;
+  const http = RULE_REASON_HTTP[reason];
+  if (http) {
+    return visit.ruleId != null
+      ? `命中规则 #${visit.ruleId}：${REASON_TEXT[reason]}（HTTP ${http}）`
+      : `${REASON_TEXT[reason]}（HTTP ${http}）`;
+  }
+  return REASON_TEXT[reason] || visit.reason || '未知原因';
+}
+
+/**
+ * 设备类型筛选项。
+ *
+ * 取代原先的「跳转 / 落地页 / 点击」动作 tab——短链类型在进页面时就已经定了，
+ * 跳转型只可能有跳转、落地页型只可能有落地页/点击，那三个 tab 里至少有两个永远为空。
+ * 设备类型对同一条短链是真的有区分度。
+ */
+const DEVICE_OPTIONS: { value: 'all' | ParsedUA['deviceType']; label: string }[] = [
+  { value: 'all', label: '全部设备' },
+  { value: '移动端', label: '移动端' },
+  { value: '桌面端', label: '桌面端' },
+  { value: '平板', label: '平板' },
+  { value: '爬虫机器人', label: '爬虫机器人' },
+];
 
 /** 表格行:在访问记录之上补齐解析结果与展示文案 */
 interface VisitRow {
@@ -543,8 +654,8 @@ const total = ref(0);
 const page = ref(1);
 const pageSize = ref(20);
 
-const actionFilter = ref<'all' | VisitAction>('all');
-/** 只看失败:后端 action 过滤已够用,失败筛选在前端当前页内完成,保持接口契约不变 */
+const deviceFilter = ref<'all' | ParsedUA['deviceType']>('all');
+/** 只看失败:后端没有按结果过滤的接口,失败筛选在前端当前页内完成,保持接口契约不变 */
 const onlyFailed = ref(false);
 const keyword = ref('');
 
@@ -601,7 +712,6 @@ async function loadVisits() {
     const res = await listVisits(linkId.value, {
       page: page.value,
       pageSize: pageSize.value,
-      action: actionFilter.value === 'all' ? undefined : actionFilter.value,
     });
     visits.value = res.items;
     total.value = res.total;
@@ -647,19 +757,20 @@ function toRow(visit: Visit): VisitRow {
           title: visit.asn ? `ASN ${visit.asn}` : '地理数据源待接入(0008 已预留字段)',
         },
     action: meta,
-    reasonText:
-      visit.outcome === 'failed'
-        ? REASON_TEXT[visit.reason as VisitReason] || visit.reason || '未知原因'
-        : '',
+    reasonText: reasonTextOf(visit),
   };
 }
 
 const rows = computed<VisitRow[]>(() => visits.value.map(toRow));
 
-/** 本地过滤:只看失败 + IP / UA / 来源 / 目标 关键词(仅限当前页) */
+/** 本地过滤:设备类型 + 只看失败 + IP / UA / 来源 / 目标 关键词(仅限当前页) */
 const filteredRows = computed<VisitRow[]>(() => {
   const q = keyword.value.trim().toLowerCase();
   return rows.value.filter((row) => {
+    // 无 UA 的行无法判设备，不归入任何设备桶（parseUserAgent 对空 UA 会返回「桌面端」）
+    if (deviceFilter.value !== 'all') {
+      if (!row.hasUa || row.parsedUa.deviceType !== deviceFilter.value) return false;
+    }
     if (onlyFailed.value && row.visit.outcome !== 'failed') return false;
     if (!q) return true;
     return (
@@ -671,11 +782,14 @@ const filteredRows = computed<VisitRow[]>(() => {
   });
 });
 
-const hasLocalFilter = computed(() => onlyFailed.value || keyword.value.trim() !== '');
+const hasLocalFilter = computed(
+  () => deviceFilter.value !== 'all' || onlyFailed.value || keyword.value.trim() !== '',
+);
 
 function resetLocalFilters() {
   keyword.value = '';
   onlyFailed.value = false;
+  deviceFilter.value = 'all';
 }
 
 // ==================== 摘要指标 ====================
@@ -693,13 +807,7 @@ const ctr = computed(() => {
 // ==================== 分页与筛选交互 ====================
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)));
 
-/** 切换动作筛选:动作过滤走后端,需回到第一页重取 */
-function setAction(value: 'all' | VisitAction) {
-  if (actionFilter.value === value) return;
-  actionFilter.value = value;
-  page.value = 1;
-  loadVisits();
-}
+/** 切换动作筛选:已移除——短链类型在进页面时就定了,动作 tab 至少有一半永远为空 */
 
 function goToPage(p: number) {
   if (p < 1 || p > totalPages.value || p === page.value) return;
@@ -803,6 +911,21 @@ function replayDiffers(row: VisitRow): boolean {
   return (replay.matched?.id ?? null) !== row.visit.ruleId;
 }
 
+/** 复制完整 UA：写「包含 UA」条件时不用手动选中一长串去粘 */
+async function copyUa(row: VisitRow) {
+  const ua = row.visit.userAgent;
+  if (!ua) {
+    message.warning('这条访问没有 User-Agent 头');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(ua);
+    message.success('已复制 User-Agent');
+  } catch {
+    message.error('复制失败,请手动选中复制');
+  }
+}
+
 function openInSimulator(row: VisitRow) {
   const input = simInputOf(row);
   router.push({
@@ -899,6 +1022,73 @@ watch(linkId, () => {
   border-radius: var(--radius-sm);
   border: 1px solid var(--line);
   background: var(--surface);
+}
+
+/* 访客画像：自适应列数的紧凑网格，不按表格列排版，避免长 UA 撑破布局 */
+.profile {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.profile-item {
+  min-width: 0;
+}
+
+.profile-item > dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  margin-bottom: 1px;
+}
+
+.profile-item > dd {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* UA 独占整行：它是最长的字段，挤在半列里会被截断成看不出规律的碎片 */
+.profile-wide {
+  grid-column: 1 / -1;
+}
+
+.ua-box {
+  display: block;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-soft);
+  word-break: break-all;
+}
+
+.mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: var(--fs-micro);
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease;
+}
+
+.mini-btn:hover {
+  color: var(--brand-600);
+  border-color: var(--brand-500);
 }
 
 /* 命中/拦截行比跳过的行更显眼 */

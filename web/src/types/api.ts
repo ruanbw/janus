@@ -23,7 +23,17 @@ export type VisitAction = 'redirect' | 'landing_view' | 'click';
 export type VisitOutcome = 'success' | 'failed';
 /** 失败原因:link_disabled 短链已停用 / link_deleted 短链已删除 /
  *  no_target 无可用目标 / landing_missing 落地页文件缺失 */
-export type VisitReason = 'link_disabled' | 'link_deleted' | 'no_target' | 'landing_missing';
+/** 访问失败原因。两类分开：短链自身不可用（link_* / no_target / landing_missing，
+ *  排在规则求值之前，明细里没有规则字段）；rule_blocked / rule_throttled 是规则裁决
+ *  导致的拦截（notfound→404 / throttle→429），后端保证这两类一定带 ruleId / ruleAction，
+ *  见 internal/store/visits.go 的 VisitReason*。 */
+export type VisitReason =
+  | 'link_disabled'
+  | 'link_deleted'
+  | 'no_target'
+  | 'landing_missing'
+  | 'rule_blocked'
+  | 'rule_throttled';
 
 /* ── 规则引擎 ─────────────────────────────────────────────────────────── */
 /** 规则作用域:global 对租户全部短链生效 / links 仅对 rule_links 显式关联的短链生效 */

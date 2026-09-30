@@ -9,6 +9,15 @@ export function formatDateTime(value?: string | null): string {
   return d.format('YYYY-MM-DD HH:mm:ss');
 }
 
+/** 只要时分秒,如 "18:30:00"。
+ *  列表里同一天的记录排在一起，年份与日期是噪声，悬停时再给完整时间（见 formatDateTime）。 */
+export function formatClock(value?: string | null): string {
+  if (!value) return '-';
+  const d = dayjs(value);
+  if (!d.isValid()) return '-';
+  return d.format('HH:mm:ss');
+}
+
 /** 相对时间,如 "3 分钟前" */
 export function formatRelative(value?: string | null): string {
   if (!value) return '-';
