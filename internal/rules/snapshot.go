@@ -509,6 +509,12 @@ func comparePhrase(op string, expected []string) string {
 		return "包含 " + values
 	case OpNotContains:
 		return "不包含 " + values
+	case OpStartsWith:
+		return "以 " + values + " 开头"
+	case OpEndsWith:
+		return "以 " + values + " 结尾"
+	case OpInCIDR:
+		return "在网段 " + values + " 内"
 	case OpGT:
 		return "大于 " + values
 	case OpLT:

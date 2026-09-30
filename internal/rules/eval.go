@@ -8,7 +8,7 @@ package rules
 
 import (
 	"log/slog"
-	"net"
+	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,7 +16,7 @@ import (
 	"cloak/internal/store"
 )
 
-// 条件运算符白名单(spec D5)。落库时只接受这 10 个,
+// 条件运算符白名单(spec D5)。落库时只接受白名单内的运算符,
 // 其余一律在加载期被丢弃并记日志——不认识的运算符绝不能退化成"恒真"。
 const (
 	OpIn          = "in"           // 字段值 ∈ values
@@ -25,6 +25,9 @@ const (
 	OpNeq         = "neq"          // 字段值 ≠ values[0]
 	OpContains    = "contains"     // 字段值包含任一 values(子串,忽略大小写)
 	OpNotContains = "not_contains" // 字段值不包含任一 values
+	OpStartsWith  = "starts_with"  // 字段值以任一 values 开头(前缀匹配,忽略大小写)
+	OpEndsWith    = "ends_with"    // 字段值以任一 values 结尾(后缀匹配,忽略大小写)
+	OpInCIDR      = "in_cidr"      // 访客 IP 落在任一 values CIDR 网段内
 	OpGT          = "gt"           // 数值大于 values[0]
 	OpLT          = "lt"           // 数值小于 values[0]
 	OpRegex       = "regex"        // 字段值匹配任一 values(加载期已编译)
@@ -34,7 +37,9 @@ const (
 // ValidOperator 判断运算符是否在白名单内(API 层入参校验复用)。
 func ValidOperator(op string) bool {
 	switch op {
-	case OpIn, OpNotIn, OpEq, OpNeq, OpContains, OpNotContains, OpGT, OpLT, OpRegex, OpDuplicated:
+	case OpIn, OpNotIn, OpEq, OpNeq, OpContains, OpNotContains,
+		OpStartsWith, OpEndsWith, OpInCIDR,
+		OpGT, OpLT, OpRegex, OpDuplicated:
 		return true
 	}
 	return false
@@ -67,10 +72,9 @@ type compiledCond struct {
 	field  string
 	op     string
 	raw    []string            // 租户写下的原始字面量(去空白、未小写),仿真回显"期望值"用
-	lits   []string            // 小写归一后的字面量(in/eq/contains/...)
+	lits   []string            // 小写归一后的字面量(in/eq/contains/starts_with/ends_with/...)
 	litMap map[string]struct{} // in / not_in 的 O(1) 预编译集合
-	ips    []net.IP            // 预解析的单 IP(仅 ip 字段)
-	nets   []*net.IPNet        // 预解析的 CIDR(仅 ip 字段)
+	radix  *IPRadixTree        // 预编译的前缀基数树(仅 ip 字段的 in/not_in/eq/neq/in_cidr)
 	res    []*regexp.Regexp
 	num    float64 // gt/lt 阈值
 	seen   int     // duplicated 阈值
@@ -281,25 +285,32 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 		return drop("values 为空")
 	}
 	c := compiledCond{field: cond.Field, op: cond.Operator, raw: values}
-	// ip 字段的集合比较(不属于)走预解析的 IP/CIDR:单个 IP 与网段都支持。
+	// ip 字段的集合比较(in/not_in/eq/neq/in_cidr)走预解析的前缀基数树:
+	// 单 IP 与网段都预编译进 IPRadixTree,求值期 O(1) 逐位下钻,零分配。
 	// 其余运算符(ip contains / ip regex 等)对 ip 按普通字符串处理。
 	if cond.Field == FieldIP {
 		switch cond.Operator {
-		case OpIn, OpEq, OpNeq, OpNotIn:
+		case OpIn, OpEq, OpNeq, OpNotIn, OpInCIDR:
+			var prefixes []netip.Prefix
 			for _, v := range values {
-				if _, n, err := net.ParseCIDR(v); err == nil {
-					c.nets = append(c.nets, n)
+				if p, err := netip.ParsePrefix(v); err == nil {
+					prefixes = append(prefixes, p)
 					continue
 				}
-				if ip := net.ParseIP(v); ip != nil {
-					c.ips = append(c.ips, ip)
+				if a, err := netip.ParseAddr(v); err == nil {
+					prefixes = append(prefixes, netip.PrefixFrom(a, a.BitLen()))
+					continue
 				}
 			}
-			if len(c.ips) == 0 && len(c.nets) == 0 {
-				return drop("ip 值既不是 IP 也不是 CIDR")
+			if len(prefixes) == 0 {
+				return drop("ip 值既不是合法 IP 也不是合法 CIDR")
 			}
+			c.radix = NewIPRadixTree(prefixes)
 			return c, true
 		}
+	}
+	if cond.Operator == OpInCIDR {
+		return drop("in_cidr 运算符仅支持 ip 字段")
 	}
 	switch cond.Operator {
 	case OpGT, OpLT:
@@ -355,8 +366,12 @@ func (c *compiledCond) match(ctx VisitorContext) bool {
 		return false
 	}
 	switch c.op {
-	case OpIn, OpEq, OpNeq, OpNotIn:
+	case OpIn, OpEq, OpNeq, OpNotIn, OpInCIDR:
 		return c.matchSet(ctx, raw)
+	case OpStartsWith:
+		return c.matchStartsWith(raw)
+	case OpEndsWith:
+		return c.matchEndsWith(raw)
 	case OpContains, OpNotContains:
 		return c.matchContains(raw)
 	case OpGT, OpLT:
@@ -376,10 +391,9 @@ func (c *compiledCond) match(ctx VisitorContext) bool {
 	return false
 }
 
-// matchSet 处理 in / eq / neq / not_in:values 里任一相等即满足(大小写不敏感)。
-// ip 字段特殊:比对的是预解析的 IP 集合与 CIDR 集合
-// (配置侧的 IP/CIDR 在加载期就解析好了,求值期只解析访客自己的地址,且只解析一次)。
-// 四个运算符只共用一个 hit("访客 IP 落没落在集合里"),再由 c.op 决定取反不取反——
+// matchSet 处理 in / eq / neq / not_in / in_cidr:values 里任一相等即满足(大小写不敏感)。
+// ip 字段特殊:比对的是预解析在 IPRadixTree 里的前缀与单 IP,求值期零分配且 O(1)。
+// 多个运算符只共用一个 hit("访客 IP 落没落在集合/网段内"),再由 c.op 决定取反不取反——
 // 在 ip 分支里各写各的返回值会漏掉 neq,把它整体判反。
 func (c *compiledCond) matchSet(ctx VisitorContext, raw string) bool {
 	hit := false
@@ -388,31 +402,8 @@ func (c *compiledCond) matchSet(ctx VisitorContext, raw string) bool {
 		if !addr.IsValid() {
 			return false
 		}
-		var (
-			a4  [4]byte
-			a16 [16]byte
-			ip  net.IP
-		)
-		if addr.Is4() {
-			a4 = addr.As4()
-			ip = a4[:]
-		} else {
-			a16 = addr.As16()
-			ip = a16[:]
-		}
-		for _, want := range c.ips {
-			if want.Equal(ip) {
-				hit = true
-				break
-			}
-		}
-		if !hit {
-			for _, n := range c.nets {
-				if n.Contains(ip) {
-					hit = true
-					break
-				}
-			}
+		if c.radix != nil {
+			hit = c.radix.Contains(addr)
 		}
 	} else if c.litMap != nil {
 		hit = c.matchLitMap(raw)
@@ -425,7 +416,7 @@ func (c *compiledCond) matchSet(ctx VisitorContext, raw string) bool {
 		}
 	}
 	switch c.op {
-	case OpIn, OpEq:
+	case OpIn, OpEq, OpInCIDR:
 		return hit
 	default: // neq / not_in
 		return !hit
@@ -472,6 +463,42 @@ func (c *compiledCond) matchLitMap(raw string) bool {
 		}
 	}
 	return false
+}
+
+// matchStartsWith 处理 starts_with:前缀匹配,大小写不敏感。
+func (c *compiledCond) matchStartsWith(raw string) bool {
+	for _, lit := range c.lits {
+		if hasPrefixFold(raw, lit) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchEndsWith 处理 ends_with:后缀匹配,大小写不敏感。
+func (c *compiledCond) matchEndsWith(raw string) bool {
+	for _, lit := range c.lits {
+		if hasSuffixFold(raw, lit) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasPrefixFold 判断 s 是否以 prefix 开头,忽略 ASCII 大小写。零分配。
+func hasPrefixFold(s, prefix string) bool {
+	if len(s) < len(prefix) {
+		return false
+	}
+	return equalFoldASCII(s[:len(prefix)], prefix)
+}
+
+// hasSuffixFold 判断 s 是否以 suffix 结尾,忽略 ASCII 大小写。零分配。
+func hasSuffixFold(s, suffix string) bool {
+	if len(s) < len(suffix) {
+		return false
+	}
+	return equalFoldASCII(s[len(s)-len(suffix):], suffix)
 }
 
 // matchContains 处理 contains / not_contains:子串匹配,大小写不敏感

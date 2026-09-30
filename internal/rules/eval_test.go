@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"log/slog"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -833,5 +834,159 @@ func BenchmarkEvaluateNestedTree(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		snap.Evaluate(vCtx, 1)
+	}
+}
+
+// TestExtendedOperators 验证 starts_with、ends_with、in_cidr 运算符的求值与仿真留痕。
+func TestExtendedOperators(t *testing.T) {
+	t.Run("starts_with 命中与大小写不敏感", func(t *testing.T) {
+		r := store.Rule{
+			ID: 1, Enabled: true, Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll, Action: store.RuleActionPass,
+			Conditions: store.Conditions(store.RuleCondition{Field: FieldPath, Operator: OpStartsWith, Values: []string{"/API", "/Admin"}}),
+		}
+		snap := NewSnapshot([]store.Rule{r}, discardLog)
+		cases := []struct {
+			path string
+			want bool
+		}{
+			{"/api/v1/links", true},
+			{"/API/v1/links", true},
+			{"/admin/settings", true},
+			{"/user/api", false},
+			{"/ap", false},
+			{"", false},
+		}
+		for _, tc := range cases {
+			fact := Fact{Path: tc.path, Domain: "s.test"}
+			_, got := snap.Evaluate(&fact, 1)
+			if got != tc.want {
+				t.Fatalf("path %q: got %v, want %v", tc.path, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("ends_with 命中与大小写不敏感", func(t *testing.T) {
+		r := store.Rule{
+			ID: 2, Enabled: true, Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll, Action: store.RuleActionPass,
+			Conditions: store.Conditions(store.RuleCondition{Field: FieldPath, Operator: OpEndsWith, Values: []string{".HTML", ".JSON"}}),
+		}
+		snap := NewSnapshot([]store.Rule{r}, discardLog)
+		cases := []struct {
+			path string
+			want bool
+		}{
+			{"/docs/index.html", true},
+			{"/docs/index.HTML", true},
+			{"/api/data.json", true},
+			{"/docs/index.htm", false},
+			{".htm", false},
+			{"", false},
+		}
+		for _, tc := range cases {
+			fact := Fact{Path: tc.path, Domain: "s.test"}
+			_, got := snap.Evaluate(&fact, 1)
+			if got != tc.want {
+				t.Fatalf("path %q: got %v, want %v", tc.path, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("in_cidr 网段与单点匹配", func(t *testing.T) {
+		r := store.Rule{
+			ID: 3, Enabled: true, Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll, Action: store.RuleActionPass,
+			Conditions: store.Conditions(store.RuleCondition{
+				Field:    FieldIP,
+				Operator: OpInCIDR,
+				Values:   []string{"10.0.0.0/8", "192.168.1.0/24", "203.0.113.5", "2001:db8::/32"},
+			}),
+		}
+		snap := NewSnapshot([]store.Rule{r}, discardLog)
+		cases := []struct {
+			ip   string
+			want bool
+		}{
+			{"10.5.6.7", true},
+			{"192.168.1.200", true},
+			{"203.0.113.5", true}, // 单 IP 自动转 /32
+			{"2001:db8::99", true},
+			{"192.168.2.1", false},
+			{"203.0.113.6", false},
+			{"2001:db9::1", false},
+			{"8.8.8.8", false},
+			{"", false},
+		}
+		for _, tc := range cases {
+			fact := Fact{IP: tc.ip, Domain: "s.test"}
+			_, got := snap.Evaluate(&fact, 1)
+			if got != tc.want {
+				t.Fatalf("ip %q: got %v, want %v", tc.ip, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("in_cidr 非 ip 字段在加载期丢弃", func(t *testing.T) {
+		var buf bytes.Buffer
+		lg := slog.New(slog.NewTextHandler(&buf, nil))
+		r := store.Rule{
+			ID: 4, Enabled: true, Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll, Action: store.RuleActionPass,
+			Conditions: store.Conditions(store.RuleCondition{Field: FieldPath, Operator: OpInCIDR, Values: []string{"10.0.0.0/8"}}),
+		}
+		snap := NewSnapshot([]store.Rule{r}, lg)
+		if len(snap.Rules) != 0 {
+			t.Fatalf("非法字段的 in_cidr 规则该整条丢弃,剩 %d 条", len(snap.Rules))
+		}
+		if !strings.Contains(buf.String(), "in_cidr 运算符仅支持 ip 字段") {
+			t.Fatalf("缺少丢弃日志:\n%s", buf.String())
+		}
+	})
+
+	t.Run("新运算符的仿真留痕文案准确", func(t *testing.T) {
+		r := store.Rule{
+			ID: 5, Enabled: true, Name: "扩展运算符规则", Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll, Action: store.RuleActionPass,
+			Conditions: store.Conditions(
+				store.RuleCondition{Field: FieldPath, Operator: OpStartsWith, Values: []string{"/api"}},
+				store.RuleCondition{Field: FieldPath, Operator: OpEndsWith, Values: []string{".json"}},
+				store.RuleCondition{Field: FieldIP, Operator: OpInCIDR, Values: []string{"10.0.0.0/8"}},
+			),
+		}
+		snap := NewSnapshot([]store.Rule{r}, discardLog)
+		fact := Fact{Path: "/api/v1/users.json", IP: "10.1.2.3", Domain: "s.test"}
+		res := snap.Simulate(&fact, 1, nil, nil)
+		if !res.Matched {
+			t.Fatalf("仿真应该命中: %+v", res.Verdict)
+		}
+		step := res.Steps[0]
+		if len(step.Conditions) != 3 {
+			t.Fatalf("条件留痕数 = %d, want 3", len(step.Conditions))
+		}
+		wantPhrases := []string{"以 /api 开头", "以 .json 结尾", "在网段 10.0.0.0/8 内"}
+		for i, p := range wantPhrases {
+			if !strings.Contains(step.Conditions[i].Description, p) {
+				t.Errorf("条件 %d 描述 %q 未包含 %q", i, step.Conditions[i].Description, p)
+			}
+		}
+	})
+}
+
+// BenchmarkEvaluateRadixCIDR 性能基准测试:验证 IPRadixTree 挂载到 Snapshot 求值链路后的大规模网段 0 分配性能
+func BenchmarkEvaluateRadixCIDR(b *testing.B) {
+	var cidrs []string
+	for i := 0; i < 256; i++ {
+		cidrs = append(cidrs, "10."+strconv.Itoa(i)+".0.0/16")
+	}
+	r := store.Rule{
+		ID: 1, Enabled: true, Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll, Action: store.RuleActionPass,
+		Conditions: store.Conditions(store.RuleCondition{Field: FieldIP, Operator: OpInCIDR, Values: cidrs}),
+	}
+	snap := NewSnapshot([]store.Rule{r}, discardLog)
+	fact := Fact{IP: "10.42.1.2", Domain: "s.test"}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, ok := snap.Evaluate(&fact, 1)
+		if !ok {
+			b.Fatal("expected match")
+		}
 	}
 }

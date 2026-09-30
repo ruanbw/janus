@@ -83,7 +83,7 @@ func TestEvaluateHonorsPriority(t *testing.T) {
 		r := globalRule(id, priority)
 		r.Action = store.RuleActionRedirect
 		r.Destination = fmt.Sprintf("https://r%d.test/", id)
-		r.Conditions = store.RuleConditions{{Field: FieldUA, Operator: OpContains, Values: []string{ua}}}
+		r.Conditions = store.Conditions(store.RuleCondition{Field: FieldUA, Operator: OpContains, Values: []string{ua}})
 		return r
 	}
 	// 故意打乱顺序传入:排序必须由 NewSnapshot 负责,不能依赖数据库 ORDER BY
@@ -248,19 +248,18 @@ func TestCacheNilSafe(t *testing.T) {
 // benchConds 一条"会命中"规则的 5 条条件,覆盖五种典型判定:
 // contains / in(枚举) / in(CIDR) / regex / not_contains。
 func benchConds() store.RuleConditions {
-	return store.RuleConditions{
-		{Field: FieldUA, Operator: OpContains, Values: []string{"bot"}},
-		{Field: FieldDevType, Operator: OpIn, Values: []string{"bot", "mobile", "desktop"}},
-		{Field: FieldIP, Operator: OpIn, Values: []string{"10.0.0.0/8", "203.0.113.0/24", "192.168.0.0/16"}},
-		{Field: FieldLang, Operator: OpRegex, Values: []string{"^(zh|en|pt|de|ja)-"}},
-		{Field: FieldPath, Operator: OpNotContains, Values: []string{"/static/", "/assets/"}},
-	}
+	return store.Conditions(
+		store.RuleCondition{Field: FieldUA, Operator: OpContains, Values: []string{"bot"}},
+		store.RuleCondition{Field: FieldDevType, Operator: OpIn, Values: []string{"bot", "mobile", "desktop"}},
+		store.RuleCondition{Field: FieldIP, Operator: OpIn, Values: []string{"10.0.0.0/8", "203.0.113.0/24", "192.168.0.0/16"}},
+		store.RuleCondition{Field: FieldLang, Operator: OpRegex, Values: []string{"^(zh|en|pt|de|ja)-"}},
+		store.RuleCondition{Field: FieldPath, Operator: OpNotContains, Values: []string{"/static/", "/assets/"}})
 }
 
 // benchMissConds 一条"必然不命中"的条件(country 恒空,空值恒不命中):
 // 用来模拟"绝大多数规则不命中"时遍历成本有多低。
 func benchMissConds() store.RuleConditions {
-	return store.RuleConditions{{Field: FieldCountry, Operator: OpEq, Values: []string{"ZZ"}}}
+	return store.Conditions(store.RuleCondition{Field: FieldCountry, Operator: OpEq, Values: []string{"ZZ"}})
 }
 
 // benchRules 造 n 条规则:前 n-1 条不命中,最后一条命中。
@@ -400,17 +399,15 @@ func simRules() []store.Rule {
 			ID: 1, Name: "美国访客拦截", Priority: 10, Enabled: true,
 			Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
 			Action: store.RuleActionNotfound,
-			Conditions: store.RuleConditions{
-				{Field: FieldCountry, Operator: OpIn, Values: []string{"US", "CA"}},
-			},
+			Conditions: store.Conditions(
+				store.RuleCondition{Field: FieldCountry, Operator: OpIn, Values: []string{"US", "CA"}}),
 		},
 		{
 			ID: 2, Name: "活动页放行", Priority: 20, Enabled: true,
 			Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
 			Action: store.RuleActionPass,
-			Conditions: store.RuleConditions{
-				{Field: FieldPath, Operator: OpContains, Values: []string{"/promo"}},
-			},
+			Conditions: store.Conditions(
+				store.RuleCondition{Field: FieldPath, Operator: OpContains, Values: []string{"/promo"}}),
 		},
 	}
 }
@@ -472,9 +469,8 @@ func TestSnapshotSimulateEmptyFieldNeverMatches(t *testing.T) {
 		ID: 7, Name: "美国访客拦截", Priority: 10, Enabled: true,
 		Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
 		Action: store.RuleActionNotfound,
-		Conditions: store.RuleConditions{
-			{Field: FieldCountry, Operator: OpNotIn, Values: []string{"CN"}},
-		},
+		Conditions: store.Conditions(
+			store.RuleCondition{Field: FieldCountry, Operator: OpNotIn, Values: []string{"CN"}}),
 	}}, lg)
 
 	// 没有 GeoIP 值:country 恒为空 ⇒ not_in 也恒不成立(关键不变式)。
@@ -501,9 +497,8 @@ func TestSnapshotSimulateDisabledDraft(t *testing.T) {
 		ID: 3, Name: "未启用的草稿", Priority: 5, Enabled: false,
 		Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
 		Action: store.RuleActionNotfound,
-		Conditions: store.RuleConditions{
-			{Field: FieldPath, Operator: OpEq, Values: []string{"/promo"}},
-		},
+		Conditions: store.Conditions(
+			store.RuleCondition{Field: FieldPath, Operator: OpEq, Values: []string{"/promo"}}),
 	}, lg)
 	if !ok {
 		t.Fatal("草稿编译失败")
@@ -531,9 +526,8 @@ func TestSnapshotSimulateAgreesWithEvaluate(t *testing.T) {
 			ID: id, Name: fmt.Sprintf("scoped-%d", id), Priority: priority, Enabled: true,
 			Scope: store.RuleScopeLinks, Logic: store.RuleLogicAll,
 			Action: store.RuleActionThrottle,
-			Conditions: store.RuleConditions{
-				{Field: FieldDomain, Operator: OpEq, Values: []string{"shop.example.com"}},
-			},
+			Conditions: store.Conditions(
+				store.RuleCondition{Field: FieldDomain, Operator: OpEq, Values: []string{"shop.example.com"}}),
 			LinkIDs: linkIDs,
 		}
 	}
@@ -546,10 +540,9 @@ func TestSnapshotSimulateAgreesWithEvaluate(t *testing.T) {
 			ID: 1, Name: "任一成立即命中", Priority: 10, Enabled: true,
 			Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAny,
 			Action: store.RuleActionRedirect, Destination: "https://blocked.example.com",
-			Conditions: store.RuleConditions{
-				{Field: FieldCountry, Operator: OpIn, Values: []string{"US"}},
-				{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}},
-			},
+			Conditions: store.Conditions(
+				store.RuleCondition{Field: FieldCountry, Operator: OpIn, Values: []string{"US"}},
+				store.RuleCondition{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}}),
 		}},
 		"无���件恒命中": {{
 			ID: 1, Name: "无条件", Priority: 10, Enabled: true,
@@ -626,9 +619,8 @@ func TestSnapshotSimulateDraftReplacesRule(t *testing.T) {
 		ID: 1, Name: "中国访客拦截", Priority: 10, Enabled: true,
 		Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
 		Action: store.RuleActionNotfound,
-		Conditions: store.RuleConditions{
-			{Field: FieldCountry, Operator: OpIn, Values: []string{"CN"}},
-		},
+		Conditions: store.Conditions(
+			store.RuleCondition{Field: FieldCountry, Operator: OpIn, Values: []string{"CN"}}),
 	}, lg)
 	if !ok {
 		t.Fatal("草稿编译失败")
@@ -664,9 +656,8 @@ func TestSnapshotSimulateDraftNewRule(t *testing.T) {
 		ID: 0, Name: "新草稿", Priority: 20, Enabled: true,
 		Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
 		Action: store.RuleActionThrottle,
-		Conditions: store.RuleConditions{
-			{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}},
-		},
+		Conditions: store.Conditions(
+			store.RuleCondition{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}}),
 	}, lg)
 	if !ok {
 		t.Fatal("草稿编译失败")
@@ -721,9 +712,8 @@ func TestSnapshotSimulateConcurrent(t *testing.T) {
 			ID: int64(i), Name: fmt.Sprintf("r%d", i), Priority: i, Enabled: true,
 			Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll,
 			Action: store.RuleActionNotfound,
-			Conditions: store.RuleConditions{
-				{Field: FieldUA, Operator: OpContains, Values: []string{"bot"}},
-			},
+			Conditions: store.Conditions(
+				store.RuleCondition{Field: FieldUA, Operator: OpContains, Values: []string{"bot"}}),
 		})
 	}
 	snap := NewSnapshot(rules, lg)

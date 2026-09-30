@@ -132,7 +132,7 @@ func TestRuleCRUDRoundTrip(t *testing.T) {
 
 	// 详情:条件与关联必须完整(前端"原样回显、整体替换保存",截断会静默丢数据)
 	got := getRule(t, c, created.ID)
-	if len(got.Conditions) != 2 || got.Conditions[0].Field != "devtype" || got.Conditions[1].Field != "path" {
+	if got.Conditions.Len() != 2 || got.Conditions.Leaves[0].Field != "devtype" || got.Conditions.Leaves[1].Field != "path" {
 		t.Fatalf("详情条件 = %+v, want 完整 2 条", got.Conditions)
 	}
 	if len(got.LinkIDs) != 2 {
@@ -148,7 +148,7 @@ func TestRuleCRUDRoundTrip(t *testing.T) {
 	if patched.Name != "拦爬虫(改)" || patched.Description != desc {
 		t.Fatalf("PATCH 结果 = %+v", patched)
 	}
-	if len(patched.LinkIDs) != 2 || len(patched.Conditions) != 2 {
+	if len(patched.LinkIDs) != 2 || patched.Conditions.Len() != 2 {
 		t.Fatalf("只改名称后关联/条件被改写: %v / %+v", patched.LinkIDs, patched.Conditions)
 	}
 
@@ -475,7 +475,7 @@ func TestRuleListTruncatesLinkNamesOnly(t *testing.T) {
 	if len(item.LinkIDs) != 4 {
 		t.Fatalf("列表 linkIds = %v, want 完整 4 条", item.LinkIDs)
 	}
-	if len(item.Conditions) != 2 {
+	if item.Conditions.Len() != 2 {
 		t.Fatalf("列表 conditions = %+v, want 完整 2 条", item.Conditions)
 	}
 	// 详情同样:linkIds 完整
