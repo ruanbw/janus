@@ -115,12 +115,6 @@ const router = createRouter({
           meta: { title: '访问决策流' },
         },
         {
-          path: 'insights',
-          name: 'insights',
-          component: () => import('@/views/insights/InsightsView.vue'),
-          meta: { title: '数据洞察' },
-        },
-        {
           path: 'stats',
           name: 'stats',
           component: () => import('@/views/stats/StatsView.vue'),

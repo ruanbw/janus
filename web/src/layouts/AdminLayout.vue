@@ -211,7 +211,6 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
-  BarChart3,
   ChevronDown,
   Crown,
   FlaskConical,
@@ -224,7 +223,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Radio,
-  Send,
   Settings,
   Sliders,
   Sun,
@@ -298,14 +296,12 @@ const navGroups: NavGroup[] = [
       { to: '/rules', label: '规则引擎', icon: Sliders },
       { to: '/rules/simulator', label: '规则模拟器', icon: FlaskConical },
       { to: '/visit-stream', label: '访问决策流', icon: Radio },
-      { to: '/insights', label: '数据洞察', icon: BarChart3 },
     ],
   },
   {
     title: '配置',
     items: [
       { to: '/domains', label: '域名池', icon: Globe },
-      { to: '/insights#postback', label: '转化回传', icon: Send },
     ],
   },
   {

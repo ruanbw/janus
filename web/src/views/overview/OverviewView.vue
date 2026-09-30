@@ -183,6 +183,139 @@
       </div>
     </section>
 
+    <!-- 流量结构分布：来源 / 设备 / 操作系统 / 浏览器（四块都来自同一份访问明细样本） -->
+    <template v-if="visits.length > 0">
+      <div class="cols-2 items-stretch">
+        <div class="panel flex flex-col">
+          <div class="panel-hd">
+            <div>
+              <h2>流量来源分布</h2>
+              <p>根据请求 Referrer 与广告点击特征自动归类。</p>
+            </div>
+          </div>
+          <div class="panel-bd flex-1">
+            <div class="bars">
+              <div
+                v-for="src in sourceBreakdown"
+                :key="src.name"
+                class="bar-row bar-row-lg"
+              >
+                <span class="bar-lab">{{ src.name }}</span>
+                <span class="bar-track">
+                  <span
+                    class="bar-fill"
+                    :class="{ 't-accent': src.percent > 30 }"
+                    :style="{ width: `${src.percent}%` }"
+                  ></span>
+                </span>
+                <span class="bar-val">{{ src.count }} 次 · {{ src.percent }}%</span>
+              </div>
+            </div>
+          </div>
+          <div class="panel-ft">
+            优先解析主流广告渠道（Meta / TikTok / Google），未携带来源的流量归入直接访问。
+          </div>
+        </div>
+
+        <div class="panel flex flex-col">
+          <div class="panel-hd">
+            <div>
+              <h2>设备类型分布</h2>
+              <p>基于 User-Agent 特征与视口画像解析。</p>
+            </div>
+          </div>
+          <div class="panel-bd flex-1">
+            <div class="bars">
+              <div
+                v-for="dev in deviceBreakdown"
+                :key="dev.name"
+                class="bar-row bar-row-lg"
+              >
+                <span class="bar-lab">{{ dev.name }}</span>
+                <span class="bar-track">
+                  <span
+                    class="bar-fill"
+                    :class="{ 't-accent': dev.name === '移动端' }"
+                    :style="{ width: `${dev.percent}%` }"
+                  ></span>
+                </span>
+                <span class="bar-val">{{ dev.count }} 次 · {{ dev.percent }}%</span>
+              </div>
+            </div>
+          </div>
+          <div class="panel-ft">
+            斗篷准入规则可针对「移动端」进行放行，拦截「桌面端」审查机或爬虫环境。
+          </div>
+        </div>
+      </div>
+
+      <div class="cols-2 items-stretch">
+        <div class="panel flex flex-col">
+          <div class="panel-hd">
+            <div>
+              <h2>操作系统分布</h2>
+              <p>终端操作系统内核与主版本统计。</p>
+            </div>
+          </div>
+          <div class="panel-bd flex-1">
+            <div class="bars">
+              <div
+                v-for="os in osBreakdown"
+                :key="os.name"
+                class="bar-row bar-row-lg"
+              >
+                <span class="bar-lab">{{ os.name }}</span>
+                <span class="bar-track">
+                  <span
+                    class="bar-fill"
+                    :class="{ 't-accent': os.name.includes('iOS') }"
+                    :style="{ width: `${os.percent}%` }"
+                  ></span>
+                </span>
+                <span class="bar-val">{{ os.count }} 次 · {{ os.percent }}%</span>
+              </div>
+            </div>
+          </div>
+          <div class="panel-ft">
+            支持在规则引擎中配置 OS 白名单（如仅放行 iOS 或 Android）。
+          </div>
+        </div>
+
+        <div class="panel flex flex-col">
+          <div class="panel-hd">
+            <div>
+              <h2>浏览器分布</h2>
+              <p>独立浏览器与应用内嵌 WebView 占比。</p>
+            </div>
+          </div>
+          <div class="panel-bd flex-1">
+            <div class="bars">
+              <div
+                v-for="br in browserBreakdown"
+                :key="br.name"
+                class="bar-row bar-row-lg"
+              >
+                <span class="bar-lab">{{ br.name }}</span>
+                <span class="bar-track">
+                  <span class="bar-fill" :style="{ width: `${br.percent}%` }"></span>
+                </span>
+                <span class="bar-val">{{ br.count }} 次 · {{ br.percent }}%</span>
+              </div>
+            </div>
+          </div>
+          <div class="panel-ft">
+            「应用内内置」指微信、抖音等 App 的 WebView，与独立浏览器分列以便看清各投放渠道的真实环境。
+          </div>
+        </div>
+      </div>
+
+      <!-- 样本量必须写出来：这四张图算的是样本占比，不是全量访问结构 -->
+      <p class="text-[12px] text-muted">
+        样本量：{{ sampleLinks.length }} 条有访问量的短链（按访问量降序取前 {{ SAMPLE_LINK_LIMIT }} 条）各
+        {{ SAMPLE_PAGE_SIZE }} 条访问明细，共 <span class="font-mono text-ink">{{ visits.length }}</span> 条。上方占比按该样本计算，不等于全量访问结构。
+      </p>
+    </template>
+
     <!-- 合规提示 -->
     <section class="panel">
       <div class="panel-bd">
@@ -206,17 +339,42 @@ import { RefreshCw } from '@lucide/vue';
 
 import { listDomains } from '@/api/domains';
 import { listLinks } from '@/api/links';
+import { listVisits } from '@/api/visits';
 import AppButton from '@/components/ui/AppButton.vue';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
-import type { Domain, Link } from '@/types/api';
+import type { Domain, Link, Visit } from '@/types/api';
 import { message } from '@/utils/toast';
+
+import {
+  browserDistribution,
+  deviceDistribution,
+  osDistribution,
+  sourceDistribution,
+} from './trafficBreakdown';
+
+/**
+ * 分布图的样本上限：按访问量降序取前 10 条短链，每条取最近 50 条明细。
+ *
+ * 全量访问明细没有聚合接口，只能靠逐条短链拉取；这两个上限是为了让总览页的加载
+ * 时间可接受，取值沿用原数据洞察页。
+ */
+const SAMPLE_LINK_LIMIT = 10;
+const SAMPLE_PAGE_SIZE = 50;
 
 const auth = useAuthStore();
 
 const loading = ref(false);
 const links = ref<Link[]>([]);
 const domains = ref<Domain[]>([]);
+/** 分布图的访问明细样本（不是全量，见 SAMPLE_LINK_LIMIT 注释） */
+const visits = ref<Visit[]>([]);
+const sampleLinks = ref<Link[]>([]);
+
+const sourceBreakdown = computed(() => sourceDistribution(visits.value));
+const deviceBreakdown = computed(() => deviceDistribution(visits.value));
+const osBreakdown = computed(() => osDistribution(visits.value));
+const browserBreakdown = computed(() => browserDistribution(visits.value));
 
 const quotaUsage = computed(() => auth.tenant?.usage);
 
@@ -357,6 +515,18 @@ async function loadData() {
     ]);
     links.value = linksRes.items;
     domains.value = domainsRes;
+
+    // 分布图样本：只拉有访问量的短链，按访问量降序取前 N 条
+    sampleLinks.value = [...linksRes.items]
+      .filter((l) => (l.visits || 0) > 0)
+      .sort((a, b) => (b.visits || 0) - (a.visits || 0))
+      .slice(0, SAMPLE_LINK_LIMIT);
+    const visitResults = await Promise.all(
+      sampleLinks.value.map((l) =>
+        listVisits(l.id, { page: 1, pageSize: SAMPLE_PAGE_SIZE }).catch(() => ({ items: [], total: 0 })),
+      ),
+    );
+    visits.value = visitResults.flatMap((r) => r?.items ?? []);
   } catch (error) {
     if (error instanceof ApiError && error.status !== 401) {
       message.error(error.message);
