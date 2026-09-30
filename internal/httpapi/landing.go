@@ -25,14 +25,23 @@ import (
 // handleLandingFallback NoRoute 兜底:gin 路由树不支持 /:code 与 /:code/... 子路由并存,
 // 落地页型短链的二级路径(click、sdk.js、静态文件)在此按 "短码/后缀" 手工分发。
 func (a *API) handleLandingFallback(c *gin.Context) {
+	if strings.HasPrefix(c.Request.URL.Path, "/api/") || strings.HasPrefix(c.Request.URL.Path, "/internal/") {
+		writeErr(c, http.StatusNotFound, errNotFound, "route not found")
+		return
+	}
+	d := a.resolveDomainByHost(c)
+	var tenantID int64
+	if d != nil {
+		tenantID = d.TenantID
+	}
 	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, tenantID, nil)
 		return
 	}
 	p := strings.TrimPrefix(c.Request.URL.Path, "/")
 	code, rest, ok := strings.Cut(p, "/")
 	if !ok || !domain.IsValidCode(code) {
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, tenantID, nil)
 		return
 	}
 	switch rest {
@@ -94,7 +103,11 @@ func (a *API) resolveLandingLink(c *gin.Context, code string) (*store.Link, *sto
 func (a *API) handleLandingClick(c *gin.Context, code string) {
 	link, d, err := a.resolveLandingLink(c, code)
 	if err != nil {
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		var tenantID int64
+		if dom := a.resolveDomainByHost(c); dom != nil {
+			tenantID = dom.TenantID
+		}
+		a.renderVisitorError(c, http.StatusNotFound, tenantID, nil)
 		return
 	}
 	targetURL, err := a.store.PickTarget(c.Request.Context(), link.ID)
@@ -103,7 +116,7 @@ func (a *API) handleLandingClick(c *gin.Context, code string) {
 			LinkID: link.ID, DomainID: d.ID,
 			Action: store.VisitActionClick, Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonNoTarget,
 		})
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 		return
 	}
 	_ = a.store.IncrementClicks(c.Request.Context(), link.ID) // 计数失败不阻断跳转
@@ -151,7 +164,11 @@ const landingSDKTemplate = `/* CLOAK 落地页 SDK:绑定按钮点击 → 平台
 func (a *API) handleLandingSDK(c *gin.Context, code string) {
 	link, domain, err := a.resolveLandingLink(c, code)
 	if err != nil {
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		var tenantID int64
+		if dom := a.resolveDomainByHost(c); dom != nil {
+			tenantID = dom.TenantID
+		}
+		a.renderVisitorError(c, http.StatusNotFound, tenantID, nil)
 		return
 	}
 	// 点击端点绝对地址:与 SDK 请求同源(Host 即短链域名),外部落地页跨域引用同样可用。
@@ -175,7 +192,11 @@ func (a *API) handleLandingSDK(c *gin.Context, code string) {
 func (a *API) handleLandingFile(c *gin.Context, code, rel string) {
 	link, _, err := a.resolveLandingLink(c, code)
 	if err != nil || link.LandingSource != store.LandingSourceUpload {
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		var tenantID int64
+		if dom := a.resolveDomainByHost(c); dom != nil {
+			tenantID = dom.TenantID
+		}
+		a.renderVisitorError(c, http.StatusNotFound, tenantID, nil)
 		return
 	}
 	rel = strings.TrimPrefix(rel, "/")
@@ -197,18 +218,18 @@ func (a *API) serveLandingFile(c *gin.Context, link *store.Link, rel string) {
 	absRoot, err1 := filepath.Abs(root)
 	absFp, err2 := filepath.Abs(fp)
 	if err1 != nil || err2 != nil || !strings.HasPrefix(absFp, absRoot+string(filepath.Separator)) {
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 		return
 	}
 	f, err := os.Open(absFp)
 	if err != nil {
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 		return
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || info.IsDir() {
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 		return
 	}
 	ctype := mime.TypeByExtension(filepath.Ext(absFp))

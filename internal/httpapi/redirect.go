@@ -27,6 +27,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"cloak/internal/httpapi/templates"
 	"cloak/internal/rules"
 	"cloak/internal/store"
 )
@@ -55,19 +56,19 @@ func (a *API) resolveDomainByHost(c *gin.Context) *store.Domain {
 func (a *API) handleRedirect(c *gin.Context) {
 	code := c.Param("code")
 	if code == "" || strings.Contains(code, "/") {
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, 0, nil)
 		return
 	}
 	d := a.resolveDomainByHost(c)
 	if d == nil {
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, 0, nil)
 		return
 	}
 	// 宽松命中:短链不可用时也返回它,由本函数把"为什么不可用"记进明细
 	link, _, reason, err := a.store.LookupLinkForVisit(c.Request.Context(), d.ID, code)
 	if err != nil {
 		// 未命中(短码不存在):无法归属到任何短链,不记明细
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, d.TenantID, nil)
 		return
 	}
 	// 动作按短链类型确定:跳转型记 redirect,落地页型记 landing_view
@@ -80,7 +81,7 @@ func (a *API) handleRedirect(c *gin.Context) {
 			LinkID: link.ID, DomainID: d.ID,
 			Action: action, Outcome: store.VisitOutcomeFailed, Reason: reason,
 		})
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 		return
 	}
 	// 其余两种"短链自身不可用"同样排在规则之前(spec D4 / ADR 0008):
@@ -97,7 +98,7 @@ func (a *API) handleRedirect(c *gin.Context) {
 					LinkID: link.ID, DomainID: d.ID,
 					Action: action, Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonLandingMissing,
 				})
-				writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+				a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 				return
 			}
 			landingDest = "/" + code + "/"
@@ -107,7 +108,7 @@ func (a *API) handleRedirect(c *gin.Context) {
 			LinkID: link.ID, DomainID: d.ID,
 			Action: action, Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonNoTarget,
 		})
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 		return
 	}
 	// 规则裁决:pass 与未命中都落到「继续原跳转流程」,区别只在明细里记不记这次命中
@@ -134,7 +135,7 @@ func (a *API) handleRedirect(c *gin.Context) {
 			LinkID: link.ID, DomainID: d.ID,
 			Action: action, Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonNoTarget,
 		})
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 		return
 	}
 	// 记录访问(短链、域名、IP、UA、来源、动作、结果、目标、时间);统计失败不阻断跳转
@@ -210,7 +211,7 @@ func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domai
 			Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonRuleBlocked,
 			RuleID: ruleID, RuleAction: ruleAction,
 		})
-		writeErr(c, http.StatusNotFound, errNotFound, "short link not found")
+		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, &dec)
 		return true
 	case store.RuleActionThrottle:
 		a.recordVisit(c, store.VisitRecord{
@@ -218,7 +219,7 @@ func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domai
 			Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonRuleThrottled,
 			RuleID: ruleID, RuleAction: ruleAction,
 		})
-		writeErr(c, http.StatusTooManyRequests, errRateLimited, "请求过于频繁,请稍后再试")
+		a.renderVisitorError(c, http.StatusTooManyRequests, link.TenantID, &dec)
 		return true
 	case store.RuleActionRedirect:
 		// 规则改写的目标不参与轮询(spec 风险章节):轮询是"在目标池里选一条",
@@ -239,4 +240,40 @@ func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domai
 		return true
 	}
 	return false
+}
+
+// renderVisitorError 针对访客端重定向/未命中/拦截场景渲染 HTML 错误页面 (404 / 429)。
+// 决议优先级:
+// 1. 规则专属自定义页面 (dec.PageMode == "custom" && dec.CustomHTML != "")
+// 2. 租户全局自定义页面 (tenantID > 0 时从 store 读取)
+// 3. 系统内置默认自适应 HTML 页面
+func (a *API) renderVisitorError(c *gin.Context, status int, tenantID int64, dec *rules.Decision) {
+	if dec != nil && dec.PageMode == "custom" && dec.CustomHTML != "" {
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(status, dec.CustomHTML)
+		return
+	}
+
+	if tenantID > 0 {
+		p404, p429, err := a.store.GetTenantErrorPages(c.Request.Context(), tenantID)
+		if err == nil {
+			if status == http.StatusTooManyRequests && p429 != "" {
+				c.Header("Content-Type", "text/html; charset=utf-8")
+				c.String(status, p429)
+				return
+			}
+			if status == http.StatusNotFound && p404 != "" {
+				c.Header("Content-Type", "text/html; charset=utf-8")
+				c.String(status, p404)
+				return
+			}
+		}
+	}
+
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	if status == http.StatusTooManyRequests {
+		c.String(status, templates.Default429HTML())
+	} else {
+		c.String(status, templates.Default404HTML())
+	}
 }

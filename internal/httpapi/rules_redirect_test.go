@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -579,4 +580,90 @@ func TestLinkRulesEnabledToggleBypassesRule(t *testing.T) {
 	resp = c.patch("/api/links/"+strconv.FormatInt(link.ID, 10), map[string]any{"rulesEnabled": true})
 	assertStatus(t, resp, http.StatusOK)
 	assertStatus(t, redirectGet(t, env, "localhost", "/"+link.Code), http.StatusNotFound)
+}
+
+func TestVisitorErrorPages(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "testpage", "targetUrls": []string{"https://dest.example.com"}, "domainIds": []int64{lid},
+	})
+
+	// 1. 普通未命中: 返回系统默认 404 HTML
+	resp := redirectGet(t, env, "localhost", "/nonexistent_code")
+	assertStatus(t, resp, http.StatusNotFound)
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("Content-Type = %q, want text/html", ct)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if !strings.Contains(string(body), "404") || !strings.Contains(string(body), "页面未找到") {
+		t.Fatalf("未命中默认 404 内容异常: %s", string(body))
+	}
+
+	// 2. 租户配置全局 404 页面后未命中: 返回租户全局自定义 HTML
+	tenant, err := env.Store.GetTenantByEmail(context.Background(), "alice@example.com")
+	if err != nil {
+		t.Fatalf("get tenant: %v", err)
+	}
+	if err := env.Store.UpdateTenantErrorPages(context.Background(), tenant.ID, "<h1>Alice 404</h1>", "<h1>Alice 429</h1>"); err != nil {
+		t.Fatalf("update tenant error pages: %v", err)
+	}
+
+	resp = redirectGet(t, env, "localhost", "/nonexistent_code")
+	assertStatus(t, resp, http.StatusNotFound)
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if !strings.Contains(string(body), "<h1>Alice 404</h1>") {
+		t.Fatalf("租户全局 404 未生效, got: %s", string(body))
+	}
+
+	// 3. 规则级自定义 404 页面
+	rule := createRule(t, c, map[string]any{
+		"name":       "专属404",
+		"action":     store.RuleActionNotfound,
+		"pageMode":   "custom",
+		"customHtml": "<h1>Rule Custom 404</h1>",
+		"conditions": ruleOnPath(link.Code),
+	})
+	_ = rule
+
+	resp = redirectGet(t, env, "localhost", "/"+link.Code)
+	assertStatus(t, resp, http.StatusNotFound)
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if !strings.Contains(string(body), "<h1>Rule Custom 404</h1>") {
+		t.Fatalf("规则专属 404 未生效, got: %s", string(body))
+	}
+
+	// 4. 规则级 429 专属页面
+	createRule(t, c, map[string]any{
+		"name":       "专属429",
+		"priority":   50, // 优先级更高
+		"action":     store.RuleActionThrottle,
+		"pageMode":   "custom",
+		"customHtml": "<h1>Rule Custom 429</h1>",
+		"conditions": ruleOnPath(link.Code),
+	})
+
+	resp = redirectGet(t, env, "localhost", "/"+link.Code)
+	assertStatus(t, resp, http.StatusTooManyRequests)
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("Content-Type = %q, want text/html", ct)
+	}
+	body, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if !strings.Contains(string(body), "<h1>Rule Custom 429</h1>") {
+		t.Fatalf("规则专属 429 未生效, got: %s", string(body))
+	}
+
+	// 5. 管理 API 依然返回 JSON
+	apiResp := c.get("/api/nonexistent-route")
+	assertStatus(t, apiResp, http.StatusNotFound)
+	if ct := apiResp.Header.Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Fatalf("API Content-Type = %q, want application/json", ct)
+	}
+	_ = apiResp.Body.Close()
 }

@@ -56,7 +56,9 @@ type ruleReq struct {
 	Destination *string               `json:"destination"`
 	Conditions  *store.RuleConditions `json:"conditions"`
 	// LinkIDs 必须是 *[]int64(指针到切片),理由见文件头不变式 ②。
-	LinkIDs *[]int64 `json:"linkIds"`
+	LinkIDs    *[]int64 `json:"linkIds"`
+	PageMode   *string  `json:"pageMode"`
+	CustomHTML *string  `json:"customHtml"`
 }
 
 // ruleWrite 归一化并校验后的待写入规则(是"合成结果"而不是"请求增量":
@@ -73,7 +75,9 @@ type ruleWrite struct {
 	conditions  store.RuleConditions
 	// linkIDs 非 nil 时整体替换关联;nil = 不动关联。scope=global 时恒指向空切片
 	// (关联与"作用于全部短链"同时成立是自相矛盾的数据状态,见 store.RuleUpdate 注释)。
-	linkIDs *[]int64
+	linkIDs    *[]int64
+	pageMode   string
+	customHTML string
 }
 
 // ruleErr 构造一条 400 校验错误(apiErr 由 writeAPIError 统一序列化)。
@@ -93,6 +97,8 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 		logic:       store.RuleLogicAll,
 		destination: "",
 		conditions:  store.RuleConditions{},
+		pageMode:    "default",
+		customHTML:  "",
 	}
 	if cur != nil {
 		// 现值原样带过来(不靠"零值即未设置"去猜):priority=0 是合法配置,
@@ -103,6 +109,8 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 		w.logic = firstNonEmpty(cur.Logic, store.RuleLogicAll)
 		w.action = cur.Action
 		w.destination = cur.Destination
+		w.pageMode = firstNonEmpty(cur.PageMode, "default")
+		w.customHTML = cur.CustomHTML
 		if cur.Conditions != nil {
 			w.conditions = cur.Conditions
 		}
@@ -159,6 +167,19 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 	// ⑤ action=redirect 时 destination 必须是合法 URL(沿用 validTargetURL:拒控制字符)
 	if w.action == store.RuleActionRedirect && !validTargetURL(w.destination) {
 		return ruleWrite{}, ruleErr("action=redirect 时 destination 必须是合法 URL(不能为空、超长或包含控制字符)")
+	}
+	// ⑩ pageMode 与 customHtml 校验
+	if req.PageMode != nil && *req.PageMode != "" {
+		w.pageMode = *req.PageMode
+	}
+	if w.pageMode != "default" && w.pageMode != "custom" {
+		return ruleWrite{}, ruleErr("pageMode 必须为 default 或 custom")
+	}
+	if req.CustomHTML != nil {
+		w.customHTML = *req.CustomHTML
+	}
+	if len(w.customHTML) > 512*1024 {
+		return ruleWrite{}, ruleErr("customHtml 超过大小上限(512KB)")
 	}
 	// ⑦⑧ 条件字段与运算符必须都在 v1 白名单内(白名单以 rules 包为准,httpapi 只引用)
 	if req.Conditions != nil {
@@ -346,6 +367,7 @@ func (a *API) handleCreateRule(c *gin.Context) {
 		Name: w.name, Description: w.description, Priority: w.priority,
 		Scope: w.scope, Enabled: w.enabled, Logic: w.logic, Action: w.action,
 		Destination: w.destination, Conditions: w.conditions, LinkIDs: derefIDs(w.linkIDs),
+		PageMode: w.pageMode, CustomHTML: w.customHTML,
 	})
 	if err != nil {
 		a.writeRuleWriteErr(c, err)
@@ -393,6 +415,7 @@ func (a *API) handlePatchRule(c *gin.Context) {
 		Name: &w.name, Description: &w.description, Priority: &w.priority,
 		Scope: &w.scope, Enabled: &w.enabled, Logic: &w.logic, Action: &w.action,
 		Destination: &w.destination, Conditions: &w.conditions, LinkIDs: w.linkIDs,
+		PageMode: &w.pageMode, CustomHTML: &w.customHTML,
 	}
 	updated, err := a.store.UpdateRule(c.Request.Context(), t.ID, id, upd)
 	if err != nil {
