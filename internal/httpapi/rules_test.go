@@ -14,10 +14,10 @@ import (
 	"strings"
 	"testing"
 
-	"cloak/internal/httpapi"
-	"cloak/internal/rules"
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/httpapi"
+	"janus/internal/rules"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 // rulePage 规则列表响应体。

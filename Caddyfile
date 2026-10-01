@@ -1,7 +1,7 @@
-# CLOAK Caddy 配置:on-demand TLS + 本地 CA(开发) / Let's Encrypt(生产)
+# Janus Caddy 配置:on-demand TLS + 本地 CA(开发) / Let's Encrypt(生产)
 # 授权端点询问 Go 后端:放行 active 租户域名,拒绝未授权域名(ADR-0002、spec 决策 #8)。
 # 平台默认域名按子域逐个签发(ADR-0004)。
-# 开发环境:Go 后端在宿主机终端启动(CLOAK_ADDR=:8080),Caddy 经 host.docker.internal 反代;
+# 开发环境:Go 后端在宿主机终端启动(JANUS_ADDR=:8080),Caddy 经 host.docker.internal 反代;
 # 生产环境改为 Let's Encrypt:删除 local_certs,并在各站点 tls 指令去掉 internal,后端在 compose 网络内(backend:8080)。
 # 注意:Caddy 2.11+ 全局选项名为 on_demand_tls(旧版为 on_demand),子选项仅 ask/permission;
 # 签发频率限流由 ask 端点(授权端点)与应用侧控制。
@@ -15,9 +15,9 @@
 	local_certs
 
 	on_demand_tls {
-		# 共享密钥:与后端 CLOAK_CADDY_ASK_TOKEN 同一个值(环境变量注入)。
+		# 共享密钥:与后端 JANUS_CADDY_ASK_TOKEN 同一个值(环境变量注入)。
 		# Caddy 2.11 的 Caddyfile 不能给 ask 请求加自定义头,只能用查询参数;
-		# 后端同时接受 X-Cloak-Caddy-Token 头。
+		# 后端同时接受 X-Janus-Caddy-Token 头。
 		ask http://host.docker.internal:8080/internal/caddy/authorize?token={$CADDY_ASK_TOKEN}
 	}
 }
@@ -47,19 +47,19 @@
 }
 
 # 裸平台域名:承载后台
-cloak.test {
+janus.test {
 	tls internal
 	import console
 }
 
 # 后台专用域名 app.<平台域名>
-app.cloak.test {
+app.janus.test {
 	tls internal
 	import console
 }
 
 # 全部租户子域(泛域名匹配):短链跳转与落地页是后端业务逻辑,整站反代
-*.cloak.test {
+*.janus.test {
 	tls internal {
 		on_demand
 	}
@@ -73,7 +73,7 @@ app.cloak.test {
 
 # ---------- catch-all:租户自有域名 ----------
 #
-# 上面的站点块只匹配 cloak.test / app.cloak.test / *.cloak.test,而授权端点放行的是
+# 上面的站点块只匹配 janus.test / app.janus.test / *.janus.test,而授权端点放行的是
 # **任意** active 自有域名。on_demand_tls.ask 只回答"该不该签",不回答"有没有路由" ——
 # 没有匹配的站点块时 Caddy 根本不服务那个主机名,于是"自有域名 → 自动签证书 →
 # 短链跳转"这条链路就不成立。:443(不带 host 限制)才是覆盖所有未匹配主机名的写法。

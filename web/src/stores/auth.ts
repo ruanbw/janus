@@ -53,7 +53,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /** 登录:成功后后端 Set-Cookie(cloak_session + cloak_csrf),请求层自动携带 CSRF */
+  /** 登录:成功后后端 Set-Cookie(janus_session + janus_csrf),请求层自动携带 CSRF */
   async function login(email: string, password: string, rememberMe?: boolean): Promise<Tenant> {
     const me = await authApi.login({ email, password, rememberMe });
     tenant.value = me;

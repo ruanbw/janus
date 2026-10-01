@@ -1,4 +1,4 @@
-# CLOAK 镜像:前后端分离(ADR-0006),两个独立构建目标,互不依赖。
+# Janus 镜像:前后端分离(ADR-0006),两个独立构建目标,互不依赖。
 #   backend = Go API 服务(纯后端,镜像内无任何前端文件)
 #   web     = nginx 静态服务(纯前端,镜像内无任何后端代码)
 # 生产由 Caddy 按路径分流:/api、/internal、/healthz → backend,其余 → web。
@@ -40,13 +40,13 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
 COPY migrations/ migrations/
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/cloak ./cmd/cloak
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/janus ./cmd/janus
 
 # ---------- 后端产物 ----------
 FROM alpine:3.21 AS backend
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
-COPY --from=backend-build /out/cloak /app/cloak
+COPY --from=backend-build /out/janus /app/janus
 COPY migrations /app/migrations
 EXPOSE 8080
-CMD ["/app/cloak"]
+CMD ["/app/janus"]

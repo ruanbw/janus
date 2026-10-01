@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"cloak/internal/httpapi"
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/httpapi"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 // loggedInTenant 注册+验证+登录,返回带会话的客户端。
@@ -81,7 +81,7 @@ func TestCreateDomainDNSActive(t *testing.T) {
 	env := testutil.Setup(t)
 	c := loggedInTenant(t, env, "alice")
 
-	// localhost 解析到 127.0.0.1,CLOAK_SERVER_PUBLIC_IP=127.0.0.1 → 真实 DNS 校验通过
+	// localhost 解析到 127.0.0.1,JANUS_SERVER_PUBLIC_IP=127.0.0.1 → 真实 DNS 校验通过
 	d := addDomain(t, c, "localhost")
 	if d.Status != "active" {
 		t.Fatalf("domain status = %s, want active", d.Status)
@@ -106,8 +106,8 @@ func TestCreateDomainValidation(t *testing.T) {
 		{"empty", "", http.StatusBadRequest},
 		{"underscore", "bad_domain.com", http.StatusBadRequest},
 		{"leading dash label", "-x.com", http.StatusBadRequest},
-		{"platform root", "cloak.test", http.StatusBadRequest},
-		{"platform app", "app.cloak.test", http.StatusBadRequest},
+		{"platform root", "janus.test", http.StatusBadRequest},
+		{"platform app", "app.janus.test", http.StatusBadRequest},
 		{"scheme", "https://example.com", http.StatusBadRequest},
 	}
 	for _, tc := range cases {
@@ -286,7 +286,7 @@ func TestAuthorizeTenantDomain(t *testing.T) {
 	assertStatus(t, resp, http.StatusOK)
 
 	// 租户默认域名(已验证)→ 放行
-	resp = get(t, env, "/internal/caddy/authorize?domain=alice.cloak.test")
+	resp = get(t, env, "/internal/caddy/authorize?domain=alice.janus.test")
 	assertStatus(t, resp, http.StatusOK)
 
 	// 停用后拒绝

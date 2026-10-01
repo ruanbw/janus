@@ -1,6 +1,6 @@
-# CLOAK 生产 Caddy 配置:on-demand TLS + Let's Encrypt(ADR-0002、spec 决策 #8、ADR-0004、ADR-0006)
+# Janus 生产 Caddy 配置:on-demand TLS + Let's Encrypt(ADR-0002、spec 决策 #8、ADR-0004、ADR-0006)
 # ⚠️ Caddy 站点地址不支持环境变量占位符:把下面的 example.com 全部替换为你的平台域名
-#    (与 .env 的 CLOAK_PLATFORM_DOMAIN 保持一致),再挂载到 Caddy 容器。
+#    (与 .env 的 JANUS_PLATFORM_DOMAIN 保持一致),再挂载到 Caddy 容器。
 # 开发版见 Caddyfile(本地 CA)。
 #
 # 前后端分离(ADR-0006):Caddy 只做 TLS + 按路径分流,自身不托管任何文件。
@@ -8,9 +8,9 @@
 #   其余                    → web(nginx 静态服务,只含前端构建产物)
 {
 	# ACME 账户邮箱(Let's Encrypt 到期提醒;可选)。
-	# 注意:CLOAK_ACME_EMAIL 为空时,email 指令会让 Caddy 启动失败
+	# 注意:JANUS_ACME_EMAIL 为空时,email 指令会让 Caddy 启动失败
 	# ("expanding email address ... is empty")。因此默认注释掉:
-	# 需要到期提醒时,取消注释下行并确保 .env 已设置 CLOAK_ACME_EMAIL。
+	# 需要到期提醒时,取消注释下行并确保 .env 已设置 JANUS_ACME_EMAIL。
 	# email {env.ACME_EMAIL}
 
 	# on-demand TLS:收到陌生域名的首个 TLS 握手时询问授权端点
@@ -27,7 +27,7 @@
 		#
 		# 为什么走查询参数而不是请求头:Caddy 2.11 的 Caddyfile 不支持给 ask 请求
 		# 加自定义头(ask <url> { header ... } 报 unrecognized parameter '{')。
-		# 后端同时接受 X-Cloak-Caddy-Token 头,Caddy 支持时可直接切换过去。
+		# 后端同时接受 X-Janus-Caddy-Token 头,Caddy 支持时可直接切换过去。
 		ask http://backend:8080/internal/caddy/authorize?token={$CADDY_ASK_TOKEN}
 	}
 }

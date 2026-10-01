@@ -9,7 +9,7 @@ import (
 func TestMigrateIdempotent(t *testing.T) {
 	ctx := context.Background()
 	// 使用 testutil 默认测试库
-	pool, err := Connect(ctx, "postgres://cloak:cloak@localhost:5432/cloak_test?sslmode=disable")
+	pool, err := Connect(ctx, "postgres://janus:janus@localhost:5432/janus_test?sslmode=disable")
 	if err != nil {
 		t.Skipf("test database not available: %v", err)
 	}

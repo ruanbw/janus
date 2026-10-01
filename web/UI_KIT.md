@@ -1,4 +1,4 @@
-# CLOAK Web UI 组件库契约(双层 + Element Plus 主题)
+# Janus Web UI 组件库契约(双层 + Element Plus 主题)
 
 技术栈:Vue 3.5 + TypeScript + Vite 6 + Tailwind CSS 4 + Reka UI(无头组件)+ @lucide/vue 图标。
 ant-design-vue 已移除,任何文件不得再 import 自 'ant-design-vue' 或使用 a-* 组件。

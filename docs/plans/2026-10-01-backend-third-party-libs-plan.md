@@ -103,7 +103,7 @@ Wrap third-party libraries cleanly behind existing project domain interfaces and
 ### Task 5: Replace manual config parsing with `github.com/caarlos0/env/v11` in `internal/config`
 
 - [x] **Step 5.1: Add `env` tags to `Config` struct in `internal/config/config.go`**
-  - Annotate all fields with `env:"CLOAK_..."` and `envDefault:"..."`.
+  - Annotate all fields with `env:"JANUS_..."` and `envDefault:"..."`.
   - Use `env.Parse(&cfg)` in `Load()`.
   - Remove redundant `getenv`, `getbool`, `getint`, `getdur` helper functions.
 - [x] **Step 5.2: Verify config tests**

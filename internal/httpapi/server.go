@@ -16,14 +16,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"cloak/internal/config"
-	"cloak/internal/domain"
-	"cloak/internal/geo"
-	"cloak/internal/jwt"
-	"cloak/internal/mailer"
-	"cloak/internal/rbac"
-	"cloak/internal/rules"
-	"cloak/internal/store"
+	"janus/internal/config"
+	"janus/internal/domain"
+	"janus/internal/geo"
+	"janus/internal/jwt"
+	"janus/internal/mailer"
+	"janus/internal/rbac"
+	"janus/internal/rules"
+	"janus/internal/store"
 )
 
 type Deps struct {
@@ -65,7 +65,7 @@ type API struct {
 	setupRate *rateLimiter
 	// resendVerifyRate 限制 /api/auth/resend-verification 的发信速度(按邮箱分桶)。
 	resendVerifyRate *rateLimiter
-	// trustedProxyNets 是运维显式声明的可信代理网段(CLOAK_TRUSTED_PROXY_CIDRS)。
+	// trustedProxyNets 是运维显式声明的可信代理网段(JANUS_TRUSTED_PROXY_CIDRS)。
 	// 为空 = 不采信任何来源的 X-Forwarded-For(限流只认 TCP 对端)。
 	trustedProxyNets []netip.Prefix
 	rbacEnforcer     *rbac.Enforcer // Casbin RBAC 授权(enforcer 线程安全,authorize 中间件使用)
@@ -88,11 +88,11 @@ func New(d Deps) http.Handler {
 		panic(fmt.Sprintf("rbac init: %v", err))
 	}
 	// JWT 管理器:密钥优先取配置;为空时用 crypto/rand 生成 32 字节 hex
-	// (每次启动随机,重启后已签发 token 失效;生产必须配置 CLOAK_JWT_SECRET)。
+	// (每次启动随机,重启后已签发 token 失效;生产必须配置 JANUS_JWT_SECRET)。
 	secret := d.Cfg.JWTSecret
 	if secret == "" {
 		secret = randomSecret()
-		log.Printf("CLOAK_JWT_SECRET 未配置,已使用临时随机密钥,重启后已签发 token 失效(生产必须配置)")
+		log.Printf("JANUS_JWT_SECRET 未配置,已使用临时随机密钥,重启后已签发 token 失效(生产必须配置)")
 	}
 	jwtMgr := jwt.NewManager(secret, d.Cfg.JWTTTL)
 
@@ -122,7 +122,7 @@ func New(d Deps) http.Handler {
 	// 这里只是防止 New() 被测试/嵌入方直接调用时静默降级成"全都信"。
 	trustedProxyNets, err := d.Cfg.TrustedProxyNets()
 	if err != nil {
-		log.Printf("CLOAK_TRUSTED_PROXY_CIDRS 解析失败(%v),已按「不采信任何 X-Forwarded-For」处理", err)
+		log.Printf("JANUS_TRUSTED_PROXY_CIDRS 解析失败(%v),已按「不采信任何 X-Forwarded-For」处理", err)
 		trustedProxyNets = nil
 	}
 
@@ -264,7 +264,7 @@ func isPrivateAddr(remote string) bool {
 	return ip.IsLoopback() || ip.IsPrivate()
 }
 
-// randomSecret 生成 32 字节随机 hex 密钥(CLOAK_JWT_SECRET 未配置时的回退,
+// randomSecret 生成 32 字节随机 hex 密钥(JANUS_JWT_SECRET 未配置时的回退,
 // 用法参考 session.go newToken 的 crypto/rand 模式)。
 func randomSecret() string {
 	b := make([]byte, 32)

@@ -6,7 +6,7 @@ Source: 用户架构原则要求「前后端所有功能模块必须使用成熟
 
 ## 1. 背景与目标
 
-在 CLOAK 短链系统后端现存代码中，有若干核心逻辑模块采用了自行造轮子（或仅使用 Go 标准库手动拼装协议/数据结构）的实现方式，包括：
+在 Janus 短链系统后端现存代码中，有若干核心逻辑模块采用了自行造轮子（或仅使用 Go 标准库手动拼装协议/数据结构）的实现方式，包括：
 1. `internal/rules/radix.go`：手写 200+ 行 `IPRadixTree` 切片索引位前缀树；
 2. `internal/httpapi/ratelimit.go`：手写固定窗口计数器与内存淘汰协程；
 3. `internal/mailer/smtp.go`：手写底层 SMTP 协议交互状态机与 Header/MIME 拼接；
@@ -108,32 +108,32 @@ Source: 用户架构原则要求「前后端所有功能模块必须使用成熟
   1. 升级 `Config` 结构体，添加声明式 struct tag：
      ```go
      type Config struct {
-         Addr            string        `env:"CLOAK_ADDR" envDefault:":8080"`
-         DatabaseURL     string        `env:"CLOAK_DATABASE_URL" envDefault:"postgres://postgres:postgres@localhost:5432/cloak?sslmode=disable"`
-         PlatformDomain  string        `env:"CLOAK_PLATFORM_DOMAIN" envDefault:"cloak.test"`
-         ServerPublicIP  string        `env:"CLOAK_SERVER_PUBLIC_IP" envDefault:"127.0.0.1"`
-         SuperadminEmail string        `env:"CLOAK_SUPERADMIN_EMAIL"`
-         CookieSecure    bool          `env:"CLOAK_COOKIE_SECURE" envDefault:"true"`
-         SessionTTL      time.Duration `env:"CLOAK_SESSION_TTL" envDefault:"720h"`
-         SessionTTLShort time.Duration `env:"CLOAK_SESSION_TTL_SHORT" envDefault:"24h"`
-         VerifyTokenTTL  time.Duration `env:"CLOAK_VERIFY_TOKEN_TTL" envDefault:"24h"`
-         ResetTokenTTL   time.Duration `env:"CLOAK_RESET_TOKEN_TTL" envDefault:"1h"`
-         JWTSecret       string        `env:"CLOAK_JWT_SECRET"`
-         JWTTTL          time.Duration `env:"CLOAK_JWT_TTL" envDefault:"24h"`
-         DNSRetryInterval  time.Duration `env:"CLOAK_DNS_RETRY_INTERVAL" envDefault:"1m"`
-         DNSMaxAge         time.Duration `env:"CLOAK_DNS_MAX_AGE" envDefault:"72h"`
-         VisitRetention    time.Duration `env:"CLOAK_VISIT_RETENTION" envDefault:"2160h"`
-         VisitCleanupEvery time.Duration `env:"CLOAK_VISIT_CLEANUP_EVERY" envDefault:"24h"`
-         LandingUploadDir   string        `env:"CLOAK_LANDING_UPLOAD_DIR" envDefault:"./uploads"`
-         LandingMaxZipBytes int64         `env:"CLOAK_LANDING_MAX_ZIP_BYTES" envDefault:"20971520"`
-         LandingMaxFiles    int           `env:"CLOAK_LANDING_MAX_FILES" envDefault:"200"`
-         MigrationsDir string        `env:"CLOAK_MIGRATIONS_DIR" envDefault:"migrations"`
-         PublicBaseURL string        `env:"CLOAK_PUBLIC_BASE_URL" envDefault:"http://app.cloak.test:5173"`
-         SMTPHost      string        `env:"CLOAK_SMTP_HOST"`
-         SMTPPort      int           `env:"CLOAK_SMTP_PORT" envDefault:"587"`
-         SMTPUsername  string        `env:"CLOAK_SMTP_USERNAME"`
-         SMTPPassword  string        `env:"CLOAK_SMTP_PASSWORD"`
-         SMTPFrom      string        `env:"CLOAK_SMTP_FROM"`
+         Addr            string        `env:"JANUS_ADDR" envDefault:":8080"`
+         DatabaseURL     string        `env:"JANUS_DATABASE_URL" envDefault:"postgres://postgres:postgres@localhost:5432/janus?sslmode=disable"`
+         PlatformDomain  string        `env:"JANUS_PLATFORM_DOMAIN" envDefault:"janus.test"`
+         ServerPublicIP  string        `env:"JANUS_SERVER_PUBLIC_IP" envDefault:"127.0.0.1"`
+         SuperadminEmail string        `env:"JANUS_SUPERADMIN_EMAIL"`
+         CookieSecure    bool          `env:"JANUS_COOKIE_SECURE" envDefault:"true"`
+         SessionTTL      time.Duration `env:"JANUS_SESSION_TTL" envDefault:"720h"`
+         SessionTTLShort time.Duration `env:"JANUS_SESSION_TTL_SHORT" envDefault:"24h"`
+         VerifyTokenTTL  time.Duration `env:"JANUS_VERIFY_TOKEN_TTL" envDefault:"24h"`
+         ResetTokenTTL   time.Duration `env:"JANUS_RESET_TOKEN_TTL" envDefault:"1h"`
+         JWTSecret       string        `env:"JANUS_JWT_SECRET"`
+         JWTTTL          time.Duration `env:"JANUS_JWT_TTL" envDefault:"24h"`
+         DNSRetryInterval  time.Duration `env:"JANUS_DNS_RETRY_INTERVAL" envDefault:"1m"`
+         DNSMaxAge         time.Duration `env:"JANUS_DNS_MAX_AGE" envDefault:"72h"`
+         VisitRetention    time.Duration `env:"JANUS_VISIT_RETENTION" envDefault:"2160h"`
+         VisitCleanupEvery time.Duration `env:"JANUS_VISIT_CLEANUP_EVERY" envDefault:"24h"`
+         LandingUploadDir   string        `env:"JANUS_LANDING_UPLOAD_DIR" envDefault:"./uploads"`
+         LandingMaxZipBytes int64         `env:"JANUS_LANDING_MAX_ZIP_BYTES" envDefault:"20971520"`
+         LandingMaxFiles    int           `env:"JANUS_LANDING_MAX_FILES" envDefault:"200"`
+         MigrationsDir string        `env:"JANUS_MIGRATIONS_DIR" envDefault:"migrations"`
+         PublicBaseURL string        `env:"JANUS_PUBLIC_BASE_URL" envDefault:"http://app.janus.test:5173"`
+         SMTPHost      string        `env:"JANUS_SMTP_HOST"`
+         SMTPPort      int           `env:"JANUS_SMTP_PORT" envDefault:"587"`
+         SMTPUsername  string        `env:"JANUS_SMTP_USERNAME"`
+         SMTPPassword  string        `env:"JANUS_SMTP_PASSWORD"`
+         SMTPFrom      string        `env:"JANUS_SMTP_FROM"`
      }
      ```
   2. `config.Load()` 直接调用 `env.Parse(&cfg)`。

@@ -499,7 +499,7 @@ func (s *Store) CleanupVisitsBefore(ctx context.Context, before time.Time) (int6
 	return s.CleanupVisitsBeforeBatched(ctx, before, DefaultVisitCleanupBatch)
 }
 
-// DefaultVisitCleanupBatch 未显式配置 CLOAK_VISIT_CLEANUP_BATCH 时的单批行数。
+// DefaultVisitCleanupBatch 未显式配置 JANUS_VISIT_CLEANUP_BATCH 时的单批行数。
 const DefaultVisitCleanupBatch = 10000
 
 // CleanupVisitsBeforeBatched 分批删除保留期前的访问记录,返回累计删除行数。

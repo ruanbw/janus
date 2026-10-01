@@ -19,13 +19,13 @@ import (
 	"github.com/gin-contrib/authz"
 	"github.com/gin-gonic/gin"
 
-	"cloak/internal/rbac"
-	"cloak/internal/store"
+	"janus/internal/rbac"
+	"janus/internal/store"
 )
 
 const (
-	sessionCookieName = "cloak_session"
-	csrfCookieName    = "cloak_csrf"
+	sessionCookieName = "janus_session"
+	csrfCookieName    = "janus_csrf"
 	sessionTokenBytes = 32
 )
 

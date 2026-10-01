@@ -36,7 +36,7 @@ const MaxDomainDescriptionLen = 200
 // 指向同一台机器,以及攻击者在自己控制的域下加一条 A 记录指向本机 IP,都能让 A 记录
 // 检查通过 —— 而 ADR-0002 声称这道闸门正是为了防"他人把任意域名解析到本服务器"。
 // 权威 DNS 里的一次性 token 只有控制该 zone 的人能发布,所以它才是归属证明。
-const VerifyRecordPrefix = "_cloak-verify."
+const VerifyRecordPrefix = "_janus-verify."
 
 // VerifyTokenBytes TXT 挑战 token 的熵(bytes),渲染成 2 倍长度 hex。
 const VerifyTokenBytes = 24

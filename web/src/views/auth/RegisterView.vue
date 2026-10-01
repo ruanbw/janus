@@ -77,7 +77,7 @@ import { message } from '@/utils/toast';
 const router = useRouter();
 const submitting = ref(false);
 
-const PLATFORM_DOMAIN = import.meta.env.VITE_PLATFORM_DOMAIN || 'cloak.test';
+const PLATFORM_DOMAIN = import.meta.env.VITE_PLATFORM_DOMAIN || 'janus.test';
 
 const form = reactive({
   email: '',

@@ -1,4 +1,4 @@
-// CLOAK API 契约类型定义(对齐 .scratch/cloak/api-contract.md)
+// Janus API 契约类型定义(对齐 .scratch/janus/api-contract.md)
 // 枚举:
 //   tenant.status: pending | active | banned
 //   domain.status: pending | active | failed | stopped
@@ -173,9 +173,9 @@ export interface QuotaUsage {
 
 /** 前端启动配置(GET /api/config,按当前租户返回) */
 export interface AppConfig {
-  /** 本服务器公网 IP,DNS 校验指向地址(CLOAK_SERVER_PUBLIC_IP) */
+  /** 本服务器公网 IP,DNS 校验指向地址(JANUS_SERVER_PUBLIC_IP) */
   serverIp: string;
-  /** 平台域名,如 cloak.test */
+  /** 平台域名,如 janus.test */
   platformDomain: string;
   /** 当前租户配额用量 */
   usage: QuotaUsage;

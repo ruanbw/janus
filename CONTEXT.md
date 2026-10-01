@@ -118,14 +118,14 @@ _Avoid_: 管理面板、控制台
 ### `.scratch/` 下有 4 个目录与本项目无关
 
 `.scratch/` 按 `docs/agents/issue-tracker.md` 的约定存放本项目的 issue 与 spec，
-即 `<slug>/spec.md` + `issues/NN-*.md`。但其中下列 4 个目录**不属于 CLOAK**，
+即 `<slug>/spec.md` + `issues/NN-*.md`。但其中下列 4 个目录**不属于 Janus**，
 是别的工作留在同一台机器上的资料，不要当作本项目的待实现需求：
 
 | 目录 | 内容 | 为什么容易误判 |
 | --- | --- | --- |
 | `dsh-ecosystem/` | 另一个项目的仓库索引与报告（`awesome_*.md`、`*.json` 索引） | 文件量大、命名像"生态文档" |
 | `dsh-npm-plugin-audit/` | npm 插件审计笔记 | — |
-| `token-stats/` | 前端仪表盘调研（`ui-spec.md`） | **`ui-spec.md` 描述的是另一个前端仪表盘的 UI**，最容易被当成 CLOAK 的需求 |
+| `token-stats/` | 前端仪表盘调研（`ui-spec.md`） | **`ui-spec.md` 描述的是另一个前端仪表盘的 UI**，最容易被当成 Janus 的需求 |
 | `geo-probe/` | 两个 ip2region `.xdb` 二进制文件 | 名字里的 `geo` 与本项目的 geo 包重名 |
 
 后三者连 `spec.md` 都没有，不符合 issue-tracker 的 `<slug>/spec.md` 结构 ——

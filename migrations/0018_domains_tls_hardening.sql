@@ -15,11 +15,11 @@ ALTER TABLE domains
   ADD COLUMN ownership_verified_at TIMESTAMPTZ;
 
 COMMENT ON COLUMN domains.verify_token IS
-  '当前归属挑战 token:提交者须在 _cloak-verify.<fqdn> 发布它,校验通过即被消费(不可重放);保留值供 active 域名低频复检比对';
+  '当前归属挑战 token:提交者须在 _janus-verify.<fqdn> 发布它,校验通过即被消费(不可重放);保留值供 active 域名低频复检比对';
 COMMENT ON COLUMN domains.ownership_verified_at IS
   '最近一次通过 TXT 挑战证明域名归属的时间;NULL = 从未按新规则验证(存量 active 域名,不做降级)';
 COMMENT ON COLUMN domains.verify_token_created_at IS
-  '挑战签发时间;超过 CLOAK_DNS_MAX_AGE 仍未验证通过 -> status=expired(终态,退出重试扫描)';
+  '挑战签发时间;超过 JANUS_DNS_MAX_AGE 仍未验证通过 -> status=expired(终态,退出重试扫描)';
 
 -- expired 是终态:pending/failed 会被扫描无限重试,超期后必须离开扫描集合,
 -- 否则每 5 分钟无条件写一次库(写放大 + 无终态)。租户可显式 recheck 复活。

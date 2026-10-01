@@ -1,4 +1,4 @@
-# CLOAK 生产环境编排:Postgres + Go 后端 + 前端静态服务(nginx)+ Caddy(on-demand TLS,Let's Encrypt)
+# Janus 生产环境编排:Postgres + Go 后端 + 前端静态服务(nginx)+ Caddy(on-demand TLS,Let's Encrypt)
 # 前后端分离(ADR-0006):backend 与 web 是两个独立构建目标、独立镜像、独立发版。
 # 使用:cp .env.example .env 并填入生产值,然后 docker compose -f docker-compose.prod.yml up -d
 # 详细说明与上线检查清单见 docs/deploy.md
@@ -7,14 +7,14 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: ${CLOAK_DB_USER:-cloak}
-      POSTGRES_PASSWORD: ${CLOAK_DB_PASSWORD:?CLOAK_DB_PASSWORD 必须设置}
-      POSTGRES_DB: ${CLOAK_DB_NAME:-cloak}
+      POSTGRES_USER: ${JANUS_DB_USER:-janus}
+      POSTGRES_PASSWORD: ${JANUS_DB_PASSWORD:?JANUS_DB_PASSWORD 必须设置}
+      POSTGRES_DB: ${JANUS_DB_NAME:-janus}
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${CLOAK_DB_USER:-cloak} -d ${CLOAK_DB_NAME:-cloak}"]
+      test: ["CMD-SHELL", "pg_isready -U ${JANUS_DB_USER:-janus} -d ${JANUS_DB_NAME:-janus}"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -25,37 +25,37 @@ services:
       dockerfile: docker/Dockerfile
       target: backend
     environment:
-      CLOAK_ADDR: ":8080"
-      CLOAK_DATABASE_URL: "postgres://${CLOAK_DB_USER:-cloak}:${CLOAK_DB_PASSWORD:?}@postgres:5432/${CLOAK_DB_NAME:-cloak}?sslmode=disable"
-      CLOAK_PLATFORM_DOMAIN: "${CLOAK_PLATFORM_DOMAIN:?CLOAK_PLATFORM_DOMAIN 必须设置(裸平台域名)}"
-      CLOAK_SERVER_PUBLIC_IP: "${CLOAK_SERVER_PUBLIC_IP:?CLOAK_SERVER_PUBLIC_IP 必须设置(服务器公网 IP)}"
-      CLOAK_SUPERADMIN_EMAIL: "${CLOAK_SUPERADMIN_EMAIL:-}"
+      JANUS_ADDR: ":8080"
+      JANUS_DATABASE_URL: "postgres://${JANUS_DB_USER:-janus}:${JANUS_DB_PASSWORD:?}@postgres:5432/${JANUS_DB_NAME:-janus}?sslmode=disable"
+      JANUS_PLATFORM_DOMAIN: "${JANUS_PLATFORM_DOMAIN:?JANUS_PLATFORM_DOMAIN 必须设置(裸平台域名)}"
+      JANUS_SERVER_PUBLIC_IP: "${JANUS_SERVER_PUBLIC_IP:?JANUS_SERVER_PUBLIC_IP 必须设置(服务器公网 IP)}"
+      JANUS_SUPERADMIN_EMAIL: "${JANUS_SUPERADMIN_EMAIL:-}"
       # 生产必须 true:HTTPS 下 Secure cookie 生效
-      CLOAK_COOKIE_SECURE: "true"
-      CLOAK_MIGRATIONS_DIR: "/app/migrations"
+      JANUS_COOKIE_SECURE: "true"
+      JANUS_MIGRATIONS_DIR: "/app/migrations"
       # 可选参数与 .env.example/代码默认值一致(compose 显式转发,便于 .env 覆盖)
-      CLOAK_SESSION_TTL: "${CLOAK_SESSION_TTL:-720h}"
-      CLOAK_SESSION_TTL_SHORT: "${CLOAK_SESSION_TTL_SHORT:-24h}"
-      CLOAK_VERIFY_TOKEN_TTL: "${CLOAK_VERIFY_TOKEN_TTL:-24h}"
-      CLOAK_RESET_TOKEN_TTL: "${CLOAK_RESET_TOKEN_TTL:-1h}"
+      JANUS_SESSION_TTL: "${JANUS_SESSION_TTL:-720h}"
+      JANUS_SESSION_TTL_SHORT: "${JANUS_SESSION_TTL_SHORT:-24h}"
+      JANUS_VERIFY_TOKEN_TTL: "${JANUS_VERIFY_TOKEN_TTL:-24h}"
+      JANUS_RESET_TOKEN_TTL: "${JANUS_RESET_TOKEN_TTL:-1h}"
       # JWT(API Bearer 认证):密钥必须配置强随机值(openssl rand -hex 32);留空则每次启动随机,重启后已签发 token 失效
-      CLOAK_JWT_SECRET: "${CLOAK_JWT_SECRET:-}"
-      CLOAK_JWT_TTL: "${CLOAK_JWT_TTL:-24h}"
-      CLOAK_DNS_RETRY_INTERVAL: "${CLOAK_DNS_RETRY_INTERVAL:-5m}"
-      CLOAK_DNS_MAX_AGE: "${CLOAK_DNS_MAX_AGE:-72h}"
-      CLOAK_VISIT_RETENTION: "${CLOAK_VISIT_RETENTION:-2160h}"
-      CLOAK_VISIT_CLEANUP_INTERVAL: "${CLOAK_VISIT_CLEANUP_INTERVAL:-24h}"
+      JANUS_JWT_SECRET: "${JANUS_JWT_SECRET:-}"
+      JANUS_JWT_TTL: "${JANUS_JWT_TTL:-24h}"
+      JANUS_DNS_RETRY_INTERVAL: "${JANUS_DNS_RETRY_INTERVAL:-5m}"
+      JANUS_DNS_MAX_AGE: "${JANUS_DNS_MAX_AGE:-72h}"
+      JANUS_VISIT_RETENTION: "${JANUS_VISIT_RETENTION:-2160h}"
+      JANUS_VISIT_CLEANUP_INTERVAL: "${JANUS_VISIT_CLEANUP_INTERVAL:-24h}"
       # 上传落地页:容器内固定目录,由 uploads 卷持久化
-      CLOAK_LANDING_UPLOAD_DIR: "/app/uploads"
-      CLOAK_LANDING_MAX_ZIP_BYTES: "${CLOAK_LANDING_MAX_ZIP_BYTES:-10485760}"
-      CLOAK_LANDING_MAX_FILES: "${CLOAK_LANDING_MAX_FILES:-500}"
+      JANUS_LANDING_UPLOAD_DIR: "/app/uploads"
+      JANUS_LANDING_MAX_ZIP_BYTES: "${JANUS_LANDING_MAX_ZIP_BYTES:-10485760}"
+      JANUS_LANDING_MAX_FILES: "${JANUS_LANDING_MAX_FILES:-500}"
       # 邮件:SMTP 凭据来自 .env(未配置时用控制台 mailer)
-      CLOAK_PUBLIC_BASE_URL: "https://${CLOAK_PLATFORM_DOMAIN:?}"
-      CLOAK_SMTP_HOST: "${CLOAK_SMTP_HOST:-}"
-      CLOAK_SMTP_PORT: "${CLOAK_SMTP_PORT:-465}"
-      CLOAK_SMTP_USERNAME: "${CLOAK_SMTP_USERNAME:-}"
-      CLOAK_SMTP_PASSWORD: "${CLOAK_SMTP_PASSWORD:-}"
-      CLOAK_SMTP_FROM: "${CLOAK_SMTP_FROM:-}"
+      JANUS_PUBLIC_BASE_URL: "https://${JANUS_PLATFORM_DOMAIN:?}"
+      JANUS_SMTP_HOST: "${JANUS_SMTP_HOST:-}"
+      JANUS_SMTP_PORT: "${JANUS_SMTP_PORT:-465}"
+      JANUS_SMTP_USERNAME: "${JANUS_SMTP_USERNAME:-}"
+      JANUS_SMTP_PASSWORD: "${JANUS_SMTP_PASSWORD:-}"
+      JANUS_SMTP_FROM: "${JANUS_SMTP_FROM:-}"
     volumes:
       - uploads:/app/uploads
     depends_on:
@@ -87,11 +87,11 @@ services:
     image: caddy:2
     environment:
       # 站点域名在 Caddyfile.prod 中硬编码,此处 PLATFORM_DOMAIN 仅用于 NO_PROXY 与提示
-      PLATFORM_DOMAIN: "${CLOAK_PLATFORM_DOMAIN:?}"
-      ACME_EMAIL: "${CLOAK_ACME_EMAIL:-}"
+      PLATFORM_DOMAIN: "${JANUS_PLATFORM_DOMAIN:?}"
+      ACME_EMAIL: "${JANUS_ACME_EMAIL:-}"
       # 生产容器同样需绕开宿主代理,授权端点直连 backend
-      NO_PROXY: "backend,localhost,127.0.0.1,.${CLOAK_PLATFORM_DOMAIN:?}"
-      no_proxy: "backend,localhost,127.0.0.1,.${CLOAK_PLATFORM_DOMAIN:?}"
+      NO_PROXY: "backend,localhost,127.0.0.1,.${JANUS_PLATFORM_DOMAIN:?}"
+      no_proxy: "backend,localhost,127.0.0.1,.${JANUS_PLATFORM_DOMAIN:?}"
     ports:
       - "80:80"
       - "443:443"

@@ -14,10 +14,10 @@ import (
 	"sync"
 	"testing"
 
-	"cloak/internal/bootstrap"
-	"cloak/internal/httpapi"
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/bootstrap"
+	"janus/internal/httpapi"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 // testClient 维护会话 cookie 与 CSRF token(模拟浏览器行为)。
@@ -31,7 +31,7 @@ func newClient(env *testutil.Env) *testClient {
 }
 
 func (c *testClient) csrfToken() string {
-	if ck, ok := c.cookies["cloak_csrf"]; ok {
+	if ck, ok := c.cookies["janus_csrf"]; ok {
 		return ck.Value
 	}
 	return ""
@@ -117,8 +117,8 @@ func TestRegisterCreatesPendingTenantWithDefaultDomain(t *testing.T) {
 	if tenant.Status != "pending" {
 		t.Errorf("tenant status = %s, want pending", tenant.Status)
 	}
-	if tenant.DefaultDomain != "alice.cloak.test" {
-		t.Errorf("defaultDomain = %s, want alice.cloak.test", tenant.DefaultDomain)
+	if tenant.DefaultDomain != "alice.janus.test" {
+		t.Errorf("defaultDomain = %s, want alice.janus.test", tenant.DefaultDomain)
 	}
 	if tenant.Tier.Name != "free" || tenant.Tier.MaxLinks != 100 || tenant.Tier.MaxDomains != 10 {
 		t.Errorf("tier = %+v, want free 100/10", tenant.Tier)
@@ -163,7 +163,7 @@ func TestRegisterConflicts(t *testing.T) {
 		"email": "alice2@example.com", "password": "password123", "slug": "alice"})
 	assertStatus(t, resp, http.StatusConflict)
 	_ = resp.Body.Close()
-	// slug 与既有默认域名冲突(他人占用 alice.cloak.test):通过添加自有域名后 slug 碰撞
+	// slug 与既有默认域名冲突(他人占用 alice.janus.test):通过添加自有域名后 slug 碰撞
 	resp = c.post("/api/auth/register", map[string]string{
 		"email": "carol@example.com", "password": "password123", "slug": "alice"})
 	assertStatus(t, resp, http.StatusConflict)
@@ -192,7 +192,7 @@ func TestVerifyThenLogin(t *testing.T) {
 	}
 	var hasSession bool
 	for _, ck := range resp.Cookies() {
-		if ck.Name == "cloak_session" && ck.Value != "" {
+		if ck.Name == "janus_session" && ck.Value != "" {
 			hasSession = true
 			if !ck.HttpOnly {
 				t.Error("session cookie must be HttpOnly")
@@ -200,7 +200,7 @@ func TestVerifyThenLogin(t *testing.T) {
 		}
 	}
 	if !hasSession {
-		t.Error("login did not set cloak_session cookie")
+		t.Error("login did not set janus_session cookie")
 	}
 
 	// 错误密码
@@ -439,17 +439,17 @@ func bootstrapSuperadmin(t *testing.T, env *testutil.Env, email string) {
 // 现在:无 token → 401 并补发一枚;错误 token → 401;正确 token → 200 且一次性(复用即拒)。
 func TestSuperadminFirstLoginRequiresSetupToken(t *testing.T) {
 	env := testutil.Setup(t)
-	bootstrapSuperadmin(t, env, "admin@cloak.test")
+	bootstrapSuperadmin(t, env, "admin@janus.test")
 	c := newClient(env)
 
 	// ① 只带任意密码:必须被拒(且该次失败会补发一枚 setup token)
-	resp := c.post("/api/auth/login", map[string]string{"email": "admin@cloak.test", "password": "whatever"})
+	resp := c.post("/api/auth/login", map[string]string{"email": "admin@janus.test", "password": "whatever"})
 	assertStatus(t, resp, http.StatusUnauthorized)
 	_ = resp.Body.Close()
 
 	// ② 错误的 setup token:同样被拒
 	resp = c.post("/api/auth/login", map[string]string{
-		"email": "admin@cloak.test", "password": "whatever", "setupToken": "not-a-real-token",
+		"email": "admin@janus.test", "password": "whatever", "setupToken": "not-a-real-token",
 	})
 	assertStatus(t, resp, http.StatusUnauthorized)
 	_ = resp.Body.Close()
@@ -457,7 +457,7 @@ func TestSuperadminFirstLoginRequiresSetupToken(t *testing.T) {
 	// ③ 正确的 setup token → 200,且响应带 firstLoginSetup 标记
 	token := env.LastToken(t)
 	resp = c.post("/api/auth/login", map[string]string{
-		"email": "admin@cloak.test", "password": "whatever", "setupToken": token,
+		"email": "admin@janus.test", "password": "whatever", "setupToken": token,
 	})
 	assertStatus(t, resp, http.StatusOK)
 	tenant := decodeBody[store.Tenant](t, resp)
@@ -470,7 +470,7 @@ func TestSuperadminFirstLoginRequiresSetupToken(t *testing.T) {
 
 	// ④ token 一次性:换一个客户端复用同一枚 → 401
 	resp = newClient(env).post("/api/auth/login", map[string]string{
-		"email": "admin@cloak.test", "password": "whatever", "setupToken": token,
+		"email": "admin@janus.test", "password": "whatever", "setupToken": token,
 	})
 	assertStatus(t, resp, http.StatusUnauthorized)
 	_ = resp.Body.Close()
@@ -480,13 +480,13 @@ func TestSuperadminFirstLoginRequiresSetupToken(t *testing.T) {
 // 错误密码必须被拒(修复前这条路径对任何密码都放行)。
 func TestSuperadminWrongPasswordRejectedAfterSetup(t *testing.T) {
 	env := testutil.Setup(t)
-	bootstrapSuperadmin(t, env, "admin@cloak.test")
+	bootstrapSuperadmin(t, env, "admin@janus.test")
 	c := newClient(env)
 
 	// 触发补发并用 setup token 登录
-	_ = c.post("/api/auth/login", map[string]string{"email": "admin@cloak.test", "password": "x"})
+	_ = c.post("/api/auth/login", map[string]string{"email": "admin@janus.test", "password": "x"})
 	resp := c.post("/api/auth/login", map[string]string{
-		"email": "admin@cloak.test", "setupToken": env.LastToken(t),
+		"email": "admin@janus.test", "setupToken": env.LastToken(t),
 	})
 	assertStatus(t, resp, http.StatusOK)
 	_ = resp.Body.Close()
@@ -497,12 +497,12 @@ func TestSuperadminWrongPasswordRejectedAfterSetup(t *testing.T) {
 	_ = resp.Body.Close()
 
 	// 错误密码 → 401(不再免密)
-	resp = newClient(env).post("/api/auth/login", map[string]string{"email": "admin@cloak.test", "password": "wrongpass"})
+	resp = newClient(env).post("/api/auth/login", map[string]string{"email": "admin@janus.test", "password": "wrongpass"})
 	assertStatus(t, resp, http.StatusUnauthorized)
 	_ = resp.Body.Close()
 
 	// 正确密码 → 200
-	resp = newClient(env).post("/api/auth/login", map[string]string{"email": "admin@cloak.test", "password": "adminpass123"})
+	resp = newClient(env).post("/api/auth/login", map[string]string{"email": "admin@janus.test", "password": "adminpass123"})
 	assertStatus(t, resp, http.StatusOK)
 	_ = resp.Body.Close()
 }

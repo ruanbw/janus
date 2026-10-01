@@ -104,7 +104,7 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 - **邮箱注册 + 邮箱验证**(防垃圾注册):注册后状态 `pending`,验证通过转 `active`,并自动激活其平台默认域名。
 - **登录 / 登出 / 记住我**:记住我 30 天,普通会话 24 小时;超管首次登录引导设置密码。
 - **修改密码 / 忘记密码 / 重置密码**:重置 token 1 小时有效。
-- **平台管理员(超管)**:由 `CLOAK_SUPERADMIN_EMAIL` 初始化,启动时幂等创建。
+- **平台管理员(超管)**:由 `JANUS_SUPERADMIN_EMAIL` 初始化,启动时幂等创建。
 - **两种认证方式**:后台会话 cookie(HTTP-only + CSRF 双提交 token);`POST /api/auth/token` 换 Bearer JWT 供脚本/CLI 使用(header 认证,免疫 CSRF)。
 - **等级(Tier)与配额**:等级决定短链数与自有域名数上限;平台默认域名不计入配额;超限返回明确错误(含当前用量 / 上限)。
 
@@ -147,7 +147,7 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 - **总览统计走专用聚合端点** `GET /api/visits/overview`:一次 SQL 出全租户计数与各维度分布(全量 `GROUP BY`,不抽样),前端不再「拉明细自己数」——否则口径必然与 KPI 分叉,且会把最近 50 行当全量、只覆盖短链列表前 100 条。UA 维度只回**原始 UA 串 + 次数**,设备/系统/浏览器标签由前端 `ua-parser-js` 翻译(Go 侧不再实现第二套 UA 解析)。
 - **CTR 口径**:分子分母同源同期,都取自 `visits` 表同一段 SQL、同一保留期窗口;分母只取**落地页访问**(跳转型短链不产生点击,算进去会系统性压低 CTR)。不再用 `links.clicks` 那个永久计数器当分子(它永不衰减而分母会被 90 天清理削掉,CTR 会单调虚高到 100% 以上)。
 - **地理归属**:内置 ip2region 离线库(V4 + V6)解析访问者国家码,16 分片双代缓存(负结果也缓存,ADR-0009)。
-- **保留策略**:访问记录默认保留 90 天,后台任务定时清理(`CLOAK_VISIT_RETENTION` 可调)。
+- **保留策略**:访问记录默认保留 90 天,后台任务定时清理(`JANUS_VISIT_RETENTION` 可调)。
 - **单链明细页**:按短链查看访问明细,含动作、结果、命中规则等字段。
 
 ### 2.6 规则引擎
@@ -229,7 +229,7 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
                                         │
                        ┌────────────────┴───────────────┐
                        │  PostgreSQL 16                 │
-                       │  + CLOAK_LANDING_UPLOAD_DIR 持久卷│
+                       │  + JANUS_LANDING_UPLOAD_DIR 持久卷│
                        └────────────────────────────────┘
 ```
 
@@ -282,7 +282,7 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 
 ```
 .
-├── cmd/cloak/                  # 后端入口(加载配置 → 连库 → 迁移 → worker → HTTP)
+├── cmd/janus/                  # 后端入口(加载配置 → 连库 → 迁移 → worker → HTTP)
 ├── internal/
 │   ├── bootstrap/              # 部署期初始化(超管幂等创建)
 │   ├── config/                 # 环境变量配置(caarlos0/env)
@@ -347,31 +347,31 @@ docker compose up -d
 
 | 服务 | 容器内端口 | 宿主机映射 | 说明 |
 | --- | --- | --- | --- |
-| `postgres` | 5432 | `127.0.0.1:5432` | PostgreSQL 16,开发凭据 `cloak/cloak` |
+| `postgres` | 5432 | `127.0.0.1:5432` | PostgreSQL 16,开发凭据 `janus/janus` |
 | `caddy` | 443 | `127.0.0.1:443`、`127.0.0.1:80` | HTTPS 入口,on-demand TLS + 本地 CA,反代宿主机 `:8080`(`host.docker.internal`) |
 
 > Caddy 占用宿主 80/443;若本机另有服务(如 openresty)也绑定这两个端口,两者错开启动。
-> 无端口访问依赖 hosts 把 `*.cloak.test` 指向 `127.0.0.1`(见 6.2)。
+> 无端口访问依赖 hosts 把 `*.janus.test` 指向 `127.0.0.1`(见 6.2)。
 
 ### 6.2 本地域名解析
 
 开发支持 **localhost 直连**与**域名访问**两种入口。域名访问需要把平台域名与测试租户子域指向本机,用 SwitchHosts 或 `/etc/hosts` 均可:
 
 ```text
-127.0.0.1 app.cloak.test
-127.0.0.1 alice.cloak.test
-127.0.0.1 bob.cloak.test
+127.0.0.1 app.janus.test
+127.0.0.1 alice.janus.test
+127.0.0.1 bob.janus.test
 ```
 
 ```bash
 # 手动追加(每注册一个新租户就加一行;hosts 不支持通配符)
-sudo sh -c 'echo "127.0.0.1 alice.cloak.test" >> /etc/hosts'
+sudo sh -c 'echo "127.0.0.1 alice.janus.test" >> /etc/hosts'
 ```
 
-- `app.cloak.test` 承载后台;`<slug>.cloak.test` 是租户的平台默认域名,用于验证短链跳转。
-- 测试自有域名时同样加一行(如 `127.0.0.1 links.example.test`)。`CLOAK_SERVER_PUBLIC_IP=127.0.0.1` 时,Go 的 DNS 校验会读 hosts,走**真实代码路径**。
+- `app.janus.test` 承载后台;`<slug>.janus.test` 是租户的平台默认域名,用于验证短链跳转。
+- 测试自有域名时同样加一行(如 `127.0.0.1 links.example.test`)。`JANUS_SERVER_PUBLIC_IP=127.0.0.1` 时,Go 的 DNS 校验会读 hosts,走**真实代码路径**。
 - 不想改 hosts 时可用 `curl --resolve` 临时解析(见 8.3)。
-- Vite Dev Server 默认拒绝非 localhost 的 Host(防 DNS rebinding);项目已在 `vite.config.ts` 用 `server.allowedHosts` 放行 `.cloak.test`(由 `web/.env.development` 的 `VITE_PLATFORM_DOMAIN` 控制),换平台域名时同步修改。
+- Vite Dev Server 默认拒绝非 localhost 的 Host(防 DNS rebinding);项目已在 `vite.config.ts` 用 `server.allowedHosts` 放行 `.janus.test`(由 `web/.env.development` 的 `VITE_PLATFORM_DOMAIN` 控制),换平台域名时同步修改。
 
 ### 6.3 信任 Caddy 本地 CA
 
@@ -390,13 +390,13 @@ sudo caddy trust --ca certs/caddy-root.pem
 ### 6.4 启动后端
 
 ```bash
-CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak
+JANUS_COOKIE_SECURE=false JANUS_ADDR=:8080 go run ./cmd/janus
 ```
 
-- `CLOAK_COOKIE_SECURE=false`:开发走 http,Secure cookie 不生效;
-- `CLOAK_ADDR=:8080`:与 Vite 代理、Caddy 反代、生产 compose 保持一致;改端口时需同步 Vite 的代理目标与 Caddy 反代地址;
-- 其余配置用代码默认值即可(Postgres `postgres://cloak:cloak@localhost:5432/cloak`、平台域名 `cloak.test`、公网 IP `127.0.0.1`、控制台 mailer);
-- 覆盖配置用环境变量,例如 `CLOAK_SUPERADMIN_EMAIL=admin@example.com go run ./cmd/cloak`;
+- `JANUS_COOKIE_SECURE=false`:开发走 http,Secure cookie 不生效;
+- `JANUS_ADDR=:8080`:与 Vite 代理、Caddy 反代、生产 compose 保持一致;改端口时需同步 Vite 的代理目标与 Caddy 反代地址;
+- 其余配置用代码默认值即可(Postgres `postgres://janus:janus@localhost:5432/janus`、平台域名 `janus.test`、公网 IP `127.0.0.1`、控制台 mailer);
+- 覆盖配置用环境变量,例如 `JANUS_SUPERADMIN_EMAIL=admin@example.com go run ./cmd/janus`;
 - `go run` **不会**自动读 `.env`(那是 compose 的行为),需要时在命令行 export;完整变量见 [.env.example](.env.example) 与 `internal/config/config.go`。
 - 未配置 SMTP 时,验证 / 重置邮件直接打印在这个终端(见 8.3 第 2 步)。
 
@@ -404,7 +404,7 @@ CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak
 
 ```bash
 curl -s http://127.0.0.1:8080/healthz          # → {"status":"ok"}
-curl -sk https://app.cloak.test/healthz         # 经 Caddy 走通全链路
+curl -sk https://app.janus.test/healthz         # 经 Caddy 走通全链路
 ```
 
 改后端代码后 `Ctrl+C` 再 `go run` 即可;前端改动由 Dev Server 热更新。
@@ -417,16 +417,16 @@ pnpm install     # 首次
 pnpm dev         # http://localhost:5173,/api 代理到 http://localhost:8080
 ```
 
-浏览器打开 `http://localhost:5173`(或 `http://app.cloak.test:5173`)。开发环境 `CLOAK_COOKIE_SECURE=false`,http 下 cookie 正常生效。
+浏览器打开 `http://localhost:5173`(或 `http://app.janus.test:5173`)。开发环境 `JANUS_COOKIE_SECURE=false`,http 下 cookie 正常生效。
 
 ### 6.6 访问入口
 
 | 入口 | 地址 | 说明 |
 | --- | --- | --- |
 | 后台(localhost) | `http://localhost:5173` | Vite Dev Server,热更新 |
-| 后台(域名) | `http://app.cloak.test:5173` | 同上,经 hosts 域名访问 |
-| 后台(域名 + HTTPS) | `https://app.cloak.test` | Caddy → Vite,验证域名 / TLS / 证书形态 |
-| 健康检查 | `https://app.cloak.test/healthz` | `{"status":"ok"}` |
+| 后台(域名) | `http://app.janus.test:5173` | 同上,经 hosts 域名访问 |
+| 后台(域名 + HTTPS) | `https://app.janus.test` | Caddy → Vite,验证域名 / TLS / 证书形态 |
+| 健康检查 | `https://app.janus.test/healthz` | `{"status":"ok"}` |
 | 后端直连 | `http://127.0.0.1:8080` | 绕过 Caddy / Vite,调试用 |
 
 ### 6.7 环境变量
@@ -435,25 +435,25 @@ pnpm dev         # http://localhost:5173,/api 代理到 http://localhost:8080
 
 | 变量 | 开发默认值 | 说明 |
 | --- | --- | --- |
-| `CLOAK_ADDR` | `:8080` | HTTP 监听地址 |
-| `CLOAK_PLATFORM_DOMAIN` | `cloak.test` | 平台裸域名;租户默认域名 `<slug>.<平台域名>` |
-| `CLOAK_SERVER_PUBLIC_IP` | `127.0.0.1` | DNS 激活校验比对的地址 |
-| `CLOAK_PUBLIC_BASE_URL` | `https://app.cloak.test` | 邮件里验证 / 重置链接的前缀 |
-| `CLOAK_DATABASE_URL` | `postgres://cloak:cloak@localhost:5432/cloak?sslmode=disable` | 后端直连 Postgres |
-| `CLOAK_TEST_DATABASE_URL` | `…/cloak_test…` | 测试库连接串(与开发库分离) |
-| `CLOAK_MIGRATIONS_DIR` | `migrations` | 迁移文件目录(生产容器内为 `/app/migrations`) |
-| `CLOAK_SUPERADMIN_EMAIL` | 空 | 超管邮箱,启动时初始化(留空则无超管) |
-| `CLOAK_COOKIE_SECURE` | `false` | 会话 cookie Secure 标记;开发 http 必须 false |
-| `CLOAK_SESSION_TTL` / `CLOAK_SESSION_TTL_SHORT` | `720h` / `24h` | 记住我 / 普通会话 |
-| `CLOAK_VERIFY_TOKEN_TTL` / `CLOAK_RESET_TOKEN_TTL` | `24h` / `1h` | 验证 / 重置 token 有效期 |
-| `CLOAK_JWT_SECRET` / `CLOAK_JWT_TTL` | 空 / `24h` | JWT 签名密钥与有效期;密钥留空则每次启动随机生成(重启后已签发 token 失效),生产必须配置 |
-| `CLOAK_DNS_RETRY_INTERVAL` / `CLOAK_DNS_MAX_AGE` | `5m` / `72h` | DNS 重试间隔 / 最长等待 |
-| `CLOAK_VISIT_RETENTION` / `CLOAK_VISIT_CLEANUP_INTERVAL` | `2160h` / `24h` | 访问记录保留 / 清理间隔 |
-| `CLOAK_LANDING_UPLOAD_DIR` | `uploads` | 上传落地页存放目录(生产挂持久卷) |
-| `CLOAK_LANDING_MAX_ZIP_BYTES` / `CLOAK_LANDING_MAX_FILES` | `10485760` / `500` | 落地页压缩包解压后总大小 / 文件数上限 |
-| `CLOAK_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM` | 空 / `465` | 配置 HOST 才启用真实 SMTP,否则控制台 mailer |
-| `CLOAK_ACME_EMAIL` | 空 | Let's Encrypt 账户邮箱(仅生产,配合 Caddyfile.prod) |
-| `CLOAK_DB_USER` / `CLOAK_DB_PASSWORD` / `CLOAK_DB_NAME` | `cloak` ×3 | 给生产 compose 建库并拼连接串;生产必须改密码 |
+| `JANUS_ADDR` | `:8080` | HTTP 监听地址 |
+| `JANUS_PLATFORM_DOMAIN` | `janus.test` | 平台裸域名;租户默认域名 `<slug>.<平台域名>` |
+| `JANUS_SERVER_PUBLIC_IP` | `127.0.0.1` | DNS 激活校验比对的地址 |
+| `JANUS_PUBLIC_BASE_URL` | `https://app.janus.test` | 邮件里验证 / 重置链接的前缀 |
+| `JANUS_DATABASE_URL` | `postgres://janus:janus@localhost:5432/janus?sslmode=disable` | 后端直连 Postgres |
+| `JANUS_TEST_DATABASE_URL` | `…/janus_test…` | 测试库连接串(与开发库分离) |
+| `JANUS_MIGRATIONS_DIR` | `migrations` | 迁移文件目录(生产容器内为 `/app/migrations`) |
+| `JANUS_SUPERADMIN_EMAIL` | 空 | 超管邮箱,启动时初始化(留空则无超管) |
+| `JANUS_COOKIE_SECURE` | `false` | 会话 cookie Secure 标记;开发 http 必须 false |
+| `JANUS_SESSION_TTL` / `JANUS_SESSION_TTL_SHORT` | `720h` / `24h` | 记住我 / 普通会话 |
+| `JANUS_VERIFY_TOKEN_TTL` / `JANUS_RESET_TOKEN_TTL` | `24h` / `1h` | 验证 / 重置 token 有效期 |
+| `JANUS_JWT_SECRET` / `JANUS_JWT_TTL` | 空 / `24h` | JWT 签名密钥与有效期;密钥留空则每次启动随机生成(重启后已签发 token 失效),生产必须配置 |
+| `JANUS_DNS_RETRY_INTERVAL` / `JANUS_DNS_MAX_AGE` | `5m` / `72h` | DNS 重试间隔 / 最长等待 |
+| `JANUS_VISIT_RETENTION` / `JANUS_VISIT_CLEANUP_INTERVAL` | `2160h` / `24h` | 访问记录保留 / 清理间隔 |
+| `JANUS_LANDING_UPLOAD_DIR` | `uploads` | 上传落地页存放目录(生产挂持久卷) |
+| `JANUS_LANDING_MAX_ZIP_BYTES` / `JANUS_LANDING_MAX_FILES` | `10485760` / `500` | 落地页压缩包解压后总大小 / 文件数上限 |
+| `JANUS_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM` | 空 / `465` | 配置 HOST 才启用真实 SMTP,否则控制台 mailer |
+| `JANUS_ACME_EMAIL` | 空 | Let's Encrypt 账户邮箱(仅生产,配合 Caddyfile.prod) |
+| `JANUS_DB_USER` / `JANUS_DB_PASSWORD` / `JANUS_DB_NAME` | `janus` ×3 | 给生产 compose 建库并拼连接串;生产必须改密码 |
 
 > ⚠️ `.env` 含数据库密码与 SMTP 凭据,已在 `.gitignore` 中,**不要提交**。
 
@@ -467,7 +467,7 @@ pnpm dev         # http://localhost:5173,/api 代理到 http://localhost:8080
 # 后端:格式化 + 测试
 gofmt -l internal cmd            # 应无输出
 go vet ./...
-go test ./...                    # 需要 cloak_test 库(见 8.1)
+go test ./...                    # 需要 janus_test 库(见 8.1)
 
 # 前端:类型 + UI 门禁 + 构建
 cd web
@@ -523,16 +523,16 @@ pnpm check:ui                     # 0 违规才通过(第 8 项要读 dist 产�
 
 ### 8.1 后端自动化测试
 
-后端测试是**黑盒 HTTP 测试**:`httptest.Server` + **真实 Postgres** + **真实迁移**,不 mock 内部函数(`internal/testutil/testutil.go`)。需要 `cloak_test` 测试库,不可用时用例自动跳过。
+后端测试是**黑盒 HTTP 测试**:`httptest.Server` + **真实 Postgres** + **真实迁移**,不 mock 内部函数(`internal/testutil/testutil.go`)。需要 `janus_test` 测试库,不可用时用例自动跳过。
 
 ```bash
 docker compose up -d postgres
-docker compose exec postgres psql -U cloak -d cloak -c 'CREATE DATABASE cloak_test'
+docker compose exec postgres psql -U janus -d janus -c 'CREATE DATABASE janus_test'
 
 go test ./...                                   # 全部
 go test ./internal/httpapi/ -count=1 -v        # 单包 + 详细输出
 go test ./... -cover                            # 覆盖率
-CLOAK_TEST_DATABASE_URL='postgres://cloak:cloak@localhost:5432/other_test?sslmode=disable' go test ./...
+JANUS_TEST_DATABASE_URL='postgres://janus:janus@localhost:5432/other_test?sslmode=disable' go test ./...
 ```
 
 每个测试的 `Setup` 会连接测试库、执行迁移、`TRUNCATE` 业务表并重新插入免费档种子(短链 100 / 域名 10),用例之间互不干扰,可重复运行。**看到全部 SKIP 就是连不上测试库**,先建库。
@@ -555,19 +555,19 @@ pnpm build        # 产物到 web/dist(不入库,镜像构建期自行重建)
 未配置 SMTP 时,验证链接打印在启动后端的终端。
 
 ```bash
-BASE=https://app.cloak.test
+BASE=https://app.janus.test
 
-# 1. 注册 → 201,status=pending,返回 defaultDomain:"alice.cloak.test"
+# 1. 注册 → 201,status=pending,返回 defaultDomain:"alice.janus.test"
 curl -sk -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"password123","slug":"alice"}'
 
-# 2. 从后端终端复制验证链接([CLOAK mailer] 段落)
-#    https://app.cloak.test/verify-email?token=<token>
+# 2. 从后端终端复制验证链接([Janus mailer] 段落)
+#    https://app.janus.test/verify-email?token=<token>
 curl -sk -X POST "$BASE/api/auth/verify-email" -H 'Content-Type: application/json' \
   -d '{"token":"<token>"}'                                # → {"status":"ok"}
 
 # 3. 登录并保存 cookie
-JAR=$(mktemp /tmp/cloak-cookies.XXXXXX)
+JAR=$(mktemp /tmp/janus-cookies.XXXXXX)
 curl -sk -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/login" \
   -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"password123","rememberMe":true}'
@@ -580,7 +580,7 @@ curl -sk "$BASE/api/auth/me" -H "Authorization: Bearer $TOKEN"
 
 # 5. 读域名(Bearer);写操作需 CSRF 双提交 token
 curl -sk "$BASE/api/domains" -H "Authorization: Bearer $TOKEN"
-CSRF=$(awk '$6=="cloak_csrf"{print $7}' "$JAR")
+CSRF=$(awk '$6=="janus_csrf"{print $7}' "$JAR")
 curl -sk -c "$JAR" -b "$JAR" "$BASE/api/domains"
 
 # 6. 建短链(多目标按轮询)
@@ -590,19 +590,19 @@ curl -sk -c "$JAR" -b "$JAR" -X POST "$BASE/api/links" \
 
 # 7. 跳转:用 --resolve 临时解析子域,不用改 hosts
 curl -sk -o /dev/null -w '%{http_code} %{redirect_url}\n' \
-  --resolve alice.cloak.test:443:127.0.0.1 "https://alice.cloak.test/<短码>"
+  --resolve alice.janus.test:443:127.0.0.1 "https://alice.janus.test/<短码>"
 # → 302 https://example.com/ 或 https://example.org/(轮询)
 
 # 8. 未命中 → 404
 curl -sk -o /dev/null -w '%{http_code}\n' \
-  --resolve alice.cloak.test:443:127.0.0.1 "https://alice.cloak.test/not-exist"
+  --resolve alice.janus.test:443:127.0.0.1 "https://alice.janus.test/not-exist"
 ```
 
-浏览器端到端验证顺序(与生产上线清单同构):打开 `https://app.cloak.test` → 注册 → 验证 → 登录看到默认域名 `active` → 建短链 → 访问短码看 302 与统计 +1 → 访问不存在短码得 404 → (可选)加自有域名并走停用/恢复/删除 → (可选)用超管邮箱登录看平台管理。
+浏览器端到端验证顺序(与生产上线清单同构):打开 `https://app.janus.test` → 注册 → 验证 → 登录看到默认域名 `active` → 建短链 → 访问短码看 302 与统计 +1 → 访问不存在短码得 404 → (可选)加自有域名并走停用/恢复/删除 → (可选)用超管邮箱登录看平台管理。
 
 ### 8.4 测试数据与重置
 
-- 开发库 `cloak` 与测试库 `cloak_test` 分离,`go test` 只动 `cloak_test`。
+- 开发库 `janus` 与测试库 `janus_test` 分离,`go test` 只动 `janus_test`。
 - 彻底清空开发数据(含数据卷,证书缓存与本地 CA 会一起没,之后需重新信任):
 
 ```bash
@@ -617,11 +617,11 @@ docker compose down -v && docker compose up -d
 | --- | --- | --- |
 | 编排 | 基础设施 Docker(Postgres + Caddy);后端/前端终端跑(`go run` + `pnpm dev`) | `docker compose -f docker-compose.prod.yml up -d`(全部容器化) |
 | 端口 | 后端 8080;Caddy 映射宿主 443/80 | 标准 80/443;后端不映射宿主机端口 |
-| 域名解析 | hosts 把 `app.cloak.test` 与测试子域指向 `127.0.0.1`(`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 读 hosts 走真实路径) | 真实 DNS 泛解析 `*.<平台域名>` |
+| 域名解析 | hosts 把 `app.janus.test` 与测试子域指向 `127.0.0.1`(`JANUS_SERVER_PUBLIC_IP=127.0.0.1`,Go 读 hosts 走真实路径) | 真实 DNS 泛解析 `*.<平台域名>` |
 | 证书 | Caddy 本地 CA(`tls internal` + on-demand),`caddy trust` 信任根证书 | Let's Encrypt(ACME 自动签发 / 续期) |
 | 邮件 | 控制台 mailer(链接打印在后端日志) | 真实 SMTP(部署者提供凭据) |
-| Cookie | `CLOAK_COOKIE_SECURE=false`(http) | 强制 `true`(https) |
-| 平台域名 | `cloak.test`(RFC 保留测试域) | 真实域名 |
+| Cookie | `JANUS_COOKIE_SECURE=false`(http) | 强制 `true`(https) |
+| 平台域名 | `janus.test`(RFC 保留测试域) | 真实域名 |
 | 前端产物 | Vite Dev Server(5173) | nginx 镜像内的静态产物(构建期生成,不入库) |
 | 落地页目录 | `uploads/` 本地目录 | 持久卷 `uploads` |
 
@@ -637,8 +637,8 @@ dig +short example.com && dig +short any.example.com
 
 # 2. 配置环境变量
 cp .env.example .env && chmod 600 .env
-#    必填:CLOAK_PLATFORM_DOMAIN、CLOAK_SERVER_PUBLIC_IP、CLOAK_DB_PASSWORD
-#    建议:CLOAK_SUPERADMIN_EMAIL、CLOAK_ACME_EMAIL、JWT 密钥(见 6.7)
+#    必填:JANUS_PLATFORM_DOMAIN、JANUS_SERVER_PUBLIC_IP、JANUS_DB_PASSWORD
+#    建议:JANUS_SUPERADMIN_EMAIL、JANUS_ACME_EMAIL、JWT 密钥(见 6.7)
 
 # 3. Caddyfile.prod 的站点地址不支持环境变量,替换成你的平台域名
 sed -i '' 's/example\.com/YOUR-DOMAIN/g' Caddyfile.prod   # macOS
@@ -650,7 +650,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml ps
 ```
 
-**首次启动自动完成**:连库 → goose 迁移 → 插入免费档种子 → 按 `CLOAK_SUPERADMIN_EMAIL` 幂等初始化超管 → 启动后台 worker → 监听 8080。证书是**按需签发**的:租户域名激活后,首次访问时 Caddy 询问授权端点并签发 Let's Encrypt 证书,到期前自动续期。
+**首次启动自动完成**:连库 → goose 迁移 → 插入免费档种子 → 按 `JANUS_SUPERADMIN_EMAIL` 幂等初始化超管 → 启动后台 worker → 监听 8080。证书是**按需签发**的:租户域名激活后,首次访问时 Caddy 询问授权端点并签发 Let's Encrypt 证书,到期前自动续期。
 
 **发布与回滚**:改前端只重建 `web` 镜像,改后端只重建 `backend` 镜像(前后端分离,互不牵连);镜像无版本 tag,回滚 = `git checkout <上一个正常提交>` 后重新 `up -d --build`。
 
@@ -661,7 +661,7 @@ docker compose -f docker-compose.prod.yml ps
 ### 已知限制
 
 - **Let's Encrypt 额度**:平台默认域名按子域逐个签发,受"每注册域名每周 50 张证书(含续期)"限制,额度按平台域名聚合(ADR-0004);接近上限需另择方案。
-- **访问记录保留 90 天**,后台任务清理,可用 `CLOAK_VISIT_RETENTION` 调整。
+- **访问记录保留 90 天**,后台任务清理,可用 `JANUS_VISIT_RETENTION` 调整。
 - **geo 为离线库**:`asn` / `is_datacenter` 无数据源,依赖它们的规则条件恒不命中(设计如此,不猜值);`internal/geo/data/` 的 xdb 需要手动更新才能识别新 IP 段。
 - **授权端点仅内网可达**:未激活域名拒绝签发证书;不要暴露到公网。
 - **规则上限**:单租户 200 条;规则快照有 1 分钟 TTL,写入时会主动失效(漏失效会让刚保存的规则短暂不生效且无报错)。
@@ -679,21 +679,21 @@ docker compose -f docker-compose.prod.yml ps
 | Caddy 502 | 后端没起:确认 6.4 的 `go run` 在跑且监听 8080(`curl -s http://127.0.0.1:8080/healthz`) |
 | 注册返回 409 | 邮箱或 slug 被占用(开发库有历史数据):换 slug,或 8.4 重置 |
 | 自有域名一直 `pending` | hosts 未加该域名 / 未指向 127.0.0.1;或未到 5 分钟重试周期,可在后台点「重新校验」 |
-| 域名 `failed` | 72 小时内未通过校验:检查 hosts 与 `CLOAK_SERVER_PUBLIC_IP` |
+| 域名 `failed` | 72 小时内未通过校验:检查 hosts 与 `JANUS_SERVER_PUBLIC_IP` |
 | 跳转 404 | 短码不存在 / 域名停用 / 短链停用;或访问的 Host 不是该租户的 active 域名 |
-| 收不到邮件,终端也没有 `[CLOAK mailer]` | 启动后端时 export 了 `CLOAK_SMTP_*`,走了真实 SMTP;不 export 即回落到控制台 mailer |
+| 收不到邮件,终端也没有 `[Janus mailer]` | 启动后端时 export 了 `JANUS_SMTP_*`,走了真实 SMTP;不 export 即回落到控制台 mailer |
 | 改 Go 代码不生效 | 开发后端不在 Docker 里:`Ctrl+C` 后重新 `go run` |
 | 改前端不生效 | 用 6.5 的 Dev Server;若看的是镜像里的旧页面,需 `pnpm build` 后重建 `web` 镜像 |
-| 测试全部 SKIP | `cloak_test` 库不存在:按 8.1 第 2 步创建 |
-| 80/443 被占用 | 开发 compose 的 Caddy 占用 80/443,与其他绑定这两个端口的服务错开;后端 8080 被占则改 `CLOAK_ADDR` 并同步代理配置 |
+| 测试全部 SKIP | `janus_test` 库不存在:按 8.1 第 2 步创建 |
+| 80/443 被占用 | 开发 compose 的 Caddy 占用 80/443,与其他绑定这两个端口的服务错开;后端 8080 被占则改 `JANUS_ADDR` 并同步代理配置 |
 | `pnpm check:ui` 报状态色对比度 | 改令牌值时没同时看 `:root` 与 `.dark` 两块;详见 `web/UI_KIT.md` |
 
 **生产环境**
 
 | 症状 | 原因 / 处理 |
 | --- | --- |
-| compose 报 `CLOAK_XXX 必须设置` | `.env` 缺必填变量(compose `:?` 强制):对照 10 与 6.7 补全 |
-| Caddy 启动失败 `expanding email address ... is empty` | `CLOAK_ACME_EMAIL` 为空但 `Caddyfile.prod` 启用了 `email` 指令:设置变量或注释指令 |
+| compose 报 `JANUS_XXX 必须设置` | `.env` 缺必填变量(compose `:?` 强制):对照 10 与 6.7 补全 |
+| Caddy 启动失败 `expanding email address ... is empty` | `JANUS_ACME_EMAIL` 为空但 `Caddyfile.prod` 启用了 `email` 指令:设置变量或注释指令 |
 | 证书不签发 / `cert_status=failed` | 看 `docker compose logs caddy`;确认 DNS 生效、80/443 可达、授权端点放行 |
 | 平台默认域名无法访问 | 泛解析 `*.<平台域名>` 未配置或未生效:`dig` 验证 |
 | 访问者看到 404 | 域名/短链被停用或删除;或规则 `notfound` 裁决命中;或 Host 不匹配 active 域名 |
@@ -708,7 +708,7 @@ docker compose -f docker-compose.prod.yml ps
 
 **认证方式**
 
-- 后台:会话 cookie `cloak_session`(HTTP-only / Secure / SameSite=Lax);写方法需带 `X-CSRF-Token`(值取自 `cloak_csrf` cookie,双提交)。
+- 后台:会话 cookie `janus_session`(HTTP-only / Secure / SameSite=Lax);写方法需带 `X-CSRF-Token`(值取自 `janus_csrf` cookie,双提交)。
 - 脚本:`POST /api/auth/token` 换 `accessToken`,之后带 `Authorization: Bearer <token>`(header 认证免疫 CSRF)。
 - 跳转:`GET /{code}`,由 Host 决定域名,无需鉴权。
 - 内部:`GET /internal/caddy/authorize?domain=<fqdn>`,仅内网可达。
@@ -761,17 +761,17 @@ cd web && pnpm type-check && pnpm build && pnpm check:ui
 
 ## 14. 许可证
 
-CLOAK 采用 **GNU Affero General Public License v3.0(AGPL-3.0)**,许可证全文见 [`LICENSE`](LICENSE)。
+Janus 采用 **GNU Affero General Public License v3.0(AGPL-3.0)**,许可证全文见 [`LICENSE`](LICENSE)。
 
 ```
-Copyright (C) 2026 ruanbw and CLOAK contributors
+Copyright (C) 2026 ruanbw and Janus contributors
 SPDX-License-Identifier: AGPL-3.0-only
 ```
 
 要点:
 
 - 你可以自由使用、修改、再分发与集成,包括闭源商用(保留版权与许可证声明,提供源码的方式见 AGPL §4~6)。
-- **AGPL 与 GPL 的关键差异**:通过网络向用户提供本程序的功能(即把它部署成 SaaS / 在线服务)时,必须向这些用户提供**对应源码**。自托管多租户服务尤其要注意:对外提供 CLOAK 的在线跳转/管理服务,需要开放修改后的源码。
+- **AGPL 与 GPL 的关键差异**:通过网络向用户提供本程序的功能(即把它部署成 SaaS / 在线服务)时,必须向这些用户提供**对应源码**。自托管多租户服务尤其要注意:对外提供 Janus 的在线跳转/管理服务,需要开放修改后的源码。
 - 无任何担保,作者不对使用后果负责(见 AGPL §15~17)。
 - 商业授权 / 闭源分发需求请单独联系作者。
 
@@ -789,7 +789,7 @@ SPDX-License-Identifier: AGPL-3.0-only
 | [`web/UI_KIT.md`](web/UI_KIT.md) | 前端组件契约与三层设计令牌规范 |
 | [`docs/adr/`](docs/adr/) | 架构决策记录(Go 后端、on-demand TLS、前后端分离、落地页 SDK、访问明细、规则裁决、GeoIP、世界地图) |
 | [`docs/agents/`](docs/agents/) | agent 协作约定(issue tracker、领域文档) |
-| [`.scratch/cloak/`](.scratch/cloak/) | 需求规格、API 完整契约、逐功能票据 |
+| [`.scratch/janus/`](.scratch/janus/) | 需求规格、API 完整契约、逐功能票据 |
 | [`.env.example`](.env.example) | 环境变量模板(带逐项说明) |
 
 **一句话总结**:Janus 是一台"接上 DNS 就能用"的短链服务 —— 租户带域名进来,证书与统计与规则都自带。

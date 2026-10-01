@@ -18,7 +18,7 @@ type Domain struct {
 	Origin      string `json:"origin"`
 	Status      string `json:"status"`
 	CertStatus  string `json:"certStatus" gorm:"column:cert_status"`
-	// VerifyToken 是当前的归属挑战 token:租户须在 _cloak-verify.<fqdn> 发布它。
+	// VerifyToken 是当前的归属挑战 token:租户须在 _janus-verify.<fqdn> 发布它。
 	// 校验通过后不删除 —— 它是"这个 zone 的控制者同意把该域名交给本平台"的
 	// 既有证据,active 域名的低频复检要靠它比对;但它不能再被当作"新挑战"使用
 	// (重新签发 token 会让旧值立即失效)。

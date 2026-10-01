@@ -9,12 +9,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"cloak/internal/store"
+	"janus/internal/store"
 )
 
 type appConfigResp struct {
-	ServerIP       string      `json:"serverIp"`       // 本服务器公网 IP,DNS 校验比对地址(CLOAK_SERVER_PUBLIC_IP)
-	PlatformDomain string      `json:"platformDomain"` // 平台域名,如 cloak.test
+	ServerIP       string      `json:"serverIp"`       // 本服务器公网 IP,DNS 校验比对地址(JANUS_SERVER_PUBLIC_IP)
+	PlatformDomain string      `json:"platformDomain"` // 平台域名,如 janus.test
 	Usage          store.Usage `json:"usage"`          // 当前租户配额用量
 }
 

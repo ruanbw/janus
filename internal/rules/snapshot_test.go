@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"cloak/internal/store"
+	"janus/internal/store"
 )
 
 func logBuf() (*slog.Logger, *bytes.Buffer) {
@@ -306,7 +306,7 @@ func benchMissRules(n int) []store.Rule {
 
 func benchFact(b testing.TB) Fact {
 	r := mustRequest(b, "https://shop.example.com/promo?utm_source=wechat&ref=x",
-		"https://www.google.com/search?q=cloak",
+		"https://www.google.com/search?q=janus",
 		"Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)")
 	r.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
 	r.RemoteAddr = "203.0.113.5:44321"
@@ -379,7 +379,7 @@ func BenchmarkNewSnapshot(b *testing.B) {
 // BenchmarkFromRequest 请求画像提取(纯字符串判定,无 IO)。
 func BenchmarkFromRequest(b *testing.B) {
 	r := mustRequest(b, "https://shop.example.com/promo?utm_source=wechat&ref=x",
-		"https://www.google.com/search?q=cloak",
+		"https://www.google.com/search?q=janus",
 		"Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "+
 			"(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1")
 	r.RemoteAddr = "203.0.113.5:44321"

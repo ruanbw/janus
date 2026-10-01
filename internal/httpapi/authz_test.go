@@ -11,10 +11,10 @@ import (
 	"net/http"
 	"testing"
 
-	"cloak/internal/bootstrap"
-	"cloak/internal/httpapi"
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/bootstrap"
+	"janus/internal/httpapi"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 // bearerReq 手工构造携带 Authorization: Bearer 的请求(不带 cookie/CSRF,
@@ -128,16 +128,16 @@ func TestAuthzTenantForbiddenAdmin(t *testing.T) {
 // (一次性 setup token)。否则"知道超管邮箱"就等于拿到整个平台。
 func TestAuthzSuperadminBearer(t *testing.T) {
 	env := testutil.Setup(t)
-	if err := bootstrap.Superadmin(context.Background(), env.Store, "admin@cloak.test"); err != nil {
+	if err := bootstrap.Superadmin(context.Background(), env.Store, "admin@janus.test"); err != nil {
 		t.Fatalf("bootstrap superadmin: %v", err)
 	}
 	// 任意密码 → 401(认证旁路已封);该次失败会触发一枚 setup token 补发
-	resp := postToken(t, env, "admin@cloak.test", "whatever")
+	resp := postToken(t, env, "admin@janus.test", "whatever")
 	assertStatus(t, resp, http.StatusUnauthorized)
 	_ = resp.Body.Close()
 
 	resp = newClient(env).post("/api/auth/token", map[string]string{
-		"email": "admin@cloak.test", "password": "whatever", "setupToken": env.LastToken(t),
+		"email": "admin@janus.test", "password": "whatever", "setupToken": env.LastToken(t),
 	})
 	assertStatus(t, resp, http.StatusOK)
 	tok := decodeBody[tokenResp](t, resp).AccessToken

@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"cloak/internal/httpapi"
-	"cloak/internal/testutil"
+	"janus/internal/httpapi"
+	"janus/internal/testutil"
 )
 
 func TestHealthz(t *testing.T) {
@@ -26,10 +26,10 @@ func TestAuthorizePlatformDomains(t *testing.T) {
 		domain string
 		want   int
 	}{
-		{"platform root domain", "cloak.test", http.StatusOK},
-		{"app subdomain", "app.cloak.test", http.StatusOK},
+		{"platform root domain", "janus.test", http.StatusOK},
+		{"app subdomain", "app.janus.test", http.StatusOK},
 		{"unknown external domain", "attacker.example.com", http.StatusForbidden},
-		{"unregistered subdomain", "nobody.cloak.test", http.StatusForbidden},
+		{"unregistered subdomain", "nobody.janus.test", http.StatusForbidden},
 		{"missing domain param", "", http.StatusBadRequest},
 	}
 	for _, c := range cases {
@@ -44,7 +44,7 @@ func TestAuthorizePlatformDomains(t *testing.T) {
 func TestAuthorizeInternalOnly(t *testing.T) {
 	env := testutil.Setup(t)
 	// httptest.NewRequest 默认 RemoteAddr=192.0.2.1(TEST-NET,非内网)
-	req := httptest.NewRequest(http.MethodGet, "/internal/caddy/authorize?domain=cloak.test", nil)
+	req := httptest.NewRequest(http.MethodGet, "/internal/caddy/authorize?domain=janus.test", nil)
 	rec := httptest.NewRecorder()
 	env.Server.Config.Handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {

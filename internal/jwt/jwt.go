@@ -14,10 +14,10 @@ import (
 )
 
 // Issuer 固定签发者标识:解析时强制匹配,防止跨服务/跨环境 token 混用。
-const Issuer = "cloak"
+const Issuer = "janus"
 
 // Claims JWT 载荷:业务角色(tenant/superadmin)+ 租户 token_version + 标准注册声明。
-// Sub 为租户 ID(十进制字符串);Issuer 固定 "cloak";ID(jti)为每次签发随机生成。
+// Sub 为租户 ID(十进制字符串);Issuer 固定 "janus";ID(jti)为每次签发随机生成。
 //
 // TokenVersion 是**吊销开关**:签发时快照租户当前的 token_version,认证时与库里的
 // 当前值比对,不一致即 401。改密/重置密码/封禁都会自增该值 → 此前签发的 token

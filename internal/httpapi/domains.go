@@ -18,8 +18,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"cloak/internal/domain"
-	"cloak/internal/store"
+	"janus/internal/domain"
+	"janus/internal/store"
 )
 
 // validFQDN 校验域名格式(实现在 domain 包,与入库归一化共用同一份规则)。
@@ -27,11 +27,11 @@ func validFQDN(s string) bool { return domain.IsValidFQDN(s) }
 
 // domainView 是租户侧看到的域名视图:在 store.Domain 之外补上"TXT 该怎么填"的指引。
 //
-// 前端不需要自己拼 "_cloak-verify." 前缀,也不需要判断"这个域名该不该做归属证明":
+// 前端不需要自己拼 "_janus-verify." 前缀,也不需要判断"这个域名该不该做归属证明":
 // verifyRecord 非空就是"请把 verifyValue 发布到 verifyRecord 这条 TXT 上"。
 type domainView struct {
 	*store.Domain
-	// VerifyRecord 待添加的 TXT 主机名(如 _cloak-verify.example.com);无需证明时为空。
+	// VerifyRecord 待添加的 TXT 主机名(如 _janus-verify.example.com);无需证明时为空。
 	VerifyRecord string `json:"verifyRecord,omitempty"`
 	// VerifyValue 待添加的 TXT 值(与 Domain.VerifyToken 同值,换个面向 DNS 的名字)。
 	VerifyValue string `json:"verifyValue,omitempty"`

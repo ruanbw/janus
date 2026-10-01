@@ -1,4 +1,4 @@
-# CLOAK 测试流程
+# Janus 测试流程
 
 三层防线:单元/黑盒测试 → 端到端 API 脚本 → 浏览器 UI 实操。
 
@@ -6,14 +6,14 @@
 
 ## 第 1 层:Go 测试(黑盒,真实 Postgres)
 
-`internal/testutil` 提供黑盒设施:启动 `httptest.Server` + 连真实 `cloak_test` 库 + 跑真实迁移,
+`internal/testutil` 提供黑盒设施:启动 `httptest.Server` + 连真实 `janus_test` 库 + 跑真实迁移,
 测试 seam 是 HTTP API 边界,不 mock 内部函数。
 
 ```bash
 # 需要先起 Postgres 并建测试库
 docker compose up -d postgres
-docker exec -i cloak-postgres-1 psql -U cloak -d postgres \
-  -c 'CREATE DATABASE cloak_test'
+docker exec -i janus-postgres-1 psql -U janus -d postgres \
+  -c 'CREATE DATABASE janus_test'
 
 go test ./... -count=1
 ```
@@ -43,7 +43,7 @@ go test ./... -count=1
 ./scripts/e2e.sh --base URL # 测已运行的服务(需自备数据)
 ```
 
-隔离手段:独立库 `cloak_e2e`、独立端口 `:18080`、独立平台域名 `e2e.cloak.test`、
+隔离手段:独立库 `janus_e2e`、独立端口 `:18080`、独立平台域名 `e2e.janus.test`、
 落地页上传目录在临时目录。邮箱验证与超管 setup token 从控制台 mailer 日志里捞。
 
 覆盖范围:
@@ -90,11 +90,11 @@ go test ./... -count=1
 ```bash
 BH="node ~/browser-hand/cli-js/src/cli.js"
 $BH doctor                                   # 先确认桥接健康
-$BH open  --url http://localhost:5173/links --page-name cloak
-$BH snapshot --page-name cloak
-$BH fill   --page-name cloak --fields '{"短码":"abc123"}'
-$BH click  --page-name cloak --text "保存修改"
-$BH evaluate --page-name cloak --code "document.body.innerText.slice(0,200)"
+$BH open  --url http://localhost:5173/links --page-name janus
+$BH snapshot --page-name janus
+$BH fill   --page-name janus --fields '{"短码":"abc123"}'
+$BH click  --page-name janus --text "保存修改"
+$BH evaluate --page-name janus --code "document.body.innerText.slice(0,200)"
 ```
 
 ### 这一层已经踩到的坑(测试时必须知道)

@@ -16,8 +16,8 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"cloak/internal/domain"
-	"cloak/internal/store"
+	"janus/internal/domain"
+	"janus/internal/store"
 )
 
 const (
@@ -31,7 +31,7 @@ const (
 
 // emailTokenPurposeSetup:超管首次设置密码的一次性 token(见 migrations/0015)。
 //
-// 为什么需要它:超管租户由 bootstrap 按 CLOAK_SUPERADMIN_EMAIL 创建,初始没有密码。
+// 为什么需要它:超管租户由 bootstrap 按 JANUS_SUPERADMIN_EMAIL 创建,初始没有密码。
 // 原实现对 FirstLoginSetup 的租户**整段跳过 bcrypt**,只要知道超管邮箱(证书透明度
 // 日志、DNS 记录、GitHub 泄露都能推断)就能直接换到 superadmin 会话 —— 这是整条
 // 认证链上最严重的一个洞。setup token 把"知道邮箱"升级为"能读到这个邮箱的收件箱",
@@ -41,7 +41,7 @@ const emailTokenPurposeSetup = "setup"
 // dummyPasswordHash 用于不存在邮箱时的假 bcrypt 比较,抹平"账号不存在/密码错误"
 // 的响应时间差,降低邮箱枚举侧信道(登录与忘记密码)。
 var dummyPasswordHash = func() []byte {
-	h, err := bcrypt.GenerateFromPassword([]byte("cloak-dummy-password"), bcrypt.DefaultCost)
+	h, err := bcrypt.GenerateFromPassword([]byte("janus-dummy-password"), bcrypt.DefaultCost)
 	if err != nil {
 		panic("bcrypt unavailable: " + err.Error())
 	}
@@ -340,7 +340,7 @@ func (a *API) consumeSetupToken(c *gin.Context, tenant *store.Tenant, token stri
 }
 
 // issueSetupToken 补发一枚超管首登 setup token。发信目标固定是租户自己的邮箱
-// (即 CLOAK_SUPERADMIN_EMAIL 对应的那个地址),节流键也用该邮箱。
+// (即 JANUS_SUPERADMIN_EMAIL 对应的那个地址),节流键也用该邮箱。
 //
 // 节流是必需的:没有它,任何知道超管邮箱的人都能把它当邮件炸弹反复触发;
 // 有它之后同一邮箱 15 分钟最多一封,而攻击者拿不到 token。
@@ -558,7 +558,7 @@ type tokenResp struct {
 
 // handleToken 签发 API Bearer JWT:校验逻辑与 handleLogin 完全一致
 // (邮箱小写、pending→401、banned→403、错误凭据→401 等时化 dummy bcrypt),
-// 成功后按租户 IsSuperAdmin 计算角色并用 CLOAK_JWT_SECRET/JWTTTL 签发 HS256 JWT。
+// 成功后按租户 IsSuperAdmin 计算角色并用 JANUS_JWT_SECRET/JWTTTL 签发 HS256 JWT。
 func (a *API) handleToken(c *gin.Context) {
 	if !a.rateLimit(c, a.authRate) {
 		return
@@ -577,7 +577,7 @@ func (a *API) handleToken(c *gin.Context) {
 	if tenant.IsSuperAdmin {
 		role = "superadmin"
 	}
-	// 复用 server 构建的 jwtMgr(密钥回退逻辑一致:CLOAK_JWT_SECRET 为空时用启动期随机密钥,
+	// 复用 server 构建的 jwtMgr(密钥回退逻辑一致:JANUS_JWT_SECRET 为空时用启动期随机密钥,
 	// 与 authenticate 的校验密钥保持一致,避免签发的 token 被 401 拒绝)。
 	tokenVersion, err := a.store.TenantTokenVersion(c.Request.Context(), tenant.ID)
 	if err != nil {

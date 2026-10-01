@@ -4,7 +4,7 @@
     <aside class="auth-aside relative w-[46%] max-w-[560px] flex-col overflow-hidden px-12 py-10">
       <div class="relative z-10 flex items-center gap-3">
         <BrandMark :size="34" />
-        <span class="text-xl font-bold tracking-[3px] text-white">CLOAK</span>
+        <span class="text-xl font-bold tracking-[3px] text-white">Janus</span>
       </div>
 
       <div class="relative z-10 my-auto py-12">
@@ -28,7 +28,7 @@
         </ul>
       </div>
 
-      <div class="relative z-10 text-xs tracking-wider text-white/50">CLOAK · 自托管短链服务</div>
+      <div class="relative z-10 text-xs tracking-wider text-white/50">Janus · 自托管短链服务</div>
     </aside>
 
     <!-- 表单侧 -->
@@ -41,7 +41,7 @@
       <div class="w-full max-w-[420px]">
         <div class="auth-mobile-brand mb-7 flex items-center justify-center gap-2.5 text-lg font-bold tracking-[2px] text-ink">
           <BrandMark :size="28" />
-          <span>CLOAK</span>
+          <span>Janus</span>
         </div>
 
         <div v-if="showHeading && $slots.title" class="auth-heading mb-7 text-center">

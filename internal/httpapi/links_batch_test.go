@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"testing"
 
-	"cloak/internal/testutil"
+	"janus/internal/testutil"
 )
 
 // batchResult 与批量接口响应体 {deleted} 对应。

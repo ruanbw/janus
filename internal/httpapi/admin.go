@@ -1,7 +1,7 @@
 package httpapi
 
 // 08 — 平台管理(超管):租户列表/详情/封禁解封/调等级;平台强删违规域名。
-// 超管初始化见 cmd/cloak/main.go initSuperadmin(环境变量 CLOAK_SUPERADMIN_EMAIL)。
+// 超管初始化见 cmd/janus/main.go initSuperadmin(环境变量 JANUS_SUPERADMIN_EMAIL)。
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"strconv"
 
-	"cloak/internal/store"
+	"janus/internal/store"
 )
 
 func (a *API) requireSuperadmin(c *gin.Context) (*store.Tenant, *store.Session, bool) {

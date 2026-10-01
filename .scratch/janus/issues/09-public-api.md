@@ -13,6 +13,6 @@
 
 ## Comments
 
-- 已完成:`internal/httpapi/apikeys.go`(生成 `cloak_` 前缀随机 Key、库中存 SHA-256 哈希、明文仅创建响应一次、列表不含明文、吊销软删除)、`v1.go`(Bearer 鉴权 + /api/v1/links 创建/列表/按 id/删除)。
+- 已完成:`internal/httpapi/apikeys.go`(生成 `janus_` 前缀随机 Key、库中存 SHA-256 哈希、明文仅创建响应一次、列表不含明文、吊销软删除)、`v1.go`(Bearer 鉴权 + /api/v1/links 创建/列表/按 id/删除)。
 - 数据严格按租户隔离(所有查询带 tenant_id 过滤);无效/已吊销 Key → 401。
 - 黑盒测试:`internal/httpapi/apikeys_test.go`(生命周期/CRUD/租户隔离/无效 Key)。测试代码未运行,需主会话执行 `go test ./...`。

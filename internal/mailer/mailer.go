@@ -25,7 +25,7 @@ type SMTPConfig struct {
 
 // Config mailer 通用配置。
 type Config struct {
-	BaseURL string // 后台访问地址(邮件中的验证/重置链接前缀),如 https://app.cloak.test
+	BaseURL string // 后台访问地址(邮件中的验证/重置链接前缀),如 https://app.janus.test
 	SMTP    *SMTPConfig
 }
 
@@ -58,14 +58,14 @@ func NewConsoleMailer(w io.Writer, baseURL string) *ConsoleMailer {
 
 func (m *ConsoleMailer) SendVerifyEmail(to, token string) error {
 	_, err := fmt.Fprintf(m.w,
-		"\n[CLOAK mailer] 邮箱验证 %s\n  token: %s\n  验证地址: %s\n\n",
+		"\n[JANUS mailer] 邮箱验证 %s\n  token: %s\n  验证地址: %s\n\n",
 		to, token, verifyURL(m.baseURL, token))
 	return err
 }
 
 func (m *ConsoleMailer) SendResetEmail(to, token string) error {
 	_, err := fmt.Fprintf(m.w,
-		"\n[CLOAK mailer] 密码重置 %s\n  token: %s\n  重置地址: %s\n\n",
+		"\n[JANUS mailer] 密码重置 %s\n  token: %s\n  重置地址: %s\n\n",
 		to, token, resetURL(m.baseURL, token))
 	return err
 }

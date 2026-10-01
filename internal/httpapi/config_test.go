@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"testing"
 
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 type appConfig struct {

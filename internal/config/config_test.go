@@ -9,10 +9,10 @@ import (
 
 func TestConfigLoadDefaults(t *testing.T) {
 	// 清理可能影响测试的环境变量
-	os.Unsetenv("CLOAK_ADDR")
-	os.Unsetenv("CLOAK_DATABASE_URL")
-	os.Unsetenv("CLOAK_COOKIE_SECURE")
-	os.Unsetenv("CLOAK_SESSION_TTL")
+	os.Unsetenv("JANUS_ADDR")
+	os.Unsetenv("JANUS_DATABASE_URL")
+	os.Unsetenv("JANUS_COOKIE_SECURE")
+	os.Unsetenv("JANUS_SESSION_TTL")
 
 	cfg, err := Load()
 	if err != nil {
@@ -22,8 +22,8 @@ func TestConfigLoadDefaults(t *testing.T) {
 	if cfg.Addr != ":8080" {
 		t.Fatalf("cfg.Addr = %s, want :8080", cfg.Addr)
 	}
-	if cfg.PlatformDomain != "cloak.test" {
-		t.Fatalf("cfg.PlatformDomain = %s, want cloak.test", cfg.PlatformDomain)
+	if cfg.PlatformDomain != "janus.test" {
+		t.Fatalf("cfg.PlatformDomain = %s, want janus.test", cfg.PlatformDomain)
 	}
 	if !cfg.CookieSecure {
 		t.Fatal("cfg.CookieSecure want true")
@@ -37,10 +37,10 @@ func TestConfigLoadDefaults(t *testing.T) {
 }
 
 func TestConfigLoadOverrides(t *testing.T) {
-	t.Setenv("CLOAK_ADDR", ":9090")
-	t.Setenv("CLOAK_COOKIE_SECURE", "false")
-	t.Setenv("CLOAK_SESSION_TTL", "12h")
-	t.Setenv("CLOAK_SMTP_PORT", "587")
+	t.Setenv("JANUS_ADDR", ":9090")
+	t.Setenv("JANUS_COOKIE_SECURE", "false")
+	t.Setenv("JANUS_SESSION_TTL", "12h")
+	t.Setenv("JANUS_SMTP_PORT", "587")
 
 	cfg, err := Load()
 	if err != nil {
@@ -65,7 +65,7 @@ func TestLoadRejectsMalformedDuration(t *testing.T) {
 	// "30d" 不是合法的 time.Duration,env.Parse 会把该字段留成零值。
 	// 旧实现吞掉这个错误继续启动,于是 SessionTTL 变 0 —— 这类"解析失败被吞"
 	// 必须变成显式失败,否则零值会一路流到运行时(最坏情况:保留期 0 → 删光访问记录)。
-	t.Setenv("CLOAK_SESSION_TTL", "30d")
+	t.Setenv("JANUS_SESSION_TTL", "30d")
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() 应在时长格式非法时返回错误")
 	}
@@ -96,29 +96,29 @@ func TestValidateRejectsNonPositiveDuration(t *testing.T) {
 	cfg := validConfig()
 	cfg.VisitCleanupEvery = 0
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() 应拒绝 CLOAK_VISIT_CLEANUP_INTERVAL=0")
+		t.Fatal("Validate() 应拒绝 JANUS_VISIT_CLEANUP_INTERVAL=0")
 	}
 
 	cfg = validConfig()
 	cfg.VisitRetention = 0
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() 应拒绝 CLOAK_VISIT_RETENTION=0")
+		t.Fatal("Validate() 应拒绝 JANUS_VISIT_RETENTION=0")
 	}
 
 	cfg = validConfig()
 	cfg.DNSRetryInterval = -time.Second
 	if err := cfg.Validate(); err == nil {
-		t.Fatal("Validate() 应拒绝负的 CLOAK_DNS_RETRY_INTERVAL")
+		t.Fatal("Validate() 应拒绝负的 JANUS_DNS_RETRY_INTERVAL")
 	}
 }
 
 func TestValidateRejectsNonPositiveCounts(t *testing.T) {
 	for name, mutate := range map[string]func(*Config){
-		"CLOAK_VISIT_CLEANUP_BATCH":     func(c *Config) { c.VisitCleanupBatch = 0 },
-		"CLOAK_LANDING_MAX_FILES":       func(c *Config) { c.LandingMaxFiles = 0 },
-		"CLOAK_MAX_TARGET_URLS":         func(c *Config) { c.MaxTargetURLs = 0 },
-		"CLOAK_LANDING_MAX_ZIP_BYTES":   func(c *Config) { c.LandingMaxZipBytes = 0 },
-		"CLOAK_LANDING_MAX_TOTAL_BYTES": func(c *Config) { c.LandingMaxTotalBytes = 0 },
+		"JANUS_VISIT_CLEANUP_BATCH":     func(c *Config) { c.VisitCleanupBatch = 0 },
+		"JANUS_LANDING_MAX_FILES":       func(c *Config) { c.LandingMaxFiles = 0 },
+		"JANUS_MAX_TARGET_URLS":         func(c *Config) { c.MaxTargetURLs = 0 },
+		"JANUS_LANDING_MAX_ZIP_BYTES":   func(c *Config) { c.LandingMaxZipBytes = 0 },
+		"JANUS_LANDING_MAX_TOTAL_BYTES": func(c *Config) { c.LandingMaxTotalBytes = 0 },
 	} {
 		cfg := validConfig()
 		mutate(&cfg)
@@ -161,7 +161,7 @@ func TestTrustedProxyNets(t *testing.T) {
 			t.Fatal("TrustedProxyNets() 应拒绝非法条目")
 		}
 		if err := cfg.Validate(); err == nil {
-			t.Fatal("Validate() 应拒绝非法的 CLOAK_TRUSTED_PROXY_CIDRS")
+			t.Fatal("Validate() 应拒绝非法的 JANUS_TRUSTED_PROXY_CIDRS")
 		}
 	})
 

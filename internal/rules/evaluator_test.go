@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"cloak/internal/store"
+	"janus/internal/store"
 )
 
 func TestExprCompileAndEvaluate(t *testing.T) {

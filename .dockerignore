@@ -1,4 +1,4 @@
-# CLOAK 构建上下文排除清单
+# Janus 构建上下文排除清单
 # docker/Dockerfile 用 COPY . . 构建 Go 二进制,此处排除一切非构建所需文件,
 # 避免敏感/大体积文件(.env、.git、node_modules 等)进入构建上下文与镜像。
 

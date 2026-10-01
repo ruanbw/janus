@@ -24,7 +24,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, dir string) error {
 	}
 
 	// 平滑兼容历史迁移记录：
-	// CLOAK 早期使用自研 schema_migrations 表（存储 0001_init.sql 等文件名）。
+	// Janus 早期使用自研 schema_migrations 表（存储 0001_init.sql 等文件名）。
 	// goose 默认使用 goose_db_version 表（版本号为 int64，如 1, 2, 3）。
 	// 为防止切换到 goose 时重复执行已有历史迁移导致冲突，在此做一次平滑对齐。
 	if err := syncLegacyMigrations(ctx, db, dir); err != nil {

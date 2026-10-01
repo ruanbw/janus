@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"cloak/internal/domain"
-	"cloak/internal/httpapi"
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/domain"
+	"janus/internal/httpapi"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 func noFollowClient(env *testutil.Env) *http.Client {
@@ -137,12 +137,12 @@ func TestSameCodeAcrossDomains(t *testing.T) {
 		if d.FQDN == "localhost" {
 			localID = d.ID
 		}
-		if d.FQDN == "alice.cloak.test" {
+		if d.FQDN == "alice.janus.test" {
 			platformID = d.ID
 		}
 	}
 	if localID == 0 || platformID == 0 {
-		t.Fatalf("need localhost + alice.cloak.test domains, got %+v", domains)
+		t.Fatalf("need localhost + alice.janus.test domains, got %+v", domains)
 	}
 
 	createLink(t, c, map[string]any{"code": "dup", "targetUrls": []string{"https://a.example.com"}, "domainIds": []int64{localID}})
@@ -153,10 +153,10 @@ func TestSameCodeAcrossDomains(t *testing.T) {
 	if loc := resp.Header.Get("Location"); loc != "https://a.example.com" {
 		t.Errorf("localhost/dup Location = %q", loc)
 	}
-	resp = redirectGet(t, env, "alice.cloak.test", "/dup")
+	resp = redirectGet(t, env, "alice.janus.test", "/dup")
 	assertStatus(t, resp, http.StatusFound)
 	if loc := resp.Header.Get("Location"); loc != "https://b.example.com" {
-		t.Errorf("alice.cloak.test/dup Location = %q", loc)
+		t.Errorf("alice.janus.test/dup Location = %q", loc)
 	}
 }
 
@@ -287,7 +287,7 @@ func TestLinkListAndPatch(t *testing.T) {
 	// PATCH 改目标与域名(关联到平台默认域名)
 	var platformID int64
 	for _, d := range listDomains(t, c) {
-		if d.FQDN == "alice.cloak.test" {
+		if d.FQDN == "alice.janus.test" {
 			platformID = d.ID
 		}
 	}
@@ -298,7 +298,7 @@ func TestLinkListAndPatch(t *testing.T) {
 	if len(upd.TargetURLs) != 1 || upd.TargetURLs[0] != "https://updated.example.com" {
 		t.Errorf("targetUrls = %v", upd.TargetURLs)
 	}
-	if len(upd.Domains) != 1 || upd.Domains[0] != "alice.cloak.test" {
+	if len(upd.Domains) != 1 || upd.Domains[0] != "alice.janus.test" {
 		t.Errorf("domains = %v", upd.Domains)
 	}
 

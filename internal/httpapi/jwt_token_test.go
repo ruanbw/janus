@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"testing"
 
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 // tokenResp 与 /api/auth/token 成功响应结构一致(契约)。

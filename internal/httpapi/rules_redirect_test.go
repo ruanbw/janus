@@ -25,11 +25,11 @@ import (
 	"sync"
 	"testing"
 
-	"cloak/internal/geo"
-	"cloak/internal/httpapi"
-	"cloak/internal/rules"
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/geo"
+	"janus/internal/httpapi"
+	"janus/internal/rules"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 // ruleOnPath 造一条「该短码一访问就命中」的规则条件。

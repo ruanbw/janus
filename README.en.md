@@ -106,7 +106,7 @@ Three hard constraints on this hot path (you must preserve them when editing `re
 - **Email registration + verification** (anti-spam): a new tenant is `pending` until the email is verified, then turns `active` and its platform default domain is activated automatically.
 - **Login / logout / remember me**: 30 days when "remember me" is checked, 24 hours otherwise; the super admin sets a password on first login.
 - **Change password / forgot password / reset password**: reset tokens live 1 hour.
-- **Platform admin (super admin)**: initialized from `CLOAK_SUPERADMIN_EMAIL`, idempotently created on boot.
+- **Platform admin (super admin)**: initialized from `JANUS_SUPERADMIN_EMAIL`, idempotently created on boot.
 - **Two authentication modes**: browser session cookie (HTTP-only + CSRF double-submit token) for the console; `POST /api/auth/token` issues a Bearer JWT for scripts/CLIs (header auth, CSRF-immune).
 - **Tiers and quotas**: a tier caps the number of links and self-owned domains; platform default domains never count toward quotas; exceeding a quota returns an explicit error including current usage and the limit.
 
@@ -149,7 +149,7 @@ Alongside it:
 - **Overview stats come from a dedicated aggregation endpoint**, `GET /api/visits/overview`: full-tenant counters and per-dimension distributions in one SQL round trip (real `GROUP BY`, no sampling). The frontend no longer pulls visit rows and counts them itself — that inevitably drifts from the KPI definitions, treats "the latest 50 rows" as the whole, and covers only the first 100 links of the link list. The UA dimension returns **raw UA strings plus counts**; device/OS/browser labels are translated by the existing `ua-parser-js` so there is no second UA parser in Go.
 - **CTR definition**: numerator and denominator come from the same SQL and the same retention window in the `visits` table; the denominator is **landing views only** (a redirect link can never produce a click, so including it would systematically depress CTR). The numerator is no longer the permanent `links.clicks` counter — it never decays while the denominator is trimmed by the 90-day cleanup, which made CTR drift monotonically upward past 100%.
 - **Geographic attribution**: a bundled ip2region offline database (V4 + V6) resolves the visitor's country code, behind a 16-shard two-generation cache that also caches negative results (ADR-0009).
-- **Retention**: visit rows are kept 90 days by default and pruned by a background worker (`CLOAK_VISIT_RETENTION`).
+- **Retention**: visit rows are kept 90 days by default and pruned by a background worker (`JANUS_VISIT_RETENTION`).
 - **Per-link detail view**: visit rows for a single link, including action, outcome and matched rule.
 
 ### 2.6 Rule engine
@@ -230,7 +230,7 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
                                         │
                        ┌────────────────┴────────────────┐
                        │  PostgreSQL 16                  │
-                       │  + CLOAK_LANDING_UPLOAD_DIR volume│
+                       │  + JANUS_LANDING_UPLOAD_DIR volume│
                        └─────────────────────────────────┘
 ```
 
@@ -283,7 +283,7 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
 
 ```
 .
-├── cmd/cloak/                  # Backend entrypoint (config → DB → migrate → workers → HTTP)
+├── cmd/janus/                  # Backend entrypoint (config → DB → migrate → workers → HTTP)
 ├── internal/
 │   ├── bootstrap/              # Boot-time initialization (idempotent super admin)
 │   ├── config/                 # Env-var config (caarlos0/env)
@@ -348,31 +348,31 @@ docker compose up -d
 
 | Service | Container port | Host mapping | Notes |
 | --- | --- | --- | --- |
-| `postgres` | 5432 | `127.0.0.1:5432` | PostgreSQL 16, dev credentials `cloak/cloak` |
+| `postgres` | 5432 | `127.0.0.1:5432` | PostgreSQL 16, dev credentials `janus/janus` |
 | `caddy` | 443 | `127.0.0.1:443`, `127.0.0.1:80` | HTTPS entrypoint, on-demand TLS + local CA, reverse-proxying host `:8080` via `host.docker.internal` |
 
 > Caddy takes host ports 80/443. If something else on your machine (an openresty, for example) binds them too, start them at different times.
-> Port-less access relies on hosts entries pointing `*.cloak.test` at `127.0.0.1` (see 6.2).
+> Port-less access relies on hosts entries pointing `*.janus.test` at `127.0.0.1` (see 6.2).
 
 ### 6.2 Local name resolution
 
 Development supports both **direct localhost access** and **name-based access**. Name-based access needs the platform domain and your test tenant subdomains pointed at this machine, via SwitchHosts or `/etc/hosts`:
 
 ```text
-127.0.0.1 app.cloak.test
-127.0.0.1 alice.cloak.test
-127.0.0.1 bob.cloak.test
+127.0.0.1 app.janus.test
+127.0.0.1 alice.janus.test
+127.0.0.1 bob.janus.test
 ```
 
 ```bash
 # Manual append (one line per new tenant; hosts has no wildcards)
-sudo sh -c 'echo "127.0.0.1 alice.cloak.test" >> /etc/hosts'
+sudo sh -c 'echo "127.0.0.1 alice.janus.test" >> /etc/hosts'
 ```
 
-- `app.cloak.test` serves the console. `<slug>.cloak.test` is a tenant's platform default domain, used to verify link redirects.
-- Test self-owned domains the same way (e.g. `127.0.0.1 links.example.test`). With `CLOAK_SERVER_PUBLIC_IP=127.0.0.1`, Go's DNS check reads hosts, so you exercise the **real code path**.
+- `app.janus.test` serves the console. `<slug>.janus.test` is a tenant's platform default domain, used to verify link redirects.
+- Test self-owned domains the same way (e.g. `127.0.0.1 links.example.test`). With `JANUS_SERVER_PUBLIC_IP=127.0.0.1`, Go's DNS check reads hosts, so you exercise the **real code path**.
 - Prefer not to touch hosts? Use `curl --resolve` for temporary resolution (see 8.3).
-- Vite's dev server rejects non-localhost Hosts by default (DNS-rebinding protection). The project allowlists `.cloak.test` in `vite.config.ts` via `server.allowedHosts` (driven by `VITE_PLATFORM_DOMAIN` in `web/.env.development`); keep both in sync when you change the platform domain.
+- Vite's dev server rejects non-localhost Hosts by default (DNS-rebinding protection). The project allowlists `.janus.test` in `vite.config.ts` via `server.allowedHosts` (driven by `VITE_PLATFORM_DOMAIN` in `web/.env.development`); keep both in sync when you change the platform domain.
 
 ### 6.3 Trust the local Caddy CA
 
@@ -391,13 +391,13 @@ sudo caddy trust --ca certs/caddy-root.pem
 ### 6.4 Run the backend
 
 ```bash
-CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak
+JANUS_COOKIE_SECURE=false JANUS_ADDR=:8080 go run ./cmd/janus
 ```
 
-- `CLOAK_COOKIE_SECURE=false` — development is plain HTTP, so `Secure` cookies would be dropped;
-- `CLOAK_ADDR=:8080` — matches the Vite proxy, the Caddy reverse proxy and the production compose; if you change the port, update the Vite proxy target and the Caddy upstream too;
-- Everything else works on code defaults (Postgres `postgres://cloak:cloak@localhost:5432/cloak`, platform domain `cloak.test`, public IP `127.0.0.1`, console mailer);
-- Override via environment variables, e.g. `CLOAK_SUPERADMIN_EMAIL=admin@example.com go run ./cmd/cloak`;
+- `JANUS_COOKIE_SECURE=false` — development is plain HTTP, so `Secure` cookies would be dropped;
+- `JANUS_ADDR=:8080` — matches the Vite proxy, the Caddy reverse proxy and the production compose; if you change the port, update the Vite proxy target and the Caddy upstream too;
+- Everything else works on code defaults (Postgres `postgres://janus:janus@localhost:5432/janus`, platform domain `janus.test`, public IP `127.0.0.1`, console mailer);
+- Override via environment variables, e.g. `JANUS_SUPERADMIN_EMAIL=admin@example.com go run ./cmd/janus`;
 - `go run` does **not** read `.env` (that is compose's job) — export what you need on the command line; the full list lives in [.env.example](.env.example) and `internal/config/config.go`;
 - with no SMTP configured, verification / reset emails are printed in this terminal (see 8.3, step 2).
 
@@ -405,7 +405,7 @@ Verify:
 
 ```bash
 curl -s http://127.0.0.1:8080/healthz          # → {"status":"ok"}
-curl -sk https://app.cloak.test/healthz         # full path through Caddy
+curl -sk https://app.janus.test/healthz         # full path through Caddy
 ```
 
 Restart with `Ctrl+C` + `go run` after backend changes; frontend changes hot-reload on their own.
@@ -418,16 +418,16 @@ pnpm install     # first time
 pnpm dev         # http://localhost:5173, /api proxied to http://localhost:8080
 ```
 
-Open `http://localhost:5173` (or `http://app.cloak.test:5173`). Development runs with `CLOAK_COOKIE_SECURE=false`, so cookies work over HTTP.
+Open `http://localhost:5173` (or `http://app.janus.test:5173`). Development runs with `JANUS_COOKIE_SECURE=false`, so cookies work over HTTP.
 
 ### 6.6 Entry points
 
 | Entry point | URL | Notes |
 | --- | --- | --- |
 | Console (localhost) | `http://localhost:5173` | Vite dev server with HMR |
-| Console (by name) | `http://app.cloak.test:5173` | Same, reached through hosts |
-| Console (name + HTTPS) | `https://app.cloak.test` | Caddy → Vite, to verify name / TLS / certificate shape |
-| Health check | `https://app.cloak.test/healthz` | `{"status":"ok"}` |
+| Console (by name) | `http://app.janus.test:5173` | Same, reached through hosts |
+| Console (name + HTTPS) | `https://app.janus.test` | Caddy → Vite, to verify name / TLS / certificate shape |
+| Health check | `https://app.janus.test/healthz` | `{"status":"ok"}` |
 | Backend direct | `http://127.0.0.1:8080` | Bypasses Caddy / Vite, for debugging |
 
 ### 6.7 Environment variables
@@ -436,25 +436,25 @@ Development defaults work out of the box; `cp .env.example .env` when you need t
 
 | Variable | Dev default | Description |
 | --- | --- | --- |
-| `CLOAK_ADDR` | `:8080` | HTTP listen address |
-| `CLOAK_PLATFORM_DOMAIN` | `cloak.test` | Bare platform domain; tenant default domains are `<slug>.<platform-domain>` |
-| `CLOAK_SERVER_PUBLIC_IP` | `127.0.0.1` | Address DNS activation checks compare against |
-| `CLOAK_PUBLIC_BASE_URL` | `https://app.cloak.test` | Link prefix in verification / reset emails |
-| `CLOAK_DATABASE_URL` | `postgres://cloak:cloak@localhost:5432/cloak?sslmode=disable` | Backend connection string |
-| `CLOAK_TEST_DATABASE_URL` | `…/cloak_test…` | Test database (separate from the dev database) |
-| `CLOAK_MIGRATIONS_DIR` | `migrations` | Migration directory (`/app/migrations` in the container) |
-| `CLOAK_SUPERADMIN_EMAIL` | empty | Super admin email, initialized on boot (no super admin when empty) |
-| `CLOAK_COOKIE_SECURE` | `false` | Session cookie `Secure` flag; must be false for dev HTTP |
-| `CLOAK_SESSION_TTL` / `CLOAK_SESSION_TTL_SHORT` | `720h` / `24h` | Remember-me / regular session |
-| `CLOAK_VERIFY_TOKEN_TTL` / `CLOAK_RESET_TOKEN_TTL` | `24h` / `1h` | Verification / reset token lifetime |
-| `CLOAK_JWT_SECRET` / `CLOAK_JWT_TTL` | empty / `24h` | JWT signing secret and lifetime; an empty secret is regenerated on every boot (invalidating issued tokens) and must be set in production |
-| `CLOAK_DNS_RETRY_INTERVAL` / `CLOAK_DNS_MAX_AGE` | `5m` / `72h` | DNS retry interval / maximum wait |
-| `CLOAK_VISIT_RETENTION` / `CLOAK_VISIT_CLEANUP_INTERVAL` | `2160h` / `24h` | Visit retention / cleanup interval |
-| `CLOAK_LANDING_UPLOAD_DIR` | `uploads` | Uploaded landing pages (persistent volume in production) |
-| `CLOAK_LANDING_MAX_ZIP_BYTES` / `CLOAK_LANDING_MAX_FILES` | `10485760` / `500` | Uncompressed size limit / file count limit for landing zips |
-| `CLOAK_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM` | empty / `465` | Real SMTP is enabled only when HOST is set; otherwise the console mailer |
-| `CLOAK_ACME_EMAIL` | empty | Let's Encrypt account email (production only, pairs with Caddyfile.prod) |
-| `CLOAK_DB_USER` / `CLOAK_DB_PASSWORD` / `CLOAK_DB_NAME` | `cloak` ×3 | Used by the production compose to create the database; change the password in production |
+| `JANUS_ADDR` | `:8080` | HTTP listen address |
+| `JANUS_PLATFORM_DOMAIN` | `janus.test` | Bare platform domain; tenant default domains are `<slug>.<platform-domain>` |
+| `JANUS_SERVER_PUBLIC_IP` | `127.0.0.1` | Address DNS activation checks compare against |
+| `JANUS_PUBLIC_BASE_URL` | `https://app.janus.test` | Link prefix in verification / reset emails |
+| `JANUS_DATABASE_URL` | `postgres://janus:janus@localhost:5432/janus?sslmode=disable` | Backend connection string |
+| `JANUS_TEST_DATABASE_URL` | `…/janus_test…` | Test database (separate from the dev database) |
+| `JANUS_MIGRATIONS_DIR` | `migrations` | Migration directory (`/app/migrations` in the container) |
+| `JANUS_SUPERADMIN_EMAIL` | empty | Super admin email, initialized on boot (no super admin when empty) |
+| `JANUS_COOKIE_SECURE` | `false` | Session cookie `Secure` flag; must be false for dev HTTP |
+| `JANUS_SESSION_TTL` / `JANUS_SESSION_TTL_SHORT` | `720h` / `24h` | Remember-me / regular session |
+| `JANUS_VERIFY_TOKEN_TTL` / `JANUS_RESET_TOKEN_TTL` | `24h` / `1h` | Verification / reset token lifetime |
+| `JANUS_JWT_SECRET` / `JANUS_JWT_TTL` | empty / `24h` | JWT signing secret and lifetime; an empty secret is regenerated on every boot (invalidating issued tokens) and must be set in production |
+| `JANUS_DNS_RETRY_INTERVAL` / `JANUS_DNS_MAX_AGE` | `5m` / `72h` | DNS retry interval / maximum wait |
+| `JANUS_VISIT_RETENTION` / `JANUS_VISIT_CLEANUP_INTERVAL` | `2160h` / `24h` | Visit retention / cleanup interval |
+| `JANUS_LANDING_UPLOAD_DIR` | `uploads` | Uploaded landing pages (persistent volume in production) |
+| `JANUS_LANDING_MAX_ZIP_BYTES` / `JANUS_LANDING_MAX_FILES` | `10485760` / `500` | Uncompressed size limit / file count limit for landing zips |
+| `JANUS_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM` | empty / `465` | Real SMTP is enabled only when HOST is set; otherwise the console mailer |
+| `JANUS_ACME_EMAIL` | empty | Let's Encrypt account email (production only, pairs with Caddyfile.prod) |
+| `JANUS_DB_USER` / `JANUS_DB_PASSWORD` / `JANUS_DB_NAME` | `janus` ×3 | Used by the production compose to create the database; change the password in production |
 
 > ⚠️ `.env` holds database and SMTP credentials. It is in `.gitignore` — **never commit it**.
 
@@ -468,7 +468,7 @@ Development defaults work out of the box; `cp .env.example .env` when you need t
 # Backend: format + tests
 gofmt -l internal cmd            # no output
 go vet ./...
-go test ./...                    # needs the cloak_test database (see 8.1)
+go test ./...                    # needs the janus_test database (see 8.1)
 
 # Frontend: types + UI gate + build
 cd web
@@ -525,16 +525,16 @@ The full contract lives in [`web/UI_KIT.md`](web/UI_KIT.md); the gate script `we
 
 ### 8.1 Backend tests
 
-Backend tests are **black-box HTTP tests**: `httptest.Server` + a **real Postgres** + **real migrations**, with no internal mocking (`internal/testutil/testutil.go`). They need a `cloak_test` database and skip automatically when it is unavailable.
+Backend tests are **black-box HTTP tests**: `httptest.Server` + a **real Postgres** + **real migrations**, with no internal mocking (`internal/testutil/testutil.go`). They need a `janus_test` database and skip automatically when it is unavailable.
 
 ```bash
 docker compose up -d postgres
-docker compose exec postgres psql -U cloak -d cloak -c 'CREATE DATABASE cloak_test'
+docker compose exec postgres psql -U janus -d janus -c 'CREATE DATABASE janus_test'
 
 go test ./...                                   # everything
 go test ./internal/httpapi/ -count=1 -v        # single package, uncached, verbose
 go test ./... -cover                            # coverage
-CLOAK_TEST_DATABASE_URL='postgres://cloak:cloak@localhost:5432/other_test?sslmode=disable' go test ./...
+JANUS_TEST_DATABASE_URL='postgres://janus:janus@localhost:5432/other_test?sslmode=disable' go test ./...
 ```
 
 Each test's `Setup` connects to the test database, applies migrations, `TRUNCATE`s business tables and re-seeds the free tier (100 links / 10 domains), so cases are isolated and repeatable. **If everything reports SKIP, the test database is missing** — create it as above.
@@ -557,19 +557,19 @@ The frontend has no unit-test framework; quality comes from type checking, the g
 With no SMTP configured, the verification link is printed in the terminal running the backend.
 
 ```bash
-BASE=https://app.cloak.test
+BASE=https://app.janus.test
 
-# 1. Register → 201, status=pending, returns defaultDomain:"alice.cloak.test"
+# 1. Register → 201, status=pending, returns defaultDomain:"alice.janus.test"
 curl -sk -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"password123","slug":"alice"}'
 
-# 2. Copy the verification link from the backend terminal ([CLOAK mailer] block)
-#    https://app.cloak.test/verify-email?token=<token>
+# 2. Copy the verification link from the backend terminal ([Janus mailer] block)
+#    https://app.janus.test/verify-email?token=<token>
 curl -sk -X POST "$BASE/api/auth/verify-email" -H 'Content-Type: application/json' \
   -d '{"token":"<token>"}'                                # → {"status":"ok"}
 
 # 3. Log in and keep the cookies
-JAR=$(mktemp /tmp/cloak-cookies.XXXXXX)
+JAR=$(mktemp /tmp/janus-cookies.XXXXXX)
 curl -sk -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/login" \
   -H 'Content-Type: application/json' \
   -d '{"email":"alice@example.com","password":"password123","rememberMe":true}'
@@ -582,7 +582,7 @@ curl -sk "$BASE/api/auth/me" -H "Authorization: Bearer $TOKEN"
 
 # 5. Read domains with Bearer; writes need the CSRF double-submit token
 curl -sk "$BASE/api/domains" -H "Authorization: Bearer $TOKEN"
-CSRF=$(awk '$6=="cloak_csrf"{print $7}' "$JAR")
+CSRF=$(awk '$6=="janus_csrf"{print $7}' "$JAR")
 curl -sk -c "$JAR" -b "$JAR" "$BASE/api/domains"
 
 # 6. Create a link (multiple targets are picked round-robin)
@@ -592,19 +592,19 @@ curl -sk -c "$JAR" -b "$JAR" -X POST "$BASE/api/links" \
 
 # 7. Redirect: resolve the subdomain temporarily, no hosts edits needed
 curl -sk -o /dev/null -w '%{http_code} %{redirect_url}\n' \
-  --resolve alice.cloak.test:443:127.0.0.1 "https://alice.cloak.test/<code>"
+  --resolve alice.janus.test:443:127.0.0.1 "https://alice.janus.test/<code>"
 # → 302 https://example.com/ or https://example.org/ (round-robin)
 
 # 8. Miss → 404
 curl -sk -o /dev/null -w '%{http_code}\n' \
-  --resolve alice.cloak.test:443:127.0.0.1 "https://alice.cloak.test/not-exist"
+  --resolve alice.janus.test:443:127.0.0.1 "https://alice.janus.test/not-exist"
 ```
 
-Browser walkthrough (mirrors the production go-live checklist): open `https://app.cloak.test` → register → verify → log in and see the default domain `active` → create a link → visit the code and see a 302 with the visit count +1 → visit a nonexistent code and get 404 → (optional) add a self-owned domain and exercise deactivate/restore/delete → (optional) log in as super admin and open the platform admin views.
+Browser walkthrough (mirrors the production go-live checklist): open `https://app.janus.test` → register → verify → log in and see the default domain `active` → create a link → visit the code and see a 302 with the visit count +1 → visit a nonexistent code and get 404 → (optional) add a self-owned domain and exercise deactivate/restore/delete → (optional) log in as super admin and open the platform admin views.
 
 ### 8.4 Test data and reset
 
-- The dev database `cloak` and the test database `cloak_test` are separate; `go test` only touches `cloak_test`.
+- The dev database `janus` and the test database `janus_test` are separate; `go test` only touches `janus_test`.
 - To wipe all development data (volumes included — the certificate cache and local CA go with them, so re-trust afterwards):
 
 ```bash
@@ -619,11 +619,11 @@ docker compose down -v && docker compose up -d
 | --- | --- | --- |
 | Orchestration | Infrastructure in Docker (Postgres + Caddy); backend/frontend in a terminal (`go run` + `pnpm dev`) | `docker compose -f docker-compose.prod.yml up -d` (everything containerized) |
 | Ports | Backend 8080; Caddy maps host 443/80 | Standard 80/443; backend exposes no host port |
-| Name resolution | hosts points `app.cloak.test` and test subdomains at `127.0.0.1` (`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`; Go reads hosts, exercising the real path) | Real DNS wildcard `*.<platform-domain>` |
+| Name resolution | hosts points `app.janus.test` and test subdomains at `127.0.0.1` (`JANUS_SERVER_PUBLIC_IP=127.0.0.1`; Go reads hosts, exercising the real path) | Real DNS wildcard `*.<platform-domain>` |
 | Certificates | Caddy local CA (`tls internal` + on-demand), trusted via `caddy trust` | Let's Encrypt (ACME, automatic issue/renew) |
 | Mail | Console mailer (links printed in the backend log) | Real SMTP (credentials supplied by the deployer) |
-| Cookies | `CLOAK_COOKIE_SECURE=false` (HTTP) | Forced `true` (HTTPS) |
-| Platform domain | `cloak.test` (RFC-reserved test domain) | A real domain |
+| Cookies | `JANUS_COOKIE_SECURE=false` (HTTP) | Forced `true` (HTTPS) |
+| Platform domain | `janus.test` (RFC-reserved test domain) | A real domain |
 | Frontend assets | Vite dev server (5173) | Static build in the nginx image (built during image build, never committed) |
 | Landing uploads | Local `uploads/` directory | Persistent `uploads` volume |
 
@@ -639,8 +639,8 @@ dig +short example.com && dig +short any.example.com
 
 # 2. Configure the environment
 cp .env.example .env && chmod 600 .env
-#    required: CLOAK_PLATFORM_DOMAIN, CLOAK_SERVER_PUBLIC_IP, CLOAK_DB_PASSWORD
-#    recommended: CLOAK_SUPERADMIN_EMAIL, CLOAK_ACME_EMAIL, JWT secret (see 6.7)
+#    required: JANUS_PLATFORM_DOMAIN, JANUS_SERVER_PUBLIC_IP, JANUS_DB_PASSWORD
+#    recommended: JANUS_SUPERADMIN_EMAIL, JANUS_ACME_EMAIL, JWT secret (see 6.7)
 
 # 3. Caddyfile.prod has no env placeholders — replace the site address
 sed -i '' 's/example\.com/YOUR-DOMAIN/g' Caddyfile.prod   # macOS
@@ -652,7 +652,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml ps
 ```
 
-**First boot does this automatically**: connect → goose migrations → seed the free tier → idempotently initialize the super admin from `CLOAK_SUPERADMIN_EMAIL` → start background workers → listen on 8080. Certificates are issued **on demand**: once a tenant domain is activated, Caddy asks the authorization endpoint on the first visit and issues a Let's Encrypt certificate, renewing before expiry.
+**First boot does this automatically**: connect → goose migrations → seed the free tier → idempotently initialize the super admin from `JANUS_SUPERADMIN_EMAIL` → start background workers → listen on 8080. Certificates are issued **on demand**: once a tenant domain is activated, Caddy asks the authorization endpoint on the first visit and issues a Let's Encrypt certificate, renewing before expiry.
 
 **Release and rollback**: a frontend change rebuilds only the `web` image, a backend change only the `backend` image (they never block each other). Images carry no version tag, so rollback means `git checkout <last good commit>` followed by `up -d --build`.
 
@@ -663,7 +663,7 @@ docker compose -f docker-compose.prod.yml ps
 ### Known limitations
 
 - **Let's Encrypt quota**: platform default domains are issued per subdomain, subject to "50 certificates per registered domain per week (including renewals)", aggregated per platform domain (ADR-0004). Plan accordingly as you scale.
-- **Visits are retained for 90 days**, then pruned by a background worker; tune with `CLOAK_VISIT_RETENTION`.
+- **Visits are retained for 90 days**, then pruned by a background worker; tune with `JANUS_VISIT_RETENTION`.
 - **Geo is an offline database**: `asn` and `is_datacenter` have no source, so rules depending on them never match (by design, values are never guessed). The xdb files in `internal/geo/data/` must be updated manually to recognize new IP ranges.
 - **The authorization endpoint is internal-only**: inactive domains are refused certificates. Never expose it publicly.
 - **Rule limits**: 200 rules per tenant; snapshots have a 1-minute TTL and are actively invalidated on write (forgetting to invalidate means a freshly saved rule silently does nothing).
@@ -681,21 +681,21 @@ docker compose -f docker-compose.prod.yml ps
 | Caddy 502 | Backend is not running: confirm the `go run` from 6.4 and that 8080 answers `curl -s http://127.0.0.1:8080/healthz` |
 | Registration returns 409 | Email or slug taken (leftover dev data): pick another slug or reset with 8.4 |
 | Self-owned domain stuck `pending` | hosts entry missing or not pointing at 127.0.0.1; or the 5-minute retry hasn't fired — use "re-check" in the console |
-| Domain `failed` | Not validated within 72 hours: check hosts and `CLOAK_SERVER_PUBLIC_IP` |
+| Domain `failed` | Not validated within 72 hours: check hosts and `JANUS_SERVER_PUBLIC_IP` |
 | Redirect returns 404 | Unknown code, disabled domain/link, or the Host is not an active domain of that tenant |
-| No email, and no `[CLOAK mailer]` in the terminal | `CLOAK_SMTP_*` was exported, so real SMTP is used; unset them to fall back to the console mailer |
+| No email, and no `[Janus mailer]` in the terminal | `JANUS_SMTP_*` was exported, so real SMTP is used; unset them to fall back to the console mailer |
 | Go changes have no effect | The dev backend is not in Docker: `Ctrl+C` and re-run `go run` |
 | Frontend changes have no effect | Use the 6.5 dev server; if you are looking at the image, run `pnpm build` and rebuild the `web` image |
-| Every test reports SKIP | The `cloak_test` database does not exist: create it per 8.1 |
-| Ports 80/443 busy | The dev compose Caddy takes them; do not run it alongside other services on those ports. If 8080 is taken, change `CLOAK_ADDR` and update the proxy config |
+| Every test reports SKIP | The `janus_test` database does not exist: create it per 8.1 |
+| Ports 80/443 busy | The dev compose Caddy takes them; do not run it alongside other services on those ports. If 8080 is taken, change `JANUS_ADDR` and update the proxy config |
 | `pnpm check:ui` reports a contrast violation | A token value was changed without checking both `:root` and `.dark`; see `web/UI_KIT.md` |
 
 **Production**
 
 | Symptom | Cause / fix |
 | --- | --- |
-| compose fails with `CLOAK_XXX must be set` | `.env` lacks a required variable (compose enforces with `:?`): fill in per 10 and 6.7 |
-| Caddy fails with `expanding email address ... is empty` | `CLOAK_ACME_EMAIL` is empty while `Caddyfile.prod` enables the `email` directive: set the variable or comment the directive |
+| compose fails with `JANUS_XXX must be set` | `.env` lacks a required variable (compose enforces with `:?`): fill in per 10 and 6.7 |
+| Caddy fails with `expanding email address ... is empty` | `JANUS_ACME_EMAIL` is empty while `Caddyfile.prod` enables the `email` directive: set the variable or comment the directive |
 | Certificates not issued / `cert_status=failed` | Read `docker compose logs caddy`; verify DNS, 80/443 reachability and that the authorization endpoint allows the domain |
 | Platform default domain unreachable | Wildcard `*.<platform-domain>` missing or not propagated: verify with `dig` |
 | Visitors see 404 | Domain/link disabled or deleted; or a rule returned a `notfound` verdict; or the Host is not an active domain |
@@ -710,7 +710,7 @@ docker compose -f docker-compose.prod.yml ps
 
 **Authentication**
 
-- Console: session cookie `cloak_session` (HTTP-only / Secure / SameSite=Lax); write methods must send `X-CSRF-Token` (value from the `cloak_csrf` cookie — double submit).
+- Console: session cookie `janus_session` (HTTP-only / Secure / SameSite=Lax); write methods must send `X-CSRF-Token` (value from the `janus_csrf` cookie — double submit).
 - Scripts: `POST /api/auth/token` returns an `accessToken`; send `Authorization: Bearer <token>` afterwards (header auth is CSRF-immune).
 - Redirects: `GET /{code}`, domain resolved from the Host header, no auth.
 - Internal: `GET /internal/caddy/authorize?domain=<fqdn>`, internal network only.
@@ -763,17 +763,17 @@ cd web && pnpm type-check && pnpm check:ui && pnpm build
 
 ## 14. License
 
-CLOAK is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. The full text is in [`LICENSE`](LICENSE).
+Janus is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**. The full text is in [`LICENSE`](LICENSE).
 
 ```
-Copyright (C) 2026 ruanbw and CLOAK contributors
+Copyright (C) 2026 ruanbw and Janus contributors
 SPDX-License-Identifier: AGPL-3.0-only
 ```
 
 In short:
 
 - You may use, modify, redistribute and integrate the software, including in closed-source commercial products (keep the copyright and license notices; see AGPL §4–6 for how source must be offered).
-- **The key difference from GPL**: if you make the functionality available to users over a network — that is, by running it as a SaaS or online service — you must offer those users the corresponding source code. This matters for CLOAK in particular: providing CLOAK's online redirect or management service requires releasing the source of your modifications.
+- **The key difference from GPL**: if you make the functionality available to users over a network — that is, by running it as a SaaS or online service — you must offer those users the corresponding source code. This matters for Janus in particular: providing Janus's online redirect or management service requires releasing the source of your modifications.
 - The software is provided without warranty of any kind (see AGPL §15–17).
 - For commercial licensing or closed-source distribution, contact the author separately.
 
@@ -791,7 +791,7 @@ In short:
 | [`web/UI_KIT.md`](web/UI_KIT.md) | Frontend component contract and the three design-token layers |
 | [`docs/adr/`](docs/adr/) | Architecture decision records (Go backend, on-demand TLS, frontend/backend separation, landing-page SDK, visit detail, rule verdicts, GeoIP, world map) |
 | [`docs/agents/`](docs/agents/) | Agent collaboration conventions |
-| [`.scratch/cloak/`](.scratch/cloak/) | Requirement spec, full API contract, per-feature tickets |
+| [`.scratch/janus/`](.scratch/janus/) | Requirement spec, full API contract, per-feature tickets |
 | [`.env.example`](.env.example) | Environment variable template with per-variable notes |
 
 **In one line**: Janus is a short-link service that works the moment DNS points at it — tenants bring domains, and certificates, analytics and rules come included.

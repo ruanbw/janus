@@ -11,7 +11,7 @@ func TestSMTPMailerConfigValidation(t *testing.T) {
 			Host: "smtp.example.com",
 			Port: 587,
 		},
-		baseURL: "http://app.cloak.test",
+		baseURL: "http://app.janus.test",
 	}
 
 	// 缺少 From 和 Username 时应该直接报错
@@ -24,7 +24,7 @@ func TestSMTPMailerConfigValidation(t *testing.T) {
 	}
 
 	// 补全 From 之后，由于目标主机不可达，应该在 dial 时返回连接错误而非 panic
-	mailer.cfg.From = "no-reply@cloak.test"
+	mailer.cfg.From = "no-reply@janus.test"
 	err = mailer.SendVerifyEmail("user@example.com", "token123")
 	if err == nil {
 		t.Fatal("expected connection error to non-existent host")
@@ -36,13 +36,13 @@ func TestSMTPMailerMessagePreparation(t *testing.T) {
 		cfg: SMTPConfig{
 			Host:     "127.0.0.1",
 			Port:     465,
-			Username: "sender@cloak.test",
+			Username: "sender@janus.test",
 			Password: "secretpassword",
 		},
-		baseURL: "https://app.cloak.test",
+		baseURL: "https://app.janus.test",
 	}
 
-	err := mailer.SendResetEmail("target@cloak.test", "reset_token_xyz")
+	err := mailer.SendResetEmail("target@janus.test", "reset_token_xyz")
 	if err == nil {
 		t.Fatal("expected connection error to 127.0.0.1:465")
 	}

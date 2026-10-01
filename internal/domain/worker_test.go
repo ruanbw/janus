@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"cloak/internal/config"
+	"janus/internal/config"
 )
 
 func testCfg() config.Config {

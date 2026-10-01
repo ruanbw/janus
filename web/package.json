@@ -1,10 +1,10 @@
 {
-  "name": "cloak-admin",
+  "name": "janus-admin",
   "version": "0.1.0",
   "private": true,
   "packageManager": "pnpm@10.30.3",
   "type": "module",
-  "description": "CLOAK 后台管理界面(Vben Admin 风格:Vue 3 + TypeScript SPA,消费 Go 后端 RESTful API)",
+  "description": "Janus 后台管理界面(Vben Admin 风格:Vue 3 + TypeScript SPA,消费 Go 后端 RESTful API)",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

@@ -1,5 +1,5 @@
 -- +goose Up
--- 0001_init.sql — CLOAK 初始表结构(见 spec 决策 #5)
+-- 0001_init.sql — Janus 初始表结构(见 spec 决策 #5)
 
 CREATE TABLE tiers (
     id          BIGSERIAL PRIMARY KEY,

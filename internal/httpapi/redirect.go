@@ -31,9 +31,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"cloak/internal/httpapi/templates"
-	"cloak/internal/rules"
-	"cloak/internal/store"
+	"janus/internal/httpapi/templates"
+	"janus/internal/rules"
+	"janus/internal/store"
 )
 
 // ---------- 访客可见错误页的安全响应头与租户错误页快照 ----------

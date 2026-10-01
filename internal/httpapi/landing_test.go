@@ -16,8 +16,8 @@ import (
 	"strings"
 	"testing"
 
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 // makeZip 按 entries 构造 zip(压缩包内容,字节)。
@@ -233,8 +233,8 @@ func TestLandingSDKContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), "/kpage/click") || !strings.Contains(string(body), "Cloak") {
-		t.Errorf("sdk body missing click url / Cloak: %s", body)
+	if !strings.Contains(string(body), "/kpage/click") || !strings.Contains(string(body), "Janus") {
+		t.Errorf("sdk body missing click url / Janus: %s", body)
 	}
 }
 
@@ -253,7 +253,7 @@ func TestLandingUploadFlow(t *testing.T) {
 
 	// 走完整流程:建链(跳转型)→ 上传 → 定型。上传单层根文件夹应被自动剥离
 	z := makeZip(t, map[string]string{
-		"site/index.html":    "<html><body>CLOAK-LANDING</body></html>",
+		"site/index.html":    "<html><body>JANUS-LANDING</body></html>",
 		"site/css/style.css": "body{color:red}",
 	})
 	link := createUploadLandingLink(t, c, lid, "kpage", z)
@@ -265,7 +265,7 @@ func TestLandingUploadFlow(t *testing.T) {
 	resp = redirectGet(t, env, "localhost", "/kpage/")
 	assertStatus(t, resp, http.StatusOK)
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), "CLOAK-LANDING") {
+	if !strings.Contains(string(body), "JANUS-LANDING") {
 		t.Errorf("index body = %s", body)
 	}
 	if cc := resp.Header.Get("Cache-Control"); cc != "no-cache" {

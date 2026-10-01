@@ -1,6 +1,6 @@
 // 请求封装:
-// - 会话 cookie(cloak_session,HTTP-only)由浏览器自动携带(axios withCredentials)
-// - CSRF 双提交 token:从 cookie cloak_csrf 读取,放入 X-CSRF-Token 请求头
+// - 会话 cookie(janus_session,HTTP-only)由浏览器自动携带(axios withCredentials)
+// - CSRF 双提交 token:从 cookie janus_csrf 读取,放入 X-CSRF-Token 请求头
 // - 统一错误处理:解析 { code, message, details? } 结构并抛出 ApiError
 import axios, { AxiosError } from 'axios';
 
@@ -11,7 +11,7 @@ import { ApiError } from '@/types/api';
 const API_PREFIX = import.meta.env.VITE_API_PREFIX || '/api';
 
 /** CSRF cookie 名(后端约定) */
-const CSRF_COOKIE = 'cloak_csrf';
+const CSRF_COOKIE = 'janus_csrf';
 
 /** 无需 CSRF 的安全方法 */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);

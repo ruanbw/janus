@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# CLOAK 端到端 API 测试(黑盒),自包含:自建数据库 + 自起服务 + 跑完即清理。
+# Janus 端到端 API 测试(黑盒),自包含:自建数据库 + 自起服务 + 跑完即清理。
 #
 # 覆盖:认证 / 配额 / 域名 / 短链 / 跳转 / 规则 / 访问统计 / 总览 /
 #       错误页定制 / 租户隔离 / JWT / Caddy 授权端点 / 平台管理。
@@ -24,10 +24,10 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-PG_CONTAINER="${PG_CONTAINER:-cloak-postgres-1}"
-E2E_DB="${E2E_DB:-cloak_e2e}"
+PG_CONTAINER="${PG_CONTAINER:-janus-postgres-1}"
+E2E_DB="${E2E_DB:-janus_e2e}"
 PORT="${E2E_PORT:-18080}"
-PLATFORM_DOMAIN="${E2E_PLATFORM_DOMAIN:-e2e.cloak.test}"
+PLATFORM_DOMAIN="${E2E_PLATFORM_DOMAIN:-e2e.janus.test}"
 ASK_TOKEN="e2e-ask-token-$$"
 SELF=""
 
@@ -39,7 +39,7 @@ sect() { printf '\n\033[1;36m── %s\033[0m\n' "$1"; }
 skip() { SKIP=$((SKIP+1)); printf '  \033[33m⊘\033[0m %s(跳过:%s)\n' "$1" "$2"; }
 check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$3"; fi; }
 
-psql_q() { docker exec "$PG_CONTAINER" psql -U cloak -d "$1" -qtAc "$2" 2>/dev/null | tr -d '\r'; }
+psql_q() { docker exec "$PG_CONTAINER" psql -U janus -d "$1" -qtAc "$2" 2>/dev/null | tr -d '\r'; }
 
 py() { if [ -n "${PYDBG:-}" ]; then python3 -c "$1" x "${@:2}"; else python3 -c "$1" x "${@:2}" 2>/dev/null; fi; }
 
@@ -51,25 +51,25 @@ if [ -z "$BASE" ]; then
 
   BUILD_DIR="$(mktemp -d)"
   echo "▸ 编译测试二进制"
-  if ! go build -o "$BUILD_DIR/cloak-e2e" ./cmd/cloak; then
+  if ! go build -o "$BUILD_DIR/janus-e2e" ./cmd/janus; then
     echo "编译失败"; exit 2
   fi
 
   LOG="$BUILD_DIR/server.log"
-  CLOAK_ADDR=":$PORT" \
-  CLOAK_DATABASE_URL="postgres://cloak:cloak@localhost:5432/$E2E_DB?sslmode=disable" \
-  CLOAK_PLATFORM_DOMAIN="$PLATFORM_DOMAIN" \
-  CLOAK_SERVER_PUBLIC_IP="127.0.0.1" \
-  CLOAK_COOKIE_SECURE="false" \
-  CLOAK_JWT_SECRET="e2e-jwt-secret-$$" \
-  CLOAK_CADDY_ASK_TOKEN="$ASK_TOKEN" \
-  CLOAK_PUBLIC_BASE_URL="http://127.0.0.1:$PORT" \
-  CLOAK_LANDING_UPLOAD_DIR="$BUILD_DIR/uploads" \
-  CLOAK_DNS_RETRY_INTERVAL="1s" \
-  CLOAK_VISIT_CLEANUP_INTERVAL="30s" \
-  CLOAK_SUPERADMIN_EMAIL="root@e2e.test" \
-  CLOAK_MIGRATIONS_DIR="$ROOT/migrations" \
-    "$BUILD_DIR/cloak-e2e" > "$LOG" 2>&1 &
+  JANUS_ADDR=":$PORT" \
+  JANUS_DATABASE_URL="postgres://janus:janus@localhost:5432/$E2E_DB?sslmode=disable" \
+  JANUS_PLATFORM_DOMAIN="$PLATFORM_DOMAIN" \
+  JANUS_SERVER_PUBLIC_IP="127.0.0.1" \
+  JANUS_COOKIE_SECURE="false" \
+  JANUS_JWT_SECRET="e2e-jwt-secret-$$" \
+  JANUS_CADDY_ASK_TOKEN="$ASK_TOKEN" \
+  JANUS_PUBLIC_BASE_URL="http://127.0.0.1:$PORT" \
+  JANUS_LANDING_UPLOAD_DIR="$BUILD_DIR/uploads" \
+  JANUS_DNS_RETRY_INTERVAL="1s" \
+  JANUS_VISIT_CLEANUP_INTERVAL="30s" \
+  JANUS_SUPERADMIN_EMAIL="root@e2e.test" \
+  JANUS_MIGRATIONS_DIR="$ROOT/migrations" \
+    "$BUILD_DIR/janus-e2e" > "$LOG" 2>&1 &
   SELF=$!
 
   BASE="http://127.0.0.1:$PORT"
@@ -98,7 +98,7 @@ JAR="$(mktemp -d)/jar.txt"
 MAILLOG=""
 [ -n "$BUILD_DIR" ] && MAILLOG="$BUILD_DIR/server.log"
 
-csrf() { grep -o 'cloak_csrf[[:space:]].*$' "$JAR" 2>/dev/null | awk '{print $NF}' | tail -1; }
+csrf() { grep -o 'janus_csrf[[:space:]].*$' "$JAR" 2>/dev/null | awk '{print $NF}' | tail -1; }
 
 # req METHOD PATH [JSON] [HOST] → 置 STATUS / BODY
 STATUS=""; BODY=""
@@ -247,7 +247,7 @@ req POST /api/domains "{\"fqdn\":\"$SELF_FQDN\",\"description\":\"E2E 自有域�
 check "添加自有域名 -> 201" "201" "$STATUS"
 SDID=$(echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin)["id"])')
 check "  初始 status=pending" "pending" "$(echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin)["status"])')"
-check "  返回 TXT 指引 verifyRecord" "_cloak-verify.$SELF_FQDN" "$(echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin).get("verifyRecord",""))')"
+check "  返回 TXT 指引 verifyRecord" "_janus-verify.$SELF_FQDN" "$(echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin).get("verifyRecord",""))')"
 check "  返回 verifyValue" "True" "$(echo "$BODY" | py 'import sys,json;print(bool(json.load(sys.stdin).get("verifyValue")))')"
 
 req POST /api/domains "{\"fqdn\":\"$SELF_FQDN\"}"
@@ -567,7 +567,7 @@ cat > "$ZIPD/site/index.html" <<'HTML'
 <!doctype html><html><head><meta charset="utf-8"><title>落地页</title></head>
 <body><h1>Landing</h1>
 <script src="/sdk.js"></script>
-<button data-cloak-click="https://example.com/deal">立即领取</button>
+<button data-janus-click="https://example.com/deal">立即领取</button>
 </body></html>
 HTML
 ( cd "$ZIPD/site" && zip -qr "$ZIPD/lp.zip" . )
@@ -612,20 +612,20 @@ check "zip 缺 index.html -> 400" "400" "$ZS"
 sect "9. 自定义错误页"
 req GET /api/me/error-pages
 check "读错误页配置 -> 200" "200" "$STATUS"
-P404='<html><body><h1>CLOAK 404 定制页</h1></body></html>'
+P404='<html><body><h1>Janus 404 定制页</h1></body></html>'
 req PATCH /api/me/error-pages "{\"custom404Html\":\"$P404\"}"
 check "写 404 定制页 -> 200" "200" "$STATUS"
 req GET /api/me/error-pages
-check "  404 定制页已持久化" "True" "$(echo "$BODY" | py "import sys,json;print('CLOAK 404 定制页' in json.load(sys.stdin)['custom404Html'])")"
-P429='<html><body><h1>CLOAK 429 定制页</h1></body></html>'
+check "  404 定制页已持久化" "True" "$(echo "$BODY" | py "import sys,json;print('Janus 404 定制页' in json.load(sys.stdin)['custom404Html'])")"
+P429='<html><body><h1>Janus 429 定制页</h1></body></html>'
 req PATCH /api/me/error-pages "{\"custom429Html\":\"$P429\"}"
 check "写 429 定制页 -> 200" "200" "$STATUS"
 B404=$(curl -sS -H "Host: $DFQDN" "$BASE/nosuch${SUF}")
-echo "$B404" | grep -q "CLOAK 404 定制页" && ok "未命中返回自定义 404 页" || bad "未命中自定义 404 页" "含定制文案" "$(echo "$B404" | head -c 100)"
+echo "$B404" | grep -q "Janus 404 定制页" && ok "未命中返回自定义 404 页" || bad "未命中自定义 404 页" "含定制文案" "$(echo "$B404" | head -c 100)"
 req PATCH /api/me/error-pages '{"custom404Html":""}'
 check "清空 404 定制页 -> 200" "200" "$STATUS"
 r=$(curl -sS -H "Host: $DFQDN" "$BASE/nosuch${SUF}")
-echo "$r" | grep -q "CLOAK 404 定制页" && bad "清空后不再返回定制页" "不含定制文案" "仍含定制文案" || ok "清空后回到默认 404"
+echo "$r" | grep -q "Janus 404 定制页" && bad "清空后不再返回定制页" "不含定制文案" "仍含定制文案" || ok "清空后回到默认 404"
 
 # ───────────────────────── 10. 配额 ─────────────────────────
 sect "10. 配额上限"
@@ -677,7 +677,7 @@ fi
 S=$(c2 -o "$TMPBODY" -w '%{http_code}' -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
   -d "{\"email\":\"$E2\",\"password\":\"$PW2\"}")
 check "第二租户登录 -> 200" "200" "$S"
-C2CSRF=$(grep -o 'cloak_csrf[[:space:]].*$' "$JAR2" | awk '{print $NF}' | tail -1)
+C2CSRF=$(grep -o 'janus_csrf[[:space:]].*$' "$JAR2" | awk '{print $NF}' | tail -1)
 
 check "跨租户读短链 -> 404" "404" "$(c2 -o /dev/null -w '%{http_code}' "$BASE/api/links/$LLID")"
 check "跨租户改短链 -> 404" "404" "$(c2 -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/links/$LLID" -H "X-CSRF-Token: $C2CSRF" -H 'Content-Type: application/json' -d '{"status":"disabled"}')"
@@ -707,10 +707,10 @@ check "JWT 无需 CSRF 头(走 Bearer 而非 cookie)" "204" "$(curl -sS -o /dev/
 
 # ───────────────────────── 13. Caddy 授权端点 ─────────────────────────
 sect "13. Caddy on-demand TLS 授权端点"
-check "正确 token + 已激活域名 -> 200" "200" "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/internal/caddy/authorize?domain=$DFQDN" -H "X-Cloak-Caddy-Token: $ASK_TOKEN")"
-check "错误 token -> 403" "403" "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/internal/caddy/authorize?domain=$DFQDN" -H "X-Cloak-Caddy-Token: wrong")"
+check "正确 token + 已激活域名 -> 200" "200" "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/internal/caddy/authorize?domain=$DFQDN" -H "X-Janus-Caddy-Token: $ASK_TOKEN")"
+check "错误 token -> 403" "403" "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/internal/caddy/authorize?domain=$DFQDN" -H "X-Janus-Caddy-Token: wrong")"
 check "无 token -> 403" "403" "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/internal/caddy/authorize?domain=$DFQDN")"
-check "未激活域名 -> 403" "403" "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/internal/caddy/authorize?domain=notowned.example.org" -H "X-Cloak-Caddy-Token: $ASK_TOKEN")"
+check "未激活域名 -> 403" "403" "$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/internal/caddy/authorize?domain=notowned.example.org" -H "X-Janus-Caddy-Token: $ASK_TOKEN")"
 
 # ───────────────────────── 14. CSRF ─────────────────────────
 sect "14. CSRF 防护"
@@ -755,7 +755,7 @@ else
   # 要等真正设置密码后才翻 false —— 这里断言的是"此刻仍处引导态"。
   check "  首登后仍处引导态(尚无密码)" "True" "$(py 'import json,sys;v=json.load(open(sys.argv[2])).get("firstLoginSetup",False);print("True" if v in (True,"true") else "got:"+repr(v))' "$TMPBODY")"
 
-  SA_CSRF=$(grep -o 'cloak_csrf[[:space:]].*$' "$SAJAR" | awk '{print $NF}' | tail -1)
+  SA_CSRF=$(grep -o 'janus_csrf[[:space:]].*$' "$SAJAR" | awk '{print $NF}' | tail -1)
   r=$(sac -o "$TMPBODY" -w '%{http_code}' -X POST "$BASE/api/auth/change-password" \
       -H "X-CSRF-Token: $SA_CSRF" -H 'Content-Type: application/json' -d "{\"newPassword\":\"$SA_PW\"}")
   check "超管设置密码 -> 204" "204" "$r"
@@ -776,7 +776,7 @@ print("False" if v in (False, None, "false") else "got:"+repr(v))' "$TMPBODY")"
       -d "{\"email\":\"$SA_EMAIL\",\"password\":\"$SA_PW\",\"setupToken\":\"bogus-token-value\"}")
   check "正确密码 + 无效 setup token 仍可登录 -> 200" "200" "$r"
 
-  SAC=$(grep -o 'cloak_csrf[[:space:]].*$' "$SAJAR" | awk '{print $NF}' | tail -1)
+  SAC=$(grep -o 'janus_csrf[[:space:]].*$' "$SAJAR" | awk '{print $NF}' | tail -1)
   r=$(sac -o "$TMPBODY" -w '%{http_code}' "$BASE/api/admin/tenants")
   check "超管访问 /api/admin/tenants -> 200" "200" "$r"
   check "  能看到全部租户(>=2)" "True" "$([ "$(count_items "$TMPBODY")" != "ERR" ] && [ "$(count_items "$TMPBODY")" -ge 2 ] && echo True || echo "got:$(count_items "$TMPBODY")")"

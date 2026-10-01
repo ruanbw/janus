@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"cloak/internal/geo"
-	"cloak/internal/httpapi"
-	"cloak/internal/mailer"
-	"cloak/internal/testutil"
+	"janus/internal/geo"
+	"janus/internal/httpapi"
+	"janus/internal/mailer"
+	"janus/internal/testutil"
 )
 
 func TestRegisterRateLimit(t *testing.T) {
@@ -73,7 +73,7 @@ func serveWithTrustedProxies(t *testing.T, env *testutil.Env, cidrs []string, rl
 	cfg.TrustedProxyCIDrs = cidrs
 	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
 		Store:     env.Store,
-		Mailer:    mailer.NewMailer(mailer.Config{BaseURL: "https://app.cloak.test"}, &bytes.Buffer{}),
+		Mailer:    mailer.NewMailer(mailer.Config{BaseURL: "https://app.janus.test"}, &bytes.Buffer{}),
 		Cfg:       cfg,
 		RateLimit: &rl,
 		GeoLookup: geo.Disabled,
@@ -105,7 +105,7 @@ func postLoginFrom(t *testing.T, srv *httptest.Server, xff string) int {
 	return resp.StatusCode
 }
 
-// TestRateLimitIgnoresForgedXFFWhenNoTrustedProxy 未配置 CLOAK_TRUSTED_PROXY_CIDRS 时,
+// TestRateLimitIgnoresForgedXFFWhenNoTrustedProxy 未配置 JANUS_TRUSTED_PROXY_CIDRS 时,
 // 即使 TCP 对端是私网/回环地址也**必须**忽略 X-Forwarded-For。
 //
 // 这是"限流可被伪造 XFF 绕过"那条洞的回归测试:旧实现按"对端是私网 ⇒ 可信"推断,

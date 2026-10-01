@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"cloak/internal/config"
-	"cloak/internal/store"
+	"janus/internal/config"
+	"janus/internal/store"
 )
 
 // 后台循环的固定节奏。
@@ -71,10 +71,10 @@ func ValidateIntervals(cfg config.Config) error {
 		name string
 		v    time.Duration
 	}{
-		{"CLOAK_DNS_RETRY_INTERVAL", cfg.DNSRetryInterval},
-		{"CLOAK_DNS_MAX_AGE", cfg.DNSMaxAge},
-		{"CLOAK_VISIT_RETENTION", cfg.VisitRetention},
-		{"CLOAK_VISIT_CLEANUP_INTERVAL", cfg.VisitCleanupEvery},
+		{"JANUS_DNS_RETRY_INTERVAL", cfg.DNSRetryInterval},
+		{"JANUS_DNS_MAX_AGE", cfg.DNSMaxAge},
+		{"JANUS_VISIT_RETENTION", cfg.VisitRetention},
+		{"JANUS_VISIT_CLEANUP_INTERVAL", cfg.VisitCleanupEvery},
 		{"证书探活间隔", certProbeInterval},
 		{"归属复检间隔", OwnershipRecheckInterval},
 	}
@@ -223,7 +223,7 @@ func (w *Worker) verifyAndActivate(ctx context.Context, d store.DomainScanRow) {
 			log.Printf("worker dns-retry: mint token %s: %v", d.FQDN, err)
 			return
 		}
-		log.Printf("worker dns-retry: %s 已重新签发 TXT 挑战(_cloak-verify.%s)", d.FQDN, d.FQDN)
+		log.Printf("worker dns-retry: %s 已重新签发 TXT 挑战(_janus-verify.%s)", d.FQDN, d.FQDN)
 		return
 	}
 	res, err := w.dns.Verify(ctx, d.FQDN, d.VerifyToken)

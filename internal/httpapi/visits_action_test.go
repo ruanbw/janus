@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 // visitPage 访问列表响应体。

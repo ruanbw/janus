@@ -1,4 +1,4 @@
-module cloak
+module janus
 
 go 1.26.0
 

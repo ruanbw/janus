@@ -6,8 +6,8 @@ import (
 	"errors"
 	"strings"
 
-	"cloak/internal/domain"
-	"cloak/internal/store"
+	"janus/internal/domain"
+	"janus/internal/store"
 )
 
 // Superadmin 按环境变量指定的邮箱初始化超管租户:

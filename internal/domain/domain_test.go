@@ -47,7 +47,7 @@ func assertStatus(t *testing.T, got, want VerifyStatus) {
 func TestVerifyPassesWithTXTToken(t *testing.T) {
 	const token = "tok-123"
 	c := fakeDNS("203.0.113.7", []netip.Addr{mustAddr(t, "203.0.113.7")},
-		map[string][]string{"_cloak-verify.shop.customer.com": {token}})
+		map[string][]string{"_janus-verify.shop.customer.com": {token}})
 	res, err := c.Verify(context.Background(), "shop.customer.com", token)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -61,7 +61,7 @@ func TestVerifyPassesWithTXTToken(t *testing.T) {
 // 不持有 token(刚创建、或挑战已被消费)→ 不通过,且指引是"去加 TXT"。
 func TestVerifyFailsWithoutToken(t *testing.T) {
 	c := fakeDNS("203.0.113.7", []netip.Addr{mustAddr(t, "203.0.113.7")},
-		map[string][]string{"_cloak-verify.shop.customer.com": {"whatever"}})
+		map[string][]string{"_janus-verify.shop.customer.com": {"whatever"}})
 	res, err := c.Verify(context.Background(), "shop.customer.com", "")
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -72,7 +72,7 @@ func TestVerifyFailsWithoutToken(t *testing.T) {
 // token 不匹配 → 不通过(抄来的/过期的 token 都没用)。
 func TestVerifyFailsOnWrongToken(t *testing.T) {
 	c := fakeDNS("203.0.113.7", []netip.Addr{mustAddr(t, "203.0.113.7")},
-		map[string][]string{"_cloak-verify.shop.customer.com": {"stale-token"}})
+		map[string][]string{"_janus-verify.shop.customer.com": {"stale-token"}})
 	res, err := c.Verify(context.Background(), "shop.customer.com", "fresh-token")
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -132,7 +132,7 @@ func TestVerifyTokenIsSingleUse(t *testing.T) {
 	}
 	// 库里的挑战已换成 newToken,而 DNS 上还留着旧值 → 不能通过。
 	c := fakeDNS("203.0.113.7", []netip.Addr{mustAddr(t, "203.0.113.7")},
-		map[string][]string{"_cloak-verify.shop.customer.com": {oldToken}})
+		map[string][]string{"_janus-verify.shop.customer.com": {oldToken}})
 	res, err := c.Verify(context.Background(), "shop.customer.com", newToken)
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
@@ -140,9 +140,9 @@ func TestVerifyTokenIsSingleUse(t *testing.T) {
 	assertStatus(t, res.Status, VerifyNeedTXT)
 }
 
-// TXT 查询名固定为 _cloak-verify.<归一化 fqdn>。
+// TXT 查询名固定为 _janus-verify.<归一化 fqdn>。
 func TestVerifyRecordName(t *testing.T) {
-	if got := VerifyRecordName("Shop.Customer.COM."); got != "_cloak-verify.shop.customer.com" {
+	if got := VerifyRecordName("Shop.Customer.COM."); got != "_janus-verify.shop.customer.com" {
 		t.Fatalf("VerifyRecordName = %q", got)
 	}
 }
@@ -168,14 +168,14 @@ func TestIsReservedFQDN(t *testing.T) {
 		fqdn, platform string
 		want           bool
 	}{
-		{"cloak.test", "cloak.test", true},
-		{"app.cloak.test", "cloak.test", true},
-		{"mail.cloak.test", "cloak.test", true},
-		{"www.cloak.test", "cloak.test", true},
-		{"deep.nested.cloak.test", "cloak.test", true},
-		{"notcloak.test", "cloak.test", false},
-		{"cloak.test.evil.com", "cloak.test", false},
-		{"customer.com", "cloak.test", false},
+		{"janus.test", "janus.test", true},
+		{"app.janus.test", "janus.test", true},
+		{"mail.janus.test", "janus.test", true},
+		{"www.janus.test", "janus.test", true},
+		{"deep.nested.janus.test", "janus.test", true},
+		{"notjanus.test", "janus.test", false},
+		{"janus.test.evil.com", "janus.test", false},
+		{"customer.com", "janus.test", false},
 		{"anything.com", "", false},
 	}
 	for _, tc := range cases {

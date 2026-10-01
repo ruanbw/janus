@@ -9,29 +9,29 @@ import (
 	"strconv"
 	"testing"
 
-	"cloak/internal/bootstrap"
-	"cloak/internal/httpapi"
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/bootstrap"
+	"janus/internal/httpapi"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 // superadminClient 初始化超管并完成首次登录设置密码,返回超管客户端。
 func superadminClient(t *testing.T, env *testutil.Env) *testClient {
 	t.Helper()
-	if err := bootstrap.Superadmin(context.Background(), env.Store, "admin@cloak.test"); err != nil {
+	if err := bootstrap.Superadmin(context.Background(), env.Store, "admin@janus.test"); err != nil {
 		t.Fatalf("bootstrap superadmin: %v", err)
 	}
 	c := newClient(env)
 	// 无密码首登**不再免密**:必须先拿到发到超管邮箱的一次性 setup token。
 	// 这里先试"只带任意密码" —— 必须被拒(否则知道超管邮箱就等于拿到整个平台),
 	// 同时该次失败会触发一枚 setup token 补发。
-	resp := c.post("/api/auth/login", map[string]string{"email": "admin@cloak.test", "password": "whatever"})
+	resp := c.post("/api/auth/login", map[string]string{"email": "admin@janus.test", "password": "whatever"})
 	assertStatus(t, resp, http.StatusUnauthorized)
 	_ = resp.Body.Close()
 
 	// 凭 setup token 才能登录成功,响应带 firstLoginSetup 标记
 	resp = c.post("/api/auth/login", map[string]string{
-		"email": "admin@cloak.test", "password": "whatever", "setupToken": env.LastToken(t),
+		"email": "admin@janus.test", "password": "whatever", "setupToken": env.LastToken(t),
 	})
 	assertStatus(t, resp, http.StatusOK)
 	tenant := decodeBody[store.Tenant](t, resp)
@@ -53,7 +53,7 @@ func TestSuperadminBootstrapAndLogin(t *testing.T) {
 	_ = superadminClient(t, env)
 
 	// 设置密码后再次登录:不再引导
-	resp := newClient(env).post("/api/auth/login", map[string]string{"email": "admin@cloak.test", "password": "adminpass123"})
+	resp := newClient(env).post("/api/auth/login", map[string]string{"email": "admin@janus.test", "password": "adminpass123"})
 	assertStatus(t, resp, http.StatusOK)
 	tenant := decodeBody[store.Tenant](t, resp)
 	if tenant.FirstLoginSetup {
@@ -93,7 +93,7 @@ func TestAdminBanAndUnban(t *testing.T) {
 	c := loggedInTenant(t, env, "alice")
 
 	// 封禁前授权放行
-	resp := get(t, env, "/internal/caddy/authorize?domain=alice.cloak.test")
+	resp := get(t, env, "/internal/caddy/authorize?domain=alice.janus.test")
 	assertStatus(t, resp, http.StatusOK)
 
 	// 超管封禁
@@ -106,7 +106,7 @@ func TestAdminBanAndUnban(t *testing.T) {
 	}
 
 	// 封禁后:授权端点拒绝其默认域名;登录被拒;既有会话立即失效
-	resp = get(t, env, "/internal/caddy/authorize?domain=alice.cloak.test")
+	resp = get(t, env, "/internal/caddy/authorize?domain=alice.janus.test")
 	assertStatus(t, resp, http.StatusForbidden)
 	resp = newClient(env).post("/api/auth/login", map[string]string{"email": "alice@example.com", "password": "password123"})
 	assertStatus(t, resp, http.StatusForbidden)
@@ -119,7 +119,7 @@ func TestAdminBanAndUnban(t *testing.T) {
 	resp = admin.patch("/api/admin/tenants/"+strconv.FormatInt(aliceID, 10), map[string]any{"status": "active"})
 	assertStatus(t, resp, http.StatusOK)
 	_ = resp.Body.Close()
-	resp = get(t, env, "/internal/caddy/authorize?domain=alice.cloak.test")
+	resp = get(t, env, "/internal/caddy/authorize?domain=alice.janus.test")
 	assertStatus(t, resp, http.StatusOK)
 }
 

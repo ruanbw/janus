@@ -1,11 +1,11 @@
-# CLOAK 开发环境编排:只跑基础设施(Postgres + Caddy 反代)。
+# Janus 开发环境编排:只跑基础设施(Postgres + Caddy 反代)。
 # Go 后端与前端在终端直接启动,便于调试:
 #   docker compose up -d                     # 启动 postgres + caddy
-#   CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak   # 后端
+#   JANUS_COOKIE_SECURE=false JANUS_ADDR=:8080 go run ./cmd/janus   # 后端
 #   cd web && pnpm dev                       # 前端(代理 /api 到 127.0.0.1:8080)
 # Caddy 通过 host.docker.internal 反代宿主机上的后端(:8080),授权端点直连同一地址。
 # 需用户手动步骤:
-#   1. /etc/hosts 添加(需 sudo):127.0.0.1 app.cloak.test <测试租户子域>.cloak.test
+#   1. /etc/hosts 添加(需 sudo):127.0.0.1 app.janus.test <测试租户子域>.janus.test
 #   2. 信任 Caddy 本地 CA 根证书:
 #        docker compose exec caddy cat /data/caddy/pki/authorities/local/root.crt > certs/caddy-root.pem
 #        sudo caddy trust --ca certs/caddy-root.pem(或 macOS 钥匙串导入并信任)
@@ -13,15 +13,15 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: cloak
-      POSTGRES_PASSWORD: cloak
-      POSTGRES_DB: cloak
+      POSTGRES_USER: janus
+      POSTGRES_PASSWORD: janus
+      POSTGRES_DB: janus
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cloak -d cloak"]
+      test: ["CMD-SHELL", "pg_isready -U janus -d janus"]
       interval: 3s
       timeout: 3s
       retries: 30
@@ -33,10 +33,10 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       # 容器继承宿主 HTTP(S)_PROXY(如 host.docker.internal:7890),ask 授权请求必须直连宿主机后端
-      - NO_PROXY=host.docker.internal,localhost,127.0.0.1,.cloak.test
-      - no_proxy=host.docker.internal,localhost,127.0.0.1,.cloak.test
+      - NO_PROXY=host.docker.internal,localhost,127.0.0.1,.janus.test
+      - no_proxy=host.docker.internal,localhost,127.0.0.1,.janus.test
     ports:
-      # 无端口访问:SwitchHosts 把 *.cloak.test 指向 127.0.0.1 后,浏览器默认走
+      # 无端口访问:SwitchHosts 把 *.janus.test 指向 127.0.0.1 后,浏览器默认走
       # 443(https)与 80(http);80 上 Caddy 自动 308 跳转 https。
       # 注意:flow-filtering 的 openresty 容器也绑定宿主 80/443/8080,
       # 开发时才启动它,与本服务同时运行会冲突,注意错开。

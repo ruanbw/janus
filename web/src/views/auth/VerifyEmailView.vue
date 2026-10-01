@@ -47,9 +47,9 @@ const failed = ref(false);
 const failTitle = ref('邮箱验证失败');
 const failMessage = ref('');
 
-/** 开发环境:验证链接打印在后端容器日志(docker logs cloak-backend-1) */
+/** 开发环境:验证链接打印在后端容器日志(docker logs janus-backend-1) */
 const sentHint =
-  '验证链接已发送到你的邮箱。开发环境中,验证链接打印在后端容器日志中,请执行 docker logs cloak-backend-1 查看。';
+  '验证链接已发送到你的邮箱。开发环境中,验证链接打印在后端容器日志中,请执行 docker logs janus-backend-1 查看。';
 
 onMounted(async () => {
   const token = (route.query.token as string) || '';

@@ -1,6 +1,6 @@
 Status: ready
 
-# CLOAK 短链服务 — 规格
+# Janus 短链服务 — 规格
 
 ## Problem Statement
 
@@ -8,7 +8,7 @@ Status: ready
 
 ## Solution
 
-一个部署在单台服务器上的**多租户短链服务**(CLOAK):
+一个部署在单台服务器上的**多租户短链服务**(Janus):
 - 租户注册后,管理自己的**域名**与**短链**;添加域名后系统自动完成 **DNS 激活校验 → HTTPS 证书签发 → 自动续期** 的全流程;
 - 每条短链由**短码 + 一个或多个目标 URL + 一组关联域名**构成,同一短码可在不同域名下指向不同目标;
 - 提供**后台管理界面**(Vben Admin)与 **RESTful API**,前后端分离;
@@ -93,7 +93,7 @@ Status: ready
 1. **架构(前后端分离,API-first)**:Go 后端提供 RESTful JSON API;管理端为 Vben Admin(Vue 3 SPA),消费该 API;Caddy 前置负责 TLS 终止与证书生命周期;Postgres 存储;Docker Compose 编排。前端构建产物经 go:embed 内嵌进 Go 二进制,维持单二进制部署;Caddy 将后台域名与租户域名统一反向代理到 Go,Go 按路由区分(后台/API 与跳转)。
 2. **RESTful 约定**:资源导向、JSON、动词语义(POST 创建/PATCH 更新/DELETE 删除/GET 查询);统一错误响应结构;列表分页;错误码可机器判读。
 3. **认证与会话**:邮箱 + 密码;密码用 bcrypt/argon2 哈希;登录签发 HTTP-only、Secure、SameSite 会话 cookie,配合 CSRF 防护(SPA 同源);会话默认 30 天(可勾选 remember-me)。注册需邮箱验证,邮件经 SMTP 发送——SMTP 凭据后续由部署者提供,mailer 做成可插拔,开发期用控制台/虚拟 mailer;提供密码重置邮件。
-4. **超管初始化**:环境变量指定超管邮箱(如 `CLOAK_SUPERADMIN_EMAIL`);该租户记录带 `is_super_admin` 标志;首次登录引导设置密码;不用"首个注册账号即超管"。
+4. **超管初始化**:环境变量指定超管邮箱(如 `JANUS_SUPERADMIN_EMAIL`);该租户记录带 `is_super_admin` 标志;首次登录引导设置密码;不用"首个注册账号即超管"。
 5. **数据模型(schema)**:
    - `tenants(id, email, password_hash, tier_id, status[pending|active|banned], verified_at, slug 全局唯一, is_super_admin, code_length(默认6), created_at)`
    - `tiers(id, name, max_links, max_domains)` — 种子数据:免费档(短链 100 / 域名 10)
@@ -110,7 +110,7 @@ Status: ready
 11. **管理端 API 面**(会话鉴权,供 Vben Admin):auth(注册/登录/登出/me/改密/忘记密码/重置)、domains(增删改查 + 手动重新校验)、links(增删改查 + 停用/启用 + 彻底删除)、visits(访问列表与计数)、api-keys、tenant(设置与配额用量)、superadmin(租户列表/封禁/调等级)。
 12. **安全与防滥用**:注册/登录限流;目标 URL 存储任意协议文本(开放重定向),实现必须拒绝控制字符(CRLF)防 header 注入;授权端点限内网;Caddy 配置 max_certs 保护;所有管理端请求鉴权并按登录租户过滤数据。
 13. **租户注册与默认域名流程**:注册时提交 `{email, password, slug}`;系统校验 slug 唯一(且不与任何既有域名 FQDN 冲突)后创建租户(`pending`)并同步创建 `origin=platform` 的默认域名记录(`{slug}.{平台域名}`,`active`、`cert_status=pending`);邮箱验证通过后置租户 `verified`,触发该默认域名的证书预签发探活,该子域即可承载短链。泛域名解析(`*.<平台域名>`)由部署者在 DNS 上配置。
-14. **环境配置与开发/生产对齐**:代码只写一套,环境差异全部由配置承载:`CLOAK_PLATFORM_DOMAIN`(平台域名)、`CLOAK_SERVER_PUBLIC_IP`(DNS 校验比对地址)、SMTP(未配置时落到控制台假 mailer)、Caddy 证书签发器(生产 Let's Encrypt / 开发本地 CA)。开发环境通过 hosts 文件(SwitchHosts)把平台域名与租户子域指向 `127.0.0.1`,`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 解析器默认读取 `/etc/hosts`,使 DNS 激活校验在开发环境走真实代码路径通过——无需"跳过校验"的分叉逻辑。
+14. **环境配置与开发/生产对齐**:代码只写一套,环境差异全部由配置承载:`JANUS_PLATFORM_DOMAIN`(平台域名)、`JANUS_SERVER_PUBLIC_IP`(DNS 校验比对地址)、SMTP(未配置时落到控制台假 mailer)、Caddy 证书签发器(生产 Let's Encrypt / 开发本地 CA)。开发环境通过 hosts 文件(SwitchHosts)把平台域名与租户子域指向 `127.0.0.1`,`JANUS_SERVER_PUBLIC_IP=127.0.0.1`,Go 解析器默认读取 `/etc/hosts`,使 DNS 激活校验在开发环境走真实代码路径通过——无需"跳过校验"的分叉逻辑。
 
 ## Testing Decisions
 
@@ -141,4 +141,4 @@ Status: ready
 - 域名删除时,其上"已逻辑删除"的短链一并物理清除;配额按未物理删除计数。
 - Caddy 固定镜像版本,证书目录用持久化卷;启动时预签发送首个访问者零等待。
 - 部署要求:DNS 上须配置平台域名的泛解析 `*.<平台域名>` 指向本服务器(以及裸平台域名本身,承载后台)。平台默认域名按子域逐个签发,受 Let's Encrypt 每注册域名每周 50 张证书(含续期)限制,该额度按平台域名聚合;规模接近上限时迁移到泛域名证书方案。
-- 开发环境:平台域名 `cloak.test`(RFC 保留测试域)。用 SwitchHosts 把 `app.cloak.test` 与每个测试租户子域 `{slug}.cloak.test` 指向 `127.0.0.1`(hosts 文件不支持通配符,租户子域需逐条加,SwitchHosts 多组即可);Caddy 用本地 CA(`tls internal`)为测试域名签发本地证书,执行一次 `caddy trust` 让本机浏览器信任根证书。Caddy 本地 CA 与 on-demand 的组合指令在实现期先用小 spike 验证。
+- 开发环境:平台域名 `janus.test`(RFC 保留测试域)。用 SwitchHosts 把 `app.janus.test` 与每个测试租户子域 `{slug}.janus.test` 指向 `127.0.0.1`(hosts 文件不支持通配符,租户子域需逐条加,SwitchHosts 多组即可);Caddy 用本地 CA(`tls internal`)为测试域名签发本地证书,执行一次 `caddy trust` 让本机浏览器信任根证书。Caddy 本地 CA 与 on-demand 的组合指令在实现期先用小 spike 验证。

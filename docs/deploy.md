@@ -1,4 +1,4 @@
-# CLOAK 生产部署指南
+# Janus 生产部署指南
 
 自托管、多租户短链服务。单台服务器:Go 后端(RESTful API)+ Postgres + nginx(前端静态服务)+ Caddy 前置(on-demand TLS,Let's Encrypt 自动签发/续期)。前后端分离(见 ADR-0006):前端为独立构建的 nginx 服务,后端镜像内无任何前端文件,两者独立发版;生产环境为多容器编排,不存在单二进制部署形态。
 
@@ -15,17 +15,17 @@
 
 | 变量 | 必填 | 说明 |
 | --- | --- | --- |
-| `CLOAK_PLATFORM_DOMAIN` | ✅ | 裸平台域名,如 `example.com`。租户默认域名形如 `<slug>.<平台域名>` |
-| `CLOAK_SERVER_PUBLIC_IP` | ✅ | 服务器公网 IP,DNS 激活校验比对地址 |
-| `CLOAK_DB_PASSWORD` | ✅ | Postgres 密码 |
-| `CLOAK_SUPERADMIN_EMAIL` | 建议 | 平台管理员邮箱(环境变量初始化,首次登录引导设置密码) |
-| `CLOAK_ACME_EMAIL` | 建议 | Let's Encrypt 账户邮箱 |
-| `CLOAK_DB_USER` / `CLOAK_DB_NAME` | 可选 | 默认 `cloak` / `cloak` |
-| `CLOAK_SESSION_TTL` / `CLOAK_SESSION_TTL_SHORT` | 可选 | 会话有效期,默认 30 天 / 24 小时 |
+| `JANUS_PLATFORM_DOMAIN` | ✅ | 裸平台域名,如 `example.com`。租户默认域名形如 `<slug>.<平台域名>` |
+| `JANUS_SERVER_PUBLIC_IP` | ✅ | 服务器公网 IP,DNS 激活校验比对地址 |
+| `JANUS_DB_PASSWORD` | ✅ | Postgres 密码 |
+| `JANUS_SUPERADMIN_EMAIL` | 建议 | 平台管理员邮箱(环境变量初始化,首次登录引导设置密码) |
+| `JANUS_ACME_EMAIL` | 建议 | Let's Encrypt 账户邮箱 |
+| `JANUS_DB_USER` / `JANUS_DB_NAME` | 可选 | 默认 `janus` / `janus` |
+| `JANUS_SESSION_TTL` / `JANUS_SESSION_TTL_SHORT` | 可选 | 会话有效期,默认 30 天 / 24 小时 |
 
 其余可选变量见 `.env.example`(token 有效期、DNS 重试、访问保留时长等)。
 
-> **部署前必须修改 Caddyfile.prod**:Caddy 站点地址不支持环境变量占位符,该文件把站点域名硬编码为 `example.com`(注释中已标注),需要把 `example.com` 全部替换为你的平台域名(与 `CLOAK_PLATFORM_DOMAIN` 一致)。`CLOAK_ACME_EMAIL` 仅在取消注释 Caddyfile.prod 中的 `email` 指令后生效(为空时该指令会导致 Caddy 启动失败)。
+> **部署前必须修改 Caddyfile.prod**:Caddy 站点地址不支持环境变量占位符,该文件把站点域名硬编码为 `example.com`(注释中已标注),需要把 `example.com` 全部替换为你的平台域名(与 `JANUS_PLATFORM_DOMAIN` 一致)。`JANUS_ACME_EMAIL` 仅在取消注释 Caddyfile.prod 中的 `email` 指令后生效(为空时该指令会导致 Caddy 启动失败)。
 
 ## 3. 启动
 
@@ -34,7 +34,7 @@ cp .env.example .env   # 填写生产值
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-- 首次启动自动执行数据库迁移、创建免费档种子、按 `CLOAK_SUPERADMIN_EMAIL` 初始化超管;
+- 首次启动自动执行数据库迁移、创建免费档种子、按 `JANUS_SUPERADMIN_EMAIL` 初始化超管;
 - 证书按需签发:租户域名激活后,访问者首次访问时 Caddy 询问授权端点并签发 Let's Encrypt 证书,到期前自动续期(ADR-0002、ADR-0004);
 - 查看状态:`docker compose -f docker-compose.prod.yml ps`、`docker compose -f docker-compose.prod.yml logs -f caddy`。
 
@@ -51,7 +51,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 - [ ] 超管登录后可见租户列表,可封禁/解封、调整等级、移除违规域名
 - [ ] 停用短链/域名后访问返回 404;配额超限时创建被拒并提示用量/上限
 
-> 上线前先在**开发环境**按同一清单走通(见 `docs/` 与 `.scratch/cloak/issues/01..15`),再切生产。
+> 上线前先在**开发环境**按同一清单走通(见 `docs/` 与 `.scratch/janus/issues/01..15`),再切生产。
 
 ## 5. 开发 / 生产差异
 
@@ -59,11 +59,11 @@ docker compose -f docker-compose.prod.yml up -d --build
 | --- | --- | --- |
 | 编排 | 基础设施 Docker(`docker compose up -d`:postgres + caddy);后端/前端终端启动(`go run` + `pnpm dev`,见根 README §5) | `docker compose -f docker-compose.prod.yml up -d`(全部容器化) |
 | 端口 | 后端 8080;Caddy 映射宿主 443/80(无端口访问) | 标准 80/443;后端不暴露公网 |
-| DNS | SwitchHosts 把 `app.cloak.test` 与测试租户子域指向 127.0.0.1(`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 读 /etc/hosts 走真实代码路径) | 真实 DNS 泛解析 `*.<平台域名>` |
+| DNS | SwitchHosts 把 `app.janus.test` 与测试租户子域指向 127.0.0.1(`JANUS_SERVER_PUBLIC_IP=127.0.0.1`,Go 读 /etc/hosts 走真实代码路径) | 真实 DNS 泛解析 `*.<平台域名>` |
 | 证书 | Caddy 本地 CA(`tls internal` + `on_demand_tls`),`caddy trust` 信任根证书 | Let's Encrypt(ACME 自动签发/续期) |
 | 邮件 | 控制台假 mailer(验证/重置链接打印在后端日志) | 真实 SMTP(部署者提供凭据;mailer 可插拔,见 spec 决策 #3) |
-| Cookie | `CLOAK_COOKIE_SECURE=false`(http) | `CLOAK_COOKIE_SECURE=true`(https,必须) |
-| 平台域名 | `cloak.test`(RFC 保留测试域) | 真实域名 |
+| Cookie | `JANUS_COOKIE_SECURE=false`(http) | `JANUS_COOKIE_SECURE=true`(https,必须) |
+| 平台域名 | `janus.test`(RFC 保留测试域) | 真实域名 |
 
 ## 6. SMTP 配置(邮件发送)
 
@@ -71,10 +71,10 @@ mailer 为可插拔实现(spec 决策 #3):未配置 SMTP 时使用控制台假 m
 
 | 变量 | 说明 |
 | --- | --- |
-| `CLOAK_SMTP_HOST` | SMTP 服务器地址,如 `smtp.example.com` |
-| `CLOAK_SMTP_PORT` | 默认 `465`(隐式 TLS);`587` 必须支持 STARTTLS,否则报错(拒绝明文 AUTH) |
-| `CLOAK_SMTP_USERNAME` / `CLOAK_SMTP_PASSWORD` | 认证凭据;用户名留空则不发送 AUTH |
-| `CLOAK_SMTP_FROM` | 发件人地址;留空回退为 Username,两者都空则发送报错 |
+| `JANUS_SMTP_HOST` | SMTP 服务器地址,如 `smtp.example.com` |
+| `JANUS_SMTP_PORT` | 默认 `465`(隐式 TLS);`587` 必须支持 STARTTLS,否则报错(拒绝明文 AUTH) |
+| `JANUS_SMTP_USERNAME` / `JANUS_SMTP_PASSWORD` | 认证凭据;用户名留空则不发送 AUTH |
+| `JANUS_SMTP_FROM` | 发件人地址;留空回退为 Username,两者都空则发送报错 |
 
 compose 会把上述变量转发给后端容器。
 

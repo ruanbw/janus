@@ -169,7 +169,7 @@ router.beforeEach(async (to) => {
 
 router.afterEach((to) => {
   const title = to.meta.title as string | undefined;
-  document.title = title ? `${title} · CLOAK 后台` : 'CLOAK 后台';
+  document.title = title ? `${title} · Janus 后台` : 'Janus 后台';
   try {
     sessionStorage.removeItem(`chunk_reload_${to.fullPath}`);
   } catch {

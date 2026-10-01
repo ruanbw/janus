@@ -18,13 +18,13 @@ type SMTPMailer struct {
 
 func (m *SMTPMailer) SendVerifyEmail(to, token string) error {
 	return m.send(to,
-		"CLOAK 邮箱验证",
+		"Janus 邮箱验证",
 		fmt.Sprintf("点击以下链接完成邮箱验证(24 小时内有效):\n\n%s\n\n如果这不是你的操作,请忽略本邮件。", verifyURL(m.baseURL, token)))
 }
 
 func (m *SMTPMailer) SendResetEmail(to, token string) error {
 	return m.send(to,
-		"CLOAK 密码重置",
+		"Janus 密码重置",
 		fmt.Sprintf("点击以下链接设置新密码(1 小时内有效):\n\n%s\n\n如果这不是你的操作,请忽略本邮件。", resetURL(m.baseURL, token)))
 }
 

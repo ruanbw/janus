@@ -13,8 +13,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"cloak/internal/geo"
-	"cloak/internal/store"
+	"janus/internal/geo"
+	"janus/internal/store"
 )
 
 // overviewResp GET /api/visits/overview 的响应体。

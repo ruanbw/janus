@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"testing"
 
-	"cloak/internal/domain"
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/domain"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 func TestMeUsageAndAutoCodeLength(t *testing.T) {

@@ -13,7 +13,7 @@ export function verifyEmail(data: { token: string }): Promise<void> {
   return post<void>('/auth/verify-email', data);
 }
 
-/** 登录:200 tenant + Set-Cookie(cloak_session / cloak_csrf) */
+/** 登录:200 tenant + Set-Cookie(janus_session / janus_csrf) */
 export function login(data: {
   email: string;
   password: string;

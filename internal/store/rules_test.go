@@ -12,17 +12,17 @@ import (
 	"strings"
 	"testing"
 
-	"cloak/internal/db"
+	"janus/internal/db"
 )
 
 // setupStore 连接测试库、执行迁移、清空业务表,返回一个只带 store 的环境。
-// 测试库不可用时跳过(需先起 postgres 并建好 cloak_test 库)。
+// 测试库不可用时跳过(需先起 postgres 并建好 janus_test 库)。
 func setupStore(t *testing.T) *Store {
 	t.Helper()
 	ctx := context.Background()
-	url := os.Getenv("CLOAK_TEST_DATABASE_URL")
+	url := os.Getenv("JANUS_TEST_DATABASE_URL")
 	if url == "" {
-		url = "postgres://cloak:cloak@localhost:5432/cloak_test?sslmode=disable"
+		url = "postgres://janus:janus@localhost:5432/janus_test?sslmode=disable"
 	}
 	pool, err := db.Connect(ctx, url)
 	if err != nil {

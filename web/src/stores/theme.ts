@@ -11,7 +11,7 @@ export interface TransitionOrigin {
   y: number;
 }
 
-const STORAGE_KEY = 'cloak-theme';
+const STORAGE_KEY = 'janus-theme';
 const DARK_QUERY = '(prefers-color-scheme: dark)';
 /** 移动端/桌面端浏览器地址栏跟随页面底色,随主题切换保持一致 */
 const THEME_COLOR: Record<ResolvedTheme, string> = { light: '#ffffff', dark: '#10141d' };

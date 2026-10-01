@@ -100,7 +100,7 @@
             <PanelLeftOpen v-else :size="17" />
           </button>
           <div class="flex min-w-0 items-center gap-2">
-            <span class="font-mono text-xs text-ink-faint">CLOAK</span>
+            <span class="font-mono text-xs text-ink-faint">Janus</span>
             <span class="text-ink-faint">/</span>
             <h1 class="truncate text-sm font-semibold text-ink">{{ routeTitle }}</h1>
           </div>
@@ -167,7 +167,7 @@
         </ErrorBoundary>
       </main>
 
-      <footer class="pb-5 text-center text-xs text-ink-faint">CLOAK · 自托管短链服务</footer>
+      <footer class="pb-5 text-center text-xs text-ink-faint">Janus · 自托管短链服务</footer>
     </div>
   </div>
 </template>
@@ -201,7 +201,7 @@ import { useAuthStore } from '@/stores/auth';
 const SIDEBAR_W_EXPANDED = '224px';
 const SIDEBAR_W_COLLAPSED = '64px';
 /** 与 web/src/styles/main.css 的 --sidebar-w 兜底值保持一致(首屏渲染前生效) */
-const COLLAPSE_STORAGE_KEY = 'cloak:sidebar-collapsed';
+const COLLAPSE_STORAGE_KEY = 'janus:sidebar-collapsed';
 
 const auth = useAuthStore();
 const route = useRoute();
@@ -281,7 +281,7 @@ watch(
   },
 );
 
-const routeTitle = computed(() => (route.meta.title as string | undefined) ?? 'CLOAK 后台');
+const routeTitle = computed(() => (route.meta.title as string | undefined) ?? 'Janus 后台');
 
 const tenantName = computed(
   () =>

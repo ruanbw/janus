@@ -369,7 +369,7 @@ const USER_AGENT_LIMIT = 500;
 /**
  * 访问明细保留期（天）。分布图的时间范围就是它 —— 超过这个窗口的访问
  * 已被后台清理任务删除，所以任何分布都只覆盖这段窗口，文案必须如实说明。
- * 默认值与后端 CLOAK_VISIT_RETENTION 的默认值一致。
+ * 默认值与后端 JANUS_VISIT_RETENTION 的默认值一致。
  */
 const VISIT_RETENTION_DAYS = 90;
 

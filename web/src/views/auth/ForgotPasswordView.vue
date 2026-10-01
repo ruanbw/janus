@@ -47,9 +47,9 @@ const submitting = ref(false);
 const sent = ref(false);
 const form = reactive({ email: '' });
 
-/** 开发环境:重置链接打印在后端容器日志(docker logs cloak-backend-1) */
+/** 开发环境:重置链接打印在后端容器日志(docker logs janus-backend-1) */
 const sentHint =
-  '如果该邮箱已注册,重置链接已发送。开发环境中,链接打印在后端容器日志,请执行 docker logs cloak-backend-1 查看。';
+  '如果该邮箱已注册,重置链接已发送。开发环境中,链接打印在后端容器日志,请执行 docker logs janus-backend-1 查看。';
 
 const rules: Record<string, FormRule[]> = {
   email: [

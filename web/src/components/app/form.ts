@@ -36,8 +36,8 @@ export interface FormContext {
   unregisterItem: (ctx: FormItemContext) => void;
 }
 
-export const formContextKey: InjectionKey<FormContext> = Symbol('cloak-form');
-export const formItemKey: InjectionKey<FormItemContext> = Symbol('cloak-form-item');
+export const formContextKey: InjectionKey<FormContext> = Symbol('janus-form');
+export const formItemKey: InjectionKey<FormItemContext> = Symbol('janus-form-item');
 
 export function useFormItem(): FormItemContext | undefined {
   return inject(formItemKey, undefined);

@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"cloak/internal/store"
+	"janus/internal/store"
 )
 
 // CaddyAskTokenHeader Caddy 回调时携带共享密钥的请求头名。
@@ -20,7 +20,7 @@ import (
 // 里的子指令在该版本被静默忽略),所以 Caddyfile 只能用查询参数传密钥
 // (`?token={$CADDY_ASK_TOKEN}`,{$ENV} 由 Caddyfile 适配器在 adapt 时展开)。
 // 头部的形式留给支持它的 Caddy 版本与手工测试 —— 两侧比对逻辑完全相同。
-const CaddyAskTokenHeader = "X-Cloak-Caddy-Token"
+const CaddyAskTokenHeader = "X-Janus-Caddy-Token"
 const CaddyAskTokenQuery = "token"
 
 // 授权端点的限流:按 TCP 对端 IP 分桶(Caddy 在 compose 网络里只有一个来源)。
@@ -47,13 +47,13 @@ func (a *API) caddyAuthLimiter() *rateLimiter {
 	return actual.(*rateLimiter)
 }
 
-// missingAskTokenLogged 保证"未配置 CLOAK_CADDY_ASK_TOKEN"只告警一次,而不是每次请求刷屏。
+// missingAskTokenLogged 保证"未配置 JANUS_CADDY_ASK_TOKEN"只告警一次,而不是每次请求刷屏。
 var missingAskTokenLogged sync.Once
 
 // handleCaddyAuthorize 是 Caddy on-demand TLS 的授权端点(见 ADR-0002、spec 决策 #8)。
 // 放行条件:
 //   - 请求来自本网络(第二层,不是唯一防线);
-//   - 携带正确的共享密钥 CLOAK_CADDY_ASK_TOKEN(第一层);
+//   - 携带正确的共享密钥 JANUS_CADDY_ASK_TOKEN(第一层);
 //   - 平台后台域名(裸平台域名)始终放行;
 //   - 域名记录 active 且所属租户 active(未封禁/已邮箱验证)。
 //
@@ -75,7 +75,7 @@ func (a *API) handleCaddyAuthorize(c *gin.Context) {
 	// 或前面再套一层反代(来源是内网 IP),判定恒真,这个无认证 GET 就公网可调 ——
 	// 它能枚举出"哪些租户域名处于 active",并引导 Caddy 为它们签发证书。
 	//
-	// 未配置 CLOAK_CADDY_ASK_TOKEN 时同样 fail-closed:发不出证书是可见的部署故障,
+	// 未配置 JANUS_CADDY_ASK_TOKEN 时同样 fail-closed:发不出证书是可见的部署故障,
 	// 而一个可被公网调用的枚举端点是静默的安全缺口。开发环境要在 Caddyfile 与
 	// 后端进程两边配同一个值(见 docker-compose.yml 与 .env.example)。
 	if !a.caddyAskTokenOK(c) {
@@ -114,7 +114,7 @@ func (a *API) caddyAskTokenOK(c *gin.Context) bool {
 	want := a.cfg.CaddyAskToken
 	if want == "" {
 		missingAskTokenLogged.Do(func() {
-			log.Printf("CLOAK_CADDY_ASK_TOKEN 未配置:/internal/caddy/authorize 一律拒绝(fail-closed)。" +
+			log.Printf("JANUS_CADDY_ASK_TOKEN 未配置:/internal/caddy/authorize 一律拒绝(fail-closed)。" +
 				"证书将无法签发 —— 请配置该变量,并把同一个值注入 Caddy 容器(Caddyfile 的 on_demand_tls.ask header)")
 		})
 		writeErr(c, http.StatusForbidden, errForbidden, "ask token not configured")

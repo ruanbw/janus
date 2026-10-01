@@ -8,9 +8,9 @@ import (
 	"sync"
 	"testing"
 
-	"cloak/internal/rules"
-	"cloak/internal/store"
-	"cloak/internal/testutil"
+	"janus/internal/rules"
+	"janus/internal/store"
+	"janus/internal/testutil"
 )
 
 // ---------- 05:表达式长度上限 + 请求体上限 ----------

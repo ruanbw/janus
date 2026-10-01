@@ -181,7 +181,7 @@ func clientIP(r *http.Request) string {
 // 使用的来源 IP。
 //
 // 与认证端点不同,这些路径**不能无条件 fail-closed**:若运维没配
-// CLOAK_TRUSTED_PROXY_CIDRS,trustedClientIP 会把所有访客都归到反代那一个源 IP 上,
+// JANUS_TRUSTED_PROXY_CIDRS,trustedClientIP 会把所有访客都归到反代那一个源 IP 上,
 // 于是 240 次/分的访客限流变成"全站共享 240 次/分",正常站点会被自己人打成 429。
 // 所以这里的取舍是:
 //   - 运维显式声明了可信代理网段 → 用 trustedClientIP(只采信可信对端的 XFF,
@@ -197,7 +197,7 @@ func (a *API) clientIPForVisitor(r *http.Request) string {
 }
 
 // trustedClientIP 是**认证端点限流**使用的来源 IP:只有 TCP 对端落在运维显式声明的
-// 可信代理网段(CLOAK_TRUSTED_PROXY_CIDRS)内,才采信 X-Forwarded-For;
+// 可信代理网段(JANUS_TRUSTED_PROXY_CIDRS)内,才采信 X-Forwarded-For;
 // 配置为空则**永不**采信,只认 TCP 对端。
 //
 // 为什么不做「私网即信」的推断:谁在前置代理是部署事实,只有部署者知道 ——

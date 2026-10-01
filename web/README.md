@@ -1,6 +1,6 @@
-# CLOAK 后台管理界面(web/)
+# Janus 后台管理界面(web/)
 
-CLOAK 短链服务的后台管理界面:基于 Vue 3 + TypeScript + Vite + Tailwind CSS 4 + Reka UI(无头组件)的单页应用(SPA),采用 Vben Admin 的工程形态(目录分层、Pinia 状态、路由守卫、Axios 封装),消费 Go 后端 RESTful API。
+Janus 短链服务的后台管理界面:基于 Vue 3 + TypeScript + Vite + Tailwind CSS 4 + Reka UI(无头组件)的单页应用(SPA),采用 Vben Admin 的工程形态(目录分层、Pinia 状态、路由守卫、Axios 封装),消费 Go 后端 RESTful API。
 
 ## 技术栈
 
@@ -15,12 +15,12 @@ CLOAK 短链服务的后台管理界面:基于 Vue 3 + TypeScript + Vite + Tailw
 ```bash
 pnpm install
 pnpm dev        # http://localhost:5173,/api 代理到 http://localhost:8080
-# 域名入口(SwitchHosts 配置后):http://app.cloak.test:5173(vite.config.ts 已放行)
+# 域名入口(SwitchHosts 配置后):http://app.janus.test:5173(vite.config.ts 已放行)
 pnpm check:ui   # 自动化 UI 一致性与设计规范门禁检查（0 违规才通过）
 pnpm type-check # Vue 3 + TypeScript 全量类型检查
 ```
 
-环境要求:Postgres 与 Caddy 由 `docker compose up -d` 提供;Go 后端在终端启动并监听 `http://localhost:8080`(见仓库根 README §5.6:`CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak`)。
+环境要求:Postgres 与 Caddy 由 `docker compose up -d` 提供;Go 后端在终端启动并监听 `http://localhost:8080`(见仓库根 README §5.6:`JANUS_COOKIE_SECURE=false JANUS_ADDR=:8080 go run ./cmd/janus`)。
 
 ## 构建
 
@@ -31,7 +31,7 @@ pnpm build      # 产物输出到 dist/(不入库);生产镜像构建期自行�
 ## 开发约定
 
 - UI 组件库契约见 web/UI_KIT.md(组件 props、表单/表格/确认框/toast API、图标映射、设计令牌)。
-- 深色模式:html.dark 由 src/stores/theme.ts 控制并持久化到 localStorage(cloak-theme)。
+- 深色模式:html.dark 由 src/stores/theme.ts 控制并持久化到 localStorage(janus-theme)。
 - 响应式一律用 Tailwind 断点工具类,不在 JS 里判断视口宽度。
 
 ## 总览页世界地图
@@ -45,8 +45,8 @@ pnpm build      # 产物输出到 dist/(不入库);生产镜像构建期自行�
 
 ## 认证与请求约定
 
-- 会话:登录后后端 `Set-Cookie`(cloak_session,HTTP-only),请求自动携带(axios `withCredentials`)。
-- CSRF:双提交 token——从 cookie `cloak_csrf` 读取值,写方法请求头附加 `X-CSRF-Token`(见 `src/utils/request.ts`)。
+- 会话:登录后后端 `Set-Cookie`(janus_session,HTTP-only),请求自动携带(axios `withCredentials`)。
+- CSRF:双提交 token——从 cookie `janus_csrf` 读取值,写方法请求头附加 `X-CSRF-Token`(见 `src/utils/request.ts`)。
 - 统一错误:非 2xx 响应解析 `{ code, message, details? }`,抛出 `ApiError`(见 `src/types/api.ts`),页面用 message 友好展示;401 自动回登录页。
 
 ## 页面

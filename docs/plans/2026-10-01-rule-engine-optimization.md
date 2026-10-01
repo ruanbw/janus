@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Optimize Cloak's rule engine for zero-allocation lazy evaluation on the redirect hot path, implement unified server-side rule simulation API to eliminate frontend drift, abstract a two-tier evaluation architecture (upgraded native AST engine + pluggable `expr-lang/expr` bytecode VM), and support nested condition logic and radix tree IP matching.
+**Goal:** Optimize Janus's rule engine for zero-allocation lazy evaluation on the redirect hot path, implement unified server-side rule simulation API to eliminate frontend drift, abstract a two-tier evaluation architecture (upgraded native AST engine + pluggable `expr-lang/expr` bytecode VM), and support nested condition logic and radix tree IP matching.
 
 **Architecture:** 
 A two-tier hybrid architecture (Tier-1 Native AST + Tier-2 Expr VM) sharing a unified `ConditionEvaluator` interface within the in-memory snapshot cache. The redirect hot path uses `LazyVisitorContext` with bitmask caching and `net/netip.Addr` to eliminate eager UA scanning and heap allocations. Server-side trace simulation executes identical evaluation logic for admin previews, eliminating frontend duplication.

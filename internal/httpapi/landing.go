@@ -1,7 +1,7 @@
 package httpapi
 
 // 16 — 落地页型短链:点击端点(计数+302 轮询目标)、每短链 SDK、上传落地页静态服务与 zip 上传。
-// 设计见 docs/adr/0005-landing-pages-click-sdk.md,契约见 .scratch/cloak/api-contract.md。
+// 设计见 docs/adr/0005-landing-pages-click-sdk.md,契约见 .scratch/janus/api-contract.md。
 
 import (
 	"archive/zip"
@@ -19,8 +19,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"cloak/internal/domain"
-	"cloak/internal/store"
+	"janus/internal/domain"
+	"janus/internal/store"
 )
 
 // handleLandingFallback NoRoute 兜底:gin 路由树不支持 /:code 与 /:code/... 子路由并存,
@@ -182,9 +182,9 @@ func (a *API) resolveLandingLinkForVisit(c *gin.Context, code string) (*store.Li
 }
 
 // landingSDKTemplate SDK 模板:__CLICK_URL__ 由服务器注入点击端点绝对地址。
-// 注:闭包 + addEventListener;同一页面可引入多个 SDK(绑不同短链),window.Cloak 为最后加载者,
+// 注:闭包 + addEventListener;同一页面可引入多个 SDK(绑不同短链),window.Janus 为最后加载者,
 // 但 bind 返回的监听闭包各自持有自己 SDK 的 clickUrl,互不影响。
-const landingSDKTemplate = `/* CLOAK 落地页 SDK:绑定按钮点击 → 平台点击端点(计数后跳转目标 URL)。 */
+const landingSDKTemplate = `/* Janus 落地页 SDK:绑定按钮点击 → 平台点击端点(计数后跳转目标 URL)。 */
 (function () {
   'use strict';
   var clickUrl = "__CLICK_URL__";
@@ -192,7 +192,7 @@ const landingSDKTemplate = `/* CLOAK 落地页 SDK:绑定按钮点击 → 平台
     if (typeof sel === 'string') { return document.querySelector(sel); }
     return sel;
   }
-  var cloak = {
+  var janus = {
     clickUrl: clickUrl,
     bind: function (selector, opts) {
       var target = resolve(selector);
@@ -210,7 +210,8 @@ const landingSDKTemplate = `/* CLOAK 落地页 SDK:绑定按钮点击 → 平台
       return true;
     }
   };
-  window.Cloak = cloak;
+  window.Janus = janus;
+  window.Janus = janus;
 })();
 `
 

@@ -16,8 +16,8 @@ import (
 	"gorm.io/gorm"
 	"strconv"
 
-	"cloak/internal/domain"
-	"cloak/internal/store"
+	"janus/internal/domain"
+	"janus/internal/store"
 )
 
 // validTargetURL 目标 URL 任意协议(开放重定向),但拒绝控制字符(CRLF header 注入防护)。
@@ -909,7 +909,7 @@ func (a *API) handleLinkStats(c *gin.Context) {
 	// visits 与 clicks 必须同源同期,否则保留期清理后 CTR 会虚高到 100% 以上:
 	//
 	//   - visits      来自 visits 表(action IN redirect/landing_view AND outcome=success),
-	//                  受 CLOAK_VISIT_RETENTION 约束;
+	//                  受 JANUS_VISIT_RETENTION 约束;
 	//   - clickVisits 同样来自 visits 表(action='click' AND outcome=success),同窗口;
 	//   - clicks      是 links.clicks 这个**永久计数器**,不随保留期衰减。
 	//

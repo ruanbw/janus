@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"cloak/internal/store"
+	"janus/internal/store"
 )
 
 // discardLog 静默日志器(编译期丢弃的告警不该污染测试输出)。

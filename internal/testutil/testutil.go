@@ -1,6 +1,6 @@
 // Package testutil 提供黑盒 HTTP 测试基础设施:
 // 运行中的服务(httptest.Server)+ 真实 Postgres + 真实迁移,测试 seam 为 HTTP API 边界。
-// 不 mock 内部函数;测试需本地 Postgres(默认 cloak_test 库,见 CLOAK_TEST_DATABASE_URL)。
+// 不 mock 内部函数;测试需本地 Postgres(默认 janus_test 库,见 JANUS_TEST_DATABASE_URL)。
 package testutil
 
 import (
@@ -17,24 +17,24 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"cloak/internal/config"
-	"cloak/internal/db"
-	"cloak/internal/domain"
-	"cloak/internal/geo"
-	"cloak/internal/httpapi"
-	"cloak/internal/mailer"
-	"cloak/internal/store"
+	"janus/internal/config"
+	"janus/internal/db"
+	"janus/internal/domain"
+	"janus/internal/geo"
+	"janus/internal/httpapi"
+	"janus/internal/mailer"
+	"janus/internal/store"
 )
 
 // TestDatabaseURL 测试库连接串(与开发库分离,每次 Setup 清空业务表)。
-var TestDatabaseURL = getenv("CLOAK_TEST_DATABASE_URL",
-	"postgres://cloak:cloak@localhost:5432/cloak_test?sslmode=disable")
+var TestDatabaseURL = getenv("JANUS_TEST_DATABASE_URL",
+	"postgres://janus:janus@localhost:5432/janus_test?sslmode=disable")
 
-// PlatformDomain 测试用平台域名(cloak.test,与开发一致)。
-const PlatformDomain = "cloak.test"
+// PlatformDomain 测试用平台域名(janus.test,与开发一致)。
+const PlatformDomain = "janus.test"
 
 // TestCaddyAskToken 测试用 Caddy on-demand TLS 回调共享密钥。
-// 生产环境由 CLOAK_CADDY_ASK_TOKEN 配置;该端点在未配置时 fail-closed,
+// 生产环境由 JANUS_CADDY_ASK_TOKEN 配置;该端点在未配置时 fail-closed,
 // 测试必须显式带上它(见 httpapi.CaddyAskTokenHeader)。
 const TestCaddyAskToken = "test-caddy-ask-token"
 
@@ -72,7 +72,7 @@ type Env struct {
 }
 
 // Setup 启动测试环境:连接测试库、执行迁移、清空业务表、启动 HTTP 服务。
-// 测试库不可用时跳过(需先 docker compose up postgres 并创建 cloak_test 库)。
+// 测试库不可用时跳过(需先 docker compose up postgres 并创建 janus_test 库)。
 // 默认注入高阈值限流,避免通用测试被限流干扰;需要验证限流行为的测试用
 // SetupWithRateLimit 自行控制。
 func Setup(t *testing.T) *Env {
@@ -96,7 +96,7 @@ func setup(t *testing.T, rc *httpapi.RateLimitConfig, geoLookup geo.Lookup) *Env
 
 	pool, err := db.Connect(ctx, TestDatabaseURL)
 	if err != nil {
-		t.Skipf("test database not available (%v); run: docker compose up -d postgres && docker exec -i cloak-postgres-1 psql -U cloak -d cloak -c 'CREATE DATABASE cloak_test'", err)
+		t.Skipf("test database not available (%v); run: docker compose up -d postgres && docker exec -i janus-postgres-1 psql -U janus -d janus -c 'CREATE DATABASE janus_test'", err)
 	}
 	t.Cleanup(pool.Close)
 	// 独占测试库到本包测试结束:各包都连同一个库并 TRUNCATE 业务表,
@@ -152,7 +152,7 @@ func setup(t *testing.T, rc *httpapi.RateLimitConfig, geoLookup geo.Lookup) *Env
 		}
 	})
 	st := store.New(gdb)
-	m := mailer.NewMailer(mailer.Config{BaseURL: "https://app.cloak.test"}, mailBuf)
+	m := mailer.NewMailer(mailer.Config{BaseURL: "https://app.janus.test"}, mailBuf)
 	if rc == nil {
 		high := 100000
 		rc = &httpapi.RateLimitConfig{
@@ -186,7 +186,7 @@ func (e *Env) MailOutput() string { return e.mail.String() }
 // 理由:外部数据的准确性不该由单元测试负责)。
 //
 // 但它不是"一律通过"——那样会掩盖真实的判定分支。这里忠实复刻生产语义:
-//   - localhost / *.localhost 解析到本机(CLOAK_SERVER_PUBLIC_IP=127.0.0.1)→ 可激活;
+//   - localhost / *.localhost 解析到本机(JANUS_SERVER_PUBLIC_IP=127.0.0.1)→ 可激活;
 //     刚创建还没有 token 时是 need_txt,拿到 token 后才 verified。
 //   - 其他名字(如 .invalid)解析不到 → need_dns,域名停在 pending 进入重试队列。
 //

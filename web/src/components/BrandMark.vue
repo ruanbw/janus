@@ -31,7 +31,7 @@ import { useId } from 'vue';
 
 // 渐变 id 必须逐实例唯一:桌面侧边栏与移动抽屉会同时挂载本组件,
 // 固定 id 会在文档里产生重复 ID,浏览器只会命中第一个。
-const gradientId = `cloak-brand-g-${useId()}`;
+const gradientId = `janus-brand-g-${useId()}`;
 
 withDefaults(
   defineProps<{
