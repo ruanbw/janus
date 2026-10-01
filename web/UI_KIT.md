@@ -151,7 +151,17 @@ web/src/components/
 
 第 4 项(未定义 CSS 变量)的定义面是 `src/styles/*.css` 全部文件,不是只有 main.css。
 
-改任何组件状态色之后,必须 `pnpm check:ui` 与 `pnpm build` 复验(第 8 项要读 dist 产物,所以先 build 再 check)。
+改任何组件状态色之后,必须按 **build → check** 的顺序复验:
+
+```bash
+pnpm type-check
+pnpm build        # 必须先 build
+pnpm check:ui     # 第 8 项读 dist/assets,dist 缺失会计入违规并非零退出
+```
+
+本文件此前把两条命令并列书写、与 README 7.1 的顺序互相矛盾,而第 8 项依赖 dist ——
+顺序写错就会得到一个静默跳过产物检查的"通过"。现统一为 build → check,
+并由 `.github/workflows/ci.yml` 与 `docker/Dockerfile` 强制执行。
 
 ## 全局注册组件(无需 import,模板直接用)
 

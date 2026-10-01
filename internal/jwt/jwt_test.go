@@ -15,7 +15,7 @@ const testSecret = "unit-test-secret"
 
 func TestIssueParseRoundTrip(t *testing.T) {
 	m := NewManager(testSecret, time.Hour)
-	token, err := m.Issue(42, "superadmin")
+	token, err := m.Issue(42, "superadmin", 7)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -33,6 +33,9 @@ func TestIssueParseRoundTrip(t *testing.T) {
 	if claims.Role != "superadmin" {
 		t.Errorf("role = %q, want superadmin", claims.Role)
 	}
+	if claims.TokenVersion != 7 {
+		t.Errorf("tokenVersion = %d, want 7", claims.TokenVersion)
+	}
 	if claims.Issuer != Issuer {
 		t.Errorf("issuer = %q, want %q", claims.Issuer, Issuer)
 	}
@@ -44,6 +47,50 @@ func TestIssueParseRoundTrip(t *testing.T) {
 	}
 	if claims.IssuedAt == nil || claims.IssuedAt.After(time.Now()) {
 		t.Error("issuedAt missing or in the future")
+	}
+}
+
+// TestTokenVersionIsCarriedAndParsed 签发时快照的 token_version 必须原样出现在载荷里,
+// 并且能被 Parse 取回 —— 认证侧靠它比对库里的当前值来吊销旧 token。
+// 同时固定一个安全边界:载荷里没有 tv 声明的 token 解析为 0,而库里的
+// token_version 恒 ≥1,所以迁移前签发的旧 token 一定对不上(全部作废)。
+func TestTokenVersionIsCarriedAndParsed(t *testing.T) {
+	m := NewManager(testSecret, time.Hour)
+	for _, v := range []int64{1, 2, 42} {
+		token, err := m.Issue(9, "tenant", v)
+		if err != nil {
+			t.Fatalf("Issue(tv=%d): %v", v, err)
+		}
+		claims, err := m.Parse(token)
+		if err != nil {
+			t.Fatalf("Parse(tv=%d): %v", v, err)
+		}
+		if claims.TokenVersion != v {
+			t.Errorf("tokenVersion = %d, want %d", claims.TokenVersion, v)
+		}
+	}
+
+	// 无 tv 声明的载荷 → 0(与库中 ≥1 的值永不相等,旧 token 一律 401)
+	claims := Claims{
+		Role: "tenant",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    Issuer,
+			Subject:   "9",
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			ID:        "no-tv-jti",
+		},
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(testSecret))
+	if err != nil {
+		t.Fatalf("sign token without tv: %v", err)
+	}
+	parsed, err := m.Parse(token)
+	if err != nil {
+		t.Fatalf("Parse token without tv: %v", err)
+	}
+	if parsed.TokenVersion != 0 {
+		t.Errorf("tokenVersion = %d, want 0 for token issued before migration", parsed.TokenVersion)
 	}
 }
 
@@ -76,7 +123,7 @@ func TestExpiredToken(t *testing.T) {
 func TestWrongSecret(t *testing.T) {
 	issuer := NewManager("secret-a", time.Hour)
 	verifier := NewManager("secret-b", time.Hour)
-	token, err := issuer.Issue(7, "tenant")
+	token, err := issuer.Issue(7, "tenant", 1)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
@@ -147,11 +194,11 @@ func TestMissingExpiration(t *testing.T) {
 
 func TestJTIUnique(t *testing.T) {
 	m := NewManager(testSecret, time.Hour)
-	a, err := m.Issue(1, "tenant")
+	a, err := m.Issue(1, "tenant", 1)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}
-	b, err := m.Issue(1, "tenant")
+	b, err := m.Issue(1, "tenant", 1)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
 	}

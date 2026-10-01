@@ -6,6 +6,12 @@
   <title>429 - 请求过于频繁</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    /*
+     * 深色模式走系统偏好(prefers-color-scheme),不引 JS、不读 localStorage:
+     * 这两页是服务端原样输出的静态页,唯一的外部依赖是浏览器本身。
+     * 与 default_404.html 保持同一套深色取值,两个页面在系统深色下应该
+     * 看起来是同一套设计而不是两个站点。
+     */
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       background-color: #f8fafc;
@@ -55,6 +61,19 @@
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
       font-size: 0.8rem;
       color: #94a3b8;
+    }
+    @media (prefers-color-scheme: dark) {
+      body { background-color: #0b1120; color: #cbd5e1; }
+      .card {
+        background: #111827;
+        border-color: #1f2937;
+        /* 与 404 页同理:浅色下那层几乎不可见的投影,在深色底上会变成脏边。 */
+        box-shadow: none;
+      }
+      .badge { background: #431407; color: #fb923c; }
+      h1 { color: #f1f5f9; }
+      p { color: #94a3b8; }
+      .code { color: #64748b; }
     }
   </style>
 </head>

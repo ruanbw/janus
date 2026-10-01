@@ -42,6 +42,15 @@ const maxRuleLinkNames = 3
 // defaultRulePriority 新建规则未指定优先级时的取值(与 DDL 默认一致:数字小者先评估)。
 const defaultRulePriority = 100
 
+// maxRuleBodyBytes /api/rules* 请求体上限。
+//
+// 为什么必须限:customHtml 本身就有 512KB 上限,而 conditions 是一棵可任意深的
+// 条件树、expression 是一条任意长的表达式。没有 body 上限时,一个匿名(已登录)
+// 租户可以用一个几十 MB 的请求体把内存打满 —— 解码本身就要先把它整份读进内存。
+// 1MB 远大于任何合法规则(最坏情况 = 512KB customHtml + 条件树 + 表达式),
+// 又小到即使被撑爆也只是一次请求的内存。
+const maxRuleBodyBytes = 1 << 20
+
 // ---------- 请求体 ----------
 
 // ruleReq POST /api/rules 与 PATCH /api/rules/{id} 共用的请求体。
@@ -89,6 +98,22 @@ type ruleWrite struct {
 // ruleErr 构造一条 400 校验错误(apiErr 由 writeAPIError 统一序列化)。
 func ruleErr(format string, args ...any) error {
 	return apiErr{http.StatusBadRequest, errValidation, fmt.Sprintf(format, args...), nil}
+}
+
+// decodeRuleBody 读 /api/rules* 的 JSON 请求体,先给 body 加大小上限。
+//
+// 超限时 json.Decoder 返回 *http.MaxBytesError,这里统一翻译成 400 与一句
+// 人能读的话 —— 直接把它原样返回会变成 500,而"请求体太大"显然是客户端的问题。
+func decodeRuleBody(c *gin.Context, dst any) error {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRuleBodyBytes)
+	if err := json.NewDecoder(c.Request.Body).Decode(dst); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			return ruleErr("请求体超过大小上限(1MB)")
+		}
+		return ruleErr("invalid JSON body")
+	}
+	return nil
 }
 
 // resolveRule 把请求体与规则现值合成为待写入的完整规则,并逐条校验契约里的 400 条件。
@@ -208,6 +233,28 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 		if err := rules.ValidateExpression(w.expression); err != nil {
 			return ruleWrite{}, ruleErr("expression 非法: %v", err)
 		}
+		// 表达式里引用 asn 与条件里用 asn 是同一件事:asn 当前没有数据源,
+		// 恒不命中。放它进来等于收下一条永不生效的规则,而租户在界面上看到的是
+		//「已启用」。前端已把它置灰(ruleMeta.ts pending),后端这里对齐。
+		// 注:rules.ValidField 仍保留 asn —— 那是**求值期**的字段集,
+		// 闸门要靠它知道"asn 恒不命中";收窄它会让 `asn == ""` 失去闸门保护。
+		if refs, err := rules.ExpressionFieldRefs(w.expression); err == nil {
+			for _, ref := range refs {
+				if ref == rules.FieldASN {
+					return ruleWrite{}, ruleErr("asn 字段当前没有数据源,依赖它的条件恒不命中,不能用于规则")
+				}
+			}
+		}
+	}
+	// 长度上限(包内常量 rules.MaxExpressionLen),**不看 ruleType**。
+	//
+	// 表达式是租户可单方面写入的最贵的一块输入,编译成本随长度增长。
+	// 而 visual 规则同样会把 expression 一起写进库(见下面 RuleUpdate 的
+	// Expression 字段)—— 一条 visual 规则带着 1MB 的垃圾表达式,虽然不会
+	// 被求值(compileRule 只在 ruleType=expression 时编译它),但它白白占着
+	// 库的 TOAST 空间,列表接口读它时也要付 IO。所以上限对两种形态一视同仁。
+	if n := len(w.expression); n > rules.MaxExpressionLen {
+		return ruleWrite{}, ruleErr("expression 超过长度上限(%d 字符)", rules.MaxExpressionLen)
 	}
 	// ⑦⑧ 条件字段与运算符必须都在 v1 白名单内(白名单以 rules 包为准,httpapi 只引用)。
 	// 条件树里的每个叶子都要校验,报错带 JSON 路径——不指明位置的话用户没法改。
@@ -282,6 +329,14 @@ func validateConditionNode(n store.ConditionNode, path string) error {
 func validateConditionLeaf(cond store.RuleCondition, path string) error {
 	if !rules.ValidField(cond.Field) {
 		return ruleErr("%s.field 不在可求值字段集内:%s", path, cond.Field)
+	}
+	// asn 当前没有数据源(FieldASN 恒返回 ok=false),条件恒不命中。
+	// 收下来等于让租户拿到一条"界面上显示已启用、线上永不生效"的规则 ——
+	// 前端已置灰(ruleMeta.ts 的 pending),这里对齐,免得 API/脚本绕过界面。
+	// 注:rules.ValidField 刻意仍保留 asn,那是**求值期**的字段集,
+	// 闸门要靠它知道"asn 恒不命中";收窄它会让 `asn == ""` 失去闸门保护。
+	if cond.Field == rules.FieldASN {
+		return ruleErr("%s.field:asn 当前没有数据源,依赖它的条件恒不命中,不能用于规则", path)
 	}
 	if !rules.ValidOperator(cond.Operator) {
 		return ruleErr("%s.operator 不合法:%s", path, cond.Operator)
@@ -410,8 +465,8 @@ func (a *API) handleCreateRule(c *gin.Context) {
 		return
 	}
 	var req ruleReq
-	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := decodeRuleBody(c, &req); err != nil {
+		writeAPIError(c, err)
 		return
 	}
 	w, err := a.resolveRule(c.Request.Context(), t.ID, nil, req)
@@ -419,17 +474,10 @@ func (a *API) handleCreateRule(c *gin.Context) {
 		writeAPIError(c, err)
 		return
 	}
-	// 规则数上限(spec D7):规则集合整租户常驻内存供热路径求值,没有上限会让快照无限膨胀
-	n, err := a.store.CountTenantRules(c.Request.Context(), t.ID)
-	if err != nil {
-		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
-		return
-	}
-	if n >= store.MaxRulesPerTenant {
-		writeErrDetails(c, http.StatusForbidden, errQuota,
-			"规则数量已达上限", map[string]any{"usage": n, "limit": store.MaxRulesPerTenant})
-		return
-	}
+	// 规则数上限(spec D7)在这里**不再**预检查:Count 与 Create 分处两个事务,
+	// 并发请求可以一起通过检查然后一起写入,越过上限。判定已经移进
+	// store.CreateRule 的事务内(持租户行锁),超限返回 *store.RuleLimitError,
+	// 由 writeRuleWriteErr 映射成 403。
 	created, err := a.store.CreateRule(c.Request.Context(), t.ID, store.Rule{
 		Name: w.name, Description: w.description, Priority: w.priority,
 		Scope: w.scope, Enabled: w.enabled, Logic: w.logic, Action: w.action,
@@ -464,8 +512,8 @@ func (a *API) handlePatchRule(c *gin.Context) {
 		return
 	}
 	var req ruleReq
-	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := decodeRuleBody(c, &req); err != nil {
+		writeAPIError(c, err)
 		return
 	}
 	// 先取现值:跨租户/不存在 → 404,同时用于"合成后再校验"(例如只改 action 也要看旧 destination)
@@ -654,8 +702,8 @@ func (a *API) handlePutLinkRules(c *gin.Context) {
 		return
 	}
 	var req putLinkRulesReq
-	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := decodeRuleBody(c, &req); err != nil {
+		writeAPIError(c, err)
 		return
 	}
 	ids, err := dedupeLinkIDs(req.RuleIDs)
@@ -744,6 +792,13 @@ func writeNotFoundOrInternal(c *gin.Context, err error, msg string) {
 
 // writeRuleWriteErr 写路径的错误映射:同租户重名 409,关联的短链/规则不归属 400。
 func (a *API) writeRuleWriteErr(c *gin.Context, err error) {
+	if store.IsRuleLimitExceeded(err) {
+		var lim *store.RuleLimitError
+		errors.As(err, &lim)
+		writeErrDetails(c, http.StatusForbidden, errQuota,
+			"规则数量已达上限", map[string]any{"usage": lim.Count, "limit": lim.Limit})
+		return
+	}
 	if errors.Is(err, store.ErrForeignLink) {
 		writeErr(c, http.StatusBadRequest, errValidation, "linkIds 中存在不存在、已逻辑删除或不属于当前租户的短链")
 		return
@@ -849,8 +904,8 @@ func (a *API) handleSimulateRules(c *gin.Context) {
 		return
 	}
 	var req simulateReq
-	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := decodeRuleBody(c, &req); err != nil {
+		writeAPIError(c, err)
 		return
 	}
 	target, err := parseSimTarget(req.URL)
@@ -1146,8 +1201,8 @@ func (a *API) handleValidateExpr(c *gin.Context) {
 		return
 	}
 	var req validateExprReq
-	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
+	if err := decodeRuleBody(c, &req); err != nil {
+		writeAPIError(c, err)
 		return
 	}
 	if strings.TrimSpace(req.Expression) == "" {

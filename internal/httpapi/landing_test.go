@@ -75,8 +75,23 @@ func uploadZip(t *testing.T, c *testClient, linkID int64, zipBytes []byte) *http
 }
 
 // createLandingLink 创建落地页型短链并返回 link。
+//
+// source=="upload" 时走完整的「建链 → 上传 → 定型」三步(issue 04 之后,
+// 创建请求里直接给 landingSource=upload 会被后端拒),**然后把托管目录删掉**,
+// 造出「landing+upload 但文件不在盘上」的形态 —— 这是磁盘被清理 / 误删之后的
+// 真实状态(访问要落一行 landing_missing),也是 API 已经造不出来的那一种。
+// 需要「有托管文件」的落地页请用 createUploadLandingLink。
 func createLandingLink(t *testing.T, c *testClient, domainID int64, code, source, landingURL string) *store.Link {
 	t.Helper()
+	if source == store.LandingSourceUpload {
+		link := createUploadLandingLink(t, c, domainID, code,
+			makeZip(t, map[string]string{"index.html": "<html>placeholder</html>"}))
+		if err := os.RemoveAll(filepath.Join(c.env.Cfg.LandingUploadDir,
+			strconv.FormatInt(link.ID, 10))); err != nil {
+			t.Fatalf("remove placeholder landing dir: %v", err)
+		}
+		return link
+	}
 	resp := c.post("/api/links", map[string]any{
 		"code":          code,
 		"targetUrls":    []string{"https://t1.example.com", "https://t2.example.com"},
@@ -88,6 +103,30 @@ func createLandingLink(t *testing.T, c *testClient, domainID int64, code, source
 	assertStatus(t, resp, http.StatusCreated)
 	l := decodeBody[store.Link](t, resp)
 	return &l
+}
+
+// createUploadLandingLink 走完整的「建链 → 上传 → 定型」三步,返回一条
+// landing+upload 且已托管 zip 的短链。
+//
+// 为什么测试也要分三步:issue 04 之后,「创建时直接给 landingSource=upload」
+// 被后端拒了(新建短链不可能已有托管文件),而「建链 → 再上传」两次独立请求
+// 的老写法会在两步之间留下一条永久 404 的空壳。前端与测试现在走同一条路径。
+func createUploadLandingLink(t *testing.T, c *testClient, domainID int64, code string, z []byte) *store.Link {
+	t.Helper()
+	link := createLink(t, c, map[string]any{
+		"code":       code,
+		"targetUrls": []string{"https://t1.example.com", "https://t2.example.com"},
+		"domainIds":  []int64{domainID},
+	})
+	resp := uploadZip(t, c, link.ID, z)
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+	resp = c.patch(fmt.Sprintf("/api/links/%d", link.ID), map[string]any{
+		"linkType": "landing", "landingSource": "upload",
+	})
+	assertStatus(t, resp, http.StatusOK)
+	up := decodeBody[store.Link](t, resp)
+	return &up
 }
 
 // stats 读取短链统计 {visits, clicks}。
@@ -204,25 +243,21 @@ func TestLandingUploadFlow(t *testing.T) {
 	c := loggedInTenant(t, env, "alice")
 	addDomain(t, c, "localhost")
 	lid := localhostDomainID(t, c)
-	link := createLandingLink(t, c, lid, "kpage", "upload", "")
-	if link.LandingUploaded {
-		t.Errorf("landingUploaded = true before upload")
-	}
-	// 未上传:托管文件不存在,访问裸短码 404(记一行 failed/landing_missing,见 0007 ADR),
-	// 静态目录同样 404
-	resp := redirectGet(t, env, "localhost", "/kpage")
-	assertStatus(t, resp, http.StatusNotFound)
-	resp = redirectGet(t, env, "localhost", "/kpage/")
-	assertStatus(t, resp, http.StatusNotFound)
+	// 创建时直接选 upload 来源被拒(issue 04):不可能有"upload 来源却无文件"的短链
+	resp := c.post("/api/links", map[string]any{
+		"code": "kpage", "targetUrls": []string{"https://t1.example.com"},
+		"domainIds": []int64{lid}, "linkType": "landing", "landingSource": "upload",
+	})
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
 
-	// 上传(单层根文件夹应被自动剥离)
+	// 走完整流程:建链(跳转型)→ 上传 → 定型。上传单层根文件夹应被自动剥离
 	z := makeZip(t, map[string]string{
 		"site/index.html":    "<html><body>CLOAK-LANDING</body></html>",
 		"site/css/style.css": "body{color:red}",
 	})
-	resp = uploadZip(t, c, link.ID, z)
-	assertStatus(t, resp, http.StatusOK)
-	up := decodeBody[store.Link](t, resp)
+	link := createUploadLandingLink(t, c, lid, "kpage", z)
+	up := *link
 	if up.LandingSource != "upload" || !up.LandingUploaded || up.LandingURL != "" {
 		t.Errorf("after upload: %+v", up)
 	}
@@ -274,7 +309,12 @@ func TestLandingZipValidation(t *testing.T) {
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			code := fmt.Sprintf("kpage%c", 'a'+i)
-			link := createLandingLink(t, c, lid, code, "upload", "")
+			// 用跳转型短链当容器:上传端点现在接受任意类型(见 issue 04 的三步流程),
+			// 而 zip 校验失败应当在任何类型下都拒掉。
+			link := createLink(t, c, map[string]any{
+				"code": code, "targetUrls": []string{"https://t1.example.com"},
+				"domainIds": []int64{lid},
+			})
 			resp := uploadZip(t, c, link.ID, tc.z)
 			assertStatus(t, resp, http.StatusBadRequest)
 			// 校验失败不产生文件(静态路径 404,且不产生成功的访问明细)
@@ -287,17 +327,8 @@ func TestLandingZipValidation(t *testing.T) {
 		})
 	}
 
-	// 非 landing 型不可上传
-	plain := createLink(t, c, map[string]any{
-		"code":       "knorm2",
-		"targetUrls": []string{"https://x.example.com"},
-		"domainIds":  []int64{lid},
-	})
-	resp := uploadZip(t, c, plain.ID, makeZip(t, map[string]string{"index.html": "x"}))
-	assertStatus(t, resp, http.StatusBadRequest)
-
 	// 创建校验:landing+url 缺 landingUrl → 400;非法类型 → 400
-	resp = c.post("/api/links", map[string]any{
+	resp := c.post("/api/links", map[string]any{
 		"code": "bad1", "targetUrls": []string{"https://x.example.com"},
 		"domainIds": []int64{lid}, "linkType": "landing", "landingSource": "url",
 	})
@@ -341,12 +372,11 @@ func TestLandingSwitchAndPurge(t *testing.T) {
 	c := loggedInTenant(t, env, "alice")
 	addDomain(t, c, "localhost")
 	lid := localhostDomainID(t, c)
-	link := createLandingLink(t, c, lid, "kpage", "upload", "")
 	z := makeZip(t, map[string]string{"index.html": "<html>UP</html>"})
-	resp := uploadZip(t, c, link.ID, z)
+	link := createUploadLandingLink(t, c, lid, "kpage", z)
+	resp := redirectGet(t, env, "localhost", "/kpage/")
 	assertStatus(t, resp, http.StatusOK)
-	resp = redirectGet(t, env, "localhost", "/kpage/")
-	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
 
 	// 切 url 来源:删除已上传文件
 	resp = c.patch(fmt.Sprintf("/api/links/%d", link.ID), map[string]any{
@@ -389,17 +419,15 @@ func TestDomainDeleteRemovesPurgedLandingFiles(t *testing.T) {
 	env := testutil.Setup(t)
 	c := loggedInTenant(t, env, "alice")
 	d := addDomain(t, c, "localhost")
-	link := createLandingLink(t, c, d.ID, "kpage", "upload", "")
-	resp := uploadZip(t, c, link.ID, makeZip(t, map[string]string{"index.html": "<html>UP</html>"}))
-	assertStatus(t, resp, http.StatusOK)
-	_ = resp.Body.Close()
+	link := createUploadLandingLink(t, c, d.ID, "kpage",
+		makeZip(t, map[string]string{"index.html": "<html>UP</html>"}))
 
 	dir := filepath.Join(env.Cfg.LandingUploadDir, strconv.FormatInt(link.ID, 10))
 	if _, err := os.Stat(dir); err != nil {
 		t.Fatalf("landing dir before delete: %v", err)
 	}
 
-	resp = c.del("/api/links/" + strconv.FormatInt(link.ID, 10))
+	resp := c.del("/api/links/" + strconv.FormatInt(link.ID, 10))
 	assertStatus(t, resp, http.StatusNoContent)
 	_ = resp.Body.Close()
 	resp = c.del("/api/domains/" + strconv.FormatInt(d.ID, 10))
@@ -408,5 +436,72 @@ func TestDomainDeleteRemovesPurgedLandingFiles(t *testing.T) {
 
 	if _, err := os.Stat(dir); os.IsNotExist(err) == false {
 		t.Fatalf("landing dir after domain delete = %v, want removed", err)
+	}
+}
+
+// ---------- 点击路径的失败明细(issue 08) ----------
+
+// TestLandingClickRecordsUnavailableLink 停用/删除后的落地页被点击时,
+// 要落一行 action=click 的 failed 明细(与跳转侧同一口径),而不是静默 404。
+// 修复前点击走严格口径 ResolveLink,这两行明细压根不存在,租户从点击侧看不到
+// "停用之后还有人点"。
+func TestLandingClickRecordsUnavailableLink(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLandingLink(t, c, lid, "kclick", "url", "https://page.example.com/lp")
+
+	resp := c.patch(fmt.Sprintf("/api/links/%d", link.ID), map[string]any{"status": "disabled"})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+	resp = redirectGet(t, env, "localhost", "/kclick/click")
+	assertStatus(t, resp, http.StatusNotFound)
+	action, outcome, reason, _, _ := ruleVisit(t, env, link.ID)
+	if action != store.VisitActionClick || outcome != store.VisitOutcomeFailed ||
+		reason != store.VisitReasonLinkDisabled {
+		t.Errorf("停用后点击的明细 = %q/%q/%q, want click/failed/link_disabled", action, outcome, reason)
+	}
+
+	resp = c.patch(fmt.Sprintf("/api/links/%d", link.ID), map[string]any{"status": "enabled"})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+	resp = c.del("/api/links/" + strconv.FormatInt(link.ID, 10))
+	assertStatus(t, resp, http.StatusNoContent)
+	_ = resp.Body.Close()
+	resp = redirectGet(t, env, "localhost", "/kclick/click")
+	assertStatus(t, resp, http.StatusNotFound)
+	action, outcome, reason, _, _ = ruleVisit(t, env, link.ID)
+	if action != store.VisitActionClick || outcome != store.VisitOutcomeFailed ||
+		reason != store.VisitReasonLinkDeleted {
+		t.Errorf("删除后点击的明细 = %q/%q/%q, want click/failed/link_deleted", action, outcome, reason)
+	}
+}
+
+// ---------- upload 来源必须已有托管文件(issue 04) ----------
+
+// TestPatchLandingUploadRequiresHostedFile 编辑时把来源切到 upload,
+// 但托管文件不在 → 400;上传之后同样的 PATCH 放行。
+func TestPatchLandingUploadRequiresHostedFile(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLandingLink(t, c, lid, "kneed", "url", "https://page.example.com/lp")
+
+	// 没有托管文件时切 upload → 400(否则这条短链会永久 404)
+	resp := c.patch(fmt.Sprintf("/api/links/%d", link.ID), map[string]any{"landingSource": "upload"})
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
+
+	// 上传之后再切同样放行
+	resp = uploadZip(t, c, link.ID, makeZip(t, map[string]string{"index.html": "<html>OK</html>"}))
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+	resp = c.patch(fmt.Sprintf("/api/links/%d", link.ID), map[string]any{"landingSource": "upload"})
+	assertStatus(t, resp, http.StatusOK)
+	up := decodeBody[store.Link](t, resp)
+	if up.LandingSource != store.LandingSourceUpload || !up.LandingUploaded {
+		t.Errorf("切换后 = %+v, want upload 来源且已托管", up)
 	}
 }

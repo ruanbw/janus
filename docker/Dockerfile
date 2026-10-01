@@ -16,7 +16,12 @@ RUN corepack enable
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
-RUN pnpm build
+# 门禁必须在 build **之前**跑完，且必须非零即失败:
+#   type-check 挡住类型错误，check:ui 挡住 UI 规范违规。
+# 放在这里而不是只写在 README 里，是因为 README 的清单只对"记得手动跑"的人有效 ——
+# 违规前端曾经可以直接进生产镜像。check:ui 的第 8 项要读 dist 产物，
+# 所以它的 build 依赖由 CI workflow 里的顺序保证(见 .github/workflows/ci.yml)。
+RUN pnpm type-check && pnpm build && pnpm check:ui
 
 # ---------- 前端产物(nginx) ----------
 FROM nginx:1.29-alpine AS web

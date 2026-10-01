@@ -68,7 +68,7 @@ func (s *Store) loadTenantMeta(ctx context.Context, t *Tenant) error {
 		return err
 	}
 	t.DefaultDomain = fqdn
-	t.FirstLoginSetup = t.IsSuperAdmin && (t.PasswordHash == nil || *t.PasswordHash == "")
+	t.FirstLoginSetup = t.needsFirstLoginSetup()
 	return nil
 }
 
@@ -247,9 +247,16 @@ func (s *Store) ListTenants(ctx context.Context) ([]*Tenant, error) {
 	}
 	for _, t := range out {
 		t.DefaultDomain = defMap[t.ID]
-		t.FirstLoginSetup = t.IsSuperAdmin && (t.PasswordHash == nil || *t.PasswordHash == "")
+		t.FirstLoginSetup = t.needsFirstLoginSetup()
 	}
 	return out, nil
+}
+
+// needsFirstLoginSetup 判断该租户是否处于"超管尚未设置密码"的引导态。
+// 抽成方法是因为 loadTenantMeta 与 ListTenants 各写了一遍同样的判定;
+// 两处分处一改就会让 /api/me 与 /api/admin/tenants 对同一租户给出矛盾的结论。
+func (t *Tenant) needsFirstLoginSetup() bool {
+	return t.IsSuperAdmin && (t.PasswordHash == nil || *t.PasswordHash == "")
 }
 
 // ---------- 会话 ----------
@@ -351,22 +358,10 @@ func (s *Store) ConsumeEmailToken(ctx context.Context, tokenHash, kind string) (
 
 // Usage 返回租户配额用量:短链按"尚未物理删除"计数,域名按"尚未删除"的自有域名计数(平台默认不计)。
 func (s *Store) Usage(ctx context.Context, tenantID int64) (*Usage, error) {
-	u := &Usage{}
-	var links, domains int64
-	if err := s.db.WithContext(ctx).Model(&Link{}).Where("tenant_id = ?", tenantID).Count(&links).Error; err != nil {
-		return nil, err
-	}
-	if err := s.db.WithContext(ctx).Model(&Domain{}).
-		Where("tenant_id = ? AND origin = 'self'", tenantID).Count(&domains).Error; err != nil {
-		return nil, err
-	}
-	u.Links = int(links)
-	u.Domains = int(domains)
 	t, err := s.GetTenantByID(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
-	u.MaxLinks = t.Tier.MaxLinks
-	u.MaxDomains = t.Tier.MaxDomains
-	return u, nil
+	// 计数口径与 WithQuotaInTx 内的配额判断共用同一份实现(quota.go)。
+	return usageWithDB(ctx, s.db, t)
 }

@@ -171,8 +171,7 @@ func (f Fact) Field(name string) (string, bool) {
 }
 
 const (
-	flagIP uint32 = 1 << iota
-	flagIPAttr
+	flagIPAttr uint32 = 1 << iota
 	flagLang
 	flagRef
 	flagUTM
@@ -235,7 +234,17 @@ func (c *LazyVisitorContext) reset() {
 	*c = LazyVisitorContext{}
 }
 
-// WithIP 显式覆盖来源 IP(如写入访问明细的已解析 IP)。
+// WithIP 注入来源 IP —— **这是唯一的注入点**。
+//
+// 为什么本包不自己解析 X-Forwarded-For:可信代理的判定口径只有一处(httpapi 的
+// clientIP,按 trusted-proxy 白名单取 XFF 最右段)。本包曾并行存在第二套实现
+// (取 XFF **最左**段),两处口径相反,而 fields.go 的注释却写着"与 httpapi 保持一致"
+// —— 那是假的:取最左段意味着访客可以自己往 XFF 前面塞一个 IP 来伪造来源 IP。
+// 两个生产调用点都显式调了 WithIP,所以这个洞没被触发;但任何忘了调的调用方
+// 都会静默恢复这条伪造通道。
+//
+// 删掉第二套实现之后,忘记调 WithIP 的后果是"取不到来源 IP"→ ip/ipattr 恒不命中
+// (fail-safe:不放行也不误拦),而不是"用一个可能是伪造的值去裁决"。
 func (c *LazyVisitorContext) WithIP(ip string) *LazyVisitorContext {
 	c.ipStr = ip
 	if addr, err := netip.ParseAddr(ip); err == nil {
@@ -243,7 +252,6 @@ func (c *LazyVisitorContext) WithIP(ip string) *LazyVisitorContext {
 	} else {
 		c.clientIP = netip.Addr{}
 	}
-	c.flags |= flagIP
 	c.ipAttr = ipAttrFromAddr(c.clientIP)
 	c.flags |= flagIPAttr
 	return c
@@ -276,14 +284,11 @@ func (c *LazyVisitorContext) ensureUAParsed() {
 	c.devType, c.os, c.browser = uaFacts(ua)
 }
 
-// ClientIP 返回请求来源 IP(netip.Addr 16 字节值类型,零堆分配)。
+// ClientIP 返回**已注入**的来源 IP;没注入过就是无效地址。
+//
+// 它不做任何解析:来源 IP 的可信口径由 httpapi 决定后经 WithIP 传进来
+// (见 WithIP 的注释)。求值期零解析是刻意的,热路径上不做第二次 IP 判定。
 func (c *LazyVisitorContext) ClientIP() netip.Addr {
-	if c.flags&flagIP == 0 {
-		c.flags |= flagIP
-		if c.req != nil {
-			c.clientIP = extractClientIP(c.req)
-		}
-	}
 	return c.clientIP
 }
 
@@ -295,8 +300,14 @@ func (c *LazyVisitorContext) Field(name string) (string, bool) {
 			ip := c.ClientIP()
 			if ip.IsValid() {
 				c.ipStr = ip.String()
-			} else if c.req != nil {
-				c.ipStr = hostOnly(c.req.RemoteAddr)
+			} else if ip = remoteAddrIP(c.req); ip.IsValid() {
+				// 兜底只取 TCP 直连方(RemoteAddr),不碰 X-Forwarded-For:
+				// 直连方不是访客能伪造的,而 XFF 是。这里也不做 loopback/private
+				// 的信任判定 —— 那是调用方(已按 trusted-proxy 白名单做过)的事。
+				// 只接受能解析成 IP 的值:ip 字段的值必须是一个 IP 字符串,
+				// 解析不出来就留空(ip 恒不命中),不能塞一个 host 名去和
+				// 租户写的 `ip == "xxx"` 字面量比较。
+				c.ipStr = ip.String()
 			}
 		}
 		return c.ipStr, c.ipStr != ""
@@ -378,6 +389,21 @@ func (c *LazyVisitorContext) Field(name string) (string, bool) {
 	return "", false
 }
 
+// remoteAddrIP 取 TCP 直连方地址。解析不出来就返回无效地址(调用方据此当作"取不到")。
+// 只认 RemoteAddr,**不**读 X-Forwarded-For —— 见 WithIP 的注释。
+func remoteAddrIP(r *http.Request) netip.Addr {
+	if r == nil {
+		return netip.Addr{}
+	}
+	if ap, err := netip.ParseAddrPort(r.RemoteAddr); err == nil {
+		return ap.Addr().Unmap()
+	}
+	if addr, err := netip.ParseAddr(strings.Trim(r.RemoteAddr, "[]")); err == nil {
+		return addr.Unmap()
+	}
+	return netip.Addr{}
+}
+
 // ToFact 将惰性画像折成完整的 Fact 结构(向后兼容现有调用方与测试)。
 func (c *LazyVisitorContext) ToFact() Fact {
 	c.ensureUAParsed()
@@ -455,79 +481,6 @@ func FromRequest(r *http.Request) Fact {
 	ctx := AcquireVisitorContext(r, country, asn)
 	defer ReleaseVisitorContext(ctx)
 	return ctx.ToFact()
-}
-
-// sourceIP 解析请求来源 IP:仅当直连来源是内网/回环(即部署前置反代)时才信任
-// X-Forwarded-For 首段,公网直连时忽略该头,防止访客伪造来源 IP 骗过规则。
-// 口径与 httpapi 写入访问明细的 clientIP 保持一致(同一处判定,避免明细与裁决对不上)。
-func sourceIP(r *http.Request) string {
-	ip := extractClientIP(r)
-	if ip.IsValid() {
-		return ip.String()
-	}
-	return hostOnly(r.RemoteAddr)
-}
-
-// extractClientIP 从请求解析来源 IP(netip.Addr 16 字节值类型,零堆分配)。
-// 仅当直连来源是内网/回环(部署前置反代)时才信任 X-Forwarded-For 首段,公网直连时忽略该头。
-func extractClientIP(r *http.Request) netip.Addr {
-	if r == nil {
-		return netip.Addr{}
-	}
-	peer := parseIPFromHostPort(r.RemoteAddr)
-	if peer.IsValid() && (peer.IsLoopback() || peer.IsPrivate()) {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			if addr, ok := parseFirstForwardedIP(xff); ok {
-				return addr
-			}
-		}
-	}
-	return peer
-}
-
-// parseFirstForwardedIP 零堆分配解析 X-Forwarded-For 中首个合法的 IP 地址。
-func parseFirstForwardedIP(xff string) (netip.Addr, bool) {
-	for len(xff) > 0 {
-		var part string
-		if idx := strings.IndexByte(xff, ','); idx >= 0 {
-			part = strings.TrimSpace(xff[:idx])
-			xff = xff[idx+1:]
-		} else {
-			part = strings.TrimSpace(xff)
-			xff = ""
-		}
-		if part == "" {
-			continue
-		}
-		if addr, err := netip.ParseAddr(part); err == nil {
-			return addr.Unmap(), true
-		}
-	}
-	return netip.Addr{}, false
-}
-
-// parseIPFromHostPort 从 "host:port" 或 "ip" 零堆分配提取 IP 地址。
-func parseIPFromHostPort(h string) netip.Addr {
-	if h == "" {
-		return netip.Addr{}
-	}
-	// 尝试 ParseAddrPort(无分配)
-	if ap, err := netip.ParseAddrPort(h); err == nil {
-		return ap.Addr().Unmap()
-	}
-	// 尝试 ParseAddr(例如去掉可能存在的括号)
-	trimmed := strings.Trim(h, "[]")
-	if addr, err := netip.ParseAddr(trimmed); err == nil {
-		return addr.Unmap()
-	}
-	// 兜底 net.SplitHostPort
-	if host, _, err := net.SplitHostPort(h); err == nil {
-		host = strings.Trim(host, "[]")
-		if addr, err := netip.ParseAddr(host); err == nil {
-			return addr.Unmap()
-		}
-	}
-	return netip.Addr{}
 }
 
 // hostOnly 去掉端口并小写(Host/RemoteAddr 通用)。

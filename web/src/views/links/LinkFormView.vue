@@ -798,6 +798,24 @@ const rules: Record<string, FormRule[]> = {
       },
     },
   ],
+  landingFile: [
+    {
+      // 「已有托管文件」与「本次选了新文件」二者居其一即可。
+      // 后端在创建/编辑时也会拒 landing+upload 且无文件(issue 04),这里是同一条
+      // 不变式的前置提示 —— 没有它,用户填完表单点保存才会撞上 400。
+      validator: () => {
+        if (form.linkType !== 'landing' || form.landingSource !== 'upload') {
+          return Promise.resolve();
+        }
+        if (form.landingUploaded || landingFile.value) {
+          return Promise.resolve();
+        }
+        return Promise.reject(
+          new Error('请选择要上传的落地页压缩包(zip,须含 index.html)'),
+        );
+      },
+    },
+  ],
   domainIds: [
     {
       validator: (_rule, value: unknown) => {
@@ -1036,17 +1054,19 @@ function onDropZip(e: DragEvent) {
   onSelectZip(file);
 }
 
-/** 上传已选 zip(替换式) */
-async function doUploadLanding(id: number) {
-  if (!landingFile.value) return;
+/** 上传已选 zip(替换式);返回是否成功,调用方据此决定能不能继续切类型 */
+async function doUploadLanding(id: number): Promise<boolean> {
+  if (!landingFile.value) return false;
   landingUploading.value = true;
   try {
     const updated = await uploadLanding(id, landingFile.value);
     form.landingUploaded = updated.landingUploaded === true;
     message.success('落地页压缩包已上传');
+    return true;
   } catch (error) {
     if (error instanceof ApiError) message.error(error.message);
     else message.error('上传失败，请稍后重试');
+    return false;
   } finally {
     landingUploading.value = false;
   }
@@ -1090,20 +1110,33 @@ async function onSubmit() {
         status: form.status,
       });
       message.success('短链已更新');
-      // 编辑:落地页上传来源且已重新选择文件,则独立上传(替换式)
+      // 编辑:上传来源且选了新文件 → 补一次替换式上传。
+      // (选了文件时 onSelectZip 通常已经即时传过一次,这里是幂等重传兜底。)
       if (form.linkType === 'landing' && form.landingSource === 'upload' && landingFile.value) {
         await doUploadLanding(link.value.id);
       }
     } else {
+      // upload 来源不能在创建请求里直接给:落地页文件按**短链 ID** 落盘,
+      // 建链那一刻 id 还不存在,后端会拒(issue 04)。
+      // 所以顺序是:先建一条可用的跳转型短链 → 上传压缩包 → 再 PATCH 定型为 landing+upload。
+      // 关键是失败形态:上传失败时留下的是一条**能正常跳转**的短链,而不是
+      // 一条 source=upload 却无文件、此后每次访问都记一行 landing_missing 的空壳。
+      const usesUpload = form.linkType === 'landing' && form.landingSource === 'upload';
       const created = await createLink({
-        ...payload,
+        targetUrls: payload.targetUrls,
+        domainIds: payload.domainIds,
+        redirectStatus: '302',
+        linkType: 'redirect',
         code: form.code.trim() || undefined,
       });
-      message.success('短链已创建');
-      // 创建:落地页上传来源且已选择文件,则建链后上传
-      if (form.linkType === 'landing' && form.landingSource === 'upload' && landingFile.value) {
-        await doUploadLanding(created.id);
+      if (usesUpload) {
+        if (!(await doUploadLanding(created.id))) {
+          router.push({ name: 'links' });
+          return;
+        }
+        await updateLink(created.id, { linkType: 'landing', landingSource: 'upload' });
       }
+      message.success('短链已创建');
     }
     router.push({ name: 'links' });
   } catch (error) {

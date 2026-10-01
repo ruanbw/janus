@@ -21,18 +21,27 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("load config: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("invalid config: %v", err)
+	}
 	ctx := context.Background()
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("connect db: %v", err)
 	}
-	defer pool.Close()
 
 	if err := db.Migrate(ctx, pool, cfg.MigrationsDir); err != nil {
+		pool.Close()
 		log.Fatalf("migrate: %v", err)
 	}
+	// 迁移完成即关闭:业务数据访问全部走 GORM,这个 pgxpool(最多 10 条连接)
+	// 此后没有任何使用者,留到进程退出等于白占 10 个连接。
+	pool.Close()
 
 	gdb, err := db.OpenGORM(cfg.DatabaseURL)
 	if err != nil {

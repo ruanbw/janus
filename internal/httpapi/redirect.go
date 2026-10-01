@@ -20,10 +20,14 @@ package httpapi
 //     风控规则不该把线上短链打成 500。
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -31,6 +35,161 @@ import (
 	"cloak/internal/rules"
 	"cloak/internal/store"
 )
+
+// ---------- 访客可见错误页的安全响应头与租户错误页快照 ----------
+//
+// 信任模型(ADR-0005 已接受):租户可以在自己的域名下运行任意 HTML/JS,
+// 与开放重定向是同一条边界 —— 系统信任租户自己的内容,不试图审查它。
+// 因此错误页响应带 CSP 是为了**收紧**而不是"防租户" :它保证租户的 HTML
+// 即使写着 <script> 也只能在访客自己的页面上跑,拿不到本站的会话 cookie、
+// 也无法把内容伪装成别的 MIME 类型。
+
+// visitorErrorCSP 访客可见错误页的 CSP。
+//
+// `sandbox` 让页面进入一个**不透明来源**(opaque origin):租户脚本能跑
+// (allow-scripts,否则自定义页里的表单与统计脚本全废),但读不到 document.cookie
+// / localStorage,发起的请求也不再带本站凭据。刻意**不给** allow-same-origin ——
+// 给了它等于把这个 iframe/页面的来源等同于本站,租户脚本就能直接读会话。
+// allow-forms 保留表单提交能力(很多 404 页是"搜索框"形态)。
+//
+// 为什么必须有这一头:租户错误页是**原样输出**的租户 HTML。在加 CSP 之前,
+// 一个租户可以往自己的 404 页里写 <script>,而同一个响应会出现在**任意**访客
+// 的浏览器上 —— 包括别的租户用同一个反向代理访问时。缺 X-Content-Type-Options
+// 时,浏览器还会对未声明类型的响应做嗅探,text/plain 里的标记可能被当 HTML 执行。
+const visitorErrorCSP = "sandbox allow-scripts allow-forms; default-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'"
+
+// throttleRetryAfterSeconds 429 响应携带的 Retry-After 秒数。
+//
+// 规则裁决的 throttle 动作本身不带窗口配置(见 store.RuleActionThrottle),
+// 但缺这个头的后果是客户端无从退避:重试节奏只能靠猜,而重试越密集越会
+// 继续撞上同一条限流规则。60 秒是一个明确、可预期、又不至于让访客干等太久
+// 的默认值。
+const throttleRetryAfterSeconds = 60
+
+// errorPagesSnapshot 某租户某一时刻的自定义错误页内容。
+//
+// 与规则快照同理,构造后不可变:读侧不需要再拿锁,变更走整体原子替换。
+type errorPagesSnapshot struct {
+	notFound        string
+	tooManyRequests string
+	builtAt         time.Time
+}
+
+// DefaultErrorPagesTTL 错误页快照的兜底存活时间。
+//
+// 与 rules.DefaultSnapshotTTL 取同一量级并**共用同一套失效路径**:
+// 租户改错误页后必须显式 Invalidate,这个 TTL 只防"漏调 Invalidate 导致改配置
+// 永远不生效"这类静默失效。代价是每个活跃租户每分钟一次很小的整租户查询。
+const DefaultErrorPagesTTL = time.Minute
+
+// errorPagesCache 租户 → 自定义错误页快照 的按租户内存缓存。
+//
+// 与规则快照同构(惰性加载 + 整体原子替换 + TTL 兜底 + 显式 Invalidate),
+// 因为两者的失效理由完全一样:配置类数据,读多写极少,且改完必须立刻生效。
+//
+// 为什么必须缓存:未命中是最容易触发的路径 —— 爬虫、扫描器、输错短码都会走这里。
+// 没有缓存时,每一次未命中都要 SELECT 两个可能各 512KB 的 TEXT 字段,
+// 等于把"攻击者随便打几个不存在的短码"变成放大器。而它恰恰是 README 1.2
+// 硬约束第 1 条("零 DB 查询")与 .scratch/custom-error-pages/spec.md D3
+// 都承诺过要按租户缓存的东西。
+type errorPagesCache struct {
+	mu    sync.RWMutex
+	items map[int64]*errorPagesSnapshot
+	// load 读取某租户的自定义错误页(签名与 (*store.Store).GetTenantErrorPages 一致)。
+	load func(ctx context.Context, tenantID int64) (string, string, error)
+	// loadMu 串行化慢路径:缓存失效瞬间的并发请求只触发一次加载,避免惊群。
+	loadMu sync.Mutex
+	ttl    time.Duration
+	log    *slog.Logger
+}
+
+func newErrorPagesCache(load func(ctx context.Context, tenantID int64) (string, string, error)) *errorPagesCache {
+	return &errorPagesCache{
+		items: make(map[int64]*errorPagesSnapshot),
+		load:  load,
+		ttl:   DefaultErrorPagesTTL,
+		log:   slog.Default(),
+	}
+}
+
+// Get 取某租户的错误页快照。加载失败时返回空快照(fail-open:退回系统内置页),
+// 且**不写缓存** —— 否则一次数据库抖动会被缓存成"这个租户永远没有自定义页"。
+func (c *errorPagesCache) Get(ctx context.Context, tenantID int64) *errorPagesSnapshot {
+	if c == nil || c.load == nil {
+		return &errorPagesSnapshot{builtAt: time.Now()}
+	}
+	if snap := c.cached(tenantID); snap != nil {
+		return snap
+	}
+	c.loadMu.Lock()
+	defer c.loadMu.Unlock()
+	if snap := c.cached(tenantID); snap != nil {
+		return snap
+	}
+	p404, p429, err := c.load(ctx, tenantID)
+	if err != nil {
+		c.log.Error("加载租户错误页失败,退回内置页(fail-open)", "tenant", tenantID, "err", err)
+		return &errorPagesSnapshot{builtAt: time.Now()}
+	}
+	snap := &errorPagesSnapshot{notFound: p404, tooManyRequests: p429, builtAt: time.Now()}
+	c.mu.Lock()
+	c.items[tenantID] = snap
+	c.mu.Unlock()
+	return snap
+}
+
+// cached 读缓存:有且未过期才算命中。
+func (c *errorPagesCache) cached(tenantID int64) *errorPagesSnapshot {
+	c.mu.RLock()
+	snap := c.items[tenantID]
+	c.mu.RUnlock()
+	// 锁外只读 snap 自己的字段:它是不可变的,拿到旧指针的读者可以安全地用完它。
+	if snap == nil || (c.ttl > 0 && time.Since(snap.builtAt) >= c.ttl) {
+		return nil
+	}
+	return snap
+}
+
+// Invalidate 丢弃某租户的快照(租户改错误页后调用),下次访问重新加载。
+func (c *errorPagesCache) Invalidate(tenantID int64) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	delete(c.items, tenantID)
+	c.mu.Unlock()
+}
+
+// errorPageCaches 按 *store.Store 索引的缓存表。
+//
+// 挂在包级而不是 API 结构体字段上,是因为 API 结构体定义在 server.go ——
+// 那份文件此刻正被另一个代理改动,以读文件的方式加字段会制造合并冲突。
+// 按 store 实例索引等价于按"这份数据来自哪个库"索引:生产只有一个进程一个 store,
+// 而黑盒测试每次 Setup 都会建一个新的 store,天然按测试隔离(否则一个用例写进
+// 缓存的自定义页会漏给下一个用例的同号租户,变成查不到原因的偶发失败)。
+var errorPageCaches sync.Map // *store.Store -> *errorPagesCache
+
+// errorPagesCacheFor 取(并按需创建)该 store 的错误页缓存。
+func (a *API) errorPagesCacheFor() *errorPagesCache {
+	if v, ok := errorPageCaches.Load(a.store); ok {
+		return v.(*errorPagesCache)
+	}
+	st := a.store
+	c := newErrorPagesCache(st.GetTenantErrorPages)
+	actual, _ := errorPageCaches.LoadOrStore(st, c)
+	return actual.(*errorPagesCache)
+}
+
+// invalidateErrorPages 丢弃某租户的自定义错误页快照。
+//
+// 与规则快照失效**分开**而不是复用 invalidateRules:两者是不同的数据
+// (规则 vs 租户错误页),触发时机也不同(改规则不影响错误页,改错误页不影响规则)。
+// 原先 me.go 在改错误页后调 invalidateRules,那个名字既不描述它做的事、
+// 也让"改错误页会失效规则快照"这个假因果看起来像是刻意设计。
+func (a *API) invalidateErrorPages(tenantID int64) {
+	a.errorPagesCacheFor().Invalidate(tenantID)
+}
 
 func hostOnly(h string) string {
 	host, _, err := net.SplitHostPort(h)
@@ -53,15 +212,45 @@ func (a *API) resolveDomainByHost(c *gin.Context) *store.Domain {
 	return d
 }
 
+// resolveDomainForError 按 Host 定位域名与租户,**不看域名状态**,供错误页渲染使用。
+//
+// 与 resolveDomainByHost 的区别正是 issue 7:那个函数只认 active 域名,
+// 因为只有 active 域名才该承载短链访问;但**渲染错误页**需要另一套语义 ——
+// 租户停用自己域名之后,访问者仍应看到该租户自己的 404 页,而不是系统内置页。
+// 租户配置自定义错误页,就是为了让"我的域名出错了"长成自己的品牌;
+// 域名一停用就退回系统页,等于在最需要品牌一致性的时刻把它撤掉。
+//
+// 走的是唯一索引上的等值查询(fqdn 唯一),不是扫描,而且只在错误路径上发生。
+func (a *API) resolveDomainForError(c *gin.Context) (*store.Domain, int64) {
+	host := hostOnly(c.Request.Host)
+	if host == "" {
+		return nil, 0
+	}
+	d, err := a.store.GetDomainByFQDNAnyStatus(c.Request.Context(), host)
+	if err != nil {
+		return nil, 0
+	}
+	return d, d.TenantID
+}
+
+// errorPageTenantID 只取租户 id 的便捷封装(不需要域名本身时用)。
+func (a *API) errorPageTenantID(c *gin.Context) int64 {
+	_, tenantID := a.resolveDomainForError(c)
+	return tenantID
+}
+
 func (a *API) handleRedirect(c *gin.Context) {
 	code := c.Param("code")
 	if code == "" || strings.Contains(code, "/") {
-		a.renderVisitorError(c, http.StatusNotFound, 0, nil)
+		a.renderVisitorError(c, http.StatusNotFound, a.errorPageTenantID(c), nil)
 		return
 	}
 	d := a.resolveDomainByHost(c)
 	if d == nil {
-		a.renderVisitorError(c, http.StatusNotFound, 0, nil)
+		// 域名不存在,或存在但不是 active(停用 / 待激活)。后者仍要拿到租户 id,
+		// 好让访客看到该租户自己的 404 页而不是系统内置页(issue 7)。
+		_, tenantID := a.resolveDomainForError(c)
+		a.renderVisitorError(c, http.StatusNotFound, tenantID, nil)
 		return
 	}
 	// 宽松命中:短链不可用时也返回它,由本函数把"为什么不可用"记进明细
@@ -248,35 +437,56 @@ func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domai
 // renderVisitorError 针对访客端重定向/未命中/拦截场景渲染 HTML 错误页面 (404 / 429)。
 // 决议优先级:
 // 1. 规则专属自定义页面 (dec.PageMode == "custom" && dec.CustomHTML != "")
-// 2. 租户全局自定义页面 (tenantID > 0 时从 store 读取)
+// 2. 租户全局自定义页面 (tenantID > 0 时从按租户的内存快照读,不再实时查库)
 // 3. 系统内置默认自适应 HTML 页面
+//
+// 每条路径都带齐三个头(CSP / X-Content-Type-Options / Cache-Control),原因见各自常量。
 func (a *API) renderVisitorError(c *gin.Context, status int, tenantID int64, dec *rules.Decision) {
+	setVisitorErrorHeaders(c, status)
 	if dec != nil && dec.PageMode == "custom" && dec.CustomHTML != "" {
-		c.Header("Content-Type", "text/html; charset=utf-8")
 		c.String(status, dec.CustomHTML)
 		return
 	}
 
 	if tenantID > 0 {
-		p404, p429, err := a.store.GetTenantErrorPages(c.Request.Context(), tenantID)
-		if err == nil {
-			if status == http.StatusTooManyRequests && p429 != "" {
-				c.Header("Content-Type", "text/html; charset=utf-8")
-				c.String(status, p429)
-				return
-			}
-			if status == http.StatusNotFound && p404 != "" {
-				c.Header("Content-Type", "text/html; charset=utf-8")
-				c.String(status, p404)
-				return
-			}
+		pages := a.errorPagesCacheFor().Get(c.Request.Context(), tenantID)
+		if status == http.StatusTooManyRequests && pages.tooManyRequests != "" {
+			c.String(status, pages.tooManyRequests)
+			return
+		}
+		if status == http.StatusNotFound && pages.notFound != "" {
+			c.String(status, pages.notFound)
+			return
 		}
 	}
 
-	c.Header("Content-Type", "text/html; charset=utf-8")
 	if status == http.StatusTooManyRequests {
 		c.String(status, templates.Default429HTML())
 	} else {
 		c.String(status, templates.Default404HTML())
 	}
+}
+
+// setVisitorErrorHeaders 给访客可见的错误页响应补齐安全与缓存语义的头。
+//
+// 头在写 body **之前**设置:gin 一旦开始写 body 就锁定了状态码与部分头,
+// 之后再补就来不及了(Content-Length 也会对不上)。
+func setVisitorErrorHeaders(c *gin.Context, status int) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	// 租户错误页是原样输出的租户 HTML。缺 nosniff 时浏览器会对未声明类型的
+	// 响应做 MIME 嗅探,一段 text/plain 里的标记也可能被当 HTML 执行。
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Content-Security-Policy", visitorErrorCSP)
+	if status == http.StatusTooManyRequests {
+		// 429 不只是"慢一点再来":它是这条访问被规则裁决拦下的证据。
+		// 缓存下来会让同一个访客在解除限流后仍看到 429,而 Retry-After 缺失
+		// 又让客户端无从退避,只能继续撞同一条规则。
+		c.Header("Retry-After", strconv.Itoa(throttleRetryAfterSeconds))
+		c.Header("Cache-Control", "no-store")
+		return
+	}
+	// 404 同理:租户改完自定义页后,启发式缓存会让访客继续看到旧版,
+	// 而"错误页长什么样"恰恰是租户最常改的东西(404 最容易触发,被缓存的
+	// 概率也最高)。no-store 让每次都回源,成本由上面的内存快照兜住。
+	c.Header("Cache-Control", "no-store")
 }

@@ -9,25 +9,31 @@
           <template #icon><RefreshCw :size="13" /></template>
           刷新
         </AppButton>
-        <AppButton size="sm" variant="outline" @click="openBatchModal">
+        <AppButton v-if="!recycleBin" size="sm" variant="outline" @click="openBatchModal">
           <template #icon><Upload :size="13" /></template>
           批量导入
         </AppButton>
-        <AppButton
-          size="sm"
-          variant="outline"
-          :disabled="links.length === 0"
-          @click="exportCsv"
-        >
+        <AppButton size="sm" variant="outline" :disabled="links.length === 0" @click="exportCsv">
           <template #icon><FileDown :size="13" /></template>
           导出 CSV
         </AppButton>
-        <AppButton size="sm" type="primary" @click="goCreate">
+        <AppButton v-if="!recycleBin" size="sm" type="primary" @click="goCreate">
           <template #icon><Plus :size="14" /></template>
           新建短链
         </AppButton>
       </template>
     </PageHeader>
+
+    <!-- 视图切换:短链 / 回收站。回收站是软删短链唯一的入口 ——
+         没有它,删掉的短链既看不见、也无法找回,短码与配额就等于被永久锁死。 -->
+    <AppTabs :model-value="viewTab" class="mb-4" @update:model-value="onSwitchTab">
+      <AppTabsList variant="line">
+        <AppTabsTrigger value="active" variant="line">短链</AppTabsTrigger>
+        <AppTabsTrigger value="deleted" variant="line">
+          回收站<template v-if="deletedTotal > 0">（{{ deletedTotal }}）</template>
+        </AppTabsTrigger>
+      </AppTabsList>
+    </AppTabs>
 
     <!-- 批量操作条:有选中项时出现 -->
     <div
@@ -49,6 +55,7 @@
           清空选择
         </AppButton>
         <AppButton
+          v-if="!recycleBin"
           size="sm"
           variant="outline"
           class="border-err/60 text-err hover:border-err hover:text-err"
@@ -60,10 +67,25 @@
           批量逻辑删除
         </AppButton>
         <AppButton
+          v-if="recycleBin"
+          size="sm"
+          variant="outline"
+          :disabled="batchOperating"
+          title="批量还原:短链回到正常列表,短码重新占用"
+          @click="handleBatchRestore"
+        >
+          <template #icon><RotateCcw :size="12" /></template>
+          批量还原
+        </AppButton>
+        <AppButton
           size="sm"
           variant="destructive"
           :disabled="batchOperating"
-          title="批量彻底删除:物理移除短链及全部历史访问明细,不可撤销"
+          :title="
+            recycleBin
+              ? '批量彻底删除:物理移除回收站里的短链及全部历史访问明细,并清理其落地页文件,不可撤销'
+              : '批量彻底删除:物理移除短链及全部历史访问明细,不可撤销'
+          "
           @click="handleBatchPurge"
         >
           <template #icon><Flame :size="12" /></template>
@@ -72,18 +94,31 @@
       </div>
     </div>
 
-    <!-- 搜索与筛选工具栏 -->
-    <div class="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_180px_180px_auto]">
+    <!-- 搜索与筛选工具栏(回收站只有搜索有意义:类型/状态对已删除的短链是历史快照) -->
+    <div
+      class="mb-4 grid gap-3"
+      :class="recycleBin ? 'sm:grid-cols-1' : 'sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_180px_180px_auto]'"
+    >
       <AppInput
         v-model="keyword"
         allow-clear
-        aria-label="搜索短链"
-        placeholder="搜索短码、域名、目标 URL 或规则名…"
+        :aria-label="recycleBin ? '搜索已删除的短链' : '搜索短链'"
+        :placeholder="recycleBin ? '搜索已删除短链的短码、域名或目标 URL…' : '搜索短码、域名、目标 URL 或规则名…'"
       >
         <template #prefix><Search :size="15" class="text-ink-faint" /></template>
       </AppInput>
-      <AppSelect v-model="typeFilter" :options="TYPE_FILTER_OPTIONS" aria-label="按类型过滤" />
-      <AppSelect v-model="statusFilter" :options="STATUS_FILTER_OPTIONS" aria-label="按状态过滤" />
+      <AppSelect
+        v-if="!recycleBin"
+        v-model="typeFilter"
+        :options="TYPE_FILTER_OPTIONS"
+        aria-label="按类型过滤"
+      />
+      <AppSelect
+        v-if="!recycleBin"
+        v-model="statusFilter"
+        :options="STATUS_FILTER_OPTIONS"
+        aria-label="按状态过滤"
+      />
       <AppButton
         v-if="hasActiveFilter"
         size="sm"
@@ -120,17 +155,21 @@
       <template #empty>
         <AppEmpty
           :description="
-            links.length === 0
-              ? '暂无短链记录，请点击下方按钮创建第一条短链'
-              : '未找到符合当前筛选条件的短链记录'
+            recycleBin
+              ? deletedTotal === 0
+                ? '回收站是空的'
+                : '未找到符合当前搜索条件的已删除短链'
+              : links.length === 0
+                ? '暂无短链记录，请点击下方按钮创建第一条短链'
+                : '未找到符合当前筛选条件的短链记录'
           "
         />
         <div class="mt-3 flex justify-center">
-          <AppButton v-if="links.length === 0" size="sm" type="primary" @click="goCreate">
+          <AppButton v-if="!recycleBin && links.length === 0" size="sm" type="primary" @click="goCreate">
             <template #icon><Plus :size="14" /></template>
             新建短链
           </AppButton>
-          <AppButton v-else size="sm" @click="resetFilters">重置过滤条件</AppButton>
+          <AppButton v-else-if="!recycleBin" size="sm" @click="resetFilters">重置过滤条件</AppButton>
         </div>
       </template>
 
@@ -247,7 +286,15 @@
         <!-- 状态：开关与文案同格。原先这里是「状态」徽标 + 「启用」开关两列,
              但两者读的都是 link.status,扫一行得看两处才确认得了状态。 -->
         <template v-else-if="column.key === 'status'">
-          <div class="flex items-center gap-2 whitespace-nowrap">
+          <!-- 回收站:已删除的短链没有"启用/停用"可言,只标出删除时间 -->
+          <span
+            v-if="recycleBin"
+            class="whitespace-nowrap text-xs text-ink-faint"
+            :title="'删除于 ' + formatDateTime(toDeletedLink(record).deletedAt)"
+          >
+            已删除
+          </span>
+          <div v-else class="flex items-center gap-2 whitespace-nowrap">
             <AppSwitch
               :model-value="toLink(record).status === 'enabled'"
               :disabled="statusUpdatingId === toLink(record).id"
@@ -268,7 +315,8 @@
 
         <!-- 规则：短链维度开关 + 适用规则摘要 -->
         <template v-else-if="column.key === 'rules'">
-          <div class="flex items-center gap-2 whitespace-nowrap">
+          <span v-if="recycleBin" class="text-xs text-ink-faint">—</span>
+          <div v-else class="flex items-center gap-2 whitespace-nowrap">
             <AppSwitch
               :model-value="toLink(record).rulesEnabled"
               :disabled="rulesUpdatingId === toLink(record).id"
@@ -347,7 +395,24 @@
 
         <!-- 操作 -->
         <template v-else-if="column.key === 'actions'">
-          <div class="flex items-center gap-1">
+          <!-- 回收站:只剩「还原」与「彻底删除」两条路径(编辑/状态开关对已删除记录无意义) -->
+          <div v-if="recycleBin" class="flex items-center gap-1">
+            <AppButton size="sm" variant="ghost" title="还原短链" @click="handleRestoreLink(toLink(record))">
+              <template #icon><RotateCcw :size="12" /></template>
+              还原
+            </AppButton>
+            <AppButton
+              size="sm"
+              variant="ghost"
+              class="text-err hover:bg-err/10 hover:text-err"
+              title="彻底删除（物理删除全部数据并清理落地页文件）"
+              @click="handlePurgeLink(toLink(record))"
+            >
+              <template #icon><Flame :size="12" /></template>
+              彻底删除
+            </AppButton>
+          </div>
+          <div v-else class="flex items-center gap-1">
             <AppButton size="sm" variant="ghost" title="编辑短链" @click="goEdit(toLink(record))">
               <template #icon><Pencil :size="12" /></template>
               编辑
@@ -379,7 +444,10 @@
     <!-- 底栏与真实分页 -->
     <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
       <div class="flex items-center gap-3 text-xs text-ink-soft">
-        <span>共 <strong class="font-mono text-ink">{{ total }}</strong> 条短链</span>
+        <span>
+          共 <strong class="font-mono text-ink">{{ total }}</strong>
+          {{ recycleBin ? '条已删除短链' : '条短链' }}
+        </span>
       </div>
       <div class="flex items-center gap-2.5">
         <div class="flex items-center gap-1.5 text-xs text-ink-soft">
@@ -475,6 +543,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
   Trash2,
   Upload,
@@ -488,8 +557,10 @@ import {
   createLink,
   deleteLink,
   getLink,
+  listDeletedLinks,
   listLinks,
   purgeLink,
+  restoreLink,
   updateLink,
   uploadLanding,
 } from '@/api/links';
@@ -500,6 +571,8 @@ import { ApiError } from '@/types/api';
 import type { Domain, Link, LinkStatus } from '@/types/api';
 import { formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
+
+import type { DeletedLink } from '@/api/links';
 
 const route = useRoute();
 const router = useRouter();
@@ -525,6 +598,18 @@ const keyword = ref('');
 const typeFilter = ref<string>('all');
 const statusFilter = ref<string>('all');
 const statusUpdatingId = ref<number | null>(null);
+
+// ==================== 回收站视图 ====================
+// 软删的短链在正常列表里完全不可见,于是"短码还能不能用""配额还剩多少"
+// 这些问题没有任何 UI 答案。回收站就是那个答案:能看见、能还原、能彻底删除。
+const viewTab = ref<'active' | 'deleted'>('active');
+const recycleBin = computed(() => viewTab.value === 'deleted');
+const deletedTotal = ref(0);
+
+/** 回收站行的类型化视图(后端仅在 includeDeleted 时回传 deletedAt) */
+function toDeletedLink(record: Record<string, unknown>): DeletedLink {
+  return record as unknown as DeletedLink;
+}
 
 // ==================== 规则列: 短链级别规则开关与摘要 ====================
 const RULE_NAME_VISIBLE = 2;
@@ -593,6 +678,7 @@ const STATUS_FILTER_OPTIONS = [
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100].map((size) => ({ value: size, label: String(size) }));
 
 const hasActiveFilter = computed(() => {
+  if (recycleBin.value) return keyword.value.trim() !== '';
   return keyword.value.trim() !== '' || typeFilter.value !== 'all' || statusFilter.value !== 'all';
 });
 
@@ -606,8 +692,6 @@ function toLink(record: Record<string, unknown>): Link {
 
 const filteredLinks = computed(() => {
   const q = keyword.value.trim().toLowerCase();
-  const tf = typeFilter.value;
-  const sf = statusFilter.value;
 
   return links.value.filter((l) => {
     const codeMatch = l.code.toLowerCase().includes(q);
@@ -616,6 +700,12 @@ const filteredLinks = computed(() => {
     const ruleMatch = l.ruleNames?.some((n) => n.toLowerCase().includes(q)) ?? false;
     const okKeyword = !q || codeMatch || domainMatch || targetMatch || ruleMatch;
 
+    // 回收站不套用类型/状态过滤:两者对已删除的短链只是一个历史快照,
+    // 按它们筛会让"回收站里还剩几条"变得难以解释。
+    if (recycleBin.value) return okKeyword;
+
+    const tf = typeFilter.value;
+    const sf = statusFilter.value;
     let okType = true;
     if (tf === 'redirect') okType = l.linkType === 'redirect';
     else if (tf === 'landing') okType = l.linkType === 'landing';
@@ -754,28 +844,41 @@ const batchDomainOptions = computed(() =>
 async function loadData() {
   loading.value = true;
   try {
-    const [linksRes, domainsRes] = await Promise.all([
-      listLinks({ page: page.value, pageSize: pageSize.value }),
-      listDomains(),
-    ]);
+    if (recycleBin.value) {
+      const res = await listDeletedLinks(page.value, pageSize.value);
+      links.value = res.items;
+      total.value = res.total;
+      deletedTotal.value = res.total;
+      // 选中项可能已不在当前页/筛选结果内,丢弃以免后续批量操作打到陈旧 id
+      clearSelection();
+    } else {
+      const [linksRes, domainsRes, trashRes] = await Promise.all([
+        listLinks({ page: page.value, pageSize: pageSize.value }),
+        listDomains(),
+        // 回收站角标:只取 total,所以 pageSize=1 即可(避免把整页回收站记录拉下来)
+        listDeletedLinks(1, 1),
+      ]);
 
-    links.value = linksRes.items;
-    total.value = linksRes.total;
-    domains.value = domainsRes;
+      links.value = linksRes.items;
+      total.value = linksRes.total;
+      domains.value = domainsRes;
+      deletedTotal.value = trashRes.total;
 
-    // 批量删除后当前页可能被删空:回退一页再取,避免停在空白页
-    if (links.value.length === 0 && page.value > 1) {
-      page.value -= 1;
-      loading.value = false;
-      return loadData();
+      // 批量删除后当前页可能被删空:回退一页再取,避免停在空白页
+      if (links.value.length === 0 && page.value > 1) {
+        page.value -= 1;
+        loading.value = false;
+        return loadData();
+      }
+      // 选中项可能已不在当前页/筛选结果内,丢弃以免后续批量操作打到陈旧 id
+      clearSelection();
+
+      if (domainsRes.length > 0 && !batchDomainId.value) {
+        const active = domainsRes.find((d) => d.status === 'active');
+        batchDomainId.value = active ? active.id : domainsRes[0].id;
+      }
     }
-    // 选中项可能已不在当前页/筛选结果内,丢弃以免后续批量操作打到陈旧 id
-    clearSelection();
 
-    if (domainsRes.length > 0 && !batchDomainId.value) {
-      const active = domainsRes.find((d) => d.status === 'active');
-      batchDomainId.value = active ? active.id : domainsRes[0].id;
-    }
   } catch (error) {
     if (error instanceof ApiError) {
       message.error(error.message);
@@ -787,6 +890,17 @@ async function loadData() {
   } finally {
     loading.value = false;
   }
+}
+
+/** 切换短链 / 回收站视图:回到第一页、清空选择与搜索词(旧筛选对新视图无意义) */
+function onSwitchTab(value: string | number): void {
+  const next = value === 'deleted' ? 'deleted' : 'active';
+  if (next === viewTab.value) return;
+  viewTab.value = next;
+  page.value = 1;
+  keyword.value = '';
+  clearSelection();
+  void loadData();
 }
 
 // ==================== 列表与表格操作 ====================
@@ -879,6 +993,58 @@ function handlePurgeLink(link: Link) {
       }
     },
   });
+}
+
+function handleRestoreLink(link: Link) {
+  confirm({
+    title: `还原短链「${link.code}」?`,
+    content:
+      '还原后短链重新对外跳转,并重新占用该域名下的短码。' +
+      '若该短码已被其它短链占用，还原会失败。',
+    okText: '确认还原',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await restoreLink(link.id);
+        message.success(`短链「${link.code}」已还原`);
+        await loadData();
+      } catch (err) {
+        if (err instanceof ApiError) message.error(err.message);
+        else message.error('还原短链失败');
+      }
+    },
+  });
+}
+
+/** 批量还原:逐条 PATCH,汇总成功数与"短码被占用"导致的失败数。 */
+async function handleBatchRestore(): Promise<void> {
+  if (selectedIds.value.length === 0) return;
+  const ids = [...selectedIds.value];
+
+  batchOperating.value = true;
+  try {
+    const results = await Promise.allSettled(ids.map((id) => restoreLink(id)));
+    const restored = results.filter((r) => r.status === 'fulfilled').length;
+    // 409 = 短码已被另一条存活短链占用,是可预期的业务冲突而非故障,单独计数提示
+    const conflicts = results.filter(
+      (r) => r.status === 'rejected' && (r.reason as ApiError)?.status === 409,
+    ).length;
+
+    clearSelection();
+    await loadData();
+    if (restored > 0) {
+      message.success(
+        `已还原 ${restored} 条短链` + (conflicts > 0 ? `,${conflicts} 条因短码被占用未能还原` : ''),
+      );
+    } else {
+      message.error(conflicts > 0 ? '所选短链的短码均已被占用,无法还原' : '还原失败,请稍后重试');
+    }
+  } catch (err) {
+    if (err instanceof ApiError) message.error(err.message);
+    else message.error('批量还原失败,请稍后重试');
+  } finally {
+    batchOperating.value = false;
+  }
 }
 
 function exportCsv() {

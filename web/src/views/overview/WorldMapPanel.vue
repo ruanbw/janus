@@ -5,7 +5,7 @@
         <h2 class="text-base font-semibold tracking-tight text-ink">访问来源地</h2>
         <p class="mt-0.5 text-xs text-ink-soft">按访客 IP 的离线 GeoIP 库判定国家，占比越高颜色越深。</p>
       </div>
-      <AppTag color="default">可定位 {{ locatedCount }} / {{ visits.length }}</AppTag>
+      <AppTag color="default">可定位 {{ locatedCount }} / {{ totalVisits }}</AppTag>
     </div>
 
     <div class="flex-1 p-4">
@@ -83,7 +83,10 @@
           无访问
         </span>
       </span>
-      <span>占比按能定位的 {{ locatedCount }} 条样本计算，不等于全量访问结构。</span>
+      <span v-if="!coverageTruncated">占比按能定位的 {{ locatedCount }} 次访问计算，不含无法定位的访问。</span>
+      <span v-else>
+        User-Agent 种类过多，分布图按前 {{ userAgentLimit }} 种 UA 统计（{{ locatedCount }} 次可定位访问），占比不覆盖全部访问。
+      </span>
     </div>
   </AppCard>
 </template>
@@ -95,7 +98,7 @@ import { RefreshCw } from '@lucide/vue';
 import AppButton from '@/components/app/AppButton.vue';
 import AppCard from '@/components/app/AppCard.vue';
 import AppTag from '@/components/app/AppTag.vue';
-import type { Visit } from '@/types/api';
+import type { FacetCount } from '@/types/api';
 
 import { countryDistribution } from './trafficBreakdown';
 import { MAP_HEIGHT, MAP_LEVELS, MAP_WIDTH, loadCountryShapes, mapLevel } from './worldMap';
@@ -104,12 +107,21 @@ import type { CountryShape } from './worldMap';
 /** 榜单条数：再多地图右侧就撑不下了（每行约 24px + 间距） */
 const TOP_COUNTRIES = 10;
 
-const props = defineProps<{ visits: Visit[] }>();
+const props = defineProps<{
+  /** 国家分布分桶（ISO 3166-1 alpha-2 → 访问次数），来自聚合端点 */
+  countries: FacetCount[];
+  /** 计入分布的访问总数（分母，用于回答"有多少访问没定位到国家"） */
+  totalVisits: number;
+  /** UA 分桶是否被后端截断（true 时分布图占比不覆盖全部访问，需如实告知） */
+  coverageTruncated: boolean;
+  /** UA 分桶上限（与后端 overviewFacetLimit 同值，仅用于文案） */
+  userAgentLimit: number;
+}>();
 
 const shapes = ref<CountryShape[]>([]);
 const mapFailed = ref(false);
 
-const breakdown = computed(() => countryDistribution(props.visits));
+const breakdown = computed(() => countryDistribution(props.countries));
 const locatedCount = computed(() => breakdown.value.reduce((sum, c) => sum + c.count, 0));
 const topCountries = computed(() => breakdown.value.slice(0, TOP_COUNTRIES));
 const restCountries = computed(() => Math.max(0, breakdown.value.length - TOP_COUNTRIES));

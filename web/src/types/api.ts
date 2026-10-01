@@ -299,6 +299,89 @@ export interface PageResult<T> {
   total: number;
 }
 
+/* ---------- 总览聚合(GET /api/visits/overview) ----------
+ *
+ * 口径与后端 store.CountVisitsByLink 完全一致:只有 action IN
+ * ('redirect','landing_view') 且 outcome='success' 的行计入访问次数。
+ * 前端不再从明细自行推导这些数字 —— 详见 internal/httpapi/visits.go
+ * 里 handleVisitsOverview 的注释(为什么"前端拉明细自己数"必然漂移)。
+ */
+
+/** 总览页的累计计数(全租户,不受短链列表分页限制) */
+export interface OverviewTotals {
+  /** 在册短链数(不含逻辑删除,与 /api/links 同口径) */
+  links: number;
+  /** 状态为 enabled 的短链数 */
+  activeLinks: number;
+  /** 落地页型短链数 */
+  landingLinks: number;
+  /** 总访问数 = 成功的 redirect + landing_view */
+  visits: number;
+  /** 跳转型短链的成功访问数 */
+  redirectVisits: number;
+  /** 落地页型短链的成功访问数(CTR 的分母) */
+  landingVisits: number;
+  /** 成功点击数(CTR 的分子,与分母同源同期,均受同一个保留期窗口约束) */
+  clicks: number;
+}
+
+/** 热门短链排行的一行 */
+export interface OverviewTopLink {
+  id: number;
+  code: string;
+  linkType: LinkType;
+  visits: number;
+}
+
+/** 维度分布的一桶:原始取值 + 访问次数 */
+export interface FacetCount {
+  value: string;
+  count: number;
+}
+
+/** 来源分布的一桶(标签与来源归类规则同 trafficBreakdown.ts) */
+export interface SourceCount {
+  name: string;
+  count: number;
+}
+
+/**
+ * 某个维度的覆盖情况。
+ *
+ * truncated 为真表示该维度按访问量取前 N 桶后被截断,此时占比的分母必须改用
+ * returned(而不是默认当成全量),并在界面上如实告知用户。
+ */
+export interface FacetCoverage {
+  total: number;
+  returned: number;
+  truncated: boolean;
+}
+
+/** 各维度分布 */
+export interface OverviewFacets {
+  /**
+   * **原始 User-Agent 字符串**的计数,不是设备标签。
+   *
+   * 设备/系统/浏览器的归类只在前端做(复用 ua-parser-js):后端另实现一套 Go 版
+   * UA 解析器只会制造第二个会漂移的口径,而 UA 串的数量级远小于访问明细行数,
+   * 传原始串既省带宽又不丢信息。
+   */
+  userAgents: FacetCount[];
+  /** 已按广告平台归类完成 */
+  sources: SourceCount[];
+  /** 只含可定位的访问(解析不出国家的不进任何桶) */
+  countries: FacetCount[];
+  userAgentCoverage: FacetCoverage;
+  countryCoverage: FacetCoverage;
+}
+
+/** 总览页一次取齐的聚合结果 */
+export interface OverviewStats {
+  totals: OverviewTotals;
+  topLinks: OverviewTopLink[];
+  facets: OverviewFacets;
+}
+
 /** 统一错误响应:{ code, message, details? } */
 export interface ApiErrorBody {
   code: string;

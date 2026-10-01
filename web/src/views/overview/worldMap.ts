@@ -24,7 +24,16 @@ export const MAP_HEIGHT = 430;
 const MAP_INSET = 8;
 
 export interface CountryShape {
-  /** TopoJSON 要素 id（ISO 3166-1 numeric，数据自带且唯一，用作 v-for 的 key） */
+  /**
+   * v-for 的 key。
+   *
+   * 优先用 TopoJSON 要素 id（ISO 3166-1 numeric）。但**不能只靠它**：
+   * countries-110m.json 里的 `N. Cyprus` / `Somaliland` / `Kosovo` 三个要素
+   * 根本没有 id 字段，`String(f.id ?? '')` 会给它们三个全等的空串 ——
+   * 三个兄弟节点共用一个 key，Vue 会告警且 DOM diff 结果不可靠
+   * （复用/错位，而不是重建）。所以回退到 properties.name，它是数据里
+   * 一定存在且唯一的。
+   */
   id: string;
   /** 换算出的 ISO 3166-1 alpha-2 码；空串表示没有对应的访问数据，画成底色 */
   code: string;
@@ -57,6 +66,7 @@ export function mapLevel(ratio: number): number {
 
 // TopoJSON 规范里的类型没有随包发出来，这里只声明本模块实际用到的字段。
 // 其余字段（arcs / transform）原样透传——arcs 是弧表的真实数据，不能重建。
+// id 刻意声明为可选：上面那条 key 回退规则正是因为数据里真有几个要素没有它。
 type CountryGeometry = { type: 'Polygon' | 'MultiPolygon'; id?: string | number };
 
 /**
@@ -113,11 +123,22 @@ async function buildCountryShapes(): Promise<CountryShape[]> {
   const path = geoPath(projection);
 
   return land
-    .map((f) => ({ id: String(f.id ?? ''), code: alpha2Of(f), d: path(f) ?? '' }))
+    .map((f) => ({ id: shapeKeyOf(f), code: alpha2Of(f), d: path(f) ?? '' }))
     .filter((s) => s.d !== '');
 }
 
 // 单独抽一层是为了让 alpha2FromNumeric 保持可测、可复用，这里只负责取 id。
 function alpha2Of(geometry: { id?: string | number }): string {
   return alpha2FromNumeric(geometry.id);
+}
+
+/** 要素的稳定唯一键：id 优先，缺失时回退到 properties.name。 */
+function shapeKeyOf(geometry: { id?: string | number; properties?: unknown }): string {
+  if (geometry.id !== undefined && geometry.id !== null && String(geometry.id) !== '') {
+    return String(geometry.id);
+  }
+  // name 在 countries-110m.json 里是必带的；仍留一层兜底(序号由调用方补不到时
+  // 至少不会退化成空串导致全表共用同一个 key)。
+  const name = (geometry.properties as { name?: string } | null | undefined)?.name;
+  return name ? `name:${name}` : 'unknown';
 }

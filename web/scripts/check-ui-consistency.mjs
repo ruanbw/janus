@@ -24,6 +24,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseSFC } from 'vue/compiler-sfc';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -212,14 +213,42 @@ vueFiles.forEach((file) => {
 console.log('7. 检查业务视图中的裸 HTML 原语 (<button, <input, <select, <table>)...');
 const businessViews = walkDir(path.resolve(srcDir, 'views'), (p) => p.endsWith('.vue'));
 
+/**
+ * 取出 .vue 文件的 <template> 区块及其在原文中的起始偏移。
+ *
+ * 为什么必须用 vue/compiler-sfc 而不是正则：`<template>([\s\S]*?)</template>` 这类
+ * 非贪婪匹配会在**第一个**嵌套 `</template>` 处截断，而 `<template #icon>`、`<template #default>`
+ * 在本仓库里到处都是。实测 20 个 view 文件全部被截断，`LinksView.vue` 只扫到
+ * 9/1138 行 —— 门禁名义上在跑，实际只覆盖了 17.2% 的代码，于是
+ * `RuleFormView.vue` 里一个落在扫描窗口之外的裸 `<input type="file">` 报了"0 违规"。
+ * 解析器是本项目已有的 Vue 工具链的一部分（@vitejs/plugin-vue 就依赖它），
+ * 不引入新依赖。
+ *
+ * 返回 offset 是为了把匹配位置换算回**原文件**的行号：报错必须指向
+ * `RuleFormView.vue:776` 这种真实位置，否则门禁的输出无法直接跳转修复。
+ */
+function readTemplateBlock(file) {
+  const source = fs.readFileSync(file, 'utf8');
+  try {
+    const { descriptor, errors } = parseSFC(source, { filename: file });
+    if (errors && errors.length > 0) {
+      console.warn(`  ⚠️ ${path.relative(webRoot, file)}: SFC 解析失败，第 7 项跳过（${errors[0].message}）`);
+      return null;
+    }
+    const block = descriptor.template;
+    if (!block) return null;
+    // content 是模板正文；loc.start.offset 指向正文第一个字符在原文中的偏移。
+    return { content: block.content, offset: block.loc.start.offset, source };
+  } catch {
+    console.warn(`  ⚠️ ${path.relative(webRoot, file)}: SFC 解析异常，第 7 项跳过`);
+    return null;
+  }
+}
+
 businessViews.forEach((file) => {
-  const content = fs.readFileSync(file, 'utf8');
-  
-  // 仅在 <template> ... </template> 区域内检查
-  const templateMatch = content.match(/<template>([\s\S]*?)<\/template>/);
-  if (!templateMatch) return;
-  const templateContent = templateMatch[1];
-  const templateOffset = content.indexOf('<template>') + '<template>'.length;
+  const block = readTemplateBlock(file);
+  if (!block) return;
+  const templateContent = block.content;
 
   // 匹配所有 <button ...>, <input ...>, <select ...>, <table ...> 标签（支持跨行）
   const tagRegex = /<(button|input|select|table)\b([^>]*)>/gis;
@@ -234,8 +263,8 @@ businessViews.forEach((file) => {
     }
 
     // 计算行列号
-    const charIndex = templateOffset + match.index;
-    const linesBefore = content.substring(0, charIndex).split('\n');
+    const charIndex = block.offset + match.index;
+    const linesBefore = block.source.substring(0, charIndex).split('\n');
     const lineNum = linesBefore.length;
     const colNum = linesBefore[linesBefore.length - 1].length + 1;
 
@@ -271,7 +300,13 @@ if (fs.existsSync(distAssetsDir)) {
     console.error('  ❌ [AnimationVariants] dist 产物中未找到 data-[state=closed]:animate-out 编译规则');
   }
 } else {
-  console.log('  ⚠️ dist 目录尚未构建，跳过产物检查（可在 pnpm build 后复验）');
+  // 静默跳过 = 门禁形同虚设：CI 里 `pnpm check:ui` 若先于 build 执行，
+  // 退出码仍是 0，这项检查就等于没跑。所以这里计入 totalErrors 并非零退出，
+  // 强制执行顺序是 build → check（README 7.1 与 UI_KIT.md 已统一到这个顺序）。
+  totalErrors++;
+  console.error(
+    '  ❌ [AnimationVariants] dist/assets 不存在：请先执行 pnpm build 再执行 pnpm check:ui',
+  );
 }
 
 // 9. 状态色对比度检查（双主题）

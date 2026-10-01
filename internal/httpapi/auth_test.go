@@ -5,6 +5,7 @@ package httpapi_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"testing"
 
+	"cloak/internal/bootstrap"
+	"cloak/internal/httpapi"
 	"cloak/internal/store"
 	"cloak/internal/testutil"
 )
@@ -417,4 +420,165 @@ func TestChangePasswordRevokesOtherSessions(t *testing.T) {
 	resp = c2.get("/api/auth/me")
 	assertStatus(t, resp, http.StatusUnauthorized)
 	_ = resp.Body.Close()
+}
+
+// ---------- 超管首次设置密码:一次性 setup token ----------
+
+// bootstrapSuperadmin 初始化一个尚无密码的超管(FirstLoginSetup=true)。
+func bootstrapSuperadmin(t *testing.T, env *testutil.Env, email string) {
+	t.Helper()
+	if err := bootstrap.Superadmin(context.Background(), env.Store, email); err != nil {
+		t.Fatalf("bootstrap superadmin: %v", err)
+	}
+}
+
+// TestSuperadminFirstLoginRequiresSetupToken 超管首次登录必须持一次性 setup token。
+//
+// 这是本次最严重那条洞的回归测试:修复前 FirstLoginSetup=true 会**整段跳过 bcrypt**,
+// 只要知道超管邮箱(证书透明度日志/DNS/GitHub 泄露都能推断)就能换到 superadmin 会话。
+// 现在:无 token → 401 并补发一枚;错误 token → 401;正确 token → 200 且一次性(复用即拒)。
+func TestSuperadminFirstLoginRequiresSetupToken(t *testing.T) {
+	env := testutil.Setup(t)
+	bootstrapSuperadmin(t, env, "admin@cloak.test")
+	c := newClient(env)
+
+	// ① 只带任意密码:必须被拒(且该次失败会补发一枚 setup token)
+	resp := c.post("/api/auth/login", map[string]string{"email": "admin@cloak.test", "password": "whatever"})
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+
+	// ② 错误的 setup token:同样被拒
+	resp = c.post("/api/auth/login", map[string]string{
+		"email": "admin@cloak.test", "password": "whatever", "setupToken": "not-a-real-token",
+	})
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+
+	// ③ 正确的 setup token → 200,且响应带 firstLoginSetup 标记
+	token := env.LastToken(t)
+	resp = c.post("/api/auth/login", map[string]string{
+		"email": "admin@cloak.test", "password": "whatever", "setupToken": token,
+	})
+	assertStatus(t, resp, http.StatusOK)
+	tenant := decodeBody[store.Tenant](t, resp)
+	if !tenant.FirstLoginSetup {
+		t.Fatal("firstLoginSetup should be true before password is set")
+	}
+	if !tenant.IsSuperAdmin {
+		t.Fatal("tenant should be superadmin")
+	}
+
+	// ④ token 一次性:换一个客户端复用同一枚 → 401
+	resp = newClient(env).post("/api/auth/login", map[string]string{
+		"email": "admin@cloak.test", "password": "whatever", "setupToken": token,
+	})
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+}
+
+// TestSuperadminWrongPasswordRejectedAfterSetup 设完密码后走正常 bcrypt 路径:
+// 错误密码必须被拒(修复前这条路径对任何密码都放行)。
+func TestSuperadminWrongPasswordRejectedAfterSetup(t *testing.T) {
+	env := testutil.Setup(t)
+	bootstrapSuperadmin(t, env, "admin@cloak.test")
+	c := newClient(env)
+
+	// 触发补发并用 setup token 登录
+	_ = c.post("/api/auth/login", map[string]string{"email": "admin@cloak.test", "password": "x"})
+	resp := c.post("/api/auth/login", map[string]string{
+		"email": "admin@cloak.test", "setupToken": env.LastToken(t),
+	})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	// 设置密码
+	resp = c.post("/api/auth/change-password", map[string]string{"newPassword": "adminpass123"})
+	assertStatus(t, resp, http.StatusNoContent)
+	_ = resp.Body.Close()
+
+	// 错误密码 → 401(不再免密)
+	resp = newClient(env).post("/api/auth/login", map[string]string{"email": "admin@cloak.test", "password": "wrongpass"})
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+
+	// 正确密码 → 200
+	resp = newClient(env).post("/api/auth/login", map[string]string{"email": "admin@cloak.test", "password": "adminpass123"})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+}
+
+// TestPasswordLengthUpperBound 密码超过 bcrypt 的 72 字节上限必须返回 E_VALIDATION,
+// 而不是穿透到 bcrypt 变成 500(ErrPasswordTooLong)。72 字节本身仍然合法。
+func TestPasswordLengthUpperBound(t *testing.T) {
+	env := testutil.Setup(t)
+	c := newClient(env)
+	long := strings.Repeat("a", 73) // 73 > 72
+
+	resp := c.post("/api/auth/register", map[string]string{
+		"email": "alice@example.com", "password": long, "slug": "alice",
+	})
+	assertStatus(t, resp, http.StatusBadRequest)
+	body := decodeBody[httpapi.ErrorBody](t, resp)
+	if body.Code != "E_VALIDATION" {
+		t.Fatalf("register code = %s, want E_VALIDATION", body.Code)
+	}
+
+	// 恰好 72 字节仍然合法(bcrypt 上界含端点)
+	resp = c.post("/api/auth/register", map[string]string{
+		"email": "bob@example.com", "password": strings.Repeat("b", 72), "slug": "bob",
+	})
+	assertStatus(t, resp, http.StatusCreated)
+	_ = resp.Body.Close()
+
+	// 重置密码端点同样受上界约束
+	resp = c.post("/api/auth/reset-password", map[string]string{
+		"token": "whatever", "newPassword": long,
+	})
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
+}
+
+// TestChangePasswordRejectsOverlongPassword 改密端点的上界校验。
+func TestChangePasswordRejectsOverlongPassword(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	resp := c.post("/api/auth/change-password", map[string]string{
+		"oldPassword": "password123", "newPassword": strings.Repeat("c", 73),
+	})
+	assertStatus(t, resp, http.StatusBadRequest)
+	body := decodeBody[httpapi.ErrorBody](t, resp)
+	if body.Code != "E_VALIDATION" {
+		t.Fatalf("code = %s, want E_VALIDATION", body.Code)
+	}
+	_ = resp.Body.Close()
+}
+
+// TestResendVerification 注册发信失败后的自助恢复入口:恒 202 不泄露邮箱存在性;
+// pending 租户会真的收到新验证邮件,已验证的租户不再发信。
+func TestResendVerification(t *testing.T) {
+	env := testutil.Setup(t)
+	c := newClient(env)
+
+	// 不存在的邮箱 → 202(不泄露存在性)
+	resp := c.post("/api/auth/resend-verification", map[string]string{"email": "ghost@example.com"})
+	assertStatus(t, resp, http.StatusAccepted)
+	_ = resp.Body.Close()
+
+	// pending 租户 → 202 且真的补发(可用新 token 完成验证)
+	register(t, env, "alice")
+	resp = c.post("/api/auth/resend-verification", map[string]string{"email": "alice@example.com"})
+	assertStatus(t, resp, http.StatusAccepted)
+	_ = resp.Body.Close()
+	resp = c.post("/api/auth/verify-email", map[string]string{"token": env.LastToken(t)})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	// 已验证的租户 → 202 且不触发发信
+	before := len(env.MailOutput())
+	resp = c.post("/api/auth/resend-verification", map[string]string{"email": "alice@example.com"})
+	assertStatus(t, resp, http.StatusAccepted)
+	_ = resp.Body.Close()
+	if got := len(env.MailOutput()) - before; got != 0 {
+		t.Errorf("active tenant triggered %d extra mail bytes, want 0", got)
+	}
 }

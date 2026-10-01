@@ -35,7 +35,13 @@
     </section>
 
     <!-- 世界地图：与其他分布图同源，但单独占满一整行 -->
-    <WorldMapPanel v-if="visits.length > 0" :visits="visits" />
+    <WorldMapPanel
+      v-if="totals.visits > 0"
+      :countries="overview?.facets.countries ?? []"
+      :total-visits="totals.visits"
+      :coverage-truncated="userAgentsTruncated"
+      :user-agent-limit="USER_AGENT_LIMIT"
+    />
 
     <!--
       分析与分布卡片：宽屏一行三列 / 中屏两列 / 手机一列，用 Tailwind 断点工具类表达。
@@ -43,7 +49,7 @@
     -->
     <section class="grid grid-cols-1 items-stretch gap-4 sm:grid-cols-2 xl:grid-cols-3">
       <!-- 暂无流量数据卡片 -->
-      <AppCard v-if="totalVisits === 0" :padding="false" class="sm:col-span-2 xl:col-span-3">
+      <AppCard v-if="totals.visits === 0" :padding="false" class="sm:col-span-2 xl:col-span-3">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
             <h2 class="text-base font-semibold tracking-tight text-ink">流量与转化分析</h2>
@@ -66,11 +72,11 @@
               暂无流量访问数据，投放或测试访问后将在此自动汇总。
             </p>
             <p class="mt-1 text-xs text-ink-faint">
-              当前已配置 {{ links.length }} 条短链（{{ activeLinksCount }} 条已启用），{{ domains.length }} 个域名（{{ activeDomainsCount }} 个已激活）。
+              当前已配置 {{ totals.links.toLocaleString() }} 条短链（{{ totals.activeLinks.toLocaleString() }} 条已启用），{{ domains.length }} 个域名（{{ activeDomainsCount }} 个已激活）。
             </p>
             <div class="mt-6 flex flex-wrap items-center justify-center gap-3">
               <AppButton to="/links" size="sm" variant="default">
-                {{ links.length === 0 ? '创建第一条短链' : '前往短链列表' }}
+                {{ totals.links === 0 ? '创建第一条短链' : '前往短链列表' }}
               </AppButton>
               <AppButton size="sm" variant="outline" :loading="loading" @click="loadData">
                 <template #icon><RefreshCw :size="13" /></template>
@@ -82,7 +88,7 @@
       </AppCard>
 
       <!-- 热门短链访问排行 -->
-      <AppCard v-if="totalVisits > 0" :padding="false" class="@container flex flex-col">
+      <AppCard v-if="totals.visits > 0" :padding="false" class="@container flex flex-col">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
             <h2 class="text-base font-semibold tracking-tight text-ink">热门短链访问排行</h2>
@@ -108,11 +114,11 @@
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div
                   class="h-full min-w-[2px] rounded bg-brand transition-all duration-300"
-                  :style="{ width: `${Math.min(100, Math.max(2, Math.round(((link.visits || 0) / totalVisits) * 100)))}%` }"
+                  :style="{ width: `${shareWidth(link.visits)}%` }"
                 />
               </div>
               <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">
-                {{ (link.visits || 0).toLocaleString() }} · {{ (((link.visits || 0) / totalVisits) * 100).toFixed(1) }}%
+                {{ link.visits.toLocaleString() }} · {{ sharePercent(link.visits) }}%
               </span>
             </div>
           </div>
@@ -123,7 +129,7 @@
       </AppCard>
 
       <!-- 短链类型与流量结构 -->
-      <AppCard v-if="totalVisits > 0" :padding="false" class="@container flex flex-col">
+      <AppCard v-if="totals.visits > 0" :padding="false" class="@container flex flex-col">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
             <h2 class="text-base font-semibold tracking-tight text-ink">短链类型与流量结构</h2>
@@ -137,7 +143,7 @@
           <div
             class="flex h-6.5 w-full overflow-hidden rounded-md border border-line"
             role="img"
-            :aria-label="`跳转型 ${redirectVisits} 次占 ${redirectPercent}%，落地页型 ${landingVisits} 次占 ${landingPercent}%`"
+            :aria-label="`跳转型 ${totals.redirectVisits.toLocaleString()} 次占 ${redirectPercent}%，落地页型 ${totals.landingVisits.toLocaleString()} 次占 ${landingPercent}%`"
           >
             <span class="h-full bg-brand transition-all duration-300" :style="{ width: `${redirectPercent}%` }"></span>
             <span class="h-full bg-info transition-all duration-300" :style="{ width: `${landingPercent}%` }"></span>
@@ -160,21 +166,21 @@
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div class="h-full min-w-[2px] rounded bg-brand transition-all duration-300" :style="{ width: `${redirectPercent}%` }" />
               </div>
-              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ redirectVisits.toLocaleString() }} · {{ redirectPercent }}%</span>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ totals.redirectVisits.toLocaleString() }} · {{ redirectPercent }}%</span>
             </div>
             <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
               <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">落地页访问</span>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div class="h-full min-w-[2px] rounded bg-info transition-all duration-300" :style="{ width: `${landingPercent}%` }" />
               </div>
-              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ landingVisits.toLocaleString() }} · {{ landingPercent }}%</span>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ totals.landingVisits.toLocaleString() }} · {{ landingPercent }}%</span>
             </div>
             <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
               <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">落地页点击</span>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
-                <div class="h-full min-w-[2px] rounded bg-ok transition-all duration-300" :style="{ width: `${landingVisits > 0 ? Math.min(100, Math.round((totalClicks / landingVisits) * 100)) : 0}%` }" />
+                <div class="h-full min-w-[2px] rounded bg-ok transition-all duration-300" :style="{ width: `${landingCtrPercent}%` }" />
               </div>
-              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ totalClicks.toLocaleString() }} · CTR {{ landingCTR }}</span>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ totals.clicks.toLocaleString() }} · CTR {{ ctrText }}</span>
             </div>
           </div>
         </div>
@@ -184,7 +190,7 @@
       </AppCard>
 
       <!-- 流量来源分布 -->
-      <AppCard v-if="visits.length > 0" :padding="false" class="@container flex flex-col">
+      <AppCard v-if="totals.visits > 0" :padding="false" class="@container flex flex-col">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
             <h2 class="text-base font-semibold tracking-tight text-ink">流量来源分布</h2>
@@ -216,7 +222,7 @@
       </AppCard>
 
       <!-- 设备类型分布 -->
-      <AppCard v-if="visits.length > 0" :padding="false" class="@container flex flex-col">
+      <AppCard v-if="totals.visits > 0" :padding="false" class="@container flex flex-col">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
             <h2 class="text-base font-semibold tracking-tight text-ink">设备类型分布</h2>
@@ -248,7 +254,7 @@
       </AppCard>
 
       <!-- 操作系统分布 -->
-      <AppCard v-if="visits.length > 0" :padding="false" class="@container flex flex-col">
+      <AppCard v-if="totals.visits > 0" :padding="false" class="@container flex flex-col">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
             <h2 class="text-base font-semibold tracking-tight text-ink">操作系统分布</h2>
@@ -280,7 +286,7 @@
       </AppCard>
 
       <!-- 浏览器分布 -->
-      <AppCard v-if="visits.length > 0" :padding="false" class="@container flex flex-col">
+      <AppCard v-if="totals.visits > 0" :padding="false" class="@container flex flex-col">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
             <h2 class="text-base font-semibold tracking-tight text-ink">浏览器分布</h2>
@@ -311,10 +317,15 @@
       </AppCard>
     </section>
 
-    <!-- 样本量提示 -->
-    <p v-if="visits.length > 0" class="text-xs text-ink-faint">
-      样本量：{{ sampleLinks.length }} 条有访问量的短链（按访问量降序取前 {{ SAMPLE_LINK_LIMIT }} 条）各
-      {{ SAMPLE_PAGE_SIZE }} 条访问明细，共 <span class="font-mono text-ink">{{ visits.length }}</span> 条。地图与各分布图的占比按该样本计算，不等于全量访问结构。
+    <!-- 口径提示：分布图覆盖到什么范围（被截断时必须如实说明，不能默认当成全量） -->
+    <p v-if="totals.visits > 0" class="text-xs text-ink-faint">
+      分布口径：只统计<strong class="font-medium text-ink-soft">成功</strong>的跳转与落地页视图（不含点击与失败），
+      时间范围为访问明细的保留期。地图分母是<strong class="font-medium text-ink-soft">能定位到国家</strong>的
+      {{ locatedVisits.toLocaleString() }} 次访问，其余 {{ (totals.visits - locatedVisits).toLocaleString() }} 次
+      无法定位（私网 / 回环 / 离线库未收录），不进任何国家。
+      <template v-if="userAgentsTruncated">
+        User-Agent 种类过多，设备 / 系统 / 浏览器三张图按访问量前 {{ USER_AGENT_LIMIT }} 种 UA 统计。
+      </template>
     </p>
 
     <!-- 合规提示 -->
@@ -329,19 +340,19 @@ import { computed, onMounted, ref } from 'vue';
 import { CircleHelp, RefreshCw } from '@lucide/vue';
 
 import { listDomains } from '@/api/domains';
-import { listLinks } from '@/api/links';
-import { listVisits } from '@/api/visits';
+import { fetchOverviewStats } from '@/api/visits';
 import AppAlert from '@/components/app/AppAlert.vue';
 import AppButton from '@/components/app/AppButton.vue';
 import AppCard from '@/components/app/AppCard.vue';
 import AppTag from '@/components/app/AppTag.vue';
 import AppTooltip from '@/components/app/AppTooltip.vue';
 import { ApiError } from '@/types/api';
-import type { Domain, Link, Visit } from '@/types/api';
+import type { Domain, OverviewStats } from '@/types/api';
 import { message } from '@/utils/toast';
 
 import {
   browserDistribution,
+  countryDistribution,
   deviceDistribution,
   osDistribution,
   sourceDistribution,
@@ -349,99 +360,99 @@ import {
 import WorldMapPanel from './WorldMapPanel.vue';
 
 /**
- * 分布图的样本上限：按访问量降序取前 10 条短链，每条取最近 50 条明细。
- *
- * 全量访问明细没有聚合接口，只能靠逐条短链拉取；这两个上限是为了让总览页的加载
- * 时间可接受，取值沿用原数据洞察页。
+ * UA 分桶上限，与后端 store 的 overviewFacetLimit 同值。
+ * 存在的意义是：被截断时界面上要能说出"按前 N 种 UA 统计"，
+ * 否则用户会把一个不覆盖全量的占比当成全量结构来读。
  */
-const SAMPLE_LINK_LIMIT = 10;
-const SAMPLE_PAGE_SIZE = 50;
+const USER_AGENT_LIMIT = 500;
+
+/**
+ * 访问明细保留期（天）。分布图的时间范围就是它 —— 超过这个窗口的访问
+ * 已被后台清理任务删除，所以任何分布都只覆盖这段窗口，文案必须如实说明。
+ * 默认值与后端 CLOAK_VISIT_RETENTION 的默认值一致。
+ */
+const VISIT_RETENTION_DAYS = 90;
 
 const loading = ref(false);
-const links = ref<Link[]>([]);
 const domains = ref<Domain[]>([]);
-/** 分布图的访问明细样本（不是全量，见 SAMPLE_LINK_LIMIT 注释） */
-const visits = ref<Visit[]>([]);
-const sampleLinks = ref<Link[]>([]);
+/** 后端一次性算好的聚合结果；null = 尚未加载或加载失败 */
+const overview = ref<OverviewStats | null>(null);
 
-const sourceBreakdown = computed(() => sourceDistribution(visits.value));
-const deviceBreakdown = computed(() => deviceDistribution(visits.value));
-const osBreakdown = computed(() => osDistribution(visits.value));
-const browserBreakdown = computed(() => browserDistribution(visits.value));
+/** 尚未加载 / 加载失败时的占位：全 0，让页面显示"暂无数据"而不是 undefined */
+const EMPTY_TOTALS: OverviewStats['totals'] = {
+  links: 0,
+  activeLinks: 0,
+  landingLinks: 0,
+  visits: 0,
+  redirectVisits: 0,
+  landingVisits: 0,
+  clicks: 0,
+};
 
-// 活跃短链数：真实已启用的短链数量
-const activeLinksCount = computed(() => {
-  return links.value.filter((link) => link.status === 'enabled').length;
-});
+/** 全部计数都来自这一个对象，不再由前端从明细或短链列表推导 */
+const totals = computed(() => overview.value?.totals ?? EMPTY_TOTALS);
+const facets = computed(() => overview.value?.facets ?? null);
 
-// 承载域名数：真实激活的域名数量
+const userAgents = computed(() => facets.value?.userAgents ?? []);
+const userAgentsTruncated = computed(() => facets.value?.userAgentCoverage.truncated ?? false);
+
+/** 能定位到国家的访问次数（地图的分母） */
+const locatedVisits = computed(() => facets.value?.countryCoverage.returned ?? 0);
+
+const sourceBreakdown = computed(() => sourceDistribution(facets.value?.sources ?? []));
+const deviceBreakdown = computed(() => deviceDistribution(userAgents.value));
+const osBreakdown = computed(() => osDistribution(userAgents.value));
+const browserBreakdown = computed(() => browserDistribution(userAgents.value));
+
+// 承载域名数：真实激活的域名数量（域名不分页，一次拿全）
 const activeDomainsCount = computed(() => {
   return domains.value.filter((domain) => domain.status === 'active').length;
 });
 
-// 总访问数：累加所有短链的真实访问量（visits）
-const totalVisits = computed(() => {
-  return links.value.reduce((sum, link) => sum + (link.visits || 0), 0);
+/**
+ * CTR = 成功点击 / 落地页视图。
+ *
+ * 分母**只能是**落地页访问：点击只可能来自落地页型短链,把跳转型短链的
+ * 访问算进分母会系统性压低这个指标(跳转型短链根本不产生点击)。
+ *
+ * 分子分母都取自 visits 表的同一段 SQL、同一段时间窗口。此前分子取的是
+ * links.clicks 这个**永久计数器**,而分母取 visits 表的 count(*) ——
+ * 90 天清理会持续削掉分母、分子永不衰减,运行满一个保留期后 CTR 会单调
+ * 虚高到超过 100%。
+ */
+const ctrPercent = computed(() => {
+  if (totals.value.landingVisits === 0) return 0;
+  return (totals.value.clicks / totals.value.landingVisits) * 100;
 });
 
-// 落地页短链数量
-const landingLinksCount = computed(() => {
-  return links.value.filter((link) => link.linkType === 'landing').length;
-});
+const ctrText = computed(() => (totals.value.landingVisits === 0 ? '0%' : `${ctrPercent.value.toFixed(1)}%`));
 
-// 落地页点击数：累加落地页型短链的真实点击量（clicks）
-const totalClicks = computed(() => {
-  return links.value
-    .filter((link) => link.linkType === 'landing')
-    .reduce((sum, link) => sum + (link.clicks || 0), 0);
-});
-
-// 整体转化率（CTR）：点击数 / 访问数（当访问数为 0 时显示 0%）
-const ctr = computed(() => {
-  if (totalVisits.value === 0) return 0;
-  return (totalClicks.value / totalVisits.value) * 100;
-});
-
-const ctrText = computed(() => {
-  if (totalVisits.value === 0) return '0%';
-  return `${ctr.value.toFixed(1)}%`;
-});
-
-// 跳转型访问统计
-const redirectVisits = computed(() => {
-  return links.value
-    .filter((link) => link.linkType === 'redirect')
-    .reduce((sum, link) => sum + (link.visits || 0), 0);
-});
-
-// 落地页型访问统计
-const landingVisits = computed(() => {
-  return links.value
-    .filter((link) => link.linkType === 'landing')
-    .reduce((sum, link) => sum + (link.visits || 0), 0);
-});
+const landingCtrPercent = computed(() => Math.min(100, Math.round(ctrPercent.value)));
 
 const redirectPercent = computed(() => {
-  if (totalVisits.value === 0) return 0;
-  return Math.round((redirectVisits.value / totalVisits.value) * 1000) / 10;
+  if (totals.value.visits === 0) return 0;
+  return Math.round((totals.value.redirectVisits / totals.value.visits) * 1000) / 10;
 });
 
 const landingPercent = computed(() => {
-  if (totalVisits.value === 0) return 0;
-  return Math.round((landingVisits.value / totalVisits.value) * 1000) / 10;
+  if (totals.value.visits === 0) return 0;
+  return Math.round((totals.value.landingVisits / totals.value.visits) * 1000) / 10;
 });
 
-const landingCTR = computed(() => {
-  if (landingVisits.value === 0) return '0%';
-  return `${((totalClicks.value / landingVisits.value) * 100).toFixed(1)}%`;
-});
+/** 热门短链排行：后端已按全租户访问量降序取好，不再在前端对"前 100 条"重排 */
+const topLinks = computed(() => overview.value?.topLinks ?? []);
 
-// 热门短链排行 (TOP 5)
-const topLinks = computed(() => {
-  return [...links.value]
-    .sort((a, b) => (b.visits || 0) - (a.visits || 0))
-    .slice(0, 5);
-});
+/** 单条短链占总访问的比例（百分比，一位小数） */
+function sharePercent(visits: number): string {
+  if (totals.value.visits === 0) return '0.0';
+  return ((visits / totals.value.visits) * 100).toFixed(1);
+}
+
+/** 排行条形图的宽度百分比：与 sharePercent 同一分母，但至少留 2% 让零星短链也可见 */
+function shareWidth(visits: number): number {
+  if (totals.value.visits === 0) return 0;
+  return Math.min(100, Math.max(2, Math.round((visits / totals.value.visits) * 100)));
+}
 
 interface KPIItem {
   label: string;
@@ -454,66 +465,54 @@ interface KPIItem {
 const kpiList = computed<KPIItem[]>(() => [
   {
     label: '活跃短链',
-    value: activeLinksCount.value.toLocaleString(),
+    value: totals.value.activeLinks.toLocaleString(),
     unit: '条',
-    sub: `已启用 · 共 ${links.value.length} 条短链`,
+    sub: `已启用 · 共 ${totals.value.links.toLocaleString()} 条短链`,
     tip: '状态为「启用」的短链数量。已停用的短链不计入，不参与重定向与流量承接。',
   },
   {
     label: '承载域名',
     value: activeDomainsCount.value.toLocaleString(),
     unit: '个',
-    sub: `已激活 · 共 ${domains.value.length} 个域名`,
+    sub: `已激活 · 共 ${domains.value.length.toLocaleString()} 个域名`,
     tip: 'DNS 解析已指向本服务器且状态为「已激活」的域名数量，可正常签发证书并承载短链跳转。',
   },
   {
     label: '总访问数',
-    value: totalVisits.value.toLocaleString(),
+    value: totals.value.visits.toLocaleString(),
     unit: '次',
-    sub: totalVisits.value > 0 ? '所有短链累计访问总量' : '暂无访问记录',
-    tip: '所有短链收到的访问请求累计总数。跳转型短链重定向即记录一次，落地页型短链落地页展现即记录一次。',
+    sub: totals.value.visits > 0 ? '所有短链累计访问总量' : '暂无访问记录',
+    tip: `所有在册短链收到的成功跳转与落地页视图累计总数（保留期 ${VISIT_RETENTION_DAYS} 天内）。跳转型短链重定向即记录一次，落地页型短链落地页展现即记录一次；点击与失败都不计入。`,
   },
   {
     label: '落地页点击数',
-    value: totalClicks.value.toLocaleString(),
+    value: totals.value.clicks.toLocaleString(),
     unit: '次',
-    sub: landingLinksCount.value > 0
-      ? `来自 ${landingLinksCount.value} 条落地页型短链`
+    sub: totals.value.landingLinks > 0
+      ? `来自 ${totals.value.landingLinks.toLocaleString()} 条落地页型短链`
       : '暂无落地页短链',
     tip: '落地页上按钮经 SDK 触发回传的累计有效点击次数。仅落地页型短链拥有点击统计。',
   },
   {
     label: '整体转化率 (CTR)',
     value: ctrText.value,
-    sub: totalVisits.value > 0
-      ? `点击 ${totalClicks.value.toLocaleString()} / 访问 ${totalVisits.value.toLocaleString()}`
+    sub: totals.value.visits > 0
+      ? `点击 ${totals.value.clicks.toLocaleString()} / 落地页访问 ${totals.value.landingVisits.toLocaleString()}`
       : '访问量为 0 时显示 0%',
-    tip: '整体点击转化率（CTR）= 落地页点击数 / 总访问数。当总访问数为 0 时显示 0%。',
+    tip: `转化率（CTR）= 落地页点击数 / 落地页访问数。分母只取落地页访问 —— 跳转型短链的访问不可能产生点击，算进去会系统性压低这个指标。分子与分母同源同期，都受 ${VISIT_RETENTION_DAYS} 天保留期约束。`,
   },
 ]);
 
 async function loadData() {
   loading.value = true;
   try {
-    const [linksRes, domainsRes] = await Promise.all([
-      listLinks(1, 100),
+    // 两个请求互不依赖，并发拿；域名列表本身不分页。
+    const [statsRes, domainsRes] = await Promise.all([
+      fetchOverviewStats(),
       listDomains(),
     ]);
-    links.value = linksRes?.items ?? [];
+    overview.value = statsRes;
     domains.value = Array.isArray(domainsRes) ? domainsRes : [];
-
-    // 分布图样本：只拉有访问量的短链，按访问量降序取前 N 条
-    const items = linksRes?.items ?? [];
-    sampleLinks.value = [...items]
-      .filter((l) => (l.visits || 0) > 0)
-      .sort((a, b) => (b.visits || 0) - (a.visits || 0))
-      .slice(0, SAMPLE_LINK_LIMIT);
-    const visitResults = await Promise.all(
-      sampleLinks.value.map((l) =>
-        listVisits(l.id, { page: 1, pageSize: SAMPLE_PAGE_SIZE }).catch(() => ({ items: [], total: 0 })),
-      ),
-    );
-    visits.value = visitResults.flatMap((r) => r?.items ?? []);
   } catch (error) {
     if (error instanceof ApiError && error.status !== 401) {
       message.error(error.message);

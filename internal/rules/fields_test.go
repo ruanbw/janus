@@ -87,26 +87,40 @@ func TestIPAttr(t *testing.T) {
 	}
 }
 
-// 内网反代才信任 X-Forwarded-For:公网直连时忽略该头,防止访客伪造来源骗过规则。
-func TestSourceIPTrustsForwardedOnlyFromPrivatePeer(t *testing.T) {
+// 本包**不解析** X-Forwarded-For:来源 IP 只能由外部按 trusted-proxy 白名单
+// 判定后经 WithIP 注入。忘记注入的后果是"取不到来源 IP"(ip/ipattr 恒不命中,
+// fail-safe),而不是"用一个访客自己塞进 XFF 的值去裁决"。
+//
+// 这条测试锁的是这个契约本身:只要有人在本包里把 XFF 解析加回来(哪怕写得很小心),
+// 伪造通道就又回来了,而且不会有任何报错。
+func TestClientIPIsNeverTakenFromForwardedHeader(t *testing.T) {
 	pub := mustRequest(t, "http://x.test/p", "", "ua")
 	pub.RemoteAddr = "203.0.113.9:1234"
 	pub.Header.Set("X-Forwarded-For", "198.51.100.7")
 	if got := FromRequest(pub).IP; got != "203.0.113.9" {
 		t.Fatalf("公网直连 IP = %q, want RemoteAddr", got)
 	}
+	// 内网反代 + 访客伪造的 XFF:一律不采信,只取 TCP 直连方
 	behind := mustRequest(t, "http://x.test/p", "", "ua")
 	behind.RemoteAddr = "127.0.0.1:1234"
 	behind.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.9")
-	if got := FromRequest(behind).IP; got != "198.51.100.7" {
-		t.Fatalf("内网反代 IP = %q, want XFF 首段", got)
+	if got := FromRequest(behind).IP; got != "127.0.0.1" {
+		t.Fatalf("内网反代 IP = %q, want RemoteAddr(本包不解析 XFF)", got)
 	}
-	// 非法 XFF 回退 RemoteAddr
+	// 外部注入才是可信来源:注入什么就是什么
+	injected := mustRequest(t, "http://x.test/p", "", "ua")
+	injected.RemoteAddr = "127.0.0.1:1234"
+	injected.Header.Set("X-Forwarded-For", "198.51.100.7, 10.0.0.9")
+	vctx := AcquireVisitorContext(injected, "", "").WithIP("198.51.100.7")
+	if got := vctx.ClientIP().String(); got != "198.51.100.7" {
+		t.Fatalf("WithIP 注入的 IP = %q, want 198.51.100.7", got)
+	}
+	ReleaseVisitorContext(vctx)
+	// 非法 RemoteAddr 时取不到 IP(ip 字段恒不命中,而不是空串"匹配一切")
 	bad := mustRequest(t, "http://x.test/p", "", "ua")
-	bad.RemoteAddr = "127.0.0.1:1234"
-	bad.Header.Set("X-Forwarded-For", "垃圾")
-	if got := FromRequest(bad).IP; got != "127.0.0.1" {
-		t.Fatalf("非法 XFF 时 IP = %q, want 127.0.0.1", got)
+	bad.RemoteAddr = "not-an-ip:1234"
+	if got := FromRequest(bad).IP; got != "" {
+		t.Fatalf("非法 RemoteAddr 时 IP = %q, want 空(恒不命中)", got)
 	}
 }
 
@@ -267,26 +281,29 @@ func TestLazyVisitorContext(t *testing.T) {
 		tests := []struct {
 			name       string
 			remoteAddr string
+			injectIP   string
 			wantIP     string
 			wantAttr   string
 		}{
-			{"IPv4 public", "203.0.113.9:5555", "203.0.113.9", ""},
-			{"IPv4 private 10.x", "10.0.0.1:80", "10.0.0.1", IPAttrPrivate},
-			{"IPv4 private 192.168.x", "192.168.1.1:443", "192.168.1.1", IPAttrPrivate},
-			{"IPv4 private 172.16.x", "172.16.0.1:8080", "172.16.0.1", IPAttrPrivate},
-			{"IPv4 loopback", "127.0.0.1:9090", "127.0.0.1", IPAttrLoopback},
-			{"IPv4 link-local", "169.254.1.1:80", "169.254.1.1", IPAttrLinkLocal},
-			{"IPv6 loopback", "[::1]:1234", "::1", IPAttrLoopback},
-			{"IPv6 link-local", "[fe80::1]:1234", "fe80::1", IPAttrLinkLocal},
-			{"IPv6 private ULA", "[fd00::1]:1234", "fd00::1", IPAttrPrivate},
-			{"IPv6 public", "[2001:db8::1]:1234", "2001:db8::1", ""},
+			{"IPv4 public", "203.0.113.9:5555", "203.0.113.9", "203.0.113.9", ""},
+			{"IPv4 private 10.x", "10.0.0.1:80", "10.0.0.1", "10.0.0.1", IPAttrPrivate},
+			{"IPv4 private 192.168.x", "192.168.1.1:443", "192.168.1.1", "192.168.1.1", IPAttrPrivate},
+			{"IPv4 private 172.16.x", "172.16.0.1:8080", "172.16.0.1", "172.16.0.1", IPAttrPrivate},
+			{"IPv4 loopback", "127.0.0.1:9090", "127.0.0.1", "127.0.0.1", IPAttrLoopback},
+			{"IPv4 link-local", "169.254.1.1:80", "169.254.1.1", "169.254.1.1", IPAttrLinkLocal},
+			{"IPv6 loopback", "[::1]:1234", "::1", "::1", IPAttrLoopback},
+			{"IPv6 link-local", "[fe80::1]:1234", "fe80::1", "fe80::1", IPAttrLinkLocal},
+			{"IPv6 private ULA", "[fd00::1]:1234", "fd00::1", "fd00::1", IPAttrPrivate},
+			{"IPv6 public", "[2001:db8::1]:1234", "2001:db8::1", "2001:db8::1", ""},
+			// 注入的 IP 与直连方不同时,以注入值为准(可信代理口径由调用方判定)
+			{"注入优先于直连方", "127.0.0.1:9090", "198.51.100.7", "198.51.100.7", ""},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				r := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
 				r.RemoteAddr = tt.remoteAddr
-				ctx := AcquireVisitorContext(r, "", "")
+				ctx := AcquireVisitorContext(r, "", "").WithIP(tt.injectIP)
 				defer ReleaseVisitorContext(ctx)
 
 				addr := ctx.ClientIP()
@@ -305,28 +322,28 @@ func TestLazyVisitorContext(t *testing.T) {
 		}
 	})
 
-	t.Run("XForwardedForZeroAlloc", func(t *testing.T) {
+	t.Run("InjectedIPZeroAlloc", func(t *testing.T) {
 		r := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
 		r.RemoteAddr = "127.0.0.1:1234"
 		r.Header.Set("X-Forwarded-For", "203.0.113.195, 10.0.0.1")
 
-		ctx := AcquireVisitorContext(r, "", "")
+		ctx := AcquireVisitorContext(r, "", "").WithIP("203.0.113.195")
 		defer ReleaseVisitorContext(ctx)
 
 		ip := ctx.ClientIP()
 		if ip.String() != "203.0.113.195" {
-			t.Fatalf("expected XFF IP 203.0.113.195, got %s", ip.String())
+			t.Fatalf("expected injected IP 203.0.113.195, got %s", ip.String())
 		}
 
 		// Warm up pool
 		for i := 0; i < 5; i++ {
-			c := AcquireVisitorContext(r, "", "")
+			c := AcquireVisitorContext(r, "", "").WithIP("203.0.113.195")
 			_ = c.ClientIP()
 			ReleaseVisitorContext(c)
 		}
 
 		allocs := testing.AllocsPerRun(100, func() {
-			c := AcquireVisitorContext(r, "", "")
+			c := AcquireVisitorContext(r, "", "").WithIP("203.0.113.195")
 			_ = c.ClientIP()
 			ReleaseVisitorContext(c)
 		})

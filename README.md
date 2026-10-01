@@ -120,7 +120,7 @@ CLOAK 是一个自托管的**多租户短链服务**:租户注册后管理自己
 - **自定义短码**或自动生成(6 位);同一短码在不同域名下可指向不同目标,同一租户的多条短链可共用短码。
 - **多目标**:一条短链可配置多个目标 URL,访问时按**轮询(round-robin)**选择其一。
 - **跳转方式**:临时 302(默认)或永久 301,每条短链独立配置。
-- **两种类型**:**跳转型**(直接重定向到目标 URL)与**落地页型**(先到落地页,点击后到目标 URL),创建后类型固定。
+- **两种类型**:**跳转型**(直接重定向到目标 URL)与**落地页型**(先到落地页,点击后到目标 URL)。类型在创建时选定,**之后仍可修改**(`PATCH /api/links/:id` 传 `linkType`,前端短链编辑页可改)。修改后按新类型立即生效。
 - **启停 / 删除**:默认逻辑删除(记录、关联与访问信息保留),另提供彻底删除(purge);前端支持批量逻辑删除与批量物理删除。
 - **规则总开关**:每条短链可单独关闭规则裁决,关闭后完全跳过规则求值。
 
@@ -142,7 +142,9 @@ CLOAK 是一个自托管的**多租户短链服务**:租户注册后管理自己
 - **访问明细**(ADR-0007):每次访问记录**动作**(跳转 / 落地页视图 / 点击)、**结果**(成功 / 失败 + 失败原因:短链已停用 / 已逻辑删除 / 没有可用目标 / 落地页文件缺失)、访问者 IP、User-Agent、来源页、语言、国家与时间。
 - **计数口径**:只有**成功**的跳转与落地页视图计入访问次数;点击与失败都不计入。
 - **可归属的失败不丢**:能归属到具体短链的失败会留痕;短码压根不存在的未命中访问不记。
-- **总览页**:KPI 卡片 + 访问趋势 / 设备 / 系统 / 浏览器 / 来源 / 国家分布 + **世界地图** choropleth(随包国界 + `d3-geo` 投影,懒加载,ADR-0010)。
+- **总览页**:KPI 卡片 + 热门短链排行 / 设备 / 系统 / 浏览器 / 来源 / 国家分布 + **世界地图** choropleth(随包国界 + `d3-geo` 投影,懒加载,ADR-0010)。
+- **总览统计走专用聚合端点** `GET /api/visits/overview`:一次 SQL 出全租户计数与各维度分布(全量 `GROUP BY`,不抽样),前端不再「拉明细自己数」——否则口径必然与 KPI 分叉,且会把最近 50 行当全量、只覆盖短链列表前 100 条。UA 维度只回**原始 UA 串 + 次数**,设备/系统/浏览器标签由前端 `ua-parser-js` 翻译(Go 侧不再实现第二套 UA 解析)。
+- **CTR 口径**:分子分母同源同期,都取自 `visits` 表同一段 SQL、同一保留期窗口;分母只取**落地页访问**(跳转型短链不产生点击,算进去会系统性压低 CTR)。不再用 `links.clicks` 那个永久计数器当分子(它永不衰减而分母会被 90 天清理削掉,CTR 会单调虚高到 100% 以上)。
 - **地理归属**:内置 ip2region 离线库(V4 + V6)解析访问者国家码,16 分片双代缓存(负结果也缓存,ADR-0009)。
 - **保留策略**:访问记录默认保留 90 天,后台任务定时清理(`CLOAK_VISIT_RETENTION` 可调)。
 - **单链明细页**:按短链查看访问明细,含动作、结果、命中规则等字段。
@@ -151,7 +153,7 @@ CLOAK 是一个自托管的**多租户短链服务**:租户注册后管理自己
 
 租户级的**访问处置规则**:一个条件集合 + 一个动作(ADR-0008)。
 
-- **13 个可求值访客字段**:`ip`(支持 CIDR)、`ipattr`(private / loopback / linklocal)、`country`、`asn`、`lang`、`ref`、`utm_source`、`ua`、`devtype`(bot / mobile / tablet / desktop)、`os`、`browser`、`path`、`domain`。
+- **13 个可求值访客字段**:`ip`(支持 CIDR)、`ipattr`(private / loopback / linklocal)、`country`、`asn`、`lang`、`ref`、`utm`、`ua`、`devtype`(bot / mobile / tablet / desktop)、`os`、`browser`、`path`、`domain`。
 - **操作符**:属于 / 不属于 / 等于 / 不等于 / 包含 / 不包含 / 开头是(`starts_with`)/ 结尾是(`ends_with`)/ 大于 / 小于 / 正则(RE2,大小写敏感)/ 落在 IP 网段(`in_cidr`,仅 `ip` 字段);`ip` 字段按 CIDR 网段或字面量匹配,数值比较遇到非数值恒不命中。v1 不做嵌套分组,条件之间由 `logic` 决定「全部满足」或「任一满足」。
 - **取不到数据恒不命中**(两个编辑方式一致):字段值为空时条件不成立,**取反写法也不例外**——`country != "US"` 在 `country` 为空时不命中,否则「拦截非美国访客」会变成拦截所有人。`asn` 当前无数据源(`fields.go` 标为恒空),凡引用它的条件恒不成立。零条件规则是**有意的兜底规则**(无条件即命中)。
 - **两种编辑方式**:`visual`(可视化条件树,默认)与 `expression`(Expr 表达式,给高级用户,`POST /api/rules/validate-expr` 校验语法)。
@@ -166,7 +168,9 @@ CLOAK 是一个自托管的**多租户短链服务**:租户注册后管理自己
 - **租户全局**:可自定义 404 与 429 错误页 HTML。
 - **规则专属**:单条规则可指定自己的错误页与模式(`default` / `custom`)。
 - 决议优先级:规则专属 → 租户全局 → 系统内置默认页(自适应深色模式的静态页)。
-- 适用场景:未命中、规则 `notfound` 裁决、规则 `throttle` 裁决(429)。
+- 适用场景:未命中、短链停用/删除/无目标/落地页文件缺失、规则 `notfound` 裁决(404)、规则 `throttle` 裁决(429)。
+- **按租户内存缓存**:租户错误页与规则快照同构(惰性加载 + 原子替换 + TTL 兜底 + 改配置后显式失效),未命中这条最易触发的路径不再每次实时查两个 512KB 的 TEXT 字段(见 README 1.2 硬约束第 1 条)。
+- **响应头**:错误页带 `Content-Security-Policy: sandbox allow-scripts allow-forms`(脚本可跑但处于不透明来源,读不到本站会话)与 `X-Content-Type-Options: nosniff`;404/429 均 `Cache-Control: no-store`,429 另带 `Retry-After: 60`。管理端预览 iframe 的 sandbox 与线上策略一致。
 
 ### 2.8 平台管理(超管)
 
@@ -467,9 +471,13 @@ go test ./...                    # 需要 cloak_test 库(见 8.1)
 # 前端:类型 + UI 门禁 + 构建
 cd web
 pnpm type-check
-pnpm check:ui                    # 0 违规才通过
-pnpm build
+pnpm build                        # 必须先 build
+pnpm check:ui                     # 0 违规才通过(第 8 项要读 dist 产物,dist 缺失即失败)
 ```
+
+> `pnpm build` 必须在 `pnpm check:ui` **之前**:第 8 项检查动效变体在编译产物里是否存在,
+> dist 不存在时它会计入违规并非零退出(不再静默跳过)。上述顺序由
+> `.github/workflows/ci.yml` 与 `docker/Dockerfile` 强制执行。
 
 ### 7.2 后端约定
 
@@ -533,6 +541,7 @@ CLOAK_TEST_DATABASE_URL='postgres://cloak:cloak@localhost:5432/other_test?sslmod
 ```bash
 cd web
 pnpm type-check   # vue-tsc --noEmit
+pnpm build        # 先产出 dist —— 第 8 项要读它
 pnpm check:ui     # UI 规范门禁:legacy 类名/令牌、未定义 CSS 变量、调色板泄漏、
                   # 任意字号、裸 HTML 原语、状态色对比度(双主题)、硬编码纯白
 pnpm build        # 产物到 web/dist(不入库,镜像构建期自行重建)
@@ -736,7 +745,7 @@ docker compose -f docker-compose.prod.yml ps
 gofmt -l internal cmd      # 无输出
 go vet ./...
 go test ./...
-cd web && pnpm type-check && pnpm check:ui && pnpm build
+cd web && pnpm type-check && pnpm build && pnpm check:ui
 ```
 
 **代码风格**

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -101,13 +102,37 @@ func (a *API) resolveLandingLink(c *gin.Context, code string) (*store.Link, *sto
 // handleLandingClick GET /{code}/click — 点击计数 +1、落一行 action=click 明细,
 // 并 302 到轮询目标。计数放在选到目标之后:选不到目标的失败点击不应计入点击数。
 func (a *API) handleLandingClick(c *gin.Context, code string) {
-	link, d, err := a.resolveLandingLink(c, code)
+	// 限流放在最前面:一旦放行,后面每一次点击都要跑一次 ip2region 地理解析 +
+	// 插一行 visits 明细。限流命中时这些一次都不该发生,所以连域名解析都跳过
+	// (renderVisitorError 传 tenantID=0,不去 DB 取租户自定义 429 页)。
+	if !a.allowVisitor(c) {
+		a.renderVisitorError(c, http.StatusTooManyRequests, 0, nil)
+		return
+	}
+	// 宽松命中(与跳转侧同一口径):停用/逻辑删除的落地页被点击时,短码仍能归属到
+	// 该短链,于是能落一行 action=click 的 failed 明细。用严格口径 ResolveLink
+	// 会直接 ErrNotFound,租户从访问明细里根本看不到"停用之后还有人点"(issue 08)。
+	link, d, reason, err := a.resolveLandingLinkForVisit(c, code)
 	if err != nil {
 		var tenantID int64
 		if dom := a.resolveDomainByHost(c); dom != nil {
 			tenantID = dom.TenantID
 		}
 		a.renderVisitorError(c, http.StatusNotFound, tenantID, nil)
+		return
+	}
+	// 非落地页型没有"按钮"可言:404 且不记明细。这不是一条可归属到该短链的失败
+	// (访问者把跳转型短链当落地页用了),记下来只会污染明细。
+	if link.LinkType != store.LinkTypeLanding {
+		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
+		return
+	}
+	if reason != "" {
+		a.recordVisit(c, store.VisitRecord{
+			LinkID: link.ID, DomainID: d.ID,
+			Action: store.VisitActionClick, Outcome: store.VisitOutcomeFailed, Reason: reason,
+		})
+		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 		return
 	}
 	targetURL, err := a.store.PickTarget(c.Request.Context(), link.ID)
@@ -125,6 +150,24 @@ func (a *API) handleLandingClick(c *gin.Context, code string) {
 		Action: store.VisitActionClick, Outcome: store.VisitOutcomeSuccess, TargetURL: targetURL,
 	})
 	c.Redirect(http.StatusFound, targetURL) // 点击跳转固定 302
+}
+
+// resolveLandingLinkForVisit 按 Host+code 宽松命中短链(短码命中即返回),
+// 返回命中的域名(点击明细用它取 domain_id)与不可用原因
+// (link_disabled / link_deleted;可用时为空串)。
+func (a *API) resolveLandingLinkForVisit(c *gin.Context, code string) (*store.Link, *store.Domain, string, error) {
+	if code == "" || strings.Contains(code, "/") {
+		return nil, nil, "", store.ErrNotFound
+	}
+	d := a.resolveDomainByHost(c)
+	if d == nil {
+		return nil, nil, "", store.ErrNotFound
+	}
+	link, resolved, reason, err := a.store.LookupLinkForVisit(c.Request.Context(), d.ID, code)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	return link, resolved, reason, nil
 }
 
 // landingSDKTemplate SDK 模板:__CLICK_URL__ 由服务器注入点击端点绝对地址。
@@ -203,24 +246,47 @@ func (a *API) handleLandingFile(c *gin.Context, code, rel string) {
 	if rel == "" {
 		rel = "index.html"
 	}
-	// 目录路径兜底:尝试目录下的 index.html
-	if fi, statErr := os.Stat(filepath.Join(a.landingLinkDir(link.ID), rel)); statErr == nil && fi.IsDir() {
-		rel = path.Join(rel, "index.html")
+	// 清洗与越界校验提到入口,再做任何 os.Stat。
+	// 原先那次 stat 用的是**未清洗**的 rel:穿越请求虽然最终仍会被 serveLandingFile
+	// 的前缀校验拒掉,但 stat 已经发生过了 —— "某路径是否为目录"由此变成一个
+	// 可测量的存在性信号(命中目录走 index.html、不命中直接 404)。
+	abs, cleanRel, ok := a.resolveLandingFilePath(link.ID, rel)
+	if !ok {
+		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
+		return
 	}
-	a.serveLandingFile(c, link, rel)
+	// 目录路径兜底:尝试目录下的 index.html(abs 已经确定落在该短链目录内)
+	if fi, statErr := os.Stat(abs); statErr == nil && fi.IsDir() {
+		var abs2, clean2 string
+		var ok2 bool
+		abs2, clean2, ok2 = a.resolveLandingFilePath(link.ID, path.Join(cleanRel, "index.html"))
+		if !ok2 {
+			a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
+			return
+		}
+		abs, cleanRel = abs2, clean2
+	}
+	a.serveLandingFile(c, link, abs, cleanRel)
 }
 
-// serveLandingFile 安全地服务上传落地页中的单个文件(防路径穿越、禁目录列表)。
-func (a *API) serveLandingFile(c *gin.Context, link *store.Link, rel string) {
-	root := a.landingLinkDir(link.ID)
+// resolveLandingFilePath 把相对路径清洗成短链目录内的绝对路径。
+// 越界(路径穿越)返回 ok=false。清洗只在这里做一次,调用方拿到的就是最终路径,
+// 不需要在"先 stat 看看"与"真正要读"之间保持两份一致的清洗逻辑。
+func (a *API) resolveLandingFilePath(linkID int64, rel string) (abs string, cleanRel string, ok bool) {
+	root := a.landingLinkDir(linkID)
 	clean := path.Clean("/" + rel)
 	fp := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(clean, "/")))
 	absRoot, err1 := filepath.Abs(root)
 	absFp, err2 := filepath.Abs(fp)
 	if err1 != nil || err2 != nil || !strings.HasPrefix(absFp, absRoot+string(filepath.Separator)) {
-		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
-		return
+		return "", "", false
 	}
+	return absFp, strings.TrimPrefix(clean, "/"), true
+}
+
+// serveLandingFile 服务上传落地页中的单个文件(禁目录列表)。
+// abs / cleanRel 来自 resolveLandingFilePath,已完成清洗与越界校验。
+func (a *API) serveLandingFile(c *gin.Context, link *store.Link, absFp, cleanRel string) {
 	f, err := os.Open(absFp)
 	if err != nil {
 		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
@@ -236,13 +302,14 @@ func (a *API) serveLandingFile(c *gin.Context, link *store.Link, rel string) {
 	if ctype == "" {
 		ctype = "application/octet-stream"
 	}
-	if path.Base(clean) == "index.html" {
+	base := path.Base(cleanRel)
+	if base == "index.html" {
 		c.Header("Cache-Control", "no-cache") // 入口不缓存,重新上传即时生效
 	} else {
 		c.Header("Cache-Control", "public, max-age=300")
 	}
 	c.Header("X-Content-Type-Options", "nosniff")
-	http.ServeContent(c.Writer, c.Request, path.Base(clean), info.ModTime(), f)
+	http.ServeContent(c.Writer, c.Request, base, info.ModTime(), f)
 }
 
 // handleUploadLanding POST /api/links/{id}/landing — multipart zip 上传(替换式)。
@@ -262,10 +329,6 @@ func (a *API) handleUploadLanding(c *gin.Context) {
 	link, err := a.store.GetLinkByID(c.Request.Context(), t.ID, id)
 	if err != nil {
 		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
-		return
-	}
-	if link.LinkType != store.LinkTypeLanding {
-		writeErr(c, http.StatusBadRequest, errValidation, "仅落地页型短链可上传落地页")
 		return
 	}
 	// 限制请求体(multipart 头部冗余 64KB),zip 大小上限在读出后校验
@@ -290,18 +353,29 @@ func (a *API) handleUploadLanding(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "压缩包超过大小上限")
 		return
 	}
-	if err := a.installLandingZip(link.ID, raw); err != nil {
+	commit, rollback, err := a.installLandingZip(link.ID, raw)
+	if err != nil {
 		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
 		return
 	}
-	// 落地页来源切到 upload,landingUrl 清空
-	landingSource, landingURL := store.LandingSourceUpload, ""
-	if _, err := a.store.UpdateLink(c.Request.Context(), t.ID, id, store.LinkUpdate{
-		LandingSource: &landingSource, LandingURL: &landingURL,
-	}); err != nil {
-		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
-		return
+	// 落地页型:来源切到 upload、landingUrl 清空。跳转型只装文件、不改来源 ——
+	// 建链 → 上传 → PATCH 定型 是「创建时不允许 upload 来源(issue 04)」之后
+	// 唯一走得通的顺序,所以上传必须接受跳转型短链;但"把别人的跳转型短链
+	// 悄悄变成落地页"是远比"文件先装上、类型稍后由用户 PATCH 决定"更大的惊吓。
+	// 注意顺序:文件先落地、来源后翻转,"upload 来源必有托管文件"这条不变式
+	// 在任何时刻都成立(反过来先翻来源就会造出永久 404 的短链)。
+	if link.LinkType == store.LinkTypeLanding {
+		landingSource, landingURL := store.LandingSourceUpload, ""
+		if _, err := a.store.UpdateLink(c.Request.Context(), t.ID, id, store.LinkUpdate{
+			LandingSource: &landingSource, LandingURL: &landingURL,
+		}); err != nil {
+			// 写库失败 → 把刚装上去的落地页换回旧目录,不留孤儿文件
+			rollback()
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+			return
+		}
 	}
+	commit()
 	updated, err := a.store.GetLinkByID(c.Request.Context(), t.ID, id)
 	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
@@ -315,11 +389,32 @@ type zipErr struct{ msg string }
 
 func (e zipErr) Error() string { return e.msg }
 
-// installLandingZip 校验并解压 zip 到 uploads/{linkID}(先解到临时目录再原子替换)。
-func (a *API) installLandingZip(linkID int64, raw []byte) error {
+// landingMaxTotalBytes 解压后所有文件的大小合计上限。
+// 与 LandingMaxZipBytes 是两个语义:前者管"磁盘被撑多大",后者管"上传的包有多大"。
+// 用一个数兼两职会出现很别扭的组合(比如把上限调小到 2MB 后,连解压后 1.5MB 的
+// 正常站点都传不上去),所以这里各自取各自的配置。
+func (a *API) landingMaxTotalBytes() int64 {
+	if a.cfg.LandingMaxTotalBytes > 0 {
+		return a.cfg.LandingMaxTotalBytes
+	}
+	return a.cfg.LandingMaxZipBytes
+}
+
+// installLandingZip 校验并解压 zip 到 uploads/{linkID},返回 commit / rollback 两个闭包。
+//
+// 换目录是原子的:先解到临时目录,再把旧目录 rename 成备份名,最后把临时目录
+// rename 成 dest。原实现是 `RemoveAll(dest)` 再 `Rename(tmp, dest)` —— 两步之间
+// 有一个"目录不存在"的窗口,并发访问会读到 landing_missing,凭空多出一批假失败明细。
+// rename(2) 在同一文件系统内是原子的,不存在这个窗口。
+//
+// 为什么还要 rollback:解压成功 ≠ 整件事成功。handleUploadLanding 随后还要写库
+// (把 landing_source 切成 upload);写库失败时磁盘上已经装好了新目录,而库里的短链
+// 还是旧来源 —— 那份文件永远没人会访问,就是纯磁盘泄漏。调用方写库失败时调
+// rollback 把旧目录换回去,不留孤儿。
+func (a *API) installLandingZip(linkID int64, raw []byte) (commit func(), rollback func(), err error) {
 	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
-		return zipErr{"无法解析 zip 压缩包"}
+		return nil, nil, zipErr{"无法解析 zip 压缩包"}
 	}
 	type fentry struct {
 		f   *zip.File
@@ -333,18 +428,18 @@ func (a *API) installLandingZip(linkID int64, raw []byte) error {
 		}
 		rel, err := zipEntryRel(name)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		if f.Mode()&os.ModeSymlink != 0 {
-			return zipErr{"压缩包不允许包含符号链接:" + name}
+			return nil, nil, zipErr{"压缩包不允许包含符号链接:" + name}
 		}
 		files = append(files, fentry{f: f, rel: rel})
 	}
 	if len(files) == 0 {
-		return zipErr{"压缩包为空"}
+		return nil, nil, zipErr{"压缩包为空"}
 	}
 	if len(files) > a.cfg.LandingMaxFiles {
-		return zipErr{fmt.Sprintf("文件数超过上限(%d)", a.cfg.LandingMaxFiles)}
+		return nil, nil, zipErr{fmt.Sprintf("文件数超过上限(%d)", a.cfg.LandingMaxFiles)}
 	}
 	// 单层根文件夹自动剥离:所有条目共享同一首层目录时去掉
 	if parts := strings.SplitN(files[0].rel, "/", 2); len(parts) == 2 {
@@ -365,50 +460,75 @@ func (a *API) installLandingZip(linkID int64, raw []byte) error {
 	}
 	hasIndex := false
 	var total int64
+	maxTotal := a.landingMaxTotalBytes()
 	for _, e := range files {
 		if e.rel == "index.html" {
 			hasIndex = true
 		}
 		if !allowedLandingExt(e.rel) {
-			return zipErr{"不允许的文件类型:" + e.rel}
+			return nil, nil, zipErr{"不允许的文件类型:" + e.rel}
 		}
 		// 先按 uint64 比较再转 int64:恶意 zip 可把 UncompressedSize64 声明为
 		// 接近 MaxUint64,直接转 int64 会溢出为负数并绕过总大小检查。
-		if e.f.UncompressedSize64 > uint64(a.cfg.LandingMaxZipBytes) {
-			return zipErr{"解压后总大小超过上限"}
+		if e.f.UncompressedSize64 > uint64(maxTotal) {
+			return nil, nil, zipErr{"解压后总大小超过上限"}
 		}
 		total += int64(e.f.UncompressedSize64)
-		if total > a.cfg.LandingMaxZipBytes {
-			return zipErr{"解压后总大小超过上限"}
+		if total > maxTotal {
+			return nil, nil, zipErr{"解压后总大小超过上限"}
 		}
 	}
 	if !hasIndex {
-		return zipErr{"压缩包必须包含 index.html"}
+		return nil, nil, zipErr{"压缩包必须包含 index.html"}
 	}
-	// 全部校验通过后解压:临时目录 → 删除旧目录 → 原子替换
+	// 全部校验通过后解压到临时目录,再原子换到 dest
 	dest := a.landingLinkDir(linkID)
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
-		return err
+		return nil, nil, err
 	}
 	tmp, err := os.MkdirTemp(filepath.Dir(dest), ".landing-*")
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	defer os.RemoveAll(tmp)
 	for _, e := range files {
 		fp := filepath.Join(tmp, filepath.FromSlash(e.rel))
 		if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if err := extractZipFile(e.f, fp); err != nil {
-			return err
+			return nil, nil, err
 		}
 	}
-	_ = os.RemoveAll(dest)
-	if err := os.Rename(tmp, dest); err != nil {
-		return err
+	// 旧目录先退到备份名(rename 原子);不存在则备份名为空
+	backup := ""
+	if _, statErr := os.Stat(dest); statErr == nil {
+		backup = dest + fmt.Sprintf(".old-%d", time.Now().UnixNano())
+		if err := os.Rename(dest, backup); err != nil {
+			return nil, nil, err
+		}
+	} else if !os.IsNotExist(statErr) {
+		return nil, nil, statErr
 	}
-	return nil
+	if err := os.Rename(tmp, dest); err != nil {
+		// 换不上去就把旧目录换回来,别把租户已有的落地页弄丢
+		if backup != "" {
+			_ = os.Rename(backup, dest)
+		}
+		return nil, nil, err
+	}
+	commit = func() {
+		if backup != "" {
+			_ = os.RemoveAll(backup)
+		}
+	}
+	rollback = func() {
+		_ = os.RemoveAll(dest)
+		if backup != "" {
+			_ = os.Rename(backup, dest)
+		}
+	}
+	return commit, rollback, nil
 }
 
 // zipEntryRel 归一化条目相对路径,拒绝绝对路径与路径穿越。
