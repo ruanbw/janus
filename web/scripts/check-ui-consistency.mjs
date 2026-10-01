@@ -12,6 +12,8 @@
  * 6. 业务视图中裸 HTML 原语检查（<button, <input, <select, <table>）
  * 7. main.css 中自定义 .truncate 规则检查（禁止污染 Tailwind 原生 truncate）
  * 8. dist 产物中动效变体规则存在性检查
+ * 9. 状态色对比度检查（:root 与 .dark 双主题，文字/填充/描边分级阈值）
+ * 10. 硬编码纯白检查（bg-white / text-white / border-white，带 alpha 的合法）
  */
 
 import fs from 'node:fs';
@@ -268,6 +270,199 @@ if (fs.existsSync(distAssetsDir)) {
 } else {
   console.log('  ⚠️ dist 目录尚未构建，跳过产物检查（可在 pnpm build 后复验）');
 }
+
+// 9. 状态色对比度检查（双主题）
+console.log('9. 检查状态色对比度（:root 与 .dark 双主题）...');
+
+// 阈值分级：文字 ≥ 4.5（WCAG AA 正文）；控件填充与焦点环 ≥ 3（非文本 UI 元素）；
+// 细边界（描边、关态轨道）≥ 1.5——1.5 是 16px 以下小控件「能看出形状」的经验下限。
+const CONTRAST_MIN = { text: 4.5, solid: 3, hairline: 1.5 };
+
+// 配对表：每一行都要在浅色与深色两套主题下同时成立。
+// 底色约定：填充、描边、文字一律以 --card 为底——本项目组件都坐在卡片上。
+const CONTRAST_PAIRS = [
+  ['--primary-foreground', '--primary', CONTRAST_MIN.text, '主按钮文字 / 选中态勾选标记'],
+  ['--secondary-foreground', '--secondary', CONTRAST_MIN.text, '次级按钮文字'],
+  ['--muted-foreground', '--muted', CONTRAST_MIN.text, '表头、悬浮行里的次级文字'],
+  ['--muted-foreground', '--card', CONTRAST_MIN.text, '卡片上的次级文字'],
+  ['--destructive-foreground', '--destructive', CONTRAST_MIN.text, '危险按钮 / 危险标签文字'],
+  ['--popover-foreground', '--popover', CONTRAST_MIN.text, '浮层文字'],
+  ['--foreground', '--background', CONTRAST_MIN.text, '正文'],
+  ['--primary', '--card', CONTRAST_MIN.solid, '选中态填充：开关开、勾选、当前页码'],
+  ['--control-track', '--card', CONTRAST_MIN.hairline, '开关关态轨道 / 复选未选填充'],
+  // 滑块用 hairline 级：浅色下 thumb 故意取 --surface(白),压在浅灰轨道上只有 ~1.6,
+  // 这是 iOS / shadcn 的做法——轮廓由 --control-thumb-edge 发丝描边给出,不是靠填充对比。
+  ['--control-thumb', '--control-track', CONTRAST_MIN.hairline, '滑块压在轨道上'],
+  ['--border', '--card', CONTRAST_MIN.hairline, '控件描边（开关、按钮、表格控件）'],
+  ['--input', '--card', CONTRAST_MIN.hairline, '输入框描边'],
+  ['--ring', '--card', CONTRAST_MIN.solid, '焦点环'],
+];
+// 刻意不校验 --control-thumb / --card：浅色下 thumb 故意等于 --surface（对比 1.00），
+// 滑块与白卡片之间的唯一轮廓是 --control-thumb-edge 发丝描边，所以只校验 thumb / 轨道。
+
+/** 取出 main.css 里某个顶层选择器的变量块（:root / .dark），做花括号配平 */
+function readCssScopeVars(cssText, selector) {
+  const head = new RegExp(`^${selector}\\s*\\{`, 'm');
+  const m = head.exec(cssText);
+  if (!m) return null;
+  const start = m.index + m[0].length;
+  let depth = 1;
+  let i = start;
+  while (i < cssText.length && depth > 0) {
+    if (cssText[i] === '{') depth += 1;
+    else if (cssText[i] === '}') depth -= 1;
+    i += 1;
+  }
+  const vars = new Map();
+  for (const decl of cssText.slice(start, i - 1).matchAll(/(--[a-zA-Z0-9_-]+)\s*:\s*([^;]+);/g)) {
+    vars.set(decl[1], decl[2].trim());
+  }
+  return vars;
+}
+
+/** 解析 #rgb / #rrggbb / #rrggbbaa / rgb() / rgba()；无法解析返回 null */
+function parseCssColor(input) {
+  if (!input) return null;
+  const text = input.trim();
+  const hex = /^#([0-9a-fA-F]{3,8})$/.exec(text);
+  if (hex) {
+    let h = hex[1];
+    if (h.length === 3 || h.length === 4) h = h.split('').map((c) => c + c).join('');
+    return {
+      r: parseInt(h.slice(0, 2), 16),
+      g: parseInt(h.slice(2, 4), 16),
+      b: parseInt(h.slice(4, 6), 16),
+      a: h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1,
+    };
+  }
+  const rgb = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*(?:[,/]\s*([\d.]+%?)\s*)?\)$/i.exec(text);
+  if (rgb) {
+    const rawAlpha = rgb[4];
+    return {
+      r: Number(rgb[1]),
+      g: Number(rgb[2]),
+      b: Number(rgb[3]),
+      a: rawAlpha === undefined ? 1 : (rawAlpha.endsWith('%') ? parseFloat(rawAlpha) / 100 : parseFloat(rawAlpha)),
+    };
+  }
+  return null;
+}
+
+/** 按优先级在若干变量表里解析令牌，递归展开 var(--x) 引用 */
+function resolveThemeToken(scopes, name, seen = new Set()) {
+  if (seen.has(name)) return null;
+  seen.add(name);
+  let raw;
+  for (const vars of scopes) {
+    if (vars && vars.has(name)) {
+      raw = vars.get(name);
+      break;
+    }
+  }
+  if (raw === undefined) return null;
+  const ref = /^var\(\s*(--[a-zA-Z0-9_-]+)\s*\)$/.exec(raw);
+  if (ref) return resolveThemeToken(scopes, ref[1], seen);
+  return parseCssColor(raw);
+}
+
+function channelLuminance(value) {
+  const c = value / 255;
+  return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+function relativeLuminance(color) {
+  return (
+    0.2126 * channelLuminance(color.r) +
+    0.7152 * channelLuminance(color.g) +
+    0.0722 * channelLuminance(color.b)
+  );
+}
+
+/** 半透明前景合成到底色上 */
+function flatten(fg, bg) {
+  return {
+    r: fg.r * fg.a + bg.r * (1 - fg.a),
+    g: fg.g * fg.a + bg.g * (1 - fg.a),
+    b: fg.b * fg.a + bg.b * (1 - fg.a),
+    a: 1,
+  };
+}
+
+function contrastRatio(fg, bg) {
+  const l1 = relativeLuminance(flatten(fg, bg));
+  const l2 = relativeLuminance(bg);
+  const [hi, lo] = l1 > l2 ? [l1, l2] : [l2, l1];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+if (fs.existsSync(mainCssPath)) {
+  const cssText = fs.readFileSync(mainCssPath, 'utf8');
+  const rootVars = readCssScopeVars(cssText, ':root');
+  const darkVars = readCssScopeVars(cssText, '\\.dark');
+  if (!rootVars || !darkVars) {
+    reportError('Contrast', mainCssPath, 1, 1, 'main.css 里找不到 :root 或 .dark 变量块，无法校验状态色对比度');
+  } else {
+    const themes = [['浅色', [rootVars]], ['深色', [darkVars, rootVars]]];
+    let failed = 0;
+    for (const [themeName, scopes] of themes) {
+      for (const [fgName, bgName, min, note] of CONTRAST_PAIRS) {
+        const fg = resolveThemeToken(scopes, fgName);
+        const bg = resolveThemeToken(scopes, bgName);
+        if (!fg || !bg) {
+          failed += 1;
+          reportError('Contrast', mainCssPath, 1, 1, `${themeName}: ${fgName} / ${bgName} 未定义或不是可解析的颜色`);
+          continue;
+        }
+        const ratio = contrastRatio(fg, bg);
+        if (ratio < min) {
+          failed += 1;
+          reportError(
+            'Contrast',
+            mainCssPath,
+            1,
+            1,
+            `${themeName}: ${fgName} on ${bgName} 仅 ${ratio.toFixed(2)}:1（需 ≥ ${min}）—— ${note}`,
+          );
+        }
+      }
+    }
+    if (failed === 0) {
+      console.log(`  ✅ 状态色对比度达标（${CONTRAST_PAIRS.length} 对 × 2 套主题）`);
+    }
+  }
+}
+
+// 10. 硬编码纯白检查
+console.log('10. 检查 src/**/*.vue 中硬编码的纯白（bg-white / text-white / border-white）...');
+// 带 alpha 的写法合法（bg-white/5、text-white/80）：它们只用在永远深色的侧栏、品牌栏与遮罩上；
+// 不带 alpha 的纯白则会在浅色主题里消失、在深色主题里变成一块白板，一律改语义令牌。
+const hardcodedWhiteRegex = /(^|[\s"':])(bg|text|border)-white(?![-\/\w])/;
+// 白名单：这几处所在的面永远是深色(侧栏、品牌栏、认证页左栏),白色是唯一正解,
+// 换成语义令牌反而会在浅色主题下变成深色字。
+const alwaysDarkAllowList = [
+  'components/AuthShell.vue',        // 登录页左侧品牌栏
+  'components/layout/NavList.vue',   // 侧栏导航高亮项
+  'components/layout/SidebarBrand.vue',
+  'layouts/AdminLayout.vue',         // 侧栏用户头像与抽屉
+];
+
+vueFiles.forEach((file) => {
+  const relPath = path.relative(srcDir, file).replace(/\\/g, '/');
+  if (alwaysDarkAllowList.some((allowed) => relPath === allowed)) return;
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  lines.forEach((line, idx) => {
+    const match = hardcodedWhiteRegex.exec(line);
+    if (match) {
+      reportError(
+        'HardcodedWhite',
+        file,
+        idx + 1,
+        (match.index ?? 0) + 1,
+        '禁止硬编码纯白，请改用语义令牌（bg-primary / text-primary-foreground / bg-card / border-input …）',
+      );
+    }
+  });
+});
 
 console.log('\n----------------------------------------');
 if (totalErrors === 0) {

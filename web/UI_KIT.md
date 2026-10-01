@@ -14,8 +14,31 @@ ant-design-vue 已移除,任何文件不得再 import 自 'ant-design-vue' 或�
 
 - 品牌色:brand-50..950(靛蓝紫,主色 brand-600 #4f46e5)
 - 点缀:accent-300..600(青)
-- 语义(明暗自动切换):surface / surface-muted / surface-strong / ink / ink-soft / ink-faint / line / line-strong / ok / warn / err / info
-- 用法:bg-surface、bg-surface-muted、text-ink、text-ink-soft、text-ink-faint、border-line、border-line-strong、text-ok、text-warn、text-err、bg-err/10 等
+- 三层令牌(都定义在 src/styles/main.css 的 `:root` 与 `.dark` 两块,经 `@theme inline` 映射成工具类):
+
+  1. 项目层(页面骨架):surface(卡片 / 组件宿主底色)、surface-muted(页面底色)、surface-strong、ink / ink-soft / ink-faint、line / line-strong、ok / warn / err / info、sidebar-*
+  2. shadcn 语义层(组件状态):background / foreground / card / card-foreground / popover / popover-foreground / primary / primary-foreground / secondary / secondary-foreground / muted / muted-foreground / accent / accent-foreground / destructive / destructive-foreground / border / input / ring
+     - 命名与语义照 shadcn 官方,取值由本项目调色板定制。`--background` 指向 `--surface` 而**不是** `--surface-muted`:shadcn 的 --background 是「组件所处的那层底色」,本项目组件坐在卡片上
+     - 深色下 `--primary` 提到 brand-400 `#818cf8`、`--primary-foreground` 改深色 `#0b1020`;否则白字 / 白滑块压在 `#4f46e5` 上只有 ~2:1
+  3. 控件状态层(shadcn 没有对应语义,项目补齐):control-track(关态轨道 / 复选未选填充)、control-track-hover、control-thumb(关态滑块)、control-thumb-edge(滑块发丝描边)
+- 用法:bg-surface、bg-surface-muted、text-ink、border-line、text-ok、bg-err/10 等
+- **组件状态色一律走 shadcn 语义层工具类**,不要再用 surface 类表达状态、也不要手写 `dark:` 品牌色切换:
+
+  | 场景 | 旧写法(明暗都失效) | 现在写法 |
+  | --- | --- | --- |
+  | 开关轨道(关) | `bg-surface-muted` | `data-[state=unchecked]:bg-control-track`(+ `hover:` 变体) |
+  | 开关滑块 | `bg-white` | `bg-control-thumb` + `data-[state=checked]:bg-primary-foreground` + `ring-control-thumb-edge` |
+  | 复选 / 单选(未选) | `bg-surface` + `border-line-strong` | `bg-transparent` + `border-input`(深色补 `dark:bg-input/30`) |
+  | 复选 / 单选(选中) | `bg-brand-600 dark:bg-brand-500` + `text-white` | `data-[state=checked]:bg-primary` + `text-primary-foreground` |
+  | 主按钮 / primary 标签 | `bg-brand-600 text-white dark:bg-brand-500` | `bg-primary text-primary-foreground` |
+  | destructive 按钮 / 标签 | `bg-err text-white` | `bg-destructive text-destructive-foreground` |
+  | 输入框 / 选择器 / 文本域 | `bg-surface/50 dark:bg-surface-strong/30` + `border-line` | `bg-transparent dark:bg-input/30` + `border-input` |
+  | 表格表头 / 行 hover | `bg-surface-muted` | `bg-muted`(hover 同色) |
+  | 分页当前页 | `bg-brand-600 text-white` | `bg-primary text-primary-foreground` |
+  | 进度条轨道 | `bg-surface-strong` | `bg-control-track/60` |
+
+- 描边分工:容器装饰描边用 `border-line`(卡片、弹窗);控件与可交互边界用 `border-input` / `border-border`(开关、复选、单选、输入框、按钮、表格控件)。别把卡片描边也升到 `--border`,否则每张卡片都是 1.5 对比的硬边框
+- 焦点环单一出处:组件只挂 `.app-field`,焦点环与错误态环由 main.css 的 `.app-field:focus-visible` 和 `[data-invalid='true'] .app-field` 提供。这两条是**未分层** CSS,优先级高于 `@layer utilities`,组件里再写 `focus-visible:ring-*` / `ring-offset-surface` 会被盖掉
 - 深色模式:html.dark 由主题 store 控制,不要手动切换
 - 字体:系统栈;等宽用 .mono 类;表格表头 app-table thead th 已加粗
 - 字体尺度:使用标准化尺度工具类，严禁使用 `text-[Npx]` 任意像素值：
@@ -40,7 +63,11 @@ ant-design-vue 已移除,任何文件不得再 import 自 'ant-design-vue' 或�
 5. 检查默认调色板泄漏（`slate-*`, `cyan-*`, `amber-*`, `emerald-*`，除白名单外）；
 6. 检查任意像素字号（`text-[Npx]`）；
 7. 检查业务 view 视图中裸 HTML 原语（`<button>`, `<input>`, `<select>`, `<table>`）；
-8. 检查生产构建产物中的动效变体规则生成。
+8. 检查生产构建产物中的动效变体规则生成;
+9. 状态色对比度:解析 main.css 的 `:root` 与 `.dark`,校验 13 对状态色(文字 ≥ 4.5、控件填充与焦点环 ≥ 3、细边界 ≥ 1.5),阈值在脚本顶部 `CONTRAST_MIN` 可调;
+10. 硬编码纯白:`src/**/*.vue` 里禁止不带 alpha 的 `bg-white` / `text-white` / `border-white`(永远深色的面——侧栏、认证页品牌栏——在脚本白名单 `alwaysDarkAllowList` 里)。
+
+改任何组件状态色之后,必须 `pnpm check:ui` 与 `pnpm build` 复验(第 8 项要读 dist 产物,所以先 build 再 check)。
 
 ## 全局注册组件(无需 import,模板直接用)
 

@@ -95,8 +95,8 @@
   --accent-foreground: var(--ink);
   --destructive: var(--err);
   --destructive-foreground: #ffffff;
-  --border: #ccd3e6; /* 控件描边:必须与 --card 可辨 */
-  --input: #ccd3e6; /* 输入框描边 */
+  --border: #c8d0e4; /* 控件描边:必须与 --card 可辨(对比 ≥1.5,门禁第 9 项守这条) */
+  --input: #c8d0e4; /* 输入框描边 */
   --ring: #6366f1; /* brand-500 */
 
   /* ---- 控件状态层 ---- */
