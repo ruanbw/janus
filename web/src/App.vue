@@ -28,9 +28,9 @@
 <script setup lang="ts">
 import { onErrorCaptured, ref } from 'vue';
 import { AlertTriangle } from '@lucide/vue';
-import AppButton from '@/components/ui/AppButton.vue';
-import ConfirmHost from '@/components/ui/ConfirmHost.vue';
-import Toaster from '@/components/ui/Toaster.vue';
+import AppButton from '@/components/app/AppButton.vue';
+import ConfirmHost from '@/components/app/ConfirmHost.vue';
+import Toaster from '@/components/app/Toaster.vue';
 
 const fatalError = ref<Error | null>(null);
 

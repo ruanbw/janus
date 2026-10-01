@@ -99,8 +99,8 @@ import { CirclePlay, CircleStop, Plus, RefreshCw, Trash2 } from '@lucide/vue';
 
 import { deleteDomain, listDomains, recheckDomain, updateDomainStatus } from '@/api/domains';
 import PageHeader from '@/components/PageHeader.vue';
-import { confirm } from '@/components/ui/confirm';
-import type { TableColumn } from '@/components/ui/types';
+import { confirm } from '@/components/app/confirm';
+import type { TableColumn } from '@/components/app/types';
 import { message } from '@/utils/toast';
 import { CERT_STATUS, DOMAIN_ORIGIN, DOMAIN_STATUS } from '@/constants/dict';
 import { ApiError } from '@/types/api';

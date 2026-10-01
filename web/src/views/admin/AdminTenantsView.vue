@@ -94,8 +94,8 @@ import { ArrowRightLeft, CirclePlay, CircleStop, RefreshCw, Trash2 } from '@luci
 
 import { listTenants, updateTenant } from '@/api/admin';
 import PageHeader from '@/components/PageHeader.vue';
-import { confirm } from '@/components/ui/confirm';
-import type { TableColumn } from '@/components/ui/types';
+import { confirm } from '@/components/app/confirm';
+import type { TableColumn } from '@/components/app/types';
 import { TENANT_STATUS } from '@/constants/dict';
 import { ApiError } from '@/types/api';
 import type { Tenant, TenantStatus } from '@/types/api';

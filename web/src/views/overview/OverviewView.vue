@@ -107,7 +107,7 @@
               </div>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div
-                  class="h-full min-w-[2px] rounded bg-brand-600 transition-all duration-300 dark:bg-brand-500"
+                  class="h-full min-w-[2px] rounded bg-brand transition-all duration-300"
                   :style="{ width: `${Math.min(100, Math.max(2, Math.round(((link.visits || 0) / totalVisits) * 100)))}%` }"
                 />
               </div>
@@ -139,13 +139,13 @@
             role="img"
             :aria-label="`跳转型 ${redirectVisits} 次占 ${redirectPercent}%，落地页型 ${landingVisits} 次占 ${landingPercent}%`"
           >
-            <span class="h-full bg-brand-600 transition-all duration-300 dark:bg-brand-500" :style="{ width: `${redirectPercent}%` }"></span>
+            <span class="h-full bg-brand transition-all duration-300" :style="{ width: `${redirectPercent}%` }"></span>
             <span class="h-full bg-info transition-all duration-300" :style="{ width: `${landingPercent}%` }"></span>
           </div>
 
           <div class="mt-3 flex flex-wrap items-center gap-3.5 text-xs text-ink-soft">
             <span class="flex items-center gap-1.5">
-              <span class="h-2.5 w-2.5 shrink-0 rounded-xs bg-brand-600 dark:bg-brand-500"></span>
+              <span class="h-2.5 w-2.5 shrink-0 rounded-xs bg-brand"></span>
               跳转型
             </span>
             <span class="flex items-center gap-1.5">
@@ -158,7 +158,7 @@
             <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
               <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">跳转型访问</span>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
-                <div class="h-full min-w-[2px] rounded bg-brand-600 transition-all duration-300 dark:bg-brand-500" :style="{ width: `${redirectPercent}%` }" />
+                <div class="h-full min-w-[2px] rounded bg-brand transition-all duration-300" :style="{ width: `${redirectPercent}%` }" />
               </div>
               <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ redirectVisits.toLocaleString() }} · {{ redirectPercent }}%</span>
             </div>
@@ -202,7 +202,7 @@
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div
                   class="h-full min-w-[2px] rounded transition-all duration-300"
-                  :class="src.percent > 30 ? 'bg-brand-600 dark:bg-brand-500' : 'bg-ink/70 dark:bg-ink-soft'"
+                  :class="src.percent > 30 ? 'bg-brand' : 'bg-ink-soft'"
                   :style="{ width: `${src.percent}%` }"
                 />
               </div>
@@ -234,7 +234,7 @@
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div
                   class="h-full min-w-[2px] rounded transition-all duration-300"
-                  :class="dev.name === '移动端' ? 'bg-brand-600 dark:bg-brand-500' : 'bg-ink/70 dark:bg-ink-soft'"
+                  :class="dev.name === '移动端' ? 'bg-brand' : 'bg-ink-soft'"
                   :style="{ width: `${dev.percent}%` }"
                 />
               </div>
@@ -266,7 +266,7 @@
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div
                   class="h-full min-w-[2px] rounded transition-all duration-300"
-                  :class="os.name.includes('iOS') ? 'bg-brand-600 dark:bg-brand-500' : 'bg-ink/70 dark:bg-ink-soft'"
+                  :class="os.name.includes('iOS') ? 'bg-brand' : 'bg-ink-soft'"
                   :style="{ width: `${os.percent}%` }"
                 />
               </div>
@@ -297,7 +297,7 @@
               <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">{{ br.name }}</span>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div
-                  class="h-full min-w-[2px] rounded bg-ink/70 transition-all duration-300 dark:bg-ink-soft"
+                  class="h-full min-w-[2px] rounded bg-ink-soft transition-all duration-300"
                   :style="{ width: `${br.percent}%` }"
                 />
               </div>
@@ -331,11 +331,11 @@ import { CircleHelp, RefreshCw } from '@lucide/vue';
 import { listDomains } from '@/api/domains';
 import { listLinks } from '@/api/links';
 import { listVisits } from '@/api/visits';
-import AppAlert from '@/components/ui/AppAlert.vue';
-import AppButton from '@/components/ui/AppButton.vue';
-import AppCard from '@/components/ui/AppCard.vue';
-import AppTag from '@/components/ui/AppTag.vue';
-import AppTooltip from '@/components/ui/AppTooltip.vue';
+import AppAlert from '@/components/app/AppAlert.vue';
+import AppButton from '@/components/app/AppButton.vue';
+import AppCard from '@/components/app/AppCard.vue';
+import AppTag from '@/components/app/AppTag.vue';
+import AppTooltip from '@/components/app/AppTooltip.vue';
 import { ApiError } from '@/types/api';
 import type { Domain, Link, Visit } from '@/types/api';
 import { message } from '@/utils/toast';

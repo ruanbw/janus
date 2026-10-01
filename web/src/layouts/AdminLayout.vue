@@ -187,7 +187,7 @@ import {
   DropdownMenuRoot,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from 'reka-ui';
+} from '@/components/ui';
 
 import ErrorBoundary from '@/components/layout/ErrorBoundary.vue';
 import NavList from '@/components/layout/NavList.vue';

@@ -16,7 +16,7 @@
       <AppCard :padding="false">
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <Sliders :size="18" class="text-brand-600 dark:text-brand-400" />
+            <Sliders :size="18" class="text-brand" />
             调整租户等级与配额
           </CardTitle>
           <CardDescription>
@@ -80,7 +80,7 @@
                     {{ currentTier?.maxLinks ?? 0 }}
                   </span>
                   <ArrowRight :size="14" class="text-ink-faint" />
-                  <span class="text-xl font-bold text-brand-600 dark:text-brand-400 tabular-nums">
+                  <span class="text-xl font-bold text-brand tabular-nums">
                     {{ selectedTier.maxLinks }}
                   </span>
                   <span class="text-xs text-ink-faint">条短链</span>
@@ -100,7 +100,7 @@
                     {{ currentTier?.maxDomains ?? 0 }}
                   </span>
                   <ArrowRight :size="14" class="text-ink-faint" />
-                  <span class="text-xl font-bold text-brand-600 dark:text-brand-400 tabular-nums">
+                  <span class="text-xl font-bold text-brand tabular-nums">
                     {{ selectedTier.maxDomains }}
                   </span>
                   <span class="text-xs text-ink-faint">个域名</span>
@@ -148,7 +148,7 @@ import { ArrowLeft, ArrowRight, Sliders, TrendingUp } from '@lucide/vue';
 
 import { getTenant, listTiers, updateTenant } from '@/api/admin';
 import PageHeader from '@/components/PageHeader.vue';
-import type { FormRule } from '@/components/ui/types';
+import type { FormRule } from '@/components/app/types';
 import { ApiError } from '@/types/api';
 import type { Tenant, Tier } from '@/types/api';
 import { message } from '@/utils/toast';

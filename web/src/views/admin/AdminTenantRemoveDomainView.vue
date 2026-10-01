@@ -14,8 +14,8 @@
 
     <AppSpin :spinning="loading">
       <!-- 带有警告/危险语义的 AppCard -->
-      <AppCard :padding="false" class="border-err/40 shadow-xs dark:border-err/30">
-        <CardHeader class="border-b border-err/10 bg-err/5 pb-4 dark:bg-err/10">
+      <AppCard :padding="false" class="border-err/40 shadow-xs">
+        <CardHeader class="border-b border-err/10 bg-err/10 pb-4">
           <CardTitle class="flex items-center gap-2 text-err">
             <ShieldAlert :size="20" />
             强制移除违规域名
@@ -100,8 +100,8 @@ import { ArrowLeft, ShieldAlert, Trash2 } from '@lucide/vue';
 
 import { getTenant, removeDomain } from '@/api/admin';
 import PageHeader from '@/components/PageHeader.vue';
-import { confirmAsync } from '@/components/ui/confirm';
-import type { FormRule } from '@/components/ui/types';
+import { confirmAsync } from '@/components/app/confirm';
+import type { FormRule } from '@/components/app/types';
 import { ApiError } from '@/types/api';
 import type { Tenant } from '@/types/api';
 import { message } from '@/utils/toast';

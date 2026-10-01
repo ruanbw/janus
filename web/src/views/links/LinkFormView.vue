@@ -18,7 +18,7 @@
             <AppCard :padding="false">
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
-                  <Hash :size="18" class="text-brand-600 dark:text-brand-400" />
+                  <Hash :size="18" class="text-brand" />
                   基本信息与类型
                 </CardTitle>
                 <CardDescription>
@@ -66,7 +66,7 @@
             <AppCard :padding="false">
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
-                  <Link2 :size="18" class="text-brand-600 dark:text-brand-400" />
+                  <Link2 :size="18" class="text-brand" />
                   {{ form.linkType === 'redirect' ? '目标 URL 与跳转机制' : '落地页与最终目标' }}
                 </CardTitle>
                 <CardDescription>
@@ -163,7 +163,7 @@
                       @dragleave.prevent="isDragging = false"
                       @drop.prevent="onDropZip"
                     >
-                      <FileArchive :size="36" class="mb-3 text-brand-600 dark:text-brand-400" />
+                      <FileArchive :size="36" class="mb-3 text-brand" />
                       
                       <div class="mb-2 flex items-center gap-2">
                         <AppUpload accept=".zip" :before-upload="onSelectZip">
@@ -190,7 +190,7 @@
                       <!-- 已选文件待上传提示 -->
                       <div
                         v-if="landingFile"
-                        class="mt-3.5 flex w-full max-w-md items-center justify-between rounded-lg border border-brand-200 bg-brand-50/50 px-3.5 py-2 text-xs text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300"
+                        class="mt-3.5 flex w-full max-w-md items-center justify-between rounded-lg border border-brand/30 bg-brand/10 px-3.5 py-2 text-xs text-brand"
                       >
                         <div class="flex min-w-0 items-center gap-2 truncate">
                           <FileArchive :size="14" class="shrink-0" />
@@ -274,7 +274,7 @@
             <AppCard :padding="false">
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
-                  <Globe :size="18" class="text-brand-600 dark:text-brand-400" />
+                  <Globe :size="18" class="text-brand" />
                   关联域名与状态
                 </CardTitle>
                 <CardDescription>
@@ -327,7 +327,7 @@
                 <div class="flex items-start justify-between gap-3">
                   <div class="min-w-0 space-y-1">
                     <CardTitle class="flex items-center gap-2">
-                      <ShieldCheck :size="18" class="text-brand-600 dark:text-brand-400" />
+                      <ShieldCheck :size="18" class="text-brand" />
                       适用规则
                     </CardTitle>
                     <CardDescription>
@@ -392,7 +392,7 @@
                 <template v-else>
                   <AppAlert v-if="ruleRows.length === 0" type="info" title="暂无规则">
                     还没有任何规则。请先到
-                    <RouterLink to="/rules" class="font-medium text-brand-600 underline dark:text-brand-400">规则引擎</RouterLink>
+                    <RouterLink to="/rules" class="font-medium text-brand underline">规则引擎</RouterLink>
                     新建规则，再回到这里关联。
                   </AppAlert>
 
@@ -462,7 +462,7 @@
             <AppCard :padding="false" class="sticky top-6">
               <CardHeader class="pb-3">
                 <CardTitle class="flex items-center gap-2 text-sm font-semibold">
-                  <Sparkles :size="16" class="text-brand-600 dark:text-brand-400" />
+                  <Sparkles :size="16" class="text-brand" />
                   短链实时预览
                 </CardTitle>
                 <CardDescription>
@@ -474,7 +474,7 @@
                 <div class="rounded-xl border border-line bg-surface-muted/60 p-3.5 space-y-2">
                   <div class="flex items-center justify-between text-2xs text-ink-faint">
                     <span>主访问地址</span>
-                    <span v-if="selectedDomains.length > 1" class="font-medium text-brand-600 dark:text-brand-400">
+                    <span v-if="selectedDomains.length > 1" class="font-medium text-brand">
                       +{{ selectedDomains.length - 1 }} 个备选域名
                     </span>
                   </div>
@@ -600,16 +600,16 @@ import {
   UploadCloud,
   Zap,
 } from '@lucide/vue';
-import type { FormRule } from '@/components/ui/types';
+import type { FormRule } from '@/components/app/types';
 
 import { listDomains } from '@/api/domains';
 import { createLink, getLink, updateLink, uploadLanding } from '@/api/links';
 import { listLinkRules, ruleOptions, setLinkRules } from '@/api/rules';
 import PageHeader from '@/components/PageHeader.vue';
-import AppAlert from '@/components/ui/AppAlert.vue';
-import AppCheckbox from '@/components/ui/AppCheckbox.vue';
-import AppTag from '@/components/ui/AppTag.vue';
-import AppTooltip from '@/components/ui/AppTooltip.vue';
+import AppAlert from '@/components/app/AppAlert.vue';
+import AppCheckbox from '@/components/app/AppCheckbox.vue';
+import AppTag from '@/components/app/AppTag.vue';
+import AppTooltip from '@/components/app/AppTooltip.vue';
 import {
   AUTO_SHORT_CODE_LENGTH,
   SHORT_CODE_FORBIDDEN_PATTERN,

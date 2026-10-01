@@ -22,7 +22,7 @@
         <AppCard :padding="false">
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <Layers :size="18" class="text-brand-600 dark:text-brand-400" />
+              <Layers :size="18" class="text-brand" />
               租户信息
             </CardTitle>
             <CardDescription>
@@ -68,7 +68,7 @@
         <AppCard :padding="false">
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <Gauge :size="18" class="text-brand-600 dark:text-brand-400" />
+              <Gauge :size="18" class="text-brand" />
               资源配额
             </CardTitle>
             <CardDescription>
@@ -126,7 +126,7 @@
       <AppCard :padding="false">
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
-            <KeyRound :size="18" class="text-brand-600 dark:text-brand-400" />
+            <KeyRound :size="18" class="text-brand" />
             {{ isFirstLogin ? '设置初始登录密码' : '修改登录密码' }}
           </CardTitle>
           <CardDescription>
@@ -199,7 +199,7 @@
           <!-- 密码规则提示小卡片 -->
           <div class="rounded-xl border border-line bg-surface-muted/40 p-4 space-y-2 text-xs">
             <div class="flex items-center gap-1.5 font-semibold text-ink">
-              <ShieldCheck :size="15" class="text-brand-600 dark:text-brand-400" />
+              <ShieldCheck :size="15" class="text-brand" />
               密码安全建议
             </div>
             <ul class="list-disc pl-4 space-y-1 text-ink-faint text-2xs leading-relaxed">
@@ -244,7 +244,7 @@ import {
   TriangleAlert,
 } from '@lucide/vue';
 import { message } from '@/utils/toast';
-import type { FormRule } from '@/components/ui/types';
+import type { FormRule } from '@/components/app/types';
 
 import { changePassword } from '@/api/auth';
 import { fetchMyTenant } from '@/api/me';

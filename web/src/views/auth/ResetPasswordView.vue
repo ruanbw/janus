@@ -43,7 +43,7 @@
 import { reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Lock } from '@lucide/vue';
-import type { FormRule } from '@/components/ui/types';
+import type { FormRule } from '@/components/app/types';
 
 import { resetPassword } from '@/api/auth';
 import AuthShell from '@/components/AuthShell.vue';

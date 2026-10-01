@@ -1,138 +1,156 @@
-// UI 组件库入口:全局注册(组件名 App* 前缀)+ 按需导出
-import type { App, Component } from 'vue';
+/**
+ * components/ui/ 统一出口。
+ *
+ * 这一层是「shadcn 下载件」层：kebab-case 文件名、只消费 shadcn 语义层令牌
+ * （bg-background / text-foreground / border-input / ring-ring …），
+ * 不含任何项目语义：既不反向依赖 components/app 目录，也不写主题变体补丁类。
+ * 项目组件（`App*`）必须构建在本层之上，不得直接 import `reka-ui`。
+ *
+ * 这里只做 re-export，不做全局注册——全局注册只发生在 `components/app/index.ts`。
+ */
 
-import AppAlert from './AppAlert.vue';
-import AppButton from './AppButton.vue';
-import AppCard from './AppCard.vue';
-import CardContent from './CardContent.vue';
-import CardDescription from './CardDescription.vue';
-import CardFooter from './CardFooter.vue';
-import CardHeader from './CardHeader.vue';
-import CardTitle from './CardTitle.vue';
-import AppCheckbox from './AppCheckbox.vue';
-import AppDescriptions from './AppDescriptions.vue';
-import AppDescriptionsItem from './AppDescriptionsItem.vue';
-import AppDialog from './AppDialog.vue';
-import AppDivider from './AppDivider.vue';
-import AppEmpty from './AppEmpty.vue';
-import AppForm from './AppForm.vue';
-import AppFormItem from './AppFormItem.vue';
-import AppInput from './AppInput.vue';
-import AppInputNumber from './AppInputNumber.vue';
-import AppModal from './AppModal.vue';
-import AppPopconfirm from './AppPopconfirm.vue';
-import AppProgress from './AppProgress.vue';
-import AppRadio from './AppRadio.vue';
-import AppRadioGroup from './AppRadioGroup.vue';
-import AppRadioCard from './AppRadioCard.vue';
-import AppResult from './AppResult.vue';
-import AppSelect from './AppSelect.vue';
-import AppSpace from './AppSpace.vue';
-import AppSpin from './AppSpin.vue';
-import AppSwitch from './AppSwitch.vue';
-import AppTable from './AppTable.vue';
-import AppTabs from './AppTabs.vue';
-import AppTabsList from './AppTabsList.vue';
-import AppTabsTrigger from './AppTabsTrigger.vue';
-import AppTabsContent from './AppTabsContent.vue';
-import AppTag from './AppTag.vue';
-import AppTextarea from './AppTextarea.vue';
-import AppTooltip from './AppTooltip.vue';
-import AppUpload from './AppUpload.vue';
-import CopyText from './CopyText.vue';
+// ---- 表单控件 ----
+export { default as Input } from './input.vue';
+export { default as Textarea } from './textarea.vue';
+export { default as Label } from './label.vue';
+export {
+  checkboxIndicatorVariants,
+  checkboxVariants,
+  default as Checkbox,
+} from './checkbox.vue';
+export {
+  switchThumbVariants,
+  switchVariants,
+  default as Switch,
+} from './switch.vue';
+export { default as RadioGroup } from './radio-group.vue';
+export { radioGroupItemVariants, default as RadioGroupItem } from './radio-group-item.vue';
+export {
+  radioGroupIndicatorVariants,
+  radioGroupIndicatorDotVariants,
+  default as RadioGroupIndicator,
+} from './radio-group-indicator.vue';
+export { selectTriggerVariants, default as SelectTrigger } from './select.vue';
+export { default as SelectValue } from './select-value.vue';
 
-const components: Record<string, Component> = {
-  AppAlert,
-  AppButton,
-  AppCard,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardFooter,
-  AppCheckbox,
-  AppDescriptions,
-  AppDescriptionsItem,
-  AppDialog,
-  AppDivider,
-  AppEmpty,
-  AppForm,
-  AppFormItem,
-  AppInput,
-  AppInputNumber,
-  AppModal,
-  AppPopconfirm,
-  AppProgress,
-  AppRadio,
-  AppRadioGroup,
-  AppRadioCard,
-  AppResult,
-  AppSelect,
-  AppSpace,
-  AppSpin,
-  AppSwitch,
-  AppTable,
-  AppTabs,
-  AppTabsList,
-  AppTabsTrigger,
-  AppTabsContent,
-  AppTag,
-  AppTextarea,
-  AppTooltip,
-  AppUpload,
-  CopyText,
-};
+// ---- 展示 ----
+export {
+  badgeVariants,
+  default as Badge,
+  type BadgeVariant,
+} from './badge.vue';
+export {
+  buttonVariants,
+  default as Button,
+  type ButtonSize,
+  type ButtonVariant,
+} from './button.vue';
+export { default as Card } from './card.vue';
+export { default as CardHeader } from './card-header.vue';
+export { default as CardTitle } from './card-title.vue';
+export { default as CardDescription } from './card-description.vue';
+export { default as CardContent } from './card-content.vue';
+export { default as CardFooter } from './card-footer.vue';
+export {
+  alertDescriptionVariants,
+  alertTitleVariants,
+  alertVariants,
+  default as Alert,
+  type AlertVariant,
+} from './alert.vue';
+export {
+  progressIndicatorVariants,
+  progressVariants,
+  default as Progress,
+} from './progress.vue';
+export { separatorVariants, default as Separator } from './separator.vue';
 
-export default {
-  install(app: App): void {
-    for (const [name, component] of Object.entries(components)) {
-      app.component(name, component);
-    }
-  },
-};
+// ---- 浮层 ----
+export { default as Dialog } from './dialog.vue';
+/** Root 也导出为 DialogRoot：项目层按 reka 的习惯名引用，与 shadcn 官方的 `Dialog` 同指一个组件 */
+export { default as DialogRoot } from './dialog.vue';
+export { default as DialogTrigger } from './dialog-trigger.vue';
+export { default as DialogPortal } from './dialog-portal.vue';
+export { dialogOverlayVariants, default as DialogOverlay } from './dialog-overlay.vue';
+export {
+  dialogContentVariants,
+  default as DialogContent,
+} from './dialog-content.vue';
+export { default as DialogClose } from './dialog-close.vue';
+export { default as DialogTitle } from './dialog-title.vue';
+export { default as DialogDescription } from './dialog-description.vue';
 
-export { default as AppAlert } from './AppAlert.vue';
-export { default as AppButton, buttonVariants } from './AppButton.vue';
-export { default as AppCard } from './AppCard.vue';
-export { default as CardHeader } from './CardHeader.vue';
-export { default as CardTitle } from './CardTitle.vue';
-export { default as CardDescription } from './CardDescription.vue';
-export { default as CardContent } from './CardContent.vue';
-export { default as CardFooter } from './CardFooter.vue';
-export { default as AppCheckbox } from './AppCheckbox.vue';
-export { default as AppDescriptions } from './AppDescriptions.vue';
-export { default as AppDescriptionsItem } from './AppDescriptionsItem.vue';
-export { default as AppDialog } from './AppDialog.vue';
-export { default as AppDivider } from './AppDivider.vue';
-export { default as AppEmpty } from './AppEmpty.vue';
-export { default as AppForm } from './AppForm.vue';
-export { default as AppFormItem } from './AppFormItem.vue';
-export { default as AppInput } from './AppInput.vue';
-export { default as AppInputNumber } from './AppInputNumber.vue';
-export { default as AppModal } from './AppModal.vue';
-export { default as AppPopconfirm } from './AppPopconfirm.vue';
-export { default as AppProgress } from './AppProgress.vue';
-export { default as AppRadio } from './AppRadio.vue';
-export { default as AppRadioGroup } from './AppRadioGroup.vue';
-export { default as AppRadioCard } from './AppRadioCard.vue';
-export { default as AppResult } from './AppResult.vue';
-export { default as AppSelect } from './AppSelect.vue';
-export { default as AppSpace } from './AppSpace.vue';
-export { default as AppSpin } from './AppSpin.vue';
-export { default as AppSwitch, switchVariants, switchThumbVariants } from './AppSwitch.vue';
-export { default as AppTable } from './AppTable.vue';
-export { default as AppTabs } from './AppTabs.vue';
-export { default as AppTabsList } from './AppTabsList.vue';
-export { default as AppTabsTrigger } from './AppTabsTrigger.vue';
-export { default as AppTabsContent } from './AppTabsContent.vue';
-export { default as AppTag } from './AppTag.vue';
-export { default as AppTextarea } from './AppTextarea.vue';
-export { default as AppTooltip } from './AppTooltip.vue';
-export { default as AppUpload } from './AppUpload.vue';
-export { default as CopyText } from './CopyText.vue';
+export { default as AlertDialog } from './alert-dialog.vue';
+export { default as AlertDialogTrigger } from './alert-dialog-trigger.vue';
+export { default as AlertDialogPortal } from './alert-dialog-portal.vue';
+export {
+  alertDialogOverlayVariants,
+  default as AlertDialogOverlay,
+} from './alert-dialog-overlay.vue';
+export {
+  alertDialogContentVariants,
+  default as AlertDialogContent,
+} from './alert-dialog-content.vue';
+export {
+  alertDialogActionVariants,
+  default as AlertDialogAction,
+} from './alert-dialog-action.vue';
+export {
+  alertDialogCancelVariants,
+  default as AlertDialogCancel,
+} from './alert-dialog-cancel.vue';
+export { default as AlertDialogTitle } from './alert-dialog-title.vue';
+export {
+  default as AlertDialogDescription,
+} from './alert-dialog-description.vue';
 
-export { useFormItem } from './form';
-export { message, toasts, dismiss } from './toast';
-export { confirm, confirmAsync, closeConfirm } from './confirm';
-export type { ConfirmOptions } from './confirm';
-export type { FormRule, TableColumn, TablePaginationConfig, SelectOption } from './types';
+export { default as Popover } from './popover.vue';
+export { default as PopoverTrigger } from './popover-trigger.vue';
+export { default as PopoverPortal } from './popover-portal.vue';
+export {
+  popoverContentVariants,
+  default as PopoverContent,
+} from './popover-content.vue';
+export { default as PopoverArrow } from './popover-arrow.vue';
+
+export { default as Tooltip } from './tooltip.vue';
+export { default as TooltipTrigger } from './tooltip-trigger.vue';
+export { default as TooltipPortal } from './tooltip-portal.vue';
+export {
+  tooltipContentVariants,
+  default as TooltipContent,
+} from './tooltip-content.vue';
+export { default as TooltipArrow } from './tooltip-arrow.vue';
+
+// ---- 导航 ----
+export { default as Tabs } from './tabs.vue';
+export { tabsListVariants, default as TabsList } from './tabs-list.vue';
+export { tabsTriggerVariants, default as TabsTrigger } from './tabs-trigger.vue';
+export { default as TabsContent } from './tabs-content.vue';
+export { tabsIndicatorVariants, default as TabsIndicator } from './tabs-indicator.vue';
+
+// ---- 表格 ----
+export { default as Table } from './table.vue';
+export { default as TableHeader } from './table-header.vue';
+export { default as TableBody } from './table-body.vue';
+export { default as TableFooter } from './table-footer.vue';
+export { default as TableRow } from './table-row.vue';
+export { default as TableHead } from './table-head.vue';
+export { default as TableCell } from './table-cell.vue';
+export { default as TableCaption } from './table-caption.vue';
+
+// ---- 下拉菜单 ----
+export { default as DropdownMenu } from './dropdown-menu.vue';
+export { default as DropdownMenuRoot } from './dropdown-menu.vue';
+export { default as DropdownMenuTrigger } from './dropdown-menu-trigger.vue';
+export { default as DropdownMenuPortal } from './dropdown-menu-portal.vue';
+export {
+  dropdownMenuContentVariants,
+  default as DropdownMenuContent,
+} from './dropdown-menu-content.vue';
+export {
+  dropdownMenuItemVariants,
+  default as DropdownMenuItem,
+} from './dropdown-menu-item.vue';
+export { default as DropdownMenuLabel } from './dropdown-menu-label.vue';
+export { default as DropdownMenuSeparator } from './dropdown-menu-separator.vue';

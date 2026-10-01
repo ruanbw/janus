@@ -4,7 +4,7 @@
       <div class="flex items-center justify-between">
         <div>
           <CardTitle class="flex items-center gap-2">
-            <FileCode :size="18" class="text-brand-600 dark:text-brand-400" />
+            <FileCode :size="18" class="text-brand" />
             访客端错误页面 (404 / 429)
           </CardTitle>
           <CardDescription>

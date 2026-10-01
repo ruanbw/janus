@@ -32,7 +32,7 @@
     <!-- 批量操作条:有选中项时出现 -->
     <div
       v-if="selectedCount > 0"
-      class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 dark:border-brand-800 dark:bg-brand-950/40"
+      class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand/30 bg-brand/10 px-3 py-2"
       data-od-id="link-batch-bar"
     >
       <div class="flex items-center gap-2 text-xs text-ink-soft">
@@ -493,8 +493,8 @@ import {
   updateLink,
   uploadLanding,
 } from '@/api/links';
-import type { TableColumn } from '@/components/ui/types';
-import { confirm } from '@/components/ui/confirm';
+import type { TableColumn } from '@/components/app/types';
+import { confirm } from '@/components/app/confirm';
 
 import { ApiError } from '@/types/api';
 import type { Domain, Link, LinkStatus } from '@/types/api';

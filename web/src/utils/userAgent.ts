@@ -1,7 +1,7 @@
 // User-Agent 解析工具(访问明细列表与总览的流量结构分布共用)
 // 判别逻辑为原样搬迁,任何调整都会同时影响两个页面,故此处不做“顺手优化”。
 import { UAParser } from 'ua-parser-js';
-import type { TagColor } from '@/components/ui/AppTag.vue';
+import type { TagColor } from '@/components/app/AppTag.vue';
 
 /** UA 解析结果 */
 export interface ParsedUA {

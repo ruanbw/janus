@@ -92,9 +92,9 @@
 import { computed, ref } from 'vue';
 import { RefreshCw } from '@lucide/vue';
 
-import AppButton from '@/components/ui/AppButton.vue';
-import AppCard from '@/components/ui/AppCard.vue';
-import AppTag from '@/components/ui/AppTag.vue';
+import AppButton from '@/components/app/AppButton.vue';
+import AppCard from '@/components/app/AppCard.vue';
+import AppTag from '@/components/app/AppTag.vue';
 import type { Visit } from '@/types/api';
 
 import { countryDistribution } from './trafficBreakdown';

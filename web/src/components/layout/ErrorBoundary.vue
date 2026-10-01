@@ -25,7 +25,7 @@
 import { onErrorCaptured, ref, watch } from 'vue';
 import { AlertTriangle, RefreshCw } from '@lucide/vue';
 
-import AppButton from '@/components/ui/AppButton.vue';
+import AppButton from '@/components/app/AppButton.vue';
 
 /**
  * 渲染错误边界。只包住它自己的插槽内容,因此拦到的是「页面渲染出错」,

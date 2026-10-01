@@ -44,7 +44,7 @@
 import { reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Lock, Mail } from '@lucide/vue';
-import type { FormRule } from '@/components/ui/types';
+import type { FormRule } from '@/components/app/types';
 
 import AuthShell from '@/components/AuthShell.vue';
 import { useAuthStore } from '@/stores/auth';

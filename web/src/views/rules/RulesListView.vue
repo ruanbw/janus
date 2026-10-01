@@ -10,8 +10,8 @@ import { FlaskConical, Link2, Pencil, Plus, RefreshCw, Search, Trash2 } from '@l
 
 import { deleteRule, listRules, updateRule } from '@/api/rules';
 import PageHeader from '@/components/PageHeader.vue';
-import { confirm } from '@/components/ui/confirm';
-import type { TableColumn, TablePaginationConfig } from '@/components/ui/types';
+import { confirm } from '@/components/app/confirm';
+import type { TableColumn, TablePaginationConfig } from '@/components/app/types';
 import type { Rule } from '@/types/api';
 import { message } from '@/utils/toast';
 import { actionLabel, actionTagColor, conditionSummary, logicLabel } from './ruleMeta';

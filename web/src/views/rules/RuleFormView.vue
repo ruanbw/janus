@@ -26,8 +26,8 @@ import {
 import { listLinks } from '@/api/links';
 import { createRule, deleteRule, getRule, updateRule, type RuleCreatePayload } from '@/api/rules';
 import PageHeader from '@/components/PageHeader.vue';
-import { confirm } from '@/components/ui/confirm';
-import type { FormRule } from '@/components/ui/types';
+import { confirm } from '@/components/app/confirm';
+import type { FormRule } from '@/components/app/types';
 import { COUNTRY_OPTIONS } from '@/constants/countries';
 import type { Rule, RuleCondition, RulePageMode, RuleScope } from '@/types/api';
 import { message } from '@/utils/toast';
@@ -61,7 +61,7 @@ interface EditableCondition {
 
 const loading = ref(false);
 const saving = ref(false);
-const formRef = ref<InstanceType<typeof import('@/components/ui/AppForm.vue')['default']> | null>(null);
+const formRef = ref<InstanceType<typeof import('@/components/app/AppForm.vue')['default']> | null>(null);
 
 const form = reactive({
   name: '',
@@ -531,7 +531,7 @@ onMounted(init);
             <AppCard :padding="false">
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
-                  <Filter :size="18" class="text-brand-600 dark:text-brand-400" />
+                  <Filter :size="18" class="text-brand" />
                   基本信息
                 </CardTitle>
                 <CardDescription>名称用于列表识别，优先级决定它在裁决队列里的先后位置</CardDescription>
@@ -589,7 +589,7 @@ onMounted(init);
             <AppCard :padding="false">
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
-                  <Globe :size="18" class="text-brand-600 dark:text-brand-400" />
+                  <Globe :size="18" class="text-brand" />
                   作用范围
                 </CardTitle>
                 <CardDescription>
@@ -650,7 +650,7 @@ onMounted(init);
             <AppCard :padding="false">
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
-                  <Check :size="18" class="text-brand-600 dark:text-brand-400" />
+                  <Check :size="18" class="text-brand" />
                   命中条件
                 </CardTitle>
                 <CardDescription>
@@ -719,7 +719,7 @@ onMounted(init);
             <AppCard :padding="false">
               <CardHeader>
                 <CardTitle class="flex items-center gap-2">
-                  <CirclePlay :size="18" class="text-brand-600 dark:text-brand-400" />
+                  <CirclePlay :size="18" class="text-brand" />
                   命中动作
                 </CardTitle>
                 <CardDescription>规则命中后对这次访问的处理方式</CardDescription>

@@ -5,7 +5,7 @@
         ref="trigger"
         type="button"
         aria-label="切换主题"
-        class="flex h-8 w-8 items-center justify-center rounded-lg text-ink-soft transition-colors hover:bg-surface-strong hover:text-ink"
+        :class="cn(buttonVariants({ variant: 'ghost', size: 'icon' }), 'h-8 w-8 text-ink-soft hover:text-ink')"
         :title="`主题:${currentLabel}`"
       >
         <component :is="ICONS[theme.mode]" :size="16" />
@@ -15,12 +15,12 @@
       <DropdownMenuContent
         :side-offset="6"
         align="end"
-        class="z-[75] min-w-40 rounded-xl border border-line bg-surface p-1.5 shadow-xl"
+        class="z-[75] min-w-40"
       >
         <DropdownMenuItem
           v-for="option in OPTIONS"
           :key="option.value"
-          class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-ink outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
+          class="gap-2 px-2.5 py-2 text-xs text-ink"
           @select="onSelect(option.value)"
         >
           <component :is="option.icon" :size="14" class="shrink-0 text-ink-soft" />
@@ -28,7 +28,7 @@
           <Check
             v-if="theme.mode === option.value"
             :size="14"
-            class="shrink-0 text-brand-600 dark:text-brand-400"
+            class="shrink-0 text-brand"
           />
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -45,9 +45,11 @@ import {
   DropdownMenuPortal,
   DropdownMenuRoot,
   DropdownMenuTrigger,
-} from 'reka-ui';
+} from '@/components/ui';
+import { buttonVariants } from '@/components/ui/button.vue';
 
 import { useThemeStore, type ThemeMode } from '@/stores/theme';
+import { cn } from '@/lib/utils';
 
 const theme = useThemeStore();
 

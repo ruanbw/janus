@@ -278,7 +278,7 @@ onMounted(async () => {
         <AppCard :padding="false">
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <User :size="18" class="text-brand-600 dark:text-brand-400" />
+              <User :size="18" class="text-brand" />
               访客输入
             </CardTitle>
             <CardDescription>留空的字段按「取不到值」处理，依赖它的条件会判不成立</CardDescription>
@@ -341,7 +341,7 @@ onMounted(async () => {
         <AppCard :padding="false">
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <FlaskConical :size="18" class="text-brand-600 dark:text-brand-400" />
+              <FlaskConical :size="18" class="text-brand" />
               示例访客
             </CardTitle>
             <CardDescription>载入后立即运行，用来快速验证「爬虫 / 机房 IP / 微信内」三类典型流量</CardDescription>
@@ -365,7 +365,7 @@ onMounted(async () => {
         <AppCard :padding="false">
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <Globe :size="18" class="text-brand-600 dark:text-brand-400" />
+              <Globe :size="18" class="text-brand" />
               访客画像
               <span class="rounded-md bg-surface-muted px-1.5 py-0.5 text-2xs text-ink-faint">13 字段</span>
             </CardTitle>

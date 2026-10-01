@@ -18,7 +18,7 @@
         <AppCard :padding="false">
           <CardHeader>
             <CardTitle class="flex items-center gap-2">
-              <Globe :size="18" class="text-brand-600 dark:text-brand-400" />
+              <Globe :size="18" class="text-brand" />
               域名基本信息
             </CardTitle>
             <CardDescription>
@@ -99,7 +99,7 @@
         <AppCard :padding="false">
           <CardHeader class="pb-3">
             <CardTitle class="flex items-center gap-2 text-sm font-semibold">
-              <Server :size="16" class="text-brand-600 dark:text-brand-400" />
+              <Server :size="16" class="text-brand" />
               DNS 解析配置指南
             </CardTitle>
             <CardDescription>
@@ -141,7 +141,7 @@
               >
                 <template #cell="{ column, record }">
                   <template v-if="column.key === 'type'">
-                    <span class="font-mono font-semibold text-brand-600 dark:text-brand-400">
+                    <span class="font-mono font-semibold text-brand">
                       {{ record.type }}
                     </span>
                   </template>
@@ -160,12 +160,12 @@
             </div>
 
             <!-- 自动签发 SSL 证书说明 -->
-            <div class="rounded-xl border border-brand-200 bg-brand-50/50 p-3.5 text-xs text-brand-900 dark:border-brand-500/20 dark:bg-brand-500/5 dark:text-brand-200 space-y-1.5">
-              <div class="flex items-center gap-1.5 font-semibold text-brand-700 dark:text-brand-300">
+            <div class="rounded-xl border border-brand/30 bg-brand/10 p-3.5 text-xs text-brand space-y-1.5">
+              <div class="flex items-center gap-1.5 font-semibold text-brand">
                 <ShieldCheck :size="15" />
                 自动签发 HTTPS 证书
               </div>
-              <p class="text-2xs leading-relaxed text-brand-800/80 dark:text-brand-300/80">
+              <p class="text-2xs leading-relaxed text-brand/80">
                 DNS 解析生效后，系统将自动通过 ACME 协议向 Let's Encrypt 申请 SSL 证书并自动保持续期，无需手动上传证书。
               </p>
             </div>
@@ -191,7 +191,7 @@ import { ArrowLeft, Clock, Globe, Server, ShieldCheck } from '@lucide/vue';
 
 import { createDomain } from '@/api/domains';
 import PageHeader from '@/components/PageHeader.vue';
-import type { FormRule, TableColumn } from '@/components/ui/types';
+import type { FormRule, TableColumn } from '@/components/app/types';
 import { message } from '@/utils/toast';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError, getQuotaUsage } from '@/types/api';

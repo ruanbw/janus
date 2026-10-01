@@ -3,7 +3,7 @@
     <template #title>注册新租户</template>
     <template #subtitle>
       注册后将自动获得平台默认域名
-      <span class="slug-chip mono ml-1 inline-block rounded-md border border-brand-200 bg-brand-50 px-1.5 py-px align-middle text-xs text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300">{{ slugHint }}</span>
+      <span class="slug-chip mono ml-1 inline-block rounded-md border border-brand/30 bg-brand/10 px-1.5 py-px align-middle text-xs text-brand">{{ slugHint }}</span>
     </template>
 
     <AppForm :model="form" :rules="rules" @finish="onSubmit">
@@ -66,7 +66,7 @@
 import { computed, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { Globe, Lock, Mail } from '@lucide/vue';
-import type { FormRule } from '@/components/ui/types';
+import type { FormRule } from '@/components/app/types';
 
 import { register } from '@/api/auth';
 import AuthShell from '@/components/AuthShell.vue';

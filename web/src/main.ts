@@ -1,11 +1,14 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 
+// Inter Variable:theme.css 的 --font-sans 第一顺位,CJK 仍走系统栈
+import '@fontsource-variable/inter';
+
 import '@/styles/main.css';
 
 import App from './App.vue';
 import router from './router';
-import UI from '@/components/ui';
+import UI from '@/components/app';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
 import { setUnauthorizedHandler } from '@/utils/request';
