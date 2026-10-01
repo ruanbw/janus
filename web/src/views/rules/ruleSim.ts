@@ -61,18 +61,27 @@ export interface TraceStep {
   whyText: string;
 }
 
+import ipaddr from 'ipaddr.js';
+
 export function classifyIpAttr(ip: string): string {
-  const parts = ip.trim().split('.');
-  if (parts.length !== 4) return '';
-  const nums = parts.map((p) => Number(p));
-  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return '';
-  const [a, b] = nums;
-  if (a === 127) return 'loopback';
-  if (a === 10) return 'private';
-  if (a === 192 && b === 168) return 'private';
-  if (a === 172 && b !== undefined && b >= 16 && b <= 31) return 'private';
-  if (a === 169 && b === 254) return 'linklocal';
-  return '';
+  const trimmed = ip.trim();
+  if (!ipaddr.isValid(trimmed)) return '';
+  try {
+    let parsed = ipaddr.parse(trimmed);
+    if (parsed.kind() === 'ipv6') {
+      const v6 = parsed as ipaddr.IPv6;
+      if (v6.isIPv4MappedAddress()) {
+        parsed = v6.toIPv4Address();
+      }
+    }
+    const range = parsed.range();
+    if (range === 'loopback') return 'loopback';
+    if (range === 'private') return 'private';
+    if (range === 'linkLocal') return 'linklocal';
+    return '';
+  } catch {
+    return '';
+  }
 }
 
 /**

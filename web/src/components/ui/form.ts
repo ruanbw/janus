@@ -1,7 +1,9 @@
-// 轻量表单校验引擎:规则形状与 antd Rule 兼容(required/type/min/max/pattern/validator),
+// 表单校验引擎: 使用成熟的社区工业级校验库 async-validator
 // 由 AppForm + AppFormItem 驱动;AppInput 等字段组件可注入错误态与清除时机。
 import { inject } from 'vue';
 import type { InjectionKey, Ref } from 'vue';
+import Schema from 'async-validator';
+import type { RuleItem } from 'async-validator';
 
 import type { FormRule } from './types';
 
@@ -27,45 +29,45 @@ export function useFormItem(): FormItemContext | undefined {
   return inject(formItemKey, undefined);
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function checkSync(rule: FormRule, value: unknown): string | null {
-  const isEmpty = value === undefined || value === null || value === '';
-  if (rule.required && (isEmpty || (Array.isArray(value) && value.length === 0))) {
-    return rule.message ?? '该字段为必填项';
-  }
-  if (isEmpty) return null;
-  if (rule.type === 'email' && typeof value === 'string' && EMAIL_RE.test(value) === false) {
-    return rule.message ?? '邮箱格式不正确';
-  }
-  if (typeof value === 'string') {
-    if (rule.min !== undefined && value.length < rule.min) {
-      return rule.message ?? '长度不能少于 ' + rule.min + ' 位';
-    }
-    if (rule.max !== undefined && value.length > rule.max) {
-      return rule.message ?? '长度不能超过 ' + rule.max + ' 位';
-    }
-    if (rule.pattern && rule.pattern.test(value) === false) {
-      return rule.message ?? '格式不正确';
-    }
-  }
-  if (Array.isArray(value) && rule.max !== undefined && value.length > rule.max) {
-    return rule.message ?? '数量超出限制';
-  }
-  return null;
-}
-
+/**
+ * validateRules 使用 async-validator 进行多规则校验，自动处理 sync/async、type、pattern 等。
+ */
 export async function validateRules(rules: FormRule[], value: unknown): Promise<string | null> {
-  for (const rule of rules) {
-    const syncError = checkSync(rule, value);
-    if (syncError) return syncError;
-    if (rule.validator) {
-      try {
-        await rule.validator(rule, value);
-      } catch (error) {
-        return error instanceof Error ? error.message : '校验失败';
+  if (!rules || rules.length === 0) return null;
+
+  // 将 FormRule 映射为 async-validator 的 RuleItem
+  const descriptorRules: RuleItem[] = rules.map((r) => {
+    const item: RuleItem = {};
+    if (r.required !== undefined) item.required = r.required;
+    if (r.message !== undefined) item.message = r.message;
+    if (r.type !== undefined) item.type = r.type;
+    if (r.min !== undefined) item.min = r.min;
+    if (r.max !== undefined) item.max = r.max;
+    if (r.pattern !== undefined) item.pattern = r.pattern;
+    if (r.validator) {
+      const origValidator = r.validator;
+      item.asyncValidator = async (rule, val) => {
+        await origValidator(r, val);
+      };
+    }
+    return item;
+  });
+
+  const validator = new Schema({ value: descriptorRules });
+
+  try {
+    await validator.validate({ value }, { first: true });
+    return null;
+  } catch (err: unknown) {
+    if (err && typeof err === 'object' && 'errors' in err) {
+      const errors = (err as { errors: Array<{ message?: string }> }).errors;
+      if (errors && errors.length > 0 && errors[0].message) {
+        return errors[0].message;
       }
     }
+    if (err instanceof Error) {
+      return err.message;
+    }
+    return '校验失败';
   }
-  return null;
 }
