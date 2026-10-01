@@ -166,6 +166,7 @@ func New(d Deps) http.Handler {
 	prot.POST("/rules", a.handleCreateRule)
 	prot.GET("/rules/options", a.handleRuleOptions)
 	prot.POST("/rules/simulate", a.handleSimulateRules)
+	prot.POST("/rules/validate-expr", a.handleValidateExpr)
 	prot.GET("/rules/:id", a.handleGetRule)
 	prot.PATCH("/rules/:id", a.handlePatchRule)
 	prot.DELETE("/rules/:id", a.handleDeleteRule)

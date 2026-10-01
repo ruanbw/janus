@@ -97,6 +97,7 @@ const (
 // appliesAll=false 且 linkIDs 为空,求值期直接跳过(spec D2:不兜底成全局)。
 type Compiled struct {
 	Rule       store.Rule
+	evaluator  ConditionEvaluator // 双层统一求值器接口(Tier-1 nativeVisualEvaluator / Tier-2 exprEvaluator)
 	logicAll   bool
 	appliesAll bool           // scope=global
 	linkIDs    map[int64]bool // scope=links 时的适用短链
@@ -127,6 +128,22 @@ func compileRule(r store.Rule, log *slog.Logger) (Compiled, bool) {
 		// 库内 CHECK 拦得住脏值,这里再兜一层:不认识的 logic 一律按 all 求值
 		log.Warn("规则 logic 非法,按 all 求值", "rule", r.ID, "logic", r.Logic)
 	}
+
+	// Tier-2 表达式规则:通过 Expr 字节码虚拟机求值
+	if r.RuleType == store.RuleTypeExpression {
+		if strings.TrimSpace(r.Expression) == "" {
+			log.Warn("表达式规则的 expression 为空,整条规则不参与求值", "rule", r.ID, "name", r.Name)
+			return Compiled{}, false
+		}
+		prog, err := CompileExpression(r.Expression)
+		if err != nil {
+			log.Warn("表达式规则编译失败,整条规则不参与求值", "rule", r.ID, "name", r.Name, "err", err)
+			return Compiled{}, false
+		}
+		c.evaluator = &exprEvaluator{program: prog, log: log}
+		return c, true
+	}
+
 	declared := r.Conditions.Len()
 	kept := 0
 	if r.Conditions.IsTree() {
@@ -155,6 +172,7 @@ func compileRule(r store.Rule, log *slog.Logger) (Compiled, bool) {
 		log.Warn("规则条件全部不可求值,整条规则不参与求值", "rule", r.ID, "name", r.Name)
 		return Compiled{}, false
 	}
+	c.evaluator = &nativeVisualEvaluator{root: c.root}
 	return c, true
 }
 
@@ -544,6 +562,9 @@ func (c *compiledCond) matchRegex(raw string) bool {
 // 空条件组视为满足(可以配一条"无条件即执行"的规则);但整条规则
 // 不会带着空条件组出现——conditions 非空却被全部丢弃时整条规则已不参与求值。
 func (c *Compiled) matchAll(ctx VisitorContext) bool {
+	if c.evaluator != nil {
+		return c.evaluator.Match(ctx)
+	}
 	return c.root.match(ctx)
 }
 

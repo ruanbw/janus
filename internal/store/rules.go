@@ -310,6 +310,12 @@ func (RuleConditions) GormDBDataType(db *gorm.DB, field *schema.Field) string {
 	return "json"
 }
 
+// 规则类型(Tier-1 visual 默认可视化条件树; Tier-2 expression Expr 表达式)
+const (
+	RuleTypeVisual     = "visual"
+	RuleTypeExpression = "expression"
+)
+
 // Rule 租户级规则。条件字段收敛为后端从请求即可真实求值的 13 个(spec D5),
 // 不可求值的字段不落库,避免"能配不能跑"的假能力。
 // LinkIDs / LinkNames / LinkCount / Hits24h 是投影字段(查询后填充,不落库):
@@ -330,6 +336,8 @@ type Rule struct {
 	Destination string         `json:"destination"`
 	PageMode    string         `json:"pageMode" gorm:"column:page_mode"`
 	CustomHTML  string         `json:"customHtml" gorm:"column:custom_html"`
+	RuleType    string         `json:"ruleType" gorm:"column:rule_type"`
+	Expression  string         `json:"expression" gorm:"column:expression"`
 	Conditions  RuleConditions `json:"conditions" gorm:"column:conditions;type:jsonb"`
 	LinkIDs     []int64        `json:"linkIds" gorm:"-"`
 	LinkNames   []string       `json:"linkNames" gorm:"-"`
@@ -475,6 +483,9 @@ func (s *Store) CreateRule(ctx context.Context, tenantID int64, r Rule) (*Rule, 
 	if r.PageMode == "" {
 		r.PageMode = "default"
 	}
+	if r.RuleType == "" {
+		r.RuleType = RuleTypeVisual
+	}
 	r.TenantID = tenantID
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&r).Error; err != nil {
@@ -607,6 +618,8 @@ type RuleUpdate struct {
 	Destination *string
 	PageMode    *string
 	CustomHTML  *string
+	RuleType    *string
+	Expression  *string
 	Conditions  *RuleConditions
 	LinkIDs     *[]int64
 }
@@ -634,6 +647,8 @@ func (s *Store) UpdateRule(ctx context.Context, tenantID, id int64, upd RuleUpda
 	put("destination", upd.Destination != nil, derefOr(cur.Destination, upd.Destination))
 	put("page_mode", upd.PageMode != nil, derefOr(orDefault(cur.PageMode, "default"), upd.PageMode))
 	put("custom_html", upd.CustomHTML != nil, derefOr(cur.CustomHTML, upd.CustomHTML))
+	put("rule_type", upd.RuleType != nil, derefOr(orDefault(cur.RuleType, RuleTypeVisual), upd.RuleType))
+	put("expression", upd.Expression != nil, derefOr(cur.Expression, upd.Expression))
 	if upd.Conditions != nil && !upd.Conditions.IsZero() {
 		fields["conditions"] = *upd.Conditions
 	}

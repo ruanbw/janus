@@ -61,6 +61,8 @@ type ruleReq struct {
 	LinkIDs    *[]int64 `json:"linkIds"`
 	PageMode   *string  `json:"pageMode"`
 	CustomHTML *string  `json:"customHtml"`
+	RuleType   *string  `json:"ruleType"`
+	Expression *string  `json:"expression"`
 }
 
 // ruleWrite 归一化并校验后的待写入规则(是"合成结果"而不是"请求增量":
@@ -80,6 +82,8 @@ type ruleWrite struct {
 	linkIDs    *[]int64
 	pageMode   string
 	customHTML string
+	ruleType   string
+	expression string
 }
 
 // ruleErr 构造一条 400 校验错误(apiErr 由 writeAPIError 统一序列化)。
@@ -113,8 +117,13 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 		w.destination = cur.Destination
 		w.pageMode = firstNonEmpty(cur.PageMode, "default")
 		w.customHTML = cur.CustomHTML
+		w.ruleType = firstNonEmpty(cur.RuleType, store.RuleTypeVisual)
+		w.expression = cur.Expression
 		// 现值无条件时就是零值,直接带过来(条件列不再是切片,靠 IsZero 区分未设置)
 		w.conditions = cur.Conditions
+	} else {
+		w.ruleType = store.RuleTypeVisual
+		w.expression = ""
 	}
 	// ① name 必填且非空白(新建时缺失同样算非法)
 	if req.Name != nil {
@@ -181,6 +190,24 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 	}
 	if len(w.customHTML) > 512*1024 {
 		return ruleWrite{}, ruleErr("customHtml 超过大小上限(512KB)")
+	}
+	// ⑪ ruleType 与 expression 校验
+	if req.RuleType != nil && *req.RuleType != "" {
+		w.ruleType = *req.RuleType
+	}
+	if w.ruleType != store.RuleTypeVisual && w.ruleType != store.RuleTypeExpression {
+		return ruleWrite{}, ruleErr("ruleType 必须为 visual 或 expression")
+	}
+	if req.Expression != nil {
+		w.expression = *req.Expression
+	}
+	if w.ruleType == store.RuleTypeExpression {
+		if strings.TrimSpace(w.expression) == "" {
+			return ruleWrite{}, ruleErr("ruleType=expression 时 expression 不能为空")
+		}
+		if err := rules.ValidateExpression(w.expression); err != nil {
+			return ruleWrite{}, ruleErr("expression 非法: %v", err)
+		}
 	}
 	// ⑦⑧ 条件字段与运算符必须都在 v1 白名单内(白名单以 rules 包为准,httpapi 只引用)。
 	// 条件树里的每个叶子都要校验,报错带 JSON 路径——不指明位置的话用户没法改。
@@ -407,6 +434,7 @@ func (a *API) handleCreateRule(c *gin.Context) {
 		Scope: w.scope, Enabled: w.enabled, Logic: w.logic, Action: w.action,
 		Destination: w.destination, Conditions: w.conditions, LinkIDs: derefIDs(w.linkIDs),
 		PageMode: w.pageMode, CustomHTML: w.customHTML,
+		RuleType: w.ruleType, Expression: w.expression,
 	})
 	if err != nil {
 		a.writeRuleWriteErr(c, err)
@@ -455,6 +483,7 @@ func (a *API) handlePatchRule(c *gin.Context) {
 		Scope: &w.scope, Enabled: &w.enabled, Logic: &w.logic, Action: &w.action,
 		Destination: &w.destination, Conditions: &w.conditions, LinkIDs: w.linkIDs,
 		PageMode: &w.pageMode, CustomHTML: &w.customHTML,
+		RuleType: &w.ruleType, Expression: &w.expression,
 	}
 	updated, err := a.store.UpdateRule(c.Request.Context(), t.ID, id, upd)
 	if err != nil {
@@ -1028,6 +1057,7 @@ func (a *API) simDraft(c *gin.Context, tenantID int64, d *simulateDraftRule) (*r
 		Scope: w.scope, Enabled: w.enabled, Logic: w.logic, Action: w.action,
 		Destination: w.destination, Conditions: w.conditions, LinkIDs: derefIDs(w.linkIDs),
 		PageMode: w.pageMode, CustomHTML: w.customHTML,
+		RuleType: w.ruleType, Expression: w.expression,
 	}, nil)
 	if !ok {
 		return nil, ruleErr("草稿规则的条件全部不可求值(检查字段与运算符),无法推演")
@@ -1096,3 +1126,43 @@ func actionVerdict(d rules.Decision) string {
 		return "放行,按原目标正常跳转。"
 	}
 }
+
+// validateExprReq 表达式校验请求体。
+type validateExprReq struct {
+	Expression string `json:"expression"`
+}
+
+// validateExprResp 表达式校验响应体。
+type validateExprResp struct {
+	Valid   bool   `json:"valid"`
+	Message string `json:"message,omitempty"`
+}
+
+// handleValidateExpr POST /api/rules/validate-expr — 校验 Expr 表达式语法与返回值类型。
+func (a *API) handleValidateExpr(c *gin.Context) {
+	_, _, ok := a.requireSession(c)
+	if !ok {
+		return
+	}
+	var req validateExprReq
+	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(req.Expression) == "" {
+		writeJSON(c, http.StatusOK, validateExprResp{
+			Valid:   false,
+			Message: "expression 不能为空",
+		})
+		return
+	}
+	if err := rules.ValidateExpression(req.Expression); err != nil {
+		writeJSON(c, http.StatusOK, validateExprResp{
+			Valid:   false,
+			Message: err.Error(),
+		})
+		return
+	}
+	writeJSON(c, http.StatusOK, validateExprResp{Valid: true})
+}
+

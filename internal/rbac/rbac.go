@@ -70,6 +70,7 @@ p, tenant, /api/rules, GET
 p, tenant, /api/rules, POST
 p, tenant, /api/rules/options, GET
 p, tenant, /api/rules/simulate, POST
+p, tenant, /api/rules/validate-expr, POST
 p, tenant, /api/rules/*, GET
 p, tenant, /api/rules/*, PATCH
 p, tenant, /api/rules/*, DELETE

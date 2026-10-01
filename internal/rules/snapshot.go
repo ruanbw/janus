@@ -406,6 +406,16 @@ func traceRule(c *Compiled, ctx VisitorContext, linkID int64, draft bool) StepTr
 	}
 	step.Logic = c.Rule.Logic
 	matched := c.matchAll(ctx)
+	if c.Rule.RuleType == store.RuleTypeExpression {
+		if matched {
+			step.Status = StepStatusHit
+			step.Reason = "表达式求值结果为 true: " + c.Rule.Expression
+			return step
+		}
+		step.Status = StepStatusSkip
+		step.Reason = "表达式求值结果为 false: " + c.Rule.Expression
+		return step
+	}
 	step.Conditions = traceConds(c.root, ctx)
 	if matched {
 		step.Status = StepStatusHit

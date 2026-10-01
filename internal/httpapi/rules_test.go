@@ -1294,3 +1294,80 @@ func TestSimulateMatchesRealRedirect(t *testing.T) {
 		t.Fatalf("Location = %q, want 原目标", loc)
 	}
 }
+
+func TestValidateExprEndpoint(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+
+	// 合法表达式
+	resp := c.post("/api/rules/validate-expr", map[string]any{
+		"expression": `Country in ["US", "CA"] && DevType == "bot"`,
+	})
+	assertStatus(t, resp, http.StatusOK)
+	body := decodeBody[map[string]any](t, resp)
+	if body["valid"] != true {
+		t.Fatalf("合法表达式应 valid=true, got %+v", body)
+	}
+
+	// 语法错误
+	resp = c.post("/api/rules/validate-expr", map[string]any{
+		"expression": `Country == `,
+	})
+	assertStatus(t, resp, http.StatusOK)
+	body = decodeBody[map[string]any](t, resp)
+	if body["valid"] != false {
+		t.Fatalf("非法表达式应 valid=false, got %+v", body)
+	}
+
+	// 空表达式
+	resp = c.post("/api/rules/validate-expr", map[string]any{
+		"expression": `   `,
+	})
+	assertStatus(t, resp, http.StatusOK)
+	body = decodeBody[map[string]any](t, resp)
+	if body["valid"] != false {
+		t.Fatalf("空表达式应 valid=false, got %+v", body)
+	}
+}
+
+func TestCreateAndSimulateExprRule(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	createLink(t, c, map[string]any{
+		"code": "exprdemo", "targetUrls": []string{"https://target.example.com/orig"}, "domainIds": []int64{lid}})
+
+	// 创建一个 Expr 表达式规则
+	created := createRule(t, c, map[string]any{
+		"name":        "Expr 拦截规则",
+		"scope":       "global",
+		"action":      "redirect",
+		"destination": "https://block.example.com",
+		"priority":    5,
+		"ruleType":    "expression",
+		"expression":  `Country == "US" && path startsWith "/exprdemo"`,
+	})
+	if created.RuleType != "expression" || created.Expression == "" {
+		t.Fatalf("创建后 ruleType/expression 未正确落库: %+v", created)
+	}
+
+	// 仿真命中
+	gotHit := simulate(t, c, map[string]any{
+		"url":           "https://localhost/exprdemo",
+		"manualCountry": "US",
+	})
+	if !gotHit.Verdict.Matched || gotHit.Verdict.RuleID != created.ID {
+		t.Fatalf("仿真期望命中 Expr 规则, got: %+v", gotHit.Verdict)
+	}
+
+	// 仿真未命中
+	gotMiss := simulate(t, c, map[string]any{
+		"url":           "https://localhost/exprdemo",
+		"manualCountry": "CN",
+	})
+	if gotMiss.Verdict.Matched {
+		t.Fatalf("仿真不应命中 Expr 规则, got: %+v", gotMiss.Verdict)
+	}
+}
+

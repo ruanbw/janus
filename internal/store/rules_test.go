@@ -930,3 +930,55 @@ func TestRuleConditionsValueRoundTripTree(t *testing.T) {
 		t.Fatalf("嵌套组结构丢了: %#v", back.Root)
 	}
 }
+
+func TestRuleTypeAndExpressionPersistence(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+	tenantID := newTenant(t, s, "expr@test.io")
+
+	// 1. 创建 Expr 规则
+	created, err := s.CreateRule(ctx, tenantID, Rule{
+		Name:        "Expr 规则",
+		Scope:       RuleScopeGlobal,
+		Action:      RuleActionPass,
+		RuleType:    RuleTypeExpression,
+		Expression:  `Country in ["US", "CA"] && DevType == "bot"`,
+		Enabled:     true,
+	})
+	if err != nil {
+		t.Fatalf("CreateRule: %v", err)
+	}
+	if created.RuleType != RuleTypeExpression || created.Expression != `Country in ["US", "CA"] && DevType == "bot"` {
+		t.Fatalf("创建后返回字段异常: %+v", created)
+	}
+
+	// 从库中重新查询
+	got, err := s.GetRule(ctx, tenantID, created.ID)
+	if err != nil {
+		t.Fatalf("GetRule: %v", err)
+	}
+	if got.RuleType != RuleTypeExpression || got.Expression != created.Expression {
+		t.Fatalf("查询库结果字段异常: %+v", got)
+	}
+
+	// 2. 更新为其他表达式
+	newExpr := `ip in_cidr "10.0.0.0/8"`
+	updated, err := s.UpdateRule(ctx, tenantID, created.ID, RuleUpdate{
+		Expression: &newExpr,
+	})
+	if err != nil {
+		t.Fatalf("UpdateRule: %v", err)
+	}
+	if updated.Expression != newExpr || updated.RuleType != RuleTypeExpression {
+		t.Fatalf("更新后结果异常: %+v", updated)
+	}
+
+	gotAfterUpdate, err := s.GetRule(ctx, tenantID, created.ID)
+	if err != nil {
+		t.Fatalf("GetRule after update: %v", err)
+	}
+	if gotAfterUpdate.Expression != newExpr {
+		t.Fatalf("更新后查库异常: %+v", gotAfterUpdate)
+	}
+}
+

@@ -4,6 +4,7 @@ go 1.26
 
 require (
 	github.com/casbin/casbin/v2 v2.135.0
+	github.com/expr-lang/expr v1.17.8
 	github.com/gin-contrib/authz v1.0.7
 	github.com/gin-gonic/gin v1.12.0
 	github.com/jackc/pgx/v5 v5.10.0
