@@ -906,7 +906,23 @@ func (a *API) handleLinkStats(c *gin.Context) {
 		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
-	writeJSON(c, http.StatusOK, map[string]any{"visits": link.Visits, "clicks": link.Clicks})
+	// visits 与 clicks 必须同源同期,否则保留期清理后 CTR 会虚高到 100% 以上:
+	//
+	//   - visits      来自 visits 表(action IN redirect/landing_view AND outcome=success),
+	//                  受 CLOAK_VISIT_RETENTION 约束;
+	//   - clickVisits 同样来自 visits 表(action='click' AND outcome=success),同窗口;
+	//   - clicks      是 links.clicks 这个**永久计数器**,不随保留期衰减。
+	//
+	// 原先这里回的是 clicks(永久),与 visits(会衰减)配对 —— 清理后台面 CTR 必然虚高,
+	// 这正是 store.Link.ClickVisits 注释里明令禁止的组合。分子分母统一走 visits 表。
+	//
+	// 两个都返回:clicks 是契约字段(永久累计,租户看 lifetime 总量),
+	// clickVisits 才是算 CTR 的那个。GetLinkByID 已把两者都填好,直接取。
+	writeJSON(c, http.StatusOK, map[string]any{
+		"visits":      link.Visits,
+		"clicks":      link.ClickVisits,
+		"clicksTotal": link.Clicks,
+	})
 }
 
 // ---------- 错误封装 ----------

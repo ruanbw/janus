@@ -382,6 +382,9 @@ for _ in 1 2 3; do curl -sS -o /dev/null -H "Host: $DFQDN" "$BASE/$GCODE"; done
 sleep 0.4
 req GET "/api/links/$GID/stats"
 check "统计端点 -> 200" "200" "$STATUS"
+# 口径:clicks 必须与 visits 同源同期(都来自 visits 表),否则保留期清理后
+# CTR 会虚高到 100% 以上。clicksTotal 才是永久累计的那个。
+check "  stats.clicks 与 visits 同源(clickVisits 口径)" "True" "$(echo "$BODY" | py 'import json,sys;d=json.load(sys.stdin);print("clicks" in d and "clicksTotal" in d and d["clicks"]<=d["visits"])')"
 VISITS=$(echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin).get("visits",0))')
 if [ "${VISITS:-0}" -ge 4 ]; then ok "  访问次数累计 $VISITS >= 4"; else bad "  访问次数累计" ">=4" "$VISITS"; fi
 

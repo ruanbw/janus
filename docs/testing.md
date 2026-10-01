@@ -100,9 +100,11 @@ $BH evaluate --page-name cloak --code "document.body.innerText.slice(0,200)"
 ### 这一层已经踩到的坑(测试时必须知道)
 
 1. **CSS 过渡在后台标签页里永不结束** — `AdminLayout.vue` 用
-   `<transition mode="out-in">`,浏览器冻结隐藏标签页的动画,leave 卡在
+   `<transition mode="out-in">`,浏览器冻结隐藏标签页的动画帧,leave 卡在
    `page-leave-active`,新页面永远不挂载(标题变了、内容还是旧的)。
-   **测试时必须把标签页切到前台**,否则会误判成白屏 bug。
+   已修(接管 `@leave`,隐藏时立即收尾),但**回归验证时仍要专门测隐藏状态**:
+   把标签页切到后台 → 点侧边栏导航 → 看 `main` 的子节点数与标题是否同步更新。
+   只测前台会漏掉这个问题 —— 这正是它当初能进主干的原因。
 2. **点按钮要用真实指针序列**。`browser-hand click` 走完整指针事件;
    直接 `element.click()` 对 reka-ui 组件不可靠(它依赖 pointerdown/mouseup 序列)。
    行内按钮要先用 `title` 或唯一属性打标记,再用 `--selector` 精确点,
