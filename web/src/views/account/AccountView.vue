@@ -102,19 +102,19 @@
 
               <p
                 v-if="row.percent >= 100"
-                class="flex items-center gap-1.5 text-[11px] font-medium text-err"
+                class="flex items-center gap-1.5 text-2xs font-medium text-err"
               >
                 <TriangleAlert :size="13" class="shrink-0" />
                 {{ row.exhausted }}
               </p>
               <p
                 v-else-if="row.percent >= QUOTA_WARN_PERCENT"
-                class="flex items-center gap-1.5 text-[11px] font-medium text-warn"
+                class="flex items-center gap-1.5 text-2xs font-medium text-warn"
               >
                 <TriangleAlert :size="13" class="shrink-0" />
                 {{ row.label }}已达 {{ row.percent }}%，接近上限
               </p>
-              <p v-else class="text-[11px] text-ink-faint">
+              <p v-else class="text-2xs text-ink-faint">
                 {{ row.note }}
               </p>
             </div>
@@ -202,7 +202,7 @@
               <ShieldCheck :size="15" class="text-brand-600 dark:text-brand-400" />
               密码安全建议
             </div>
-            <ul class="list-disc pl-4 space-y-1 text-ink-faint text-[11px] leading-relaxed">
+            <ul class="list-disc pl-4 space-y-1 text-ink-faint text-2xs leading-relaxed">
               <li>密码长度不得少于 8 位字符；</li>
               <li>建议组合使用大小写英文字母、数字与特殊标点符号；</li>
               <li>请勿使用生日、姓名拼音或常见的连贯弱口令。</li>

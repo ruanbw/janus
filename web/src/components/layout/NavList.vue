@@ -3,7 +3,7 @@
     <template v-for="group in groups" :key="group.title">
       <p
         v-if="showLabels"
-        class="px-2.5 pt-3 pb-1.5 font-mono text-[10.5px] font-semibold tracking-wider text-slate-400 uppercase"
+        class="px-2.5 pt-3 pb-1.5 font-mono text-2xs font-semibold tracking-wider text-sidebar-ink/70 uppercase"
       >
         {{ group.title }}
       </p>
@@ -15,11 +15,11 @@
         :to="item.to"
         :title="showLabels ? undefined : item.label"
         :aria-current="isActive(item.to) ? 'page' : undefined"
-        class="mb-0.5 flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors"
+        class="mb-0.5 flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs transition-colors"
         :class="
           isActive(item.to)
             ? 'bg-brand-600 font-semibold text-white shadow-sm'
-            : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
+            : 'text-sidebar-ink hover:bg-white/5 hover:text-sidebar-ink-active'
         "
       >
         <component :is="item.icon" :size="16" class="shrink-0" :class="showLabels ? '' : 'mx-auto'" />

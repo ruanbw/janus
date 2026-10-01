@@ -20,9 +20,9 @@
       </AppButton>
     </AppForm>
 
-    <div v-if="!sent" class="auth-footer-links mt-6 text-center text-[13px] text-ink-faint">
+    <div v-if="!sent" class="auth-footer-links mt-6 text-center text-sm text-ink-faint">
       <router-link to="/login" class="font-medium text-brand-600 transition-colors hover:text-brand-500">返回登录</router-link>
-      <span class="dot mx-2 text-line-strong">·</span>
+      <span class="mx-2 text-line-strong">·</span>
       <router-link to="/register" class="font-medium text-brand-600 transition-colors hover:text-brand-500">注册新租户</router-link>
     </div>
   </AuthShell>

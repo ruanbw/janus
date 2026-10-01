@@ -1,8 +1,22 @@
 <template>
+  <RouterLink
+    v-if="to !== undefined"
+    :to="to"
+    :class="btnClasses"
+    :aria-disabled="inactive ? 'true' : undefined"
+    :tabindex="inactive ? -1 : undefined"
+    @click="onClick"
+  >
+    <Loader2 v-if="loading" :size="iconSize" class="animate-spin shrink-0" />
+    <span v-else-if="$slots.icon" class="inline-flex shrink-0"><slot name="icon" /></span>
+    <span v-if="$slots.default" class="inline-flex items-center gap-1.5"><slot /></span>
+  </RouterLink>
   <button
+    v-else
     :type="htmlType"
     :disabled="disabled || loading"
     :class="btnClasses"
+    @click="onClick"
   >
     <Loader2 v-if="loading" :size="iconSize" class="animate-spin shrink-0" />
     <span v-else-if="$slots.icon" class="inline-flex shrink-0"><slot name="icon" /></span>
@@ -65,9 +79,12 @@ export const buttonVariants = cva(
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { RouterLink, type RouteLocationRaw } from 'vue-router';
 import { Loader2 } from '@lucide/vue';
 
 import { cn } from '@/lib/utils';
+
+const emit = defineEmits<{ click: [event: MouseEvent] }>();
 
 const props = withDefaults(
   defineProps<{
@@ -79,6 +96,8 @@ const props = withDefaults(
     loading?: boolean;
     disabled?: boolean;
     htmlType?: 'button' | 'submit' | 'reset';
+    /** 传入后渲染为 RouterLink,保留链接语义(middle-click / 新标签页 / 右键菜单) */
+    to?: string | RouteLocationRaw;
     class?: any;
   }>(),
   {
@@ -126,11 +145,25 @@ const iconSize = computed(() => {
   return 15;
 });
 
+/** 链接模式下 disabled/loading 不能靠原生 disabled 属性生效,改用视觉与交互抑制 */
+const inactive = computed(() => props.disabled || props.loading);
+
+const isLink = computed(() => props.to !== undefined);
+
 const btnClasses = computed(() => {
   return cn(
     buttonVariants({ variant: resolvedVariant.value, size: resolvedSize.value }),
     props.block && 'w-full',
+    isLink.value && inactive.value && 'pointer-events-none cursor-not-allowed opacity-50',
     props.class,
   );
 });
+
+function onClick(event: MouseEvent): void {
+  if (isLink.value && inactive.value) {
+    event.preventDefault();
+    return;
+  }
+  emit('click', event);
+}
 </script>

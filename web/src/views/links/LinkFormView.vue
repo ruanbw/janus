@@ -183,7 +183,7 @@
                       <p class="text-xs text-ink-faint">
                         支持点击上方按钮或将 <span class="font-medium text-ink">.zip 压缩包</span> 拖拽到此处
                       </p>
-                      <p class="mt-1 text-[11px] text-ink-faint">
+                      <p class="mt-1 text-2xs text-ink-faint">
                         压缩包根目录必须包含 <code class="font-mono text-ink">index.html</code>，更新上传后即刻生效
                       </p>
 
@@ -195,7 +195,7 @@
                         <div class="flex min-w-0 items-center gap-2 truncate">
                           <FileArchive :size="14" class="shrink-0" />
                           <span class="truncate font-medium">{{ landingFile.name }}</span>
-                          <span class="text-[11px] opacity-75">({{ formatFileSize(landingFile.size) }})</span>
+                          <span class="text-2xs opacity-75">({{ formatFileSize(landingFile.size) }})</span>
                         </div>
                         <AppTag color="blue" class="shrink-0">待上传</AppTag>
                       </div>
@@ -381,7 +381,7 @@
                       </AppCheckbox>
                       <AppTag v-if="row.scope === 'global'" color="blue">全局</AppTag>
                       <AppTag v-else color="default">指定短链</AppTag>
-                      <span class="ml-auto text-[11px] text-ink-faint">
+                      <span class="ml-auto text-2xs text-ink-faint">
                         {{ row.scope === 'global' ? '对本短链恒生效' : '创建后可勾选' }}
                       </span>
                     </li>
@@ -414,7 +414,7 @@
                           :disabled="row.scope === 'global' || row.updating"
                           @change="(val: boolean) => onToggleRule(row, val)"
                         >
-                          <span class="text-[13px] text-ink">{{ row.name }}</span>
+                          <span class="text-xs text-ink">{{ row.name }}</span>
                         </AppCheckbox>
                       </AppTooltip>
 
@@ -422,7 +422,7 @@
                       <AppTag v-else color="default">指定短链</AppTag>
                       <AppTag v-if="!row.enabled" color="warning">已停用</AppTag>
 
-                      <span class="ml-auto flex shrink-0 items-center gap-2 text-[11px] text-ink-faint">
+                      <span class="ml-auto flex shrink-0 items-center gap-2 text-2xs text-ink-faint">
                         <span class="font-mono">优先级 {{ row.priority }}</span>
                         <span class="font-mono">{{ actionLabel(row.action) }}</span>
                         <Loader2 v-if="row.updating" :size="12" class="animate-spin" />
@@ -472,7 +472,7 @@
               <CardContent class="space-y-4">
                 <!-- 拼接后的完整地址展示框 -->
                 <div class="rounded-xl border border-line bg-surface-muted/60 p-3.5 space-y-2">
-                  <div class="flex items-center justify-between text-[11px] text-ink-faint">
+                  <div class="flex items-center justify-between text-2xs text-ink-faint">
                     <span>主访问地址</span>
                     <span v-if="selectedDomains.length > 1" class="font-medium text-brand-600 dark:text-brand-400">
                       +{{ selectedDomains.length - 1 }} 个备选域名
@@ -500,7 +500,7 @@
 
                 <!-- 配置清单摘要 -->
                 <div class="space-y-2.5 border-t border-line pt-3.5 text-xs">
-                  <div class="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                  <div class="text-2xs font-medium uppercase tracking-wider text-ink-faint">
                     配置清单摘要
                   </div>
 
@@ -555,7 +555,7 @@
                 </div>
 
                 <!-- 指南小卡片 -->
-                <div class="rounded-lg border border-line-strong/60 bg-surface/50 p-3 text-[11px] leading-relaxed text-ink-faint space-y-1.5">
+                <div class="rounded-lg border border-line-strong/60 bg-surface/50 p-3 text-2xs leading-relaxed text-ink-faint space-y-1.5">
                   <div class="flex items-center gap-1 font-medium text-ink-soft">
                     <Info :size="13" class="text-brand-600" />
                     温馨提示

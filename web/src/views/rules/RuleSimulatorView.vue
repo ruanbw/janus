@@ -120,8 +120,8 @@ const ruleOptions = computed(() =>
 );
 
 function stepToneClass(status: TraceStep['status']): string {
-  if (status === 'block') return 'border-err/40 bg-danger-soft';
-  if (status === 'hit') return 'border-brand-500/40 bg-accent-soft';
+  if (status === 'block') return 'border-err/40 bg-err/10';
+  if (status === 'hit') return 'border-brand-500/40 bg-brand-500/10';
   if (status === 'disabled') return 'border-line bg-surface-muted opacity-70';
   return 'border-line bg-surface';
 }
@@ -130,8 +130,8 @@ function verdictToneClass(): string {
   if (!verdict.value) return 'border-line bg-surface';
   if (!verdict.value.matched) return 'border-line bg-surface-muted';
   return verdict.value.blocking
-    ? 'border-err/40 bg-danger-soft'
-    : 'border-brand-500/40 bg-accent-soft';
+    ? 'border-err/40 bg-err/10'
+    : 'border-brand-500/40 bg-brand-500/10';
 }
 
 async function runSimulation() {
@@ -301,7 +301,7 @@ onMounted(async () => {
                 allow-clear
                 placeholder="留空 = 由后端按 IP 解析"
               />
-              <p class="mt-1 text-[11px] leading-relaxed text-ink-faint">
+              <p class="mt-1 text-2xs leading-relaxed text-ink-faint">
                 ISO 国家码。留空由后端离线库按访客 IP 解析，与真实裁决一致；
                 手填则覆盖 GeoIP 结果，用于验证「假如他来自这个国家」。
               </p>
@@ -347,15 +347,15 @@ onMounted(async () => {
             <CardDescription>载入后立即运行，用来快速验证「爬虫 / 机房 IP / 微信内」三类典型流量</CardDescription>
           </CardHeader>
           <CardContent class="space-y-2">
-            <button
+            <AppButton
               v-for="s in SAMPLES"
               :key="s.label"
-              type="button"
-              class="w-full rounded-lg border border-line px-3 py-2 text-left text-[13px] text-ink transition-colors hover:border-brand-500 hover:bg-accent-soft"
+              variant="outline"
+              class="w-full justify-start font-normal text-left h-auto py-2 px-3 text-ink"
               @click="loadSample(s.input)"
             >
               {{ s.label }}
-            </button>
+            </AppButton>
           </CardContent>
         </AppCard>
       </div>
@@ -367,7 +367,7 @@ onMounted(async () => {
             <CardTitle class="flex items-center gap-2">
               <Globe :size="18" class="text-brand-600 dark:text-brand-400" />
               访客画像
-              <span class="rounded-md bg-surface-muted px-1.5 py-0.5 text-[11px] text-ink-faint">13 字段</span>
+              <span class="rounded-md bg-surface-muted px-1.5 py-0.5 text-2xs text-ink-faint">13 字段</span>
             </CardTitle>
             <CardDescription>{{ scopeNote || '运行模拟后，这里显示从请求解析出的可判定字段' }}</CardDescription>
           </CardHeader>
@@ -379,10 +379,10 @@ onMounted(async () => {
                 class="flex min-w-0 flex-col gap-0.5 bg-surface px-3 py-2"
               >
                 <span class="text-xs text-ink-faint">{{ f.label }}</span>
-                <span class="mono truncate text-[13px] text-ink" :class="f.value === '—' ? 'text-ink-faint' : ''" :title="f.value">
+                <span class="mono truncate text-sm text-ink" :class="f.value === '—' ? 'text-ink-faint' : ''" :title="f.value">
                   {{ f.value }}
                 </span>
-                <span v-if="f.pending" class="text-[11px] text-warn">{{ f.note }}</span>
+                <span v-if="f.pending" class="text-2xs text-warn">{{ f.note }}</span>
               </div>
             </div>
           </CardContent>
@@ -394,7 +394,7 @@ onMounted(async () => {
             <CardDescription>按优先级升序逐条求值，首条命中即定案；「已跳过」的规则根本没被求值</CardDescription>
           </CardHeader>
           <CardContent class="space-y-3">
-            <p v-if="traceSteps.length === 0" class="text-[13px] text-ink-faint">
+            <p v-if="traceSteps.length === 0" class="text-sm text-ink-faint">
               还没有运行过模拟。填好左侧输入后点「运行模拟」。
             </p>
 
@@ -406,14 +406,14 @@ onMounted(async () => {
             >
               <div class="flex flex-wrap items-center gap-2">
                 <span class="mono text-xs text-ink-faint">#{{ step.ruleId }}</span>
-                <span class="text-[13px] font-semibold text-ink">{{ step.ruleName }}</span>
+                <span class="text-sm font-semibold text-ink">{{ step.ruleName }}</span>
                 <AppTag
                   :color="step.status === 'block' ? 'red' : step.status === 'hit' ? 'green' : 'default'"
                 >
                   {{ step.statusText }}
                 </AppTag>
               </div>
-              <p class="mt-1.5 text-[13px] leading-relaxed text-ink-soft">{{ step.whyText }}</p>
+              <p class="mt-1.5 text-sm leading-relaxed text-ink-soft">{{ step.whyText }}</p>
               <ul v-if="step.facts.length > 0" class="mt-2 space-y-1">
                 <li
                   v-for="(fact, i) in step.facts"
@@ -443,7 +443,7 @@ onMounted(async () => {
                 </AppTag>
               </div>
               <div class="mt-2 text-lg font-semibold text-ink">{{ verdict.actionText }}</div>
-              <p class="mt-1 text-[13px] leading-relaxed text-ink-soft">{{ verdict.detailText }}</p>
+              <p class="mt-1 text-sm leading-relaxed text-ink-soft">{{ verdict.detailText }}</p>
 
               <!-- 404 / 429 访客页面预览操作 -->
               <div
@@ -478,13 +478,14 @@ onMounted(async () => {
               <span class="text-sm font-semibold text-ink">{{ previewModalTitle }}</span>
               <span class="text-xs text-ink-faint">已开启 sandbox 安全隔离</span>
             </div>
-            <button
-              type="button"
-              class="rounded p-1 text-ink-soft hover:bg-surface-muted hover:text-ink"
+            <AppButton
+              size="icon"
+              variant="ghost"
+              aria-label="关闭预览"
               @click="previewModalVisible = false"
             >
               <X :size="18" />
-            </button>
+            </AppButton>
           </div>
           <div class="flex-1 p-3 bg-line/20">
             <iframe

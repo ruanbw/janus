@@ -10,7 +10,7 @@
         <span class="mt-0.5 shrink-0" :class="iconColorClass(t.type)">
           <component :is="iconOf(t.type)" :size="16" />
         </span>
-        <p class="min-w-0 flex-1 break-words text-[13px] font-medium leading-relaxed text-ink">{{ t.content }}</p>
+        <p class="min-w-0 flex-1 break-words text-xs font-medium leading-relaxed text-ink">{{ t.content }}</p>
         <button
           type="button"
           tabindex="-1"

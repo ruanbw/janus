@@ -22,7 +22,7 @@
       </AppFormItem>
       <div class="form-options mb-5 flex items-center justify-between">
         <AppCheckbox v-model="form.rememberMe">记住我(会话保持 30 天)</AppCheckbox>
-        <router-link to="/forgot-password" class="text-[13px] font-medium text-brand-600 transition-colors hover:text-brand-500">
+        <router-link to="/forgot-password" class="text-xs font-medium text-brand-600 transition-colors hover:text-brand-500">
           忘记密码
         </router-link>
       </div>
@@ -31,7 +31,7 @@
       </AppButton>
     </AppForm>
 
-    <div class="auth-footer-links mt-6 text-center text-[13px] text-ink-faint">
+    <div class="auth-footer-links mt-6 text-center text-xs text-ink-faint">
       还没有账号?
       <router-link to="/register" class="font-medium text-brand-600 transition-colors hover:text-brand-500">
         注册新租户

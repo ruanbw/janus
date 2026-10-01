@@ -805,7 +805,7 @@ onMounted(init);
                   <CardDescription>当访问者满足下面所有条件时</CardDescription>
                 </CardHeader>
                 <CardContent class="space-y-4">
-                  <p class="text-[13px] leading-relaxed text-ink">
+                  <p class="text-sm leading-relaxed text-ink">
                     当作用于 <b class="text-ink">{{ scopeSummaryText }}</b> 短链时：
                   </p>
 
@@ -831,7 +831,7 @@ onMounted(init);
                     <span v-else class="text-xs text-ink-faint">→ 短链自身流程</span>
                   </div>
 
-                  <dl class="grid grid-cols-2 gap-y-2 border-t border-line pt-4 text-[13px]">
+                  <dl class="grid grid-cols-2 gap-y-2 border-t border-line pt-4 text-sm">
                     <dt class="text-ink-faint">作用域</dt>
                     <dd class="text-right text-ink">
                       {{ form.scope === 'global' ? '全局' : `${form.linkIds.length} 条短链` }}
@@ -883,13 +883,14 @@ onMounted(init);
               <span class="text-sm font-semibold text-ink">规则专属拦截页面沙箱预览</span>
               <span class="text-xs text-ink-faint">已开启 sandbox 安全隔离</span>
             </div>
-            <button
-              type="button"
-              class="rounded p-1 text-ink-soft hover:bg-surface-muted hover:text-ink"
+            <AppButton
+              size="icon"
+              variant="ghost"
+              aria-label="关闭预览"
               @click="previewRuleHtmlVisible = false"
             >
               <X :size="18" />
-            </button>
+            </AppButton>
           </div>
           <div class="flex-1 p-3 bg-line/20">
             <iframe

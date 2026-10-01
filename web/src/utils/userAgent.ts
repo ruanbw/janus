@@ -1,6 +1,7 @@
 // User-Agent 解析工具(访问明细列表与总览的流量结构分布共用)
 // 判别逻辑为原样搬迁,任何调整都会同时影响两个页面,故此处不做“顺手优化”。
 import { UAParser } from 'ua-parser-js';
+import type { TagColor } from '@/components/ui/AppTag.vue';
 
 /** UA 解析结果 */
 export interface ParsedUA {
@@ -101,16 +102,16 @@ export function parseUserAgent(ua: string): ParsedUA {
   return parsed;
 }
 
-/** 设备类型对应的徽标配色 */
-export function getDeviceBadgeClass(deviceType: ParsedUA['deviceType']): string {
+/** 设备类型对应的徽标配色(AppTag 的 color 预设,不是裸 class 名) */
+export function getDeviceTagColor(deviceType: ParsedUA['deviceType']): TagColor {
   switch (deviceType) {
     case '移动端':
-      return 'badge-ok';
+      return 'success';
     case '平板':
-      return 'badge-warn';
+      return 'warning';
     case '爬虫机器人':
-      return 'badge-danger';
+      return 'error';
     default:
-      return 'badge-neutral';
+      return 'default';
   }
 }

@@ -3,7 +3,7 @@
     <template #title>注册新租户</template>
     <template #subtitle>
       注册后将自动获得平台默认域名
-      <span class="slug-chip mono ml-1 inline-block rounded-md border border-brand-200 bg-brand-50 px-1.5 py-px align-middle text-[12.5px] text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300">{{ slugHint }}</span>
+      <span class="slug-chip mono ml-1 inline-block rounded-md border border-brand-200 bg-brand-50 px-1.5 py-px align-middle text-xs text-brand-700 dark:border-brand-500/30 dark:bg-brand-500/10 dark:text-brand-300">{{ slugHint }}</span>
     </template>
 
     <AppForm :model="form" :rules="rules" @finish="onSubmit">
@@ -53,7 +53,7 @@
       </AppButton>
     </AppForm>
 
-    <div class="auth-footer-links mt-6 text-center text-[13px] text-ink-faint">
+    <div class="auth-footer-links mt-6 text-center text-xs text-ink-faint">
       已有账号?
       <router-link to="/login" class="font-medium text-brand-600 transition-colors hover:text-brand-500">
         直接登录

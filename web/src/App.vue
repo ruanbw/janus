@@ -9,13 +9,12 @@
         {{ fatalError.message || '运行遇到未知异常，请尝试刷新' }}
       </p>
       <div class="mt-6 flex justify-center gap-3">
-        <button
-          type="button"
-          class="btn btn-primary btn-sm"
+        <AppButton
+          size="sm"
           @click="reloadPage"
         >
           刷新重试
-        </button>
+        </AppButton>
       </div>
     </div>
   </div>
@@ -29,6 +28,7 @@
 <script setup lang="ts">
 import { onErrorCaptured, ref } from 'vue';
 import { AlertTriangle } from '@lucide/vue';
+import AppButton from '@/components/ui/AppButton.vue';
 import ConfirmHost from '@/components/ui/ConfirmHost.vue';
 import Toaster from '@/components/ui/Toaster.vue';
 

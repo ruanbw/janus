@@ -112,7 +112,7 @@
             <div class="rounded-xl border border-line bg-surface-muted/60 p-3.5 space-y-2">
               <div class="flex items-center justify-between text-xs text-ink-soft">
                 <span class="font-medium">本服务器 IP 地址</span>
-                <span class="text-[11px] text-ink-faint">目标 A 记录</span>
+                <span class="text-2xs text-ink-faint">目标 A 记录</span>
               </div>
               <div class="flex items-center justify-between gap-2">
                 <span class="mono text-sm font-bold text-ink">
@@ -130,36 +130,33 @@
 
             <!-- DNS 解析配置表格 -->
             <div class="space-y-2">
-              <div class="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+              <div class="text-2xs font-medium uppercase tracking-wider text-ink-faint">
                 推荐解析记录设置
               </div>
-              <div class="overflow-hidden rounded-lg border border-line">
-                <table class="w-full text-left text-xs">
-                  <thead class="border-b border-line bg-surface-muted/70 text-ink-soft">
-                    <tr>
-                      <th class="px-2.5 py-1.5 font-medium">类型</th>
-                      <th class="px-2.5 py-1.5 font-medium">主机记录</th>
-                      <th class="px-2.5 py-1.5 font-medium">记录值</th>
-                    </tr>
-                  </thead>
-                  <tbody class="divide-y divide-line text-ink">
-                    <tr class="hover:bg-surface-muted/30">
-                      <td class="px-2.5 py-2 font-mono font-semibold text-brand-600 dark:text-brand-400">A</td>
-                      <td class="px-2.5 py-2 font-mono text-ink-soft">@ 或 子域</td>
-                      <td class="px-2.5 py-2 font-mono text-ink truncate max-w-[110px]" :title="serverIp || '服务器 IP'">
-                        {{ serverIp || '服务器 IP' }}
-                      </td>
-                    </tr>
-                    <tr class="hover:bg-surface-muted/30">
-                      <td class="px-2.5 py-2 font-mono font-semibold text-brand-600 dark:text-brand-400">CNAME</td>
-                      <td class="px-2.5 py-2 font-mono text-ink-soft">子域 (如 links)</td>
-                      <td class="px-2.5 py-2 font-mono text-ink truncate max-w-[110px]" :title="platformDomain || '平台域名'">
-                        {{ platformDomain || '平台域名' }}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+              <AppTable
+                :columns="dnsColumns"
+                :data-source="dnsDataSource"
+                :pagination="false"
+                row-key="type"
+              >
+                <template #cell="{ column, record }">
+                  <template v-if="column.key === 'type'">
+                    <span class="font-mono font-semibold text-brand-600 dark:text-brand-400">
+                      {{ record.type }}
+                    </span>
+                  </template>
+                  <template v-else-if="column.key === 'host'">
+                    <span class="font-mono text-ink-soft">
+                      {{ record.host }}
+                    </span>
+                  </template>
+                  <template v-else-if="column.key === 'value'">
+                    <span class="font-mono text-ink truncate block max-w-[140px]" :title="String(record.value)">
+                      {{ record.value }}
+                    </span>
+                  </template>
+                </template>
+              </AppTable>
             </div>
 
             <!-- 自动签发 SSL 证书说明 -->
@@ -168,13 +165,13 @@
                 <ShieldCheck :size="15" />
                 自动签发 HTTPS 证书
               </div>
-              <p class="text-[11px] leading-relaxed text-brand-800/80 dark:text-brand-300/80">
+              <p class="text-2xs leading-relaxed text-brand-800/80 dark:text-brand-300/80">
                 DNS 解析生效后，系统将自动通过 ACME 协议向 Let's Encrypt 申请 SSL 证书并自动保持续期，无需手动上传证书。
               </p>
             </div>
 
             <!-- 72 小时轮询说明 -->
-            <div class="flex items-start gap-2 rounded-lg border border-line-strong/60 bg-surface/50 p-3 text-[11px] leading-relaxed text-ink-faint">
+            <div class="flex items-start gap-2 rounded-lg border border-line-strong/60 bg-surface/50 p-3 text-2xs leading-relaxed text-ink-faint">
               <Clock :size="14" class="mt-0.5 shrink-0 text-ink-soft" />
               <span>
                 系统将在后台以指数退避间隔持续检测 DNS 指向；若 72 小时后仍未连通，状态将转为「校验失败」，届时可检查 DNS 后重新触发校验。
@@ -194,7 +191,7 @@ import { ArrowLeft, Clock, Globe, Server, ShieldCheck } from '@lucide/vue';
 
 import { createDomain } from '@/api/domains';
 import PageHeader from '@/components/PageHeader.vue';
-import type { FormRule } from '@/components/ui/types';
+import type { FormRule, TableColumn } from '@/components/ui/types';
 import { message } from '@/utils/toast';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError, getQuotaUsage } from '@/types/api';
@@ -208,6 +205,25 @@ const formState = reactive({ fqdn: '', description: '' });
 
 const serverIp = computed(() => auth.config?.serverIp || '');
 const platformDomain = computed(() => auth.config?.platformDomain || '');
+
+const dnsColumns: TableColumn[] = [
+  { key: 'type', dataIndex: 'type', title: '类型', width: 80 },
+  { key: 'host', dataIndex: 'host', title: '主机记录', width: 140 },
+  { key: 'value', dataIndex: 'value', title: '记录值' },
+];
+
+const dnsDataSource = computed<Record<string, unknown>[]>(() => [
+  {
+    type: 'A',
+    host: '@ 或 子域',
+    value: serverIp.value || '服务器 IP',
+  },
+  {
+    type: 'CNAME',
+    host: '子域 (如 links)',
+    value: platformDomain.value || '平台域名',
+  },
+]);
 
 /** 域名格式校验(与后端 validFQDN 一致):点分标签,字母/数字/连字符,标签不以连字符开头结尾,总长 ≤253 */
 function isValidFQDN(s: string): boolean {

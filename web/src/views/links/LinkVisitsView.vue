@@ -1,579 +1,536 @@
 <template>
-  <div class="flex flex-col gap-5 pb-10" data-od-id="link-visits-view">
+  <div class="pb-10" data-od-id="link-visits-view">
     <!-- ==================== 页头:短码 / 承载域名 / 类型 + 返回 ==================== -->
     <PageHeader title="短链访问明细" :description="headerDescription">
       <template #actions>
-        <span v-if="link" class="badge badge-neutral">{{ linkTypeLabel }}</span>
-        <button
-          type="button"
-          class="btn btn-sm"
-          :disabled="loading"
-          title="刷新访问明细"
-          @click="loadData"
-        >
-          <RefreshCw :size="13" :class="loading ? 'animate-spin' : ''" />
+        <AppTag v-if="link" color="default">{{ linkTypeLabel }}</AppTag>
+        <AppButton size="sm" variant="outline" :loading="loading" title="刷新访问明细" @click="loadData">
           刷新
-        </button>
-        <button type="button" class="btn btn-sm" @click="goBack">
-          <ArrowLeft :size="13" />
+        </AppButton>
+        <AppButton size="sm" variant="outline" @click="goBack">
+          <template #icon><ArrowLeft :size="13" /></template>
           返回列表
-        </button>
+        </AppButton>
       </template>
     </PageHeader>
 
     <!-- ==================== 短链加载失败(如已被彻底删除) ==================== -->
-    <section v-if="loadError" class="panel" data-od-id="link-visits-error">
-      <AppResult
-        status="error"
-        title="无法查看该短链的访问明细"
-        :sub-title="loadError"
-      >
+    <AppCard v-if="loadError" :padding="false" data-od-id="link-visits-error">
+      <AppResult status="error" title="无法查看该短链的访问明细" :sub-title="loadError">
         <template #extra>
-          <button type="button" class="btn btn-sm btn-primary" @click="goBack">
-            <ArrowLeft :size="13" />
+          <AppButton size="sm" type="primary" @click="goBack">
+            <template #icon><ArrowLeft :size="13" /></template>
             返回短链列表
-          </button>
+          </AppButton>
         </template>
       </AppResult>
-    </section>
+    </AppCard>
 
     <!-- ==================== 首次加载 ==================== -->
-    <div v-else-if="loading && !loaded" class="panel py-16 flex flex-col items-center justify-center">
-      <AppSpin size="large" />
-      <p class="tiny muted mt-3">正在拉取该短链的访问明细…</p>
-    </div>
+    <AppCard v-else-if="loading && !loaded" :padding="false">
+      <div class="flex flex-col items-center justify-center py-16">
+        <AppSpin size="large" />
+        <p class="mt-3 text-xs text-ink-soft">正在拉取该短链的访问明细…</p>
+      </div>
+    </AppCard>
 
     <template v-else>
       <!-- ==================== 左右分栏布局：左表格 + 右画像及规则回放 ==================== -->
-      <div class="grid grid-cols-1 gap-5 xl:grid-cols-12 items-start" data-od-id="link-visits-split-layout">
+      <div class="grid grid-cols-1 items-start gap-5 xl:grid-cols-12" data-od-id="link-visits-split-layout">
         <!-- 左侧：访问明细列表 -->
-        <section class="panel xl:col-span-7 flex flex-col min-w-0" data-od-id="link-visits-list">
-          <div class="panel-hd">
-            <div>
-              <h2>访问明细</h2>
-              <p>逐条记录该短链每次{{ isLanding ? '落地页视图与按钮点击' : '跳转' }}的动作与结果，点击列表行在右侧查看访客画像与规则回放。</p>
+        <AppCard :padding="false" class="flex min-w-0 flex-col xl:col-span-7" data-od-id="link-visits-list">
+          <div class="flex flex-wrap items-center justify-between gap-3.5 border-b border-line px-4 py-3">
+            <div class="min-w-0">
+              <h2 class="text-base font-semibold tracking-tight text-ink">访问明细</h2>
+              <p class="mt-1 text-xs leading-relaxed text-ink-faint">
+                逐条记录该短链每次{{ isLanding ? '落地页视图与按钮点击' : '跳转' }}的动作与结果，点击列表行在右侧查看访客画像与规则回放。
+              </p>
             </div>
-            <div class="btn-row">
-              <span class="badge badge-neutral mono">共 {{ total }} 条</span>
-            </div>
+            <span class="mono text-xs text-ink-faint">共 {{ total }} 条</span>
           </div>
 
           <!-- 工具栏:设备类型筛选 / 只看失败 / 关键词(均仅在当前页数据内过滤) -->
-          <div class="panel-bd">
-            <div class="toolbar">
-              <div class="seg-filter" role="group" aria-label="按设备类型筛选">
-                <button
-                  v-for="opt in DEVICE_OPTIONS"
-                  :key="opt.value"
-                  type="button"
-                  :aria-pressed="deviceFilter === opt.value"
-                  @click="deviceFilter = opt.value"
-                >
-                  {{ opt.label }}
-                </button>
-              </div>
-
-              <div class="row" style="gap: 6px">
-                <label class="switch" title="仅显示失败的动作(前端过滤,不影响总数)">
-                  <input v-model="onlyFailed" type="checkbox" aria-label="只看失败" />
-                  <i></i>
-                </label>
-                <span class="tiny">只看失败</span>
-              </div>
-
-              <div class="relative grow min-w-[200px]">
-                <input
-                  v-model="keyword"
-                  class="input input-icon"
-                  id="visitSearch"
-                  placeholder="搜索 IP、UA、来源或目标…"
-                  aria-label="搜索访问明细"
-                />
-                <Search
-                  :size="14"
-                  class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
-                />
-              </div>
-
-              <button
-                v-if="hasLocalFilter"
-                type="button"
-                class="btn btn-sm btn-ghost text-muted hover:text-fg"
-                @click="resetLocalFilters"
+          <div class="flex flex-wrap items-center gap-3 px-4 py-3">
+            <div
+              role="group"
+              aria-label="按设备类型筛选"
+              class="inline-flex gap-0.5 rounded-lg border border-line bg-surface-muted p-0.5"
+            >
+              <AppButton
+                v-for="opt in DEVICE_OPTIONS"
+                :key="opt.value"
+                size="sm"
+                :variant="deviceFilter === opt.value ? 'secondary' : 'ghost'"
+                :class="deviceFilter === opt.value ? 'font-semibold text-ink' : 'text-ink-soft'"
+                :aria-pressed="deviceFilter === opt.value"
+                @click="deviceFilter = opt.value"
               >
-                <X :size="13" />
-                清空过滤
-              </button>
-
-              <span v-if="hasLocalFilter" class="tiny muted" data-od-id="visit-filter-scope-hint">
-                设备、搜索与「只看失败」仅筛选当前页
-              </span>
+                {{ opt.label }}
+              </AppButton>
             </div>
+
+            <div class="flex items-center gap-1.5">
+              <AppSwitch
+                v-model="onlyFailed"
+                aria-label="只看失败"
+                title="仅显示失败的动作(前端过滤,不影响总数)"
+              />
+              <span class="text-xs text-ink-soft">只看失败</span>
+            </div>
+
+            <AppInput
+              v-model="keyword"
+              allow-clear
+              class="min-w-[200px] grow"
+              placeholder="搜索 IP、UA、来源或目标…"
+              aria-label="搜索访问明细"
+            >
+              <template #prefix><Search :size="14" /></template>
+            </AppInput>
+
+            <AppButton v-if="hasLocalFilter" size="sm" variant="ghost" class="text-ink-soft" @click="resetLocalFilters">
+              <template #icon><X :size="13" /></template>
+              清空过滤
+            </AppButton>
+
+            <span v-if="hasLocalFilter" class="text-xs text-ink-faint" data-od-id="visit-filter-scope-hint">
+              设备、搜索与「只看失败」仅筛选当前页
+            </span>
           </div>
 
-          <AppSpin :spinning="loading">
-            <div class="tbl-wrap">
-              <table class="tbl" id="linkVisitTable">
-                <thead>
-                  <tr>
-                    <th class="shrink" title="服务端记录的访问时间">时间</th>
-                    <th class="shrink" title="来访 IP:X-Forwarded-For 优先,回退 RemoteAddr">IP</th>
-                    <th title="国家由后端内嵌离线 GeoIP 库解析">地理位置</th>
-                    <th title="由 User-Agent 解析:设备型号 · 操作系统 · 浏览器">设备型号</th>
-                    <th class="shrink" title="本次触发的动作与结果;失败的动作不计入访问次数">动作与结果</th>
-                    <th title="本次动作最终抵达的地址,缺省时回退显示来源页">目标 / 来源</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <!-- 加载态 -->
-                  <tr v-if="loading && rows.length === 0">
-                    <td colspan="6" class="empty">
-                      <div class="flex items-center justify-center gap-2 py-6">
-                        <RefreshCw class="animate-spin" :size="16" />
-                        正在加载访问明细...
-                      </div>
-                    </td>
-                  </tr>
+          <div class="px-4 pb-4">
+            <AppSpin :spinning="loading">
+              <AppTable
+                :columns="columns"
+                :data-source="tableData"
+                :scroll="{ x: 1040 }"
+                row-key="id"
+                :row-props="visitRowProps"
+                @row-click="onRowClick"
+              >
+                <template #header="{ column }">
+                  <span :title="COLUMN_HINTS[column.key]">{{ column.title }}</span>
+                </template>
 
-                  <!-- 该短链从未被访问 -->
-                  <tr v-else-if="rows.length === 0">
-                    <td colspan="6" class="py-8">
-                      <AppEmpty description="该短链暂无访问记录,短链被访问后明细将在此处逐条呈现" />
-                    </td>
-                  </tr>
+                <template #empty>
+                  <AppEmpty
+                    :description="
+                      rows.length === 0
+                        ? '该短链暂无访问记录,短链被访问后明细将在此处逐条呈现'
+                        : '当前页没有符合筛选条件的记录(搜索与「只看失败」仅在当前页数据内过滤)'
+                    "
+                  />
+                  <div v-if="rows.length > 0" class="flex justify-center">
+                    <AppButton size="sm" @click="resetLocalFilters">重置本地过滤</AppButton>
+                  </div>
+                </template>
 
-                  <!-- 当前页经本地过滤后无命中 -->
-                  <tr v-else-if="filteredRows.length === 0">
-                    <td colspan="6" class="py-8">
-                      <AppEmpty description="当前页没有符合筛选条件的记录(搜索与「只看失败」仅在当前页数据内过滤)" />
-                      <div class="flex justify-center">
-                        <button type="button" class="btn btn-sm" @click="resetLocalFilters">
-                          重置本地过滤
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-
-                  <!-- 明细行：点击选中，右侧查看访客画像与规则决策链 -->
-                  <tr
-                    v-for="row in filteredRows"
-                    :key="row.visit.id"
-                    :data-outcome="row.visit.outcome"
-                    :data-selected="selectedId === row.visit.id"
-                    class="row-selectable"
-                    tabindex="0"
-                    :aria-selected="selectedId === row.visit.id"
-                    @click="selectRow(row)"
-                    @keydown.enter.prevent="selectRow(row)"
-                    @keydown.space.prevent="selectRow(row)"
-                  >
-                    <!-- 时间:列里只给时分秒,完整年月日悬停看 -->
-                    <td class="shrink">
-                      <AppTooltip :title="formatDateTime(row.visit.createdAt)">
-                        <span class="mono tiny cursor-help underline decoration-dotted underline-offset-2">
-                          {{ formatClock(row.visit.createdAt) }}
-                        </span>
-                      </AppTooltip>
-                    </td>
-
-                    <!-- 来访 IP -->
-                    <td class="shrink">
-                      <span class="mono tiny" :title="row.visit.ip || '未知 IP'">
-                        {{ row.visit.ip || '—' }}
+                <template #cell="{ column, record }">
+                  <!-- 时间:列里只给时分秒,完整年月日悬停看 -->
+                  <template v-if="column.key === 'time'">
+                    <AppTooltip :title="formatDateTime(toRow(record).visit.createdAt)">
+                      <span class="mono cursor-help text-xs underline decoration-dotted underline-offset-2">
+                        {{ formatClock(toRow(record).visit.createdAt) }}
                       </span>
-                    </td>
+                    </AppTooltip>
+                  </template>
 
-                    <!-- 地理位置:国家 / 数据中心 / 语言 -->
-                    <td>
-                      <div class="stack" style="gap: 2px; min-width: 0">
-                        <span
-                          class="tiny truncate"
-                          :title="row.country === '—' ? '该 IP 查不到国家（私网/回环/库中未收录）' : row.visit.country"
-                        >
-                          国家:{{ row.country }}
-                        </span>
-                        <span>
-                          <span
-                            :class="['badge', row.network.badge]"
-                            :title="row.network.title"
-                          >
-                            {{ row.network.text }}
-                          </span>
-                        </span>
-                        <span class="tiny muted truncate" :title="row.lang || '未携带 Accept-Language'">
-                          语言:{{ row.lang }}
+                  <!-- 来访 IP -->
+                  <template v-else-if="column.key === 'ip'">
+                    <span class="mono text-xs" :title="toRow(record).visit.ip || '未知 IP'">
+                      {{ toRow(record).visit.ip || '—' }}
+                    </span>
+                  </template>
+
+                  <!-- 地理位置:国家 / 数据中心 / 语言 -->
+                  <template v-else-if="column.key === 'geo'">
+                    <div class="flex min-w-0 flex-col gap-0.5">
+                      <span
+                        class="text-xs"
+                        :title="toRow(record).country === '—' ? '该 IP 查不到国家（私网/回环/库中未收录）' : toRow(record).visit.country"
+                      >
+                        国家:{{ toRow(record).country }}
+                      </span>
+                      <AppTag :color="toRow(record).network.color" :title="toRow(record).network.title">
+                        {{ toRow(record).network.text }}
+                      </AppTag>
+                      <span
+                        class="text-xs text-ink-soft"
+                        :title="toRow(record).lang || '未携带 Accept-Language'"
+                      >
+                        语言:{{ toRow(record).lang }}
+                      </span>
+                    </div>
+                  </template>
+
+                  <!-- 设备型号 -->
+                  <template v-else-if="column.key === 'device'">
+                    <div v-if="toRow(record).hasUa" class="flex min-w-0 flex-col gap-0.5">
+                      <div class="flex min-w-0 flex-nowrap items-center gap-1.5">
+                        <AppTag :color="deviceTagColor(toRow(record).parsedUa.deviceType)">
+                          {{ toRow(record).parsedUa.deviceType }}
+                        </AppTag>
+                        <span class="text-xs" :title="toRow(record).parsedUa.deviceModel">
+                          {{ toRow(record).parsedUa.deviceModel }}
                         </span>
                       </div>
-                    </td>
+                      <span
+                        class="text-xs text-ink-soft"
+                        :title="toRow(record).parsedUa.os + ' · ' + toRow(record).parsedUa.browser"
+                      >
+                        {{ toRow(record).parsedUa.os }} · {{ toRow(record).parsedUa.browser }}
+                      </span>
+                    </div>
+                    <span v-else class="text-xs text-ink-soft">未知设备</span>
+                  </template>
 
-                    <!-- 设备型号 -->
-                    <td>
-                      <div v-if="row.hasUa" class="stack" style="gap: 2px; min-width: 0">
-                        <div class="row" style="gap: 5px; flex-wrap: nowrap; min-width: 0">
-                          <span :class="['badge', getDeviceBadgeClass(row.parsedUa.deviceType)]">
-                            {{ row.parsedUa.deviceType }}
-                          </span>
-                          <span class="tiny truncate" :title="row.parsedUa.deviceModel">
-                            {{ row.parsedUa.deviceModel }}
-                          </span>
-                        </div>
-                        <span
-                          class="tiny muted truncate"
-                          :title="row.parsedUa.os + ' · ' + row.parsedUa.browser"
-                        >
-                          {{ row.parsedUa.os }} · {{ row.parsedUa.browser }}
-                        </span>
+                  <!-- 动作与结果：清楚显示具体命中的失败规则名称与具体命中的条件 -->
+                  <template v-else-if="column.key === 'action'">
+                    <div class="flex max-w-[220px] flex-col gap-1">
+                      <div class="flex flex-nowrap items-center gap-1">
+                        <AppTag :color="toRow(record).action.color">{{ toRow(record).action.text }}</AppTag>
+                        <AppTag :color="toRow(record).visit.outcome === 'failed' ? 'error' : 'success'">
+                          {{ toRow(record).visit.outcome === 'failed' ? '✗ 失败' : '✓ 成功' }}
+                        </AppTag>
                       </div>
-                      <span v-else class="tiny muted">未知设备</span>
-                    </td>
+                      <span
+                        v-if="toRow(record).reasonText"
+                        class="text-xs text-err"
+                        :title="toRow(record).reasonTooltip"
+                      >
+                        {{ toRow(record).reasonText }}
+                      </span>
+                    </div>
+                  </template>
 
-                    <!-- 动作与结果：清楚显示具体命中的失败规则名称与具体命中的条件 -->
-                    <td class="shrink">
-                      <div class="stack" style="gap: 3px; max-width: 220px">
-                        <div class="row" style="gap: 4px; flex-wrap: nowrap">
-                          <span :class="['badge', row.action.badge]">{{ row.action.text }}</span>
-                          <span
-                            :class="[
-                              'badge',
-                              row.visit.outcome === 'failed' ? 'badge-danger' : 'badge-ok',
-                            ]"
-                          >
-                            {{ row.visit.outcome === 'failed' ? '✗ 失败' : '✓ 成功' }}
-                          </span>
-                        </div>
-                        <span
-                          v-if="row.reasonText"
-                          class="tiny truncate"
-                          style="color: var(--danger)"
-                          :title="row.reasonTooltip"
-                        >
-                          {{ row.reasonText }}
-                        </span>
-                      </div>
-                    </td>
-
-                    <!-- 目标 / 来源 -->
-                    <td>
-                      <div class="stack" style="gap: 2px; min-width: 0; max-width: 320px">
-                        <span
-                          v-if="row.visit.targetUrl"
-                          class="mono tiny truncate"
-                          :title="row.visit.targetUrl"
-                        >
-                          {{ row.visit.targetUrl }}
-                        </span>
-                        <span
-                          v-else-if="row.visit.referer"
-                          class="tiny truncate"
-                          :title="row.visit.referer"
-                        >
-                          {{ row.visit.referer }}
-                        </span>
-                        <span v-else class="tiny muted">直接访问</span>
-                        <span
-                          v-if="row.visit.targetUrl && row.visit.referer"
-                          class="tiny muted truncate"
-                          :title="'来源页:' + row.visit.referer"
-                        >
-                          来自 {{ row.visit.referer }}
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </AppSpin>
+                  <!-- 目标 / 来源 -->
+                  <template v-else-if="column.key === 'target'">
+                    <div class="flex min-w-0 max-w-[320px] flex-col gap-0.5">
+                      <span
+                        v-if="toRow(record).visit.targetUrl"
+                        class="mono text-xs"
+                        :title="toRow(record).visit.targetUrl"
+                      >
+                        {{ toRow(record).visit.targetUrl }}
+                      </span>
+                      <span
+                        v-else-if="toRow(record).visit.referer"
+                        class="text-xs"
+                        :title="toRow(record).visit.referer"
+                      >
+                        {{ toRow(record).visit.referer }}
+                      </span>
+                      <span v-else class="text-xs text-ink-soft">直接访问</span>
+                      <span
+                        v-if="toRow(record).visit.targetUrl && toRow(record).visit.referer"
+                        class="text-xs text-ink-soft"
+                        :title="'来源页:' + toRow(record).visit.referer"
+                      >
+                        来自 {{ toRow(record).visit.referer }}
+                      </span>
+                    </div>
+                  </template>
+                </template>
+              </AppTable>
+            </AppSpin>
+          </div>
 
           <!-- 底栏与真实分页 -->
-          <div class="panel-ft row-between flex-wrap gap-3">
-            <div class="row tiny muted" style="gap: 12px">
-              <span>共 <strong class="text-ink font-mono">{{ total }}</strong> 条访问明细</span>
+          <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3">
+            <div class="flex items-center gap-3 text-xs text-ink-soft">
+              <span>共 <strong class="font-mono text-ink">{{ total }}</strong> 条访问明细</span>
               <span v-if="hasLocalFilter">
-                当前页命中 <strong class="text-ink font-mono">{{ filteredRows.length }}</strong> / {{ rows.length }} 条
+                当前页命中
+                <strong class="font-mono text-ink">{{ filteredRows.length }}</strong> / {{ rows.length }} 条
               </span>
             </div>
-            <div class="row" style="gap: 10px">
-              <div class="row tiny muted" style="gap: 6px">
+            <div class="flex items-center gap-2.5">
+              <div class="flex items-center gap-1.5 text-xs text-ink-soft">
                 <span>每页</span>
-                <select
-                  v-model.number="pageSize"
-                  class="select"
-                  style="min-height: 28px; padding: 2px 20px 2px 8px; font-size: 12px"
+                <AppSelect
+                  v-model="pageSize"
+                  size="sm"
+                  class="w-[76px]"
+                  :options="PAGE_SIZE_OPTIONS"
                   aria-label="每页条数"
                   @change="onPageSizeChange"
-                >
-                  <option :value="10">10</option>
-                  <option :value="20">20</option>
-                  <option :value="50">50</option>
-                  <option :value="100">100</option>
-                </select>
+                />
                 <span>条</span>
               </div>
-              <div class="row" style="gap: 6px">
-                <button
-                  type="button"
-                  class="btn btn-sm"
-                  :disabled="page <= 1 || loading"
-                  @click="goToPage(page - 1)"
-                >
+              <div class="flex items-center gap-1.5">
+                <AppButton size="sm" variant="outline" :disabled="page <= 1 || loading" @click="goToPage(page - 1)">
                   上一页
-                </button>
-                <span class="mono tiny muted self-center px-1">
-                  {{ page }} / {{ totalPages }}
-                </span>
-                <button
-                  type="button"
-                  class="btn btn-sm"
+                </AppButton>
+                <span class="mono px-1 text-xs text-ink-soft">{{ page }} / {{ totalPages }}</span>
+                <AppButton
+                  size="sm"
+                  variant="outline"
                   :disabled="page >= totalPages || loading"
                   @click="goToPage(page + 1)"
                 >
                   下一页
-                </button>
+                </AppButton>
               </div>
             </div>
           </div>
-        </section>
+        </AppCard>
 
         <!-- 右侧：访客画像与规则回放详情卡片 -->
-        <section
-          class="panel xl:col-span-5 sticky top-20 flex flex-col min-w-0 max-h-[calc(100vh-6rem)]"
+        <AppCard
+          :padding="false"
+          class="sticky top-20 flex max-h-[calc(100vh-6rem)] min-w-0 flex-col xl:col-span-5"
           data-od-id="link-visit-detail-panel"
         >
           <!-- 未选择行时的引导提示 -->
           <div
             v-if="!selectedRow"
-            class="flex flex-col items-center justify-center p-10 text-center my-auto min-h-[380px]"
+            class="my-auto flex min-h-[380px] flex-col items-center justify-center p-10 text-center"
           >
-            <div class="flex h-12 w-12 items-center justify-center rounded-full bg-brand-500/10 text-brand-600 mb-3">
+            <div class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-500/10 text-brand-600">
               <MousePointerClick :size="22" />
             </div>
             <h3 class="text-sm font-semibold text-ink">选择访问记录</h3>
-            <p class="text-xs text-muted mt-1.5 max-w-[260px] leading-relaxed">
+            <p class="mt-1.5 max-w-[260px] text-xs leading-relaxed text-ink-soft">
               在左侧列表中点击任意一行，即可在此查看该次请求的完整访客画像、真实裁决以及按当前规则集的决策链路回放。
             </p>
           </div>
 
           <!-- 选中行时的详情展示 -->
           <template v-else>
-            <div class="panel-hd shrink-0 border-b border-line">
-              <div class="min-w-0">
-                <div class="row" style="gap: 8px; align-items: center">
-                  <h2>访客画像与规则回放</h2>
-                  <span
-                    :class="[
-                      'badge',
-                      selectedRow.visit.outcome === 'failed' ? 'badge-danger' : 'badge-ok',
-                    ]"
-                  >
-                    {{ selectedRow.visit.outcome === 'failed' ? '✗ 访问失败' : '✓ 访问成功' }}
-                  </span>
+            <div class="shrink-0 border-b border-line px-4 py-3">
+              <div class="flex flex-wrap items-center justify-between gap-3.5">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <h2 class="text-base font-semibold tracking-tight text-ink">访客画像与规则回放</h2>
+                    <AppTag :color="selectedRow.visit.outcome === 'failed' ? 'error' : 'success'">
+                      {{ selectedRow.visit.outcome === 'failed' ? '✗ 访问失败' : '✓ 访问成功' }}
+                    </AppTag>
+                  </div>
+                  <p class="mono mt-1 text-xs text-ink-soft">
+                    ID #{{ selectedRow.visit.id }} · {{ formatDateTime(selectedRow.visit.createdAt) }}
+                  </p>
                 </div>
-                <p class="truncate mono tiny muted mt-0.5">
-                  ID #{{ selectedRow.visit.id }} · {{ formatDateTime(selectedRow.visit.createdAt) }}
-                </p>
-              </div>
-              <div class="btn-row">
-                <button
-                  type="button"
-                  class="btn btn-sm"
-                  title="带着这个访客去模拟器改规则"
-                  @click="openInSimulator(selectedRow)"
-                >
-                  <FlaskConical :size="13" />
-                  模拟器打开
-                </button>
-                <button
-                  type="button"
-                  class="btn btn-sm btn-ghost text-muted hover:text-fg"
-                  title="关闭详情"
-                  aria-label="关闭详情"
-                  @click="selectedId = null"
-                >
-                  <X :size="14" />
-                </button>
+                <div class="flex items-center gap-1.5">
+                  <AppButton
+                    size="sm"
+                    variant="outline"
+                    title="带着这个访客去模拟器改规则"
+                    @click="openInSimulator(selectedRow)"
+                  >
+                    <template #icon><FlaskConical :size="13" /></template>
+                    模拟器打开
+                  </AppButton>
+                  <AppButton
+                    size="icon"
+                    variant="ghost"
+                    class="h-8 w-8 text-ink-soft"
+                    title="关闭详情"
+                    aria-label="关闭详情"
+                    @click="selectedId = null"
+                  >
+                    <template #icon><X :size="14" /></template>
+                  </AppButton>
+                </div>
               </div>
             </div>
 
             <!-- 可滚动的明细主体 -->
-            <div class="panel-bd flex-1 overflow-y-auto space-y-5 p-4">
+            <div class="flex-1 space-y-5 overflow-y-auto p-4">
               <!-- ① 访客画像 -->
-              <div class="trace-sec">
-                <div class="row-between" style="gap: 8px; align-items: baseline">
-                  <span class="mono micro font-semibold text-ink-soft">访客画像 · 本次请求</span>
-                  <span class="tiny muted">规则条件匹配的字段明细</span>
+              <div class="flex flex-col gap-2">
+                <div class="flex flex-wrap items-baseline justify-between gap-2">
+                  <span class="mono text-2xs font-semibold text-ink-soft">访客画像 · 本次请求</span>
+                  <span class="text-xs text-ink-soft">规则条件匹配的字段明细</span>
                 </div>
-                <dl class="profile">
-                  <div class="profile-item">
-                    <dt>访问时间</dt>
-                    <dd class="mono">{{ formatDateTime(selectedRow.visit.createdAt) }}</dd>
+                <dl class="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-x-3.5 gap-y-2.5">
+                  <div class="min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">访问时间</dt>
+                    <dd class="mono m-0 flex items-center gap-1.5 text-xs text-ink">
+                      {{ formatDateTime(selectedRow.visit.createdAt) }}
+                    </dd>
                   </div>
-                  <div class="profile-item">
-                    <dt>来访 IP</dt>
-                    <dd class="mono">{{ selectedRow.visit.ip || '—' }}</dd>
+                  <div class="min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">来访 IP</dt>
+                    <dd class="mono m-0 flex items-center gap-1.5 text-xs text-ink">{{ selectedRow.visit.ip || '—' }}</dd>
                   </div>
-                  <div class="profile-item">
-                    <dt>国家 / 地区</dt>
-                    <dd>
-                      <span :class="['badge', selectedRow.country === '—' ? 'badge-neutral' : 'badge-ok']">
+                  <div class="min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">国家 / 地区</dt>
+                    <dd class="m-0 flex items-center gap-1.5 text-xs text-ink">
+                      <AppTag :color="selectedRow.country === '—' ? 'default' : 'success'">
                         {{ selectedRow.country }}
-                      </span>
+                      </AppTag>
                     </dd>
                   </div>
-                  <div class="profile-item">
-                    <dt>网络属性</dt>
-                    <dd>
-                      <span :class="['badge', selectedRow.network.badge]" :title="selectedRow.network.title">
+                  <div class="min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">网络属性</dt>
+                    <dd class="m-0 flex items-center gap-1.5 text-xs text-ink">
+                      <AppTag :color="selectedRow.network.color" :title="selectedRow.network.title">
                         {{ selectedRow.network.text }}
-                      </span>
+                      </AppTag>
                     </dd>
                   </div>
-                  <div class="profile-item">
-                    <dt>语言 (Accept-Language)</dt>
-                    <dd class="mono truncate" :title="selectedRow.lang">{{ selectedRow.lang }}</dd>
+                  <div class="min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">语言 (Accept-Language)</dt>
+                    <dd class="mono m-0 flex min-w-0 items-center gap-1.5 text-xs text-ink" :title="selectedRow.lang">
+                      {{ selectedRow.lang }}
+                    </dd>
                   </div>
-                  <div class="profile-item">
-                    <dt>设备类型与型号</dt>
-                    <dd>
-                      <span :class="['badge', getDeviceBadgeClass(selectedRow.parsedUa.deviceType)]">
+                  <div class="min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">设备类型与型号</dt>
+                    <dd class="m-0 flex min-w-0 items-center gap-1.5 text-xs text-ink">
+                      <AppTag :color="deviceTagColor(selectedRow.parsedUa.deviceType)">
                         {{ selectedRow.parsedUa.deviceType }}
-                      </span>
-                      <span class="tiny muted truncate" :title="selectedRow.parsedUa.deviceModel">
+                      </AppTag>
+                      <span class="text-xs text-ink-soft" :title="selectedRow.parsedUa.deviceModel">
                         {{ selectedRow.parsedUa.deviceModel }}
                       </span>
                     </dd>
                   </div>
-                  <div class="profile-item">
-                    <dt>系统 / 浏览器</dt>
-                    <dd class="truncate" :title="selectedRow.parsedUa.os + ' / ' + selectedRow.parsedUa.browser">
+                  <div class="min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">系统 / 浏览器</dt>
+                    <dd
+                      class="m-0 flex min-w-0 items-center gap-1.5 text-xs text-ink"
+                      :title="selectedRow.parsedUa.os + ' / ' + selectedRow.parsedUa.browser"
+                    >
                       {{ selectedRow.parsedUa.os }}
-                      <span class="muted">/</span>
+                      <span class="text-ink-soft">/</span>
                       {{ selectedRow.parsedUa.browser }}
                     </dd>
                   </div>
-                  <div class="profile-item">
-                    <dt>短链</dt>
-                    <dd class="mono truncate" :title="(selectedRow.visit.domain || link?.domains?.[0] || '') + '/' + (link?.code || '-')">
+                  <div class="min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">短链</dt>
+                    <dd
+                      class="mono m-0 flex min-w-0 items-center gap-1.5 text-xs text-ink"
+                      :title="(selectedRow.visit.domain || link?.domains?.[0] || '') + '/' + (link?.code || '-')"
+                    >
                       {{ selectedRow.visit.domain || link?.domains?.[0] || '未知域名' }}/{{ link?.code || '-' }}
                     </dd>
                   </div>
-                  <div class="profile-item">
-                    <dt>短链类型</dt>
-                    <dd>{{ linkTypeLabel }} → {{ selectedRow.action.text }}</dd>
+                  <div class="min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">短链类型</dt>
+                    <dd class="m-0 text-xs text-ink">{{ linkTypeLabel }} → {{ selectedRow.action.text }}</dd>
                   </div>
-                  <div class="profile-item">
-                    <dt>来源页 (Referer)</dt>
-                    <dd class="truncate" :title="selectedRow.visit.referer || '直接访问'">
+                  <div class="min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">来源页 (Referer)</dt>
+                    <dd
+                      class="m-0 min-w-0 text-xs text-ink"
+                      :title="selectedRow.visit.referer || '直接访问'"
+                    >
                       {{ selectedRow.visit.referer || '直接访问' }}
                     </dd>
                   </div>
-                  <div class="profile-item">
-                    <dt>最终抵达</dt>
-                    <dd class="mono truncate" :title="selectedRow.visit.targetUrl || '—'">
+                  <div class="min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">最终抵达</dt>
+                    <dd
+                      class="mono m-0 flex min-w-0 items-center gap-1.5 text-xs text-ink"
+                      :title="selectedRow.visit.targetUrl || '—'"
+                    >
                       {{ selectedRow.visit.targetUrl || '—' }}
                     </dd>
                   </div>
-                  <div class="profile-item profile-wide">
-                    <dt>
+                  <div class="col-span-full min-w-0">
+                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">
                       完整 User-Agent
-                      <button
-                        type="button"
-                        class="mini-btn"
+                      <AppButton
+                        size="sm"
+                        variant="ghost"
+                        class="h-5 px-1.5 text-2xs text-ink-soft hover:text-brand-600"
                         aria-label="复制完整 User-Agent"
                         @click.stop="copyUa(selectedRow)"
                       >
-                        <Copy class="size-3" aria-hidden="true" /> 复制
-                      </button>
+                        <template #icon><Copy :size="11" /></template>
+                        复制
+                      </AppButton>
                     </dt>
-                    <dd class="mono ua-box">{{ selectedRow.visit.userAgent || '（无 UA 头）' }}</dd>
+                    <dd class="mono block rounded-sm border border-line bg-surface px-2 py-1.5 text-2xs leading-[1.55] text-ink-soft break-all">
+                      {{ selectedRow.visit.userAgent || '（无 UA 头）' }}
+                    </dd>
                   </div>
                 </dl>
               </div>
 
               <!-- 分隔线 -->
-              <div class="border-t border-line pt-4 space-y-4">
+              <div class="space-y-4 border-t border-line pt-4">
                 <!-- ② 真实裁决：后端当时记下的事实 -->
-                <div class="trace-sec">
-                  <div class="row-between" style="gap: 8px; align-items: baseline">
-                    <span class="mono micro font-semibold text-ink-soft">真实裁决 · 后端记录</span>
-                    <span class="tiny muted">后端处理该请求时的实际处置结果</span>
+                <div class="flex flex-col gap-2">
+                  <div class="flex flex-wrap items-baseline justify-between gap-2">
+                    <span class="mono text-2xs font-semibold text-ink-soft">真实裁决 · 后端记录</span>
+                    <span class="text-xs text-ink-soft">后端处理该请求时的实际处置结果</span>
                   </div>
 
                   <!-- 命中的规则卡片 -->
                   <div
                     v-if="selectedRow.matchedRule"
-                    class="rounded-lg border border-line bg-surface p-3 space-y-1.5 shadow-2xs"
+                    class="space-y-1.5 rounded-lg border border-line bg-surface p-3 shadow-xs"
                   >
-                    <div class="row-between text-xs">
+                    <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
                       <span class="font-medium text-ink">
                         命中规则 #{{ selectedRow.matchedRule.id }} · {{ selectedRow.matchedRule.name }}
                       </span>
-                      <span class="badge" :class="selectedRow.matchedRule.enabled ? 'badge-ok' : 'badge-neutral'">
+                      <AppTag :color="selectedRow.matchedRule.enabled ? 'success' : 'default'">
                         {{ selectedRow.matchedRule.enabled ? '规则当前启用' : '规则当前已停用' }}
-                      </span>
+                      </AppTag>
                     </div>
                     <!-- 只展示具体命中的条件，不展示全部条件 -->
-                    <div v-if="selectedRow.hitConditionText" class="mono tiny leading-relaxed" style="color: var(--danger)">
+                    <div v-if="selectedRow.hitConditionText" class="mono text-xs leading-relaxed text-err">
                       <span class="font-medium">命中条件：</span>{{ selectedRow.hitConditionText }}
                     </div>
-                    <div v-else-if="selectedRow.matchedRule.conditions?.length" class="mono tiny text-ink-soft leading-relaxed">
+                    <div
+                      v-else-if="selectedRow.matchedRule.conditions?.length"
+                      class="mono text-xs leading-relaxed text-ink-soft"
+                    >
                       <span class="font-medium">规则条件：</span>{{ conditionSummary(selectedRow.matchedRule) }}
                     </div>
                   </div>
 
-                  <div class="row flex-wrap" style="gap: 6px; align-items: center">
-                    <span :class="['badge', realVerdictOf(selectedRow).badge]">
-                      {{ realVerdictOf(selectedRow).text }}
-                    </span>
-                    <span :class="['badge', selectedRow.visit.outcome === 'failed' ? 'badge-danger' : 'badge-ok']">
+                  <div class="flex flex-wrap items-center gap-1.5">
+                    <AppTag :color="realVerdictOf(selectedRow).color">{{ realVerdictOf(selectedRow).text }}</AppTag>
+                    <AppTag :color="selectedRow.visit.outcome === 'failed' ? 'error' : 'success'">
                       {{ selectedRow.visit.outcome === 'failed' ? '✗ 失败' : '✓ 成功' }}
-                    </span>
-                    <span v-if="selectedRow.reasonText" class="tiny" style="color: var(--danger)">
-                      {{ selectedRow.reasonText }}
-                    </span>
-                    <span v-if="selectedRow.visit.ruleId == null && selectedRow.visit.outcome !== 'failed'" class="tiny muted">
+                    </AppTag>
+                    <span v-if="selectedRow.reasonText" class="text-xs text-err">{{ selectedRow.reasonText }}</span>
+                    <span
+                      v-if="selectedRow.visit.ruleId == null && selectedRow.visit.outcome !== 'failed'"
+                      class="text-xs text-ink-soft"
+                    >
                       没有规则参与，按默认短链配置放行
                     </span>
                   </div>
                 </div>
 
                 <!-- ③ 规则回放：按当前规则集重算一遍 -->
-                <div class="trace-sec">
-                  <div class="row-between" style="gap: 8px; align-items: baseline">
-                    <span class="mono micro font-semibold text-ink-soft">规则回放 · 按当前规则集</span>
-                    <span class="tiny muted">规则若被改动过，回放可能与历史裁决不同</span>
+                <div class="flex flex-col gap-2">
+                  <div class="flex flex-wrap items-baseline justify-between gap-2">
+                    <span class="mono text-2xs font-semibold text-ink-soft">规则回放 · 按当前规则集</span>
+                    <span class="text-xs text-ink-soft">规则若被改动过，回放可能与历史裁决不同</span>
                   </div>
 
-                  <div v-if="traceStateOf(selectedRow.visit.id)?.loading" class="row py-3" style="gap: 8px">
+                  <div v-if="traceStateOf(selectedRow.visit.id)?.loading" class="flex items-center gap-2 py-3">
                     <RefreshCw class="animate-spin text-brand-500" :size="14" />
-                    <span class="tiny muted">正在回放规则链…</span>
+                    <span class="text-xs text-ink-soft">正在回放规则链…</span>
                   </div>
 
-                  <p v-else-if="traceStateOf(selectedRow.visit.id).error" class="tiny" style="color: var(--danger)">
+                  <p
+                    v-else-if="traceStateOf(selectedRow.visit.id).error"
+                    class="text-xs text-err"
+                  >
                     回放失败：{{ traceStateOf(selectedRow.visit.id).error }}
                   </p>
 
                   <template v-else-if="traceStateOf(selectedRow.visit.id).trace">
-                    <div class="row flex-wrap" style="gap: 6px; align-items: center">
-                      <span
-                        :class="[
-                          'badge',
-                          traceStateOf(selectedRow.visit.id).verdict!.matched
-                            ? traceStateOf(selectedRow.visit.id).verdict!.blocking
-                              ? 'badge-danger'
-                              : 'badge-ok'
-                            : 'badge-neutral',
-                        ]"
-                      >
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <AppTag :color="verdictTagColor(traceStateOf(selectedRow.visit.id).verdict)">
                         {{ traceStateOf(selectedRow.visit.id).verdict!.title }}
+                      </AppTag>
+                      <span class="text-xs text-ink-soft">
+                        {{ traceStateOf(selectedRow.visit.id).trace!.scopeNote }}
                       </span>
-                      <span class="tiny muted">{{ traceStateOf(selectedRow.visit.id).trace!.scopeNote }}</span>
                     </div>
 
                     <!-- 回放与历史不一致提示 -->
                     <div
                       v-if="replayDiffers(selectedRow)"
-                      class="rounded-lg border border-amber-300/40 bg-amber-50/50 p-2.5 text-xs text-amber-800 dark:border-amber-700/40 dark:bg-amber-950/30 dark:text-amber-300 leading-relaxed"
+                      class="rounded-lg border border-warn/40 bg-warn/10 p-2.5 text-xs leading-relaxed text-warn"
                     >
                       回放与当时的裁决不一致：当时是
                       {{ selectedRow.visit.ruleId == null ? '无规则命中' : `命中 #${selectedRow.visit.ruleId}` }}，
@@ -582,74 +539,58 @@
                         : '无规则命中' }}。
                     </div>
 
-                    <ul class="trace-list">
+                    <ul class="flex flex-col gap-1.5">
                       <li
                         v-for="step in traceStateOf(selectedRow.visit.id).trace!.steps"
                         :key="step.key"
-                        :class="['trace-step', step.status]"
+                        class="flex flex-wrap items-center gap-1.5 rounded-sm border border-line bg-surface px-2.5 py-2"
+                        :class="step.status === 'hit' ? 'border-ok/40' : step.status === 'block' ? 'border-err/40' : ''"
                       >
-                        <span class="mono tiny" style="color: var(--ink-faint)">#{{ step.ruleId }}</span>
-                        <span class="tiny" style="color: var(--ink); font-weight: 500">{{ step.ruleName }}</span>
-                        <span
-                          :class="[
-                            'badge',
-                            step.status === 'block'
-                              ? 'badge-danger'
-                              : step.status === 'hit'
-                                ? 'badge-ok'
-                                : 'badge-neutral',
-                          ]"
-                        >
+                        <span class="mono text-xs text-ink-faint">#{{ step.ruleId }}</span>
+                        <span class="text-xs font-medium text-ink">{{ step.ruleName }}</span>
+                        <AppTag :color="step.status === 'block' ? 'error' : step.status === 'hit' ? 'success' : 'default'">
                           {{ step.statusText }}
-                        </span>
-                        <span class="tiny muted" style="flex-basis: 100%">{{ step.whyText }}</span>
+                        </AppTag>
+                        <span class="w-full text-xs text-ink-soft">{{ step.whyText }}</span>
                         <!-- 命中的规则只展示具体命中的条件，不展示未命中的其余条件 -->
                         <template v-if="step.facts.length > 0">
                           <template v-if="step.status === 'hit' || step.status === 'block'">
                             <span
                               v-for="(fact, i) in step.facts.filter((f) => f.hit)"
                               :key="i"
-                              class="mono tiny"
-                              style="color: var(--ink)"
+                              class="mono text-xs text-ink"
                             >✓ {{ fact.text }}</span>
                           </template>
                           <template v-else>
                             <span
                               v-for="(fact, i) in step.facts"
                               :key="i"
-                              class="mono tiny"
-                              :style="fact.hit ? 'color: var(--ink)' : 'color: var(--ink-faint)'"
+                              class="mono text-xs"
+                              :class="fact.hit ? 'text-ink' : 'text-ink-faint'"
                             >{{ fact.hit ? '✓' : '✗' }} {{ fact.text }}</span>
                           </template>
                         </template>
                       </li>
                     </ul>
 
-                    <p
-                      v-if="traceStateOf(selectedRow.visit.id).trace!.skippedForDetail > 0"
-                      class="tiny muted"
-                    >
+                    <p v-if="traceStateOf(selectedRow.visit.id).trace!.skippedForDetail > 0" class="text-xs text-ink-soft">
                       {{ traceStateOf(selectedRow.visit.id).trace!.skippedForDetail }} 条规则未取到条件，未参与本次回放
                     </p>
                   </template>
                 </div>
 
                 <!-- ④ 带着这个访客去模拟器改规则 -->
-                <div class="trace-sec pt-2">
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-primary w-full justify-center"
-                    @click="openInSimulator(selectedRow)"
-                  >
-                    <FlaskConical :size="13" />
+                <div class="flex flex-col gap-1.5 pt-2">
+                  <AppButton size="sm" type="primary" block @click="openInSimulator(selectedRow)">
+                    <template #icon><FlaskConical :size="13" /></template>
                     用此访客在模拟器打开
-                  </button>
-                  <span class="tiny muted text-center">在模拟器里改条件验一遍，再回到这里看真实流量怎么走</span>
+                  </AppButton>
+                  <span class="text-center text-xs text-ink-soft">在模拟器里改条件验一遍，再回到这里看真实流量怎么走</span>
                 </div>
               </div>
             </div>
           </template>
-        </section>
+        </AppCard>
       </div>
     </template>
   </div>
@@ -669,9 +610,11 @@ import AppSpin from '@/components/ui/AppSpin.vue';
 import AppTooltip from '@/components/ui/AppTooltip.vue';
 import { ApiError } from '@/types/api';
 import type { Link, Rule, RuleAction, RuleCondition, Visit, VisitAction, VisitReason } from '@/types/api';
+import type { TableColumn } from '@/components/ui/types';
+import type { TagColor } from '@/components/ui/AppTag.vue';
 import { formatClock, formatCountry, formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
-import { getDeviceBadgeClass, parseUserAgent } from '@/utils/userAgent';
+import { getDeviceTagColor, parseUserAgent } from '@/utils/userAgent';
 import type { ParsedUA } from '@/utils/userAgent';
 import { actionLabel, conditionSummary, describeCondition, isBlockingAction } from '@/views/rules/ruleMeta';
 import { buildDecisionTrace, loadAllRules, verdictOf } from '@/views/rules/ruleTrace';
@@ -684,10 +627,10 @@ const router = useRouter();
 
 // ==================== 展示文案映射 ====================
 /** 动作 → 徽标文案/配色 */
-const ACTION_META: Record<VisitAction, { text: string; badge: string }> = {
-  redirect: { text: '跳转', badge: 'badge-neutral' },
-  landing_view: { text: '落地页', badge: 'badge-warn' },
-  click: { text: '点击', badge: 'badge-ok' },
+const ACTION_META: Record<VisitAction, { text: string; color: TagColor }> = {
+  redirect: { text: '跳转', color: 'default' },
+  landing_view: { text: '落地页', color: 'warning' },
+  click: { text: '点击', color: 'success' },
 };
 
 /**
@@ -717,6 +660,29 @@ const DEVICE_OPTIONS: { value: 'all' | ParsedUA['deviceType']; label: string }[]
   { value: '爬虫机器人', label: '爬虫机器人' },
 ];
 
+/** 表格列定义;key 同时用作 #cell 分支与 #header 提示文案的索引 */
+const columns: TableColumn[] = [
+  { key: 'time', title: '时间', width: 96 },
+  { key: 'ip', title: 'IP', width: 130 },
+  { key: 'geo', title: '地理位置' },
+  { key: 'device', title: '设备型号' },
+  { key: 'action', title: '动作与结果', width: 240 },
+  { key: 'target', title: '目标 / 来源' },
+];
+
+/** 各列的补充说明,悬停表头可见 */
+const COLUMN_HINTS: Record<string, string> = {
+  time: '服务端记录的访问时间',
+  ip: '来访 IP:X-Forwarded-For 优先,回退 RemoteAddr',
+  geo: '国家由后端内嵌离线 GeoIP 库解析',
+  device: '由 User-Agent 解析:设备型号 · 操作系统 · 浏览器',
+  action: '本次触发的动作与结果;失败的动作不计入访问次数',
+  target: '本次动作最终抵达的地址,缺省时回退显示来源页',
+};
+
+/** 分页每页条数选项 */
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100].map((size) => ({ value: size, label: String(size) }));
+
 /** 表格行:在访问记录之上补齐解析结果与展示文案 */
 interface VisitRow {
   visit: Visit;
@@ -724,8 +690,8 @@ interface VisitRow {
   parsedUa: ParsedUA;
   country: string;
   lang: string;
-  network: { text: string; badge: string; title: string };
-  action: { text: string; badge: string };
+  network: { text: string; color: TagColor; title: string };
+  action: { text: string; color: TagColor };
   matchedRule?: Rule;
   reasonText: string;
   reasonTooltip: string;
@@ -925,7 +891,7 @@ async function loadData() {
 // ==================== 行数据组装 ====================
 function toRow(visit: Visit): VisitRow {
   const hasUa = Boolean(visit.userAgent && visit.userAgent.trim());
-  const meta = ACTION_META[visit.action] ?? { text: visit.action || '未知动作', badge: 'badge-neutral' };
+  const meta = ACTION_META[visit.action] ?? { text: visit.action || '未知动作', color: 'default' as TagColor };
   const rule = visit.ruleId != null ? rulesMap.value.get(visit.ruleId) : undefined;
   const { text: reasonText, tooltip: reasonTooltip, hitConditionText } = formatFailureReason(visit, rule);
 
@@ -936,10 +902,10 @@ function toRow(visit: Visit): VisitRow {
     country: formatCountry(visit.country),
     lang: visit.lang || '—',
     network: visit.isDatacenter
-      ? { text: '数据中心', badge: 'badge-warn', title: visit.asn ? `ASN ${visit.asn}` : '数据中心出口' }
+      ? { text: '数据中心', color: 'warning' as TagColor, title: visit.asn ? `ASN ${visit.asn}` : '数据中心出口' }
       : {
           text: '住宅/未知',
-          badge: 'badge-neutral',
+          color: 'default' as TagColor,
           title: visit.asn ? `ASN ${visit.asn}` : '未标记为数据中心出口(该字段暂无数据源)',
         },
     action: meta,
@@ -951,6 +917,43 @@ function toRow(visit: Visit): VisitRow {
 }
 
 const rows = computed<VisitRow[]>(() => visits.value.map(toRow));
+
+/** #cell 插槽拿到的 record 是 Record<string, unknown>,按仓库既有模式收窄回 VisitRow */
+function asRow(record: Record<string, unknown>): VisitRow {
+  return record as unknown as VisitRow;
+}
+
+/**
+ * #cell 插槽拿到的 record 是 Record<string, unknown>,按仓库既有模式收窄回 VisitRow。
+ * 另给每行补一个扁平 id 供 AppTable 的 row-key 使用:行数据是包装对象(visit 在里面),
+ * 而 AppTable 取 key 的方式是 record[rowKey],撑不起 'visit.id' 这种路径。
+ */
+const tableData = computed<Record<string, unknown>[]>(() =>
+  filteredRows.value.map((row) => ({ ...row, id: row.visit.id })),
+);
+
+/** 把行状态透传到真实 <tr>,供 <style scoped> 里的 :deep() 行状态规则消费 */
+function visitRowProps(record: Record<string, unknown>): Record<string, unknown> {
+  const row = asRow(record);
+  return {
+    'data-outcome': row.visit.outcome,
+    'data-selected': selectedId.value === row.visit.id,
+  };
+}
+
+function onRowClick(record: Record<string, unknown>): void {
+  selectRow(asRow(record));
+}
+
+/** 回放裁决对应的徽标色:命中拦截=红,命中非拦截=绿,未命中=中性 */
+function verdictTagColor(verdict: Verdict | null): TagColor {
+  if (!verdict || !verdict.matched) return 'default';
+  return verdict.blocking ? 'error' : 'success';
+}
+
+function deviceTagColor(deviceType: ParsedUA['deviceType']): TagColor {
+  return getDeviceTagColor(deviceType);
+}
 
 /** 本地过滤:设备类型 + 只看失败 + 搜索(仅限当前页) */
 const filteredRows = computed<VisitRow[]>(() => {
@@ -1050,15 +1053,15 @@ function selectRow(row: VisitRow) {
 }
 
 /** 后端当时记下的真实裁决 */
-function realVerdictOf(row: VisitRow): { text: string; badge: string } {
+function realVerdictOf(row: VisitRow): { text: string; color: TagColor } {
   if (row.visit.ruleId == null) {
     if (row.visit.reason === 'rule_blocked') {
-      return { text: '规则拦截 · 直接 404', badge: 'badge-danger' };
+      return { text: '规则拦截 · 直接 404', color: 'error' };
     }
     if (row.visit.reason === 'rule_throttled') {
-      return { text: '规则限流 · 429', badge: 'badge-danger' };
+      return { text: '规则限流 · 429', color: 'error' };
     }
-    return { text: '无规则参与', badge: 'badge-neutral' };
+    return { text: '无规则参与', color: 'default' };
   }
   const action = row.visit.ruleAction as RuleAction;
   const label = actionLabel(action) || action || '未知动作';
@@ -1066,7 +1069,7 @@ function realVerdictOf(row: VisitRow): { text: string; badge: string } {
   const namePart = rule ? `「${rule.name}」` : '';
   return {
     text: `命中 #${row.visit.ruleId} ${namePart} · ${label}`,
-    badge: isBlockingAction(action) ? 'badge-danger' : 'badge-ok',
+    color: isBlockingAction(action) ? 'error' : 'success',
   };
 }
 
@@ -1126,139 +1129,27 @@ watch(linkId, () => {
 </script>
 
 <style scoped>
-/* 失败动作整行淡红底 */
-.tbl tbody tr[data-outcome='failed'] {
-  background: var(--danger-soft);
+/*
+ * 只保留表格「行状态」这四条规则：它们必须打到 AppTable 子组件内部的真实 <tr> 上，
+ * 工具类做不到，所以走 :deep()；其余一律用语义令牌 + Tailwind 工具类表达。
+ * 底色直接用 color-mix 展开成 --err，不再依赖 Tech-Utility 层的 --danger/--danger-soft。
+ */
+:deep(.app-table tbody tr[data-outcome='failed']) {
+  background: color-mix(in srgb, var(--err) 12%, var(--surface));
 }
-
-.tbl tbody tr[data-outcome='failed']:hover {
-  background: color-mix(in srgb, var(--danger) 18%, var(--surface));
+:deep(.app-table tbody tr[data-outcome='failed']:hover) {
+  background: color-mix(in srgb, var(--err) 18%, var(--surface));
 }
-
-/* 选中行样式：左侧指示条与主题高亮底色 */
-.row-selectable {
-  cursor: pointer;
-  transition: background-color 0.12s ease;
+:deep(.app-table tbody tr[data-selected='true']) {
+  background: color-mix(in srgb, var(--color-brand-500) 10%, var(--surface)) !important;
+  box-shadow: inset 3px 0 0 var(--color-brand-500);
 }
-
-.row-selectable:hover {
-  background: var(--surface-muted);
+:deep(.app-table tbody tr[data-outcome='failed'][data-selected='true']) {
+  background: color-mix(in srgb, var(--err) 22%, var(--surface)) !important;
+  box-shadow: inset 3px 0 0 var(--err);
 }
-
-.row-selectable[data-selected='true'] {
-  background: color-mix(in srgb, var(--brand-500) 10%, var(--surface)) !important;
-  box-shadow: inset 3px 0 0 var(--brand-500);
-}
-
-.tbl tbody tr[data-outcome='failed'][data-selected='true'] {
-  background: color-mix(in srgb, var(--danger) 22%, var(--surface)) !important;
-  box-shadow: inset 3px 0 0 var(--danger);
-}
-
-.row-selectable:focus-visible {
-  outline: 2px solid var(--brand-500);
+:deep(.app-table tbody tr[data-selected='true']:focus-visible) {
+  outline: 2px solid var(--color-brand-500);
   outline-offset: -2px;
-}
-
-.trace-sec {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.trace-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.trace-step {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
-  background: var(--surface);
-}
-
-/* 访客画像：自适应网格，适应右侧卡片宽度 */
-.profile {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-  gap: 10px 14px;
-  margin: 0;
-}
-
-.profile-item {
-  min-width: 0;
-}
-
-.profile-item > dt {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-micro);
-  color: var(--muted);
-  margin-bottom: 2px;
-}
-
-.profile-item > dd {
-  margin: 0;
-  font-size: 12px;
-  color: var(--fg);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-/* UA 独占整行 */
-.profile-wide {
-  grid-column: 1 / -1;
-}
-
-.ua-box {
-  display: block;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  font-size: 11.5px;
-  line-height: 1.55;
-  color: var(--ink-soft);
-  word-break: break-all;
-}
-
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 6px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--muted);
-  font-size: var(--fs-micro);
-  cursor: pointer;
-  transition: color 0.14s ease, border-color 0.14s ease;
-}
-
-.mini-btn:hover {
-  color: var(--brand-600);
-  border-color: var(--brand-500);
-}
-
-/* 命中/拦截行比跳过的行更显眼 */
-.trace-step.hit {
-  border-color: color-mix(in srgb, var(--ok) 40%, var(--line));
-}
-
-.trace-step.block {
-  border-color: color-mix(in srgb, var(--danger) 40%, var(--line));
 }
 </style>

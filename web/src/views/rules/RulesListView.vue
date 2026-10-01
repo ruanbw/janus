@@ -82,6 +82,7 @@ const columns: TableColumn[] = [
   { title: '操作', key: 'actions', width: 128, align: 'right', nowrap: true },
 ];
 
+/** AppTable 插槽 record 为 Record<string, unknown>,转换为领域类型以访问字段 */
 function toRule(record: Record<string, unknown>): Rule {
   return record as unknown as Rule;
 }
@@ -207,16 +208,16 @@ onMounted(loadRules);
     >
       <template #cell="{ column, record }">
         <template v-if="column.key === 'id'">
-          <span class="mono text-[13px] text-ink-faint">#{{ record.id }}</span>
+          <span class="mono text-xs text-ink-faint">#{{ record.id }}</span>
         </template>
 
         <template v-else-if="column.key === 'name'">
           <div class="min-w-0">
-            <div class="truncate text-[13px] font-medium text-ink">{{ record.name }}</div>
+            <div class="truncate text-xs font-medium text-ink">{{ record.name }}</div>
             <div class="mt-0.5 flex items-center gap-2 text-xs text-ink-faint">
               <span>优先级 {{ record.priority }}</span>
               <span>·</span>
-              <span>{{ logicLabel(record.logic as Rule['logic']) }}</span>
+              <span>{{ logicLabel(record.logic) }}</span>
             </div>
           </div>
         </template>
@@ -224,7 +225,7 @@ onMounted(loadRules);
         <template v-else-if="column.key === 'scope'">
           <div class="flex flex-col items-start gap-1">
             <AppTag v-if="record.scope === 'global'" color="blue">全局</AppTag>
-            <div v-else class="flex items-center gap-1.5 text-[13px] text-ink">
+            <div v-else class="flex items-center gap-1.5 text-xs text-ink">
               <Link2 :size="14" class="text-ink-faint" />
               <span>{{ record.linkCount || 0 }} 条短链</span>
             </div>
@@ -254,25 +255,16 @@ onMounted(loadRules);
         </template>
 
         <template v-else-if="column.key === 'hits24h'">
-          <span class="mono text-[13px] text-ink-soft">{{ record.hits24h ?? 0 }}</span>
+          <span class="mono text-xs text-ink-soft">{{ record.hits24h ?? 0 }}</span>
         </template>
 
         <template v-else-if="column.key === 'enabled'">
-          <button
-            type="button"
-            role="switch"
-            :aria-checked="record.enabled === true"
-            :aria-label="record.enabled ? '点击停用' : '点击启用'"
+          <AppSwitch
+            :model-value="record.enabled === true"
             :disabled="togglingId === record.id"
-            class="relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-            :class="record.enabled ? 'bg-brand-500' : 'bg-line-strong'"
-            @click="onToggleRule(toRule(record))"
-          >
-            <span
-              class="absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all"
-              :class="record.enabled ? 'left-[18px]' : 'left-0.5'"
-            />
-          </button>
+            :aria-label="record.enabled ? '点击停用' : '点击启用'"
+            @change="onToggleRule(toRule(record))"
+          />
         </template>
 
         <template v-else-if="column.key === 'actions'">

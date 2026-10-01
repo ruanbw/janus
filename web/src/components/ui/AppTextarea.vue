@@ -15,7 +15,7 @@
     />
     <div
       v-if="showCount"
-      class="pointer-events-none absolute bottom-2 right-2.5 rounded bg-surface/80 px-1 py-0.5 text-[11px] font-mono text-ink-faint backdrop-blur-xs select-none"
+      class="pointer-events-none absolute bottom-2 right-2.5 rounded bg-surface/80 px-1 py-0.5 text-2xs font-mono text-ink-faint backdrop-blur-xs select-none"
     >
       {{ currentLength }}{{ maxlength !== undefined ? ` / ${maxlength}` : '' }}
     </div>

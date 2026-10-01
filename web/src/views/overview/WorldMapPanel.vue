@@ -1,18 +1,18 @@
 <template>
-  <div class="panel flex flex-col">
-    <div class="panel-hd">
+  <AppCard :padding="false" class="flex flex-col">
+    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
       <div>
-        <h2>访问来源地</h2>
-        <p>按访客 IP 的离线 GeoIP 库判定国家，占比越高颜色越深。</p>
+        <h2 class="text-base font-semibold tracking-tight text-ink">访问来源地</h2>
+        <p class="mt-0.5 text-xs text-ink-soft">按访客 IP 的离线 GeoIP 库判定国家，占比越高颜色越深。</p>
       </div>
-      <span class="badge badge-neutral shrink-0">可定位 {{ locatedCount }} / {{ visits.length }}</span>
+      <AppTag color="default">可定位 {{ locatedCount }} / {{ visits.length }}</AppTag>
     </div>
 
-    <div class="panel-bd flex-1">
+    <div class="flex-1 p-4">
       <!-- 一条都定位不出来时没什么可着色的，直接说清楚原因，不画一张全灰的地图 -->
-      <div v-if="locatedCount === 0" class="empty flex flex-col items-center gap-1.5 py-10 text-center">
-        <span class="text-[13px] font-medium text-ink">本次样本里没有能定位到国家的访问</span>
-        <span class="max-w-sm text-[12px] leading-relaxed text-ink-faint">
+      <div v-if="locatedCount === 0" class="flex flex-col items-center gap-1.5 py-10 text-center">
+        <span class="text-xs font-medium text-ink">本次样本里没有能定位到国家的访问</span>
+        <span class="max-w-sm text-xs leading-relaxed text-ink-faint">
           私网 / 回环地址与离线库未收录的地址会返回空国家码，这类访问不计入地图占比。
         </span>
       </div>
@@ -25,7 +25,7 @@
         <div class="min-w-0 flex-1">
           <div
             v-if="mapFailed"
-            class="empty flex flex-col items-center gap-1.5 py-10 text-center text-[13px] text-ink-soft"
+            class="flex flex-col items-center gap-1.5 py-10 text-center text-xs text-ink-soft"
           >
             <span>世界地图数据加载失败，下方列表仍然可用。</span>
             <AppButton size="sm" variant="outline" @click="retry">
@@ -51,20 +51,20 @@
               <title>{{ tooltipOf(shape.code) }}</title>
             </path>
           </svg>
-          <div v-else class="py-16 text-center text-[12px] text-ink-faint">正在加载世界地图…</div>
+          <div v-else class="py-16 text-center text-xs text-ink-faint">正在加载世界地图…</div>
         </div>
 
         <!-- 排行榜：手机没有悬停，触摸端靠这份列表读数 -->
-        <ol class="grid shrink-0 gap-x-4 gap-y-1.5 text-[12.5px] sm:grid-cols-2 lg:w-[240px] lg:grid-cols-1">
+        <ol class="grid shrink-0 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-2 lg:w-[240px] lg:grid-cols-1">
           <li v-for="item in topCountries" :key="item.code" class="flex items-center gap-2">
-            <span class="legend-key shrink-0" :class="`map-lv${levelOf(item.code)}`"></span>
+            <span class="h-2.5 w-2.5 shrink-0 rounded-xs" :class="`map-lv${levelOf(item.code)}`"></span>
             <span class="truncate text-ink">{{ item.name }}</span>
             <span class="ml-auto shrink-0 font-mono text-ink-soft">
               {{ item.count }} · {{ item.percent }}%
             </span>
           </li>
           <li v-if="restCountries" class="flex items-center gap-2 text-ink-faint">
-            <span class="legend-key shrink-0 map-land"></span>
+            <span class="h-2.5 w-2.5 shrink-0 rounded-xs map-land"></span>
             <span class="truncate">其余 {{ restCountries }} 个国家</span>
             <span class="ml-auto shrink-0 font-mono">合计 {{ restVisits }} 次</span>
           </li>
@@ -72,20 +72,20 @@
       </div>
     </div>
 
-    <div v-if="locatedCount > 0" class="panel-ft flex flex-wrap items-center gap-x-4 gap-y-2">
-      <span class="legend m-0 p-0">
-        <span v-for="item in MAP_LEVELS" :key="item.level" class="legend-item">
-          <span class="legend-key" :class="`map-lv${item.level}`"></span>
+    <div v-if="locatedCount > 0" class="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line px-4 py-2.5 text-xs text-ink-faint">
+      <span class="flex flex-wrap items-center gap-3.5 m-0 p-0">
+        <span v-for="item in MAP_LEVELS" :key="item.level" class="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-xs" :class="`map-lv${item.level}`"></span>
           {{ item.label }}
         </span>
-        <span class="legend-item">
-          <span class="legend-key map-land"></span>
+        <span class="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span class="h-2.5 w-2.5 shrink-0 rounded-xs map-land"></span>
           无访问
         </span>
       </span>
-      <span class="text-muted">占比按能定位的 {{ locatedCount }} 条样本计算，不等于全量访问结构。</span>
+      <span>占比按能定位的 {{ locatedCount }} 条样本计算，不等于全量访问结构。</span>
     </div>
-  </div>
+  </AppCard>
 </template>
 
 <script setup lang="ts">
@@ -93,6 +93,8 @@ import { computed, ref } from 'vue';
 import { RefreshCw } from '@lucide/vue';
 
 import AppButton from '@/components/ui/AppButton.vue';
+import AppCard from '@/components/ui/AppCard.vue';
+import AppTag from '@/components/ui/AppTag.vue';
 import type { Visit } from '@/types/api';
 
 import { countryDistribution } from './trafficBreakdown';

@@ -1,65 +1,59 @@
 <template>
-  <div class="space-y-5 pb-10">
+  <div class="space-y-5 pb-10" data-od-id="overview-view">
     <!-- KPI 卡片网格 (真实数据驱动：3列自适应、高度统一) -->
     <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
-      <div
+      <AppCard
         v-for="kpi in kpiList"
         :key="kpi.label"
-        class="kpi relative flex flex-col justify-between h-full min-h-[118px] hover:z-20 focus-within:z-20"
+        class="relative flex flex-col justify-between min-h-[118px] hover:z-20 focus-within:z-20 p-4"
       >
         <div>
-          <div class="kpi-k">{{ kpi.label }}</div>
-          <div class="kpi-v flex items-baseline">
+          <div class="font-mono text-2xs uppercase tracking-wider text-ink-faint pr-7">
+            {{ kpi.label }}
+          </div>
+          <div class="mt-1 flex items-baseline font-mono text-2xl font-semibold tracking-tight text-ink tabular-nums leading-none">
             <span>{{ kpi.value }}</span>
-            <span v-if="kpi.unit" class="text-[14px] text-muted font-normal ml-1">{{ kpi.unit }}</span>
+            <span v-if="kpi.unit" class="ml-1 text-sm font-normal text-ink-soft">{{ kpi.unit }}</span>
           </div>
         </div>
-        <div class="kpi-sub mt-2">
+        <div class="mt-2 text-xs text-ink-soft">
           {{ kpi.sub }}
         </div>
 
         <!-- 说明提示气泡 -->
-        <button
-          type="button"
-          class="kpi-info"
-          :aria-label="`指标说明：${kpi.label}`"
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 11.2v5.1M12 7.7h.01" />
-          </svg>
-          <span class="kpi-tip" role="tooltip">
-            {{ kpi.tip }}
-          </span>
-        </button>
-      </div>
+        <AppTooltip :title="kpi.tip">
+          <AppButton
+            variant="ghost"
+            size="icon"
+            class="absolute top-2.5 right-2.5 h-6 w-6 rounded-full text-ink-faint hover:text-ink"
+            :aria-label="`指标说明：${kpi.label}`"
+          >
+            <CircleHelp :size="15" />
+          </AppButton>
+        </AppTooltip>
+      </AppCard>
     </section>
 
-    <!-- 世界地图：与其他分布图同源，但单独占满一整行。按国家着色需要横向空间，
-         挤进三列网格的一格里，国界会被压成看不清的色块。 -->
+    <!-- 世界地图：与其他分布图同源，但单独占满一整行 -->
     <WorldMapPanel v-if="visits.length > 0" :visits="visits" />
 
     <!--
-      分析与分布卡片：宽屏一行三列 / 中屏两列 / 手机一列，用 Tailwind 断点工具类表达，
-      不在 JS 里判断视口（见 AdminLayout 的移动端适配约定）。
-      三列的断点取 xl（1280px）而不是 lg：桌面侧边栏占 224px，1024px 视口下留给内容的
-      只有 ~800px，三等分后每张卡不足 260px，条形图会被标签和读数挤没——那种宽度
-      排两列反而更可读。KPI 卡只放一个数字，用 lg 就够，不跟着变。
-      卡片内部的条形行则按**卡片自身宽度**换挡，靠 .panel-chart 的 container-type，
-      因为同一视口下卡片宽度还会被侧边栏收起与否、列数变化改掉。
+      分析与分布卡片：宽屏一行三列 / 中屏两列 / 手机一列，用 Tailwind 断点工具类表达。
+      卡片内部的条形行则按卡片自身宽度换挡，依赖 @container 容器查询。
     -->
     <section class="grid grid-cols-1 items-stretch gap-4 sm:grid-cols-2 xl:grid-cols-3">
-      <div v-if="totalVisits === 0" class="panel sm:col-span-2 xl:col-span-3">
-        <div class="panel-hd">
+      <!-- 暂无流量数据卡片 -->
+      <AppCard v-if="totalVisits === 0" :padding="false" class="sm:col-span-2 xl:col-span-3">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
-            <h2>流量与转化分析</h2>
-            <p>短链访问与落地页点击的实时汇总分析。</p>
+            <h2 class="text-base font-semibold tracking-tight text-ink">流量与转化分析</h2>
+            <p class="mt-0.5 text-xs text-ink-soft">短链访问与落地页点击的实时汇总分析。</p>
           </div>
-          <router-link to="/links" class="btn btn-sm">
+          <AppButton to="/links" size="sm" variant="outline">
             管理短链 →
-          </router-link>
+          </AppButton>
         </div>
-        <div class="panel-bd py-14">
+        <div class="py-14 px-4">
           <div class="mx-auto flex max-w-md flex-col items-center text-center">
             <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-surface-strong text-ink-faint">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="h-6 w-6">
@@ -67,17 +61,17 @@
                 <path d="m19 9-5 5-4-4-3 3" />
               </svg>
             </div>
-            <h3 class="mt-4 text-[16px] font-semibold text-ink">暂无流量访问数据</h3>
-            <p class="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
+            <h3 class="mt-4 text-base font-semibold text-ink">暂无流量访问数据</h3>
+            <p class="mt-1.5 text-xs leading-relaxed text-ink-soft">
               暂无流量访问数据，投放或测试访问后将在此自动汇总。
             </p>
-            <p class="mt-1 text-[12px] text-ink-faint">
+            <p class="mt-1 text-xs text-ink-faint">
               当前已配置 {{ links.length }} 条短链（{{ activeLinksCount }} 条已启用），{{ domains.length }} 个域名（{{ activeDomainsCount }} 个已激活）。
             </p>
             <div class="mt-6 flex flex-wrap items-center justify-center gap-3">
-              <router-link to="/links" class="btn btn-primary btn-sm">
+              <AppButton to="/links" size="sm" variant="default">
                 {{ links.length === 0 ? '创建第一条短链' : '前往短链列表' }}
-              </router-link>
+              </AppButton>
               <AppButton size="sm" variant="outline" :loading="loading" @click="loadData">
                 <template #icon><RefreshCw :size="13" /></template>
                 刷新数据
@@ -85,268 +79,263 @@
             </div>
           </div>
         </div>
-      </div>
+      </AppCard>
 
-      <!-- 真实数据构成：当有访问量时展示 -->
       <!-- 热门短链访问排行 -->
-      <div v-if="totalVisits > 0" class="panel panel-chart flex flex-col">
-        <div class="panel-hd">
+      <AppCard v-if="totalVisits > 0" :padding="false" class="@container flex flex-col">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
-            <h2>热门短链访问排行</h2>
-            <p>按访问量降序排列的短链流量表现。</p>
+            <h2 class="text-base font-semibold tracking-tight text-ink">热门短链访问排行</h2>
+            <p class="mt-0.5 text-xs text-ink-soft">按访问量降序排列的短链流量表现。</p>
           </div>
-          <router-link to="/links" class="btn btn-sm">
+          <AppButton to="/links" size="sm" variant="outline">
             全部短链 →
-          </router-link>
+          </AppButton>
         </div>
-        <div class="panel-bd flex-1">
-          <div class="bars">
+        <div class="flex-1 p-4">
+          <div class="flex flex-col gap-2.5">
             <div
               v-for="link in topLinks"
               :key="link.id"
-              class="bar-row bar-row-lg"
+              class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
             >
-              <div class="bar-lab flex items-center gap-1.5 min-w-0" :title="`/${link.code}`">
-                <span class="mono font-semibold truncate text-[13px]">/{{ link.code }}</span>
-                <span
-                  class="text-[10px] px-1.5 py-0.5 rounded shrink-0 font-medium leading-none"
-                  :class="link.linkType === 'landing' ? 'bg-cyan-50 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300' : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'"
-                >
+              <div class="flex items-center gap-1.5 min-w-0 @max-[340px]:col-span-1" :title="`/${link.code}`">
+                <span class="truncate font-mono text-xs font-semibold text-ink">/{{ link.code }}</span>
+                <AppTag :color="link.linkType === 'landing' ? 'info' : 'default'">
                   {{ link.linkType === 'landing' ? '落地页' : '跳转' }}
-                </span>
+                </AppTag>
               </div>
-              <span class="bar-track">
-                <span
-                  class="bar-fill"
+              <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
+                <div
+                  class="h-full min-w-[2px] rounded bg-brand-600 transition-all duration-300 dark:bg-brand-500"
                   :style="{ width: `${Math.min(100, Math.max(2, Math.round(((link.visits || 0) / totalVisits) * 100)))}%` }"
-                ></span>
-              </span>
-              <span class="bar-val font-mono text-[12px]">
+                />
+              </div>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">
                 {{ (link.visits || 0).toLocaleString() }} · {{ (((link.visits || 0) / totalVisits) * 100).toFixed(1) }}%
               </span>
             </div>
           </div>
         </div>
-        <div class="panel-ft">
+        <div class="border-t border-line px-4 py-2.5 text-xs text-ink-faint">
           按单条短链累计访问量排序，反映流量在各投放短码上的集中度。
         </div>
-      </div>
+      </AppCard>
 
       <!-- 短链类型与流量结构 -->
-      <div v-if="totalVisits > 0" class="panel panel-chart flex flex-col">
-        <div class="panel-hd">
+      <AppCard v-if="totalVisits > 0" :padding="false" class="@container flex flex-col">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
-            <h2>短链类型与流量结构</h2>
-            <p>区分直接跳转与落地页承接，合计等于总访问量。</p>
+            <h2 class="text-base font-semibold tracking-tight text-ink">短链类型与流量结构</h2>
+            <p class="mt-0.5 text-xs text-ink-soft">区分直接跳转与落地页承接，合计等于总访问量。</p>
           </div>
-          <!-- 原来指向已删的「统计」页。访问明细只有一条路:短链列表点那一行的访问列,
-               所以这里就指到列表页,别再给同一个能力开第二个入口。 -->
-          <router-link to="/links" class="btn btn-sm">
+          <AppButton to="/links" size="sm" variant="outline">
             查看各短链的访问 →
-          </router-link>
+          </AppButton>
         </div>
-        <div class="panel-bd flex-1">
+        <div class="flex-1 p-4">
           <div
-            class="stackbar"
+            class="flex h-6.5 w-full overflow-hidden rounded-md border border-line"
             role="img"
             :aria-label="`跳转型 ${redirectVisits} 次占 ${redirectPercent}%，落地页型 ${landingVisits} 次占 ${landingPercent}%`"
           >
-            <span class="bg-brand-600" :style="{ width: `${redirectPercent}%` }"></span>
-            <span class="bg-cyan-500" :style="{ width: `${landingPercent}%` }"></span>
+            <span class="h-full bg-brand-600 transition-all duration-300 dark:bg-brand-500" :style="{ width: `${redirectPercent}%` }"></span>
+            <span class="h-full bg-info transition-all duration-300" :style="{ width: `${landingPercent}%` }"></span>
           </div>
 
-          <div class="legend">
-            <span class="legend-item">
-              <span class="legend-key bg-brand-600"></span>
+          <div class="mt-3 flex flex-wrap items-center gap-3.5 text-xs text-ink-soft">
+            <span class="flex items-center gap-1.5">
+              <span class="h-2.5 w-2.5 shrink-0 rounded-xs bg-brand-600 dark:bg-brand-500"></span>
               跳转型
             </span>
-            <span class="legend-item">
-              <span class="legend-key bg-cyan-500"></span>
+            <span class="flex items-center gap-1.5">
+              <span class="h-2.5 w-2.5 shrink-0 rounded-xs bg-info"></span>
               落地页型
             </span>
           </div>
 
-          <div class="bars mt-4">
-            <div class="bar-row bar-row-lg">
-              <span class="bar-lab">跳转型访问</span>
-              <span class="bar-track">
-                <span class="bar-fill bg-brand-600" :style="{ width: `${redirectPercent}%` }"></span>
-              </span>
-              <span class="bar-val font-mono text-[12px]">{{ redirectVisits.toLocaleString() }} · {{ redirectPercent }}%</span>
+          <div class="mt-4 flex flex-col gap-2.5">
+            <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
+              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">跳转型访问</span>
+              <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
+                <div class="h-full min-w-[2px] rounded bg-brand-600 transition-all duration-300 dark:bg-brand-500" :style="{ width: `${redirectPercent}%` }" />
+              </div>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ redirectVisits.toLocaleString() }} · {{ redirectPercent }}%</span>
             </div>
-            <div class="bar-row bar-row-lg">
-              <span class="bar-lab">落地页访问</span>
-              <span class="bar-track">
-                <span class="bar-fill bg-cyan-500" :style="{ width: `${landingPercent}%` }"></span>
-              </span>
-              <span class="bar-val font-mono text-[12px]">{{ landingVisits.toLocaleString() }} · {{ landingPercent }}%</span>
+            <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
+              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">落地页访问</span>
+              <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
+                <div class="h-full min-w-[2px] rounded bg-info transition-all duration-300" :style="{ width: `${landingPercent}%` }" />
+              </div>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ landingVisits.toLocaleString() }} · {{ landingPercent }}%</span>
             </div>
-            <div class="bar-row bar-row-lg">
-              <span class="bar-lab">落地页点击</span>
-              <span class="bar-track">
-                <span class="bar-fill bg-emerald-500" :style="{ width: `${landingVisits > 0 ? Math.min(100, Math.round((totalClicks / landingVisits) * 100)) : 0}%` }"></span>
-              </span>
-              <span class="bar-val font-mono text-[12px]">{{ totalClicks.toLocaleString() }} · CTR {{ landingCTR }}</span>
+            <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
+              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">落地页点击</span>
+              <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
+                <div class="h-full min-w-[2px] rounded bg-ok transition-all duration-300" :style="{ width: `${landingVisits > 0 ? Math.min(100, Math.round((totalClicks / landingVisits) * 100)) : 0}%` }" />
+              </div>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ totalClicks.toLocaleString() }} · CTR {{ landingCTR }}</span>
             </div>
           </div>
         </div>
-        <div class="panel-ft">
+        <div class="border-t border-line px-4 py-2.5 text-xs text-ink-faint">
           落地页点击经平台 JS SDK 回传，整体转化率（CTR）反映落地页对目标 URL 的转化效率。
         </div>
-      </div>
+      </AppCard>
 
-      <div v-if="visits.length > 0" class="panel panel-chart flex flex-col">
-        <div class="panel-hd">
+      <!-- 流量来源分布 -->
+      <AppCard v-if="visits.length > 0" :padding="false" class="@container flex flex-col">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
-            <h2>流量来源分布</h2>
-            <p>根据请求 Referrer 与广告点击特征自动归类。</p>
+            <h2 class="text-base font-semibold tracking-tight text-ink">流量来源分布</h2>
+            <p class="mt-0.5 text-xs text-ink-soft">根据请求 Referrer 与广告点击特征自动归类。</p>
           </div>
         </div>
-        <div class="panel-bd flex-1">
-          <div class="bars">
+        <div class="flex-1 p-4">
+          <div class="flex flex-col gap-2.5">
             <div
               v-for="src in sourceBreakdown"
               :key="src.name"
-              class="bar-row bar-row-lg"
+              class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
             >
-              <span class="bar-lab">{{ src.name }}</span>
-              <span class="bar-track">
-                <span
-                  class="bar-fill"
-                  :class="{ 't-accent': src.percent > 30 }"
+              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">{{ src.name }}</span>
+              <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
+                <div
+                  class="h-full min-w-[2px] rounded transition-all duration-300"
+                  :class="src.percent > 30 ? 'bg-brand-600 dark:bg-brand-500' : 'bg-ink/70 dark:bg-ink-soft'"
                   :style="{ width: `${src.percent}%` }"
-                ></span>
-              </span>
-              <span class="bar-val">{{ src.count }} 次 · {{ src.percent }}%</span>
+                />
+              </div>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ src.count }} 次 · {{ src.percent }}%</span>
             </div>
           </div>
         </div>
-        <div class="panel-ft">
+        <div class="border-t border-line px-4 py-2.5 text-xs text-ink-faint">
           优先解析主流广告渠道（Meta / TikTok / Google），未携带来源的流量归入直接访问。
         </div>
-      </div>
+      </AppCard>
 
-      <div v-if="visits.length > 0" class="panel panel-chart flex flex-col">
-        <div class="panel-hd">
+      <!-- 设备类型分布 -->
+      <AppCard v-if="visits.length > 0" :padding="false" class="@container flex flex-col">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
-            <h2>设备类型分布</h2>
-            <p>基于 User-Agent 特征与视口画像解析。</p>
+            <h2 class="text-base font-semibold tracking-tight text-ink">设备类型分布</h2>
+            <p class="mt-0.5 text-xs text-ink-soft">基于 User-Agent 特征与视口画像解析。</p>
           </div>
         </div>
-        <div class="panel-bd flex-1">
-          <div class="bars">
+        <div class="flex-1 p-4">
+          <div class="flex flex-col gap-2.5">
             <div
               v-for="dev in deviceBreakdown"
               :key="dev.name"
-              class="bar-row bar-row-lg"
+              class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
             >
-              <span class="bar-lab">{{ dev.name }}</span>
-              <span class="bar-track">
-                <span
-                  class="bar-fill"
-                  :class="{ 't-accent': dev.name === '移动端' }"
+              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">{{ dev.name }}</span>
+              <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
+                <div
+                  class="h-full min-w-[2px] rounded transition-all duration-300"
+                  :class="dev.name === '移动端' ? 'bg-brand-600 dark:bg-brand-500' : 'bg-ink/70 dark:bg-ink-soft'"
                   :style="{ width: `${dev.percent}%` }"
-                ></span>
-              </span>
-              <span class="bar-val">{{ dev.count }} 次 · {{ dev.percent }}%</span>
+                />
+              </div>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ dev.count }} 次 · {{ dev.percent }}%</span>
             </div>
           </div>
         </div>
-        <div class="panel-ft">
+        <div class="border-t border-line px-4 py-2.5 text-xs text-ink-faint">
           斗篷准入规则可针对「移动端」进行放行，拦截「桌面端」审查机或爬虫环境。
         </div>
-      </div>
+      </AppCard>
 
-      <div v-if="visits.length > 0" class="panel panel-chart flex flex-col">
-        <div class="panel-hd">
+      <!-- 操作系统分布 -->
+      <AppCard v-if="visits.length > 0" :padding="false" class="@container flex flex-col">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
-            <h2>操作系统分布</h2>
-            <p>终端操作系统内核与主版本统计。</p>
+            <h2 class="text-base font-semibold tracking-tight text-ink">操作系统分布</h2>
+            <p class="mt-0.5 text-xs text-ink-soft">终端操作系统内核与主版本统计。</p>
           </div>
         </div>
-        <div class="panel-bd flex-1">
-          <div class="bars">
+        <div class="flex-1 p-4">
+          <div class="flex flex-col gap-2.5">
             <div
               v-for="os in osBreakdown"
               :key="os.name"
-              class="bar-row bar-row-lg"
+              class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
             >
-              <span class="bar-lab">{{ os.name }}</span>
-              <span class="bar-track">
-                <span
-                  class="bar-fill"
-                  :class="{ 't-accent': os.name.includes('iOS') }"
+              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">{{ os.name }}</span>
+              <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
+                <div
+                  class="h-full min-w-[2px] rounded transition-all duration-300"
+                  :class="os.name.includes('iOS') ? 'bg-brand-600 dark:bg-brand-500' : 'bg-ink/70 dark:bg-ink-soft'"
                   :style="{ width: `${os.percent}%` }"
-                ></span>
-              </span>
-              <span class="bar-val">{{ os.count }} 次 · {{ os.percent }}%</span>
+                />
+              </div>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ os.count }} 次 · {{ os.percent }}%</span>
             </div>
           </div>
         </div>
-        <div class="panel-ft">
+        <div class="border-t border-line px-4 py-2.5 text-xs text-ink-faint">
           支持在规则引擎中配置 OS 白名单（如仅放行 iOS 或 Android）。
         </div>
-      </div>
+      </AppCard>
 
-      <div v-if="visits.length > 0" class="panel panel-chart flex flex-col">
-        <div class="panel-hd">
+      <!-- 浏览器分布 -->
+      <AppCard v-if="visits.length > 0" :padding="false" class="@container flex flex-col">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
-            <h2>浏览器分布</h2>
-            <p>独立浏览器与应用内嵌 WebView 占比。</p>
+            <h2 class="text-base font-semibold tracking-tight text-ink">浏览器分布</h2>
+            <p class="mt-0.5 text-xs text-ink-soft">独立浏览器与应用内嵌 WebView 占比。</p>
           </div>
         </div>
-        <div class="panel-bd flex-1">
-          <div class="bars">
+        <div class="flex-1 p-4">
+          <div class="flex flex-col gap-2.5">
             <div
               v-for="br in browserBreakdown"
               :key="br.name"
-              class="bar-row bar-row-lg"
+              class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
             >
-              <span class="bar-lab">{{ br.name }}</span>
-              <span class="bar-track">
-                <span class="bar-fill" :style="{ width: `${br.percent}%` }"></span>
-              </span>
-              <span class="bar-val">{{ br.count }} 次 · {{ br.percent }}%</span>
+              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">{{ br.name }}</span>
+              <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
+                <div
+                  class="h-full min-w-[2px] rounded bg-ink/70 transition-all duration-300 dark:bg-ink-soft"
+                  :style="{ width: `${br.percent}%` }"
+                />
+              </div>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ br.count }} 次 · {{ br.percent }}%</span>
             </div>
           </div>
         </div>
-        <div class="panel-ft">
+        <div class="border-t border-line px-4 py-2.5 text-xs text-ink-faint">
           「应用内内置」指微信、抖音等 App 的 WebView，与独立浏览器分列以便看清各投放渠道的真实环境。
         </div>
-      </div>
+      </AppCard>
     </section>
 
-    <!-- 样本量必须写出来：这几张分布图算的是样本占比，不是全量访问结构 -->
-    <p v-if="visits.length > 0" class="text-[12px] text-muted">
+    <!-- 样本量提示 -->
+    <p v-if="visits.length > 0" class="text-xs text-ink-faint">
       样本量：{{ sampleLinks.length }} 条有访问量的短链（按访问量降序取前 {{ SAMPLE_LINK_LIMIT }} 条）各
       {{ SAMPLE_PAGE_SIZE }} 条访问明细，共 <span class="font-mono text-ink">{{ visits.length }}</span> 条。地图与各分布图的占比按该样本计算，不等于全量访问结构。
     </p>
 
     <!-- 合规提示 -->
-    <section class="panel">
-      <div class="panel-bd">
-        <div class="note">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 8h.01M11 12h1v4h1" />
-          </svg>
-          <div>
-            <b>合规提示。</b>斗篷的本质是「对不同访问者返回不同内容」。用于绕过平台审核或对审核员定向展示白标内容，可能违反 TikTok / Meta / Google 的广告政策并导致账户封禁。本系统按「流量准入控制 + 品牌合规」的正向用途设计：拦截爬虫与无效流量、地域与语言适配、转化归因。落地生产前请确认业务场景合规性。
-          </div>
-        </div>
-      </div>
-    </section>
+    <AppAlert type="info" show-icon title="合规提示">
+      斗篷的本质是「对不同访问者返回不同内容」。用于绕过平台审核或对审核员定向展示白标内容，可能违反 TikTok / Meta / Google 的广告政策并导致账户封禁。本系统按「流量准入控制 + 品牌合规」的正向用途设计：拦截爬虫与无效流量、地域与语言适配、转化归因。落地生产前请确认业务场景合规性。
+    </AppAlert>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { RefreshCw } from '@lucide/vue';
+import { CircleHelp, RefreshCw } from '@lucide/vue';
 
 import { listDomains } from '@/api/domains';
 import { listLinks } from '@/api/links';
 import { listVisits } from '@/api/visits';
+import AppAlert from '@/components/ui/AppAlert.vue';
 import AppButton from '@/components/ui/AppButton.vue';
+import AppCard from '@/components/ui/AppCard.vue';
+import AppTag from '@/components/ui/AppTag.vue';
+import AppTooltip from '@/components/ui/AppTooltip.vue';
 import { ApiError } from '@/types/api';
 import type { Domain, Link, Visit } from '@/types/api';
 import { message } from '@/utils/toast';

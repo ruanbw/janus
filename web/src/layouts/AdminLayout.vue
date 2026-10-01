@@ -17,19 +17,19 @@
       >
         <div
           v-if="!collapsed"
-          class="truncate font-mono text-[10.5px] tracking-wider text-slate-400 uppercase"
+          class="truncate font-mono text-2xs tracking-wider text-sidebar-ink uppercase"
         >
           租户 · {{ tenantName }}
         </div>
         <div class="flex items-center gap-2.5" :class="collapsed ? '' : 'mt-2'">
           <span
-            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 font-mono text-[11px] font-semibold text-slate-200"
+            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 font-mono text-2xs font-semibold text-sidebar-ink-active"
           >
             {{ avatarInitial }}
           </span>
-          <div v-if="!collapsed" class="min-w-0 text-[12px] leading-tight text-slate-300">
+          <div v-if="!collapsed" class="min-w-0 text-xs leading-tight text-sidebar-ink-active">
             <div>{{ auth.isSuperAdmin ? '超级管理员' : '租户管理员' }}</div>
-            <div class="font-mono text-[10px] text-slate-400">{{ auth.tenant?.tier?.name || '标准版' }}</div>
+            <div class="font-mono text-2xs text-sidebar-ink">{{ auth.tenant?.tier?.name || '标准版' }}</div>
           </div>
         </div>
       </div>
@@ -51,7 +51,7 @@
               <button
                 type="button"
                 aria-label="关闭菜单"
-                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/5 hover:text-white"
+                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sidebar-ink transition-colors hover:bg-white/5 hover:text-sidebar-ink-active"
               >
                 <X :size="18" />
               </button>
@@ -102,7 +102,7 @@
           <div class="flex min-w-0 items-center gap-2">
             <span class="font-mono text-xs text-ink-faint">CLOAK</span>
             <span class="text-ink-faint">/</span>
-            <h1 class="truncate text-[14.5px] font-semibold text-ink">{{ routeTitle }}</h1>
+            <h1 class="truncate text-sm font-semibold text-ink">{{ routeTitle }}</h1>
           </div>
         </div>
 
@@ -116,11 +116,11 @@
                 class="flex items-center gap-2 rounded-full py-1 pr-1.5 pl-1 transition-colors hover:bg-surface-strong"
               >
                 <span
-                  class="flex h-7 w-7 items-center justify-center rounded-full bg-brand-600 text-[12px] font-semibold text-white"
+                  class="flex h-7 w-7 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white"
                 >
                   {{ avatarInitial }}
                 </span>
-                <span class="hidden max-w-44 truncate text-[13px] text-ink sm:block">
+                <span class="hidden max-w-44 truncate text-sm text-ink sm:block">
                   {{ auth.tenant?.email }}
                 </span>
                 <ChevronDown :size="12" class="text-ink-faint" />
@@ -133,7 +133,7 @@
                 class="z-[75] min-w-40 rounded-xl border border-line bg-surface p-1.5 shadow-xl"
               >
                 <DropdownMenuItem
-                  class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-ink outline-none data-[highlighted]:bg-brand-50 data-[highlighted]:text-brand-700 dark:data-[highlighted]:bg-brand-500/15 dark:data-[highlighted]:text-brand-300"
+                  class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-ink outline-none data-[highlighted]:bg-brand-50 data-[highlighted]:text-brand-700 dark:data-[highlighted]:bg-brand-500/15 dark:data-[highlighted]:text-brand-300"
                   @select="go('/account')"
                 >
                   <User :size="14" />
@@ -141,7 +141,7 @@
                 </DropdownMenuItem>
                 <DropdownMenuSeparator class="my-1 h-px bg-line" />
                 <DropdownMenuItem
-                  class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-[13px] text-err outline-none data-[highlighted]:bg-err/10"
+                  class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-err outline-none data-[highlighted]:bg-err/10"
                   @select="onLogout"
                 >
                   <LogOut :size="14" />

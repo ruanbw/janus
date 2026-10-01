@@ -3,7 +3,7 @@
     <span class="flex h-12 w-12 items-center justify-center rounded-full bg-surface-strong text-ink-faint">
       <Inbox :size="22" />
     </span>
-    <p class="text-[13px] text-ink-faint">{{ description }}</p>
+    <p class="text-xs text-ink-faint">{{ description }}</p>
   </div>
 </template>
 

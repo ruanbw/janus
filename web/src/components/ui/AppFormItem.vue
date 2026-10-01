@@ -21,7 +21,7 @@
     </p>
     <p
       v-else-if="extra || $slots.extra"
-      class="mt-1.5 whitespace-pre-line text-[13px] leading-relaxed text-ink-faint"
+      class="mt-1.5 whitespace-pre-line text-xs leading-relaxed text-ink-faint"
     >
       <slot name="extra">{{ extra }}</slot>
     </p>

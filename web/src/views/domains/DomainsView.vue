@@ -22,7 +22,7 @@
       <template #cell="{ column, record }">
         <template v-if="column.key === 'fqdn'">
           <CopyText :text="toDomain(record).fqdn">
-            <span class="mono text-[13px]">{{ toDomain(record).fqdn }}</span>
+            <span class="mono">{{ toDomain(record).fqdn }}</span>
           </CopyText>
         </template>
         <template v-else-if="column.key === 'description'">
@@ -113,6 +113,7 @@ const domains = ref<Domain[]>([]);
 const loading = ref(false);
 
 /** AppTable 槽位 record 为 Record<string, unknown>,转换为领域类型以访问字段 */
+/** AppTable 插槽 record 为 Record<string, unknown>,转换为领域类型以访问字段 */
 function toDomain(r: Record<string, unknown>): Domain {
   return r as unknown as Domain;
 }

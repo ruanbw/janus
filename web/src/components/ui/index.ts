@@ -27,6 +27,7 @@ import AppResult from './AppResult.vue';
 import AppSelect from './AppSelect.vue';
 import AppSpace from './AppSpace.vue';
 import AppSpin from './AppSpin.vue';
+import AppSwitch from './AppSwitch.vue';
 import AppTable from './AppTable.vue';
 import AppTag from './AppTag.vue';
 import AppTextarea from './AppTextarea.vue';
@@ -61,6 +62,7 @@ const components: Record<string, Component> = {
   AppSelect,
   AppSpace,
   AppSpin,
+  AppSwitch,
   AppTable,
   AppTag,
   AppTextarea,
@@ -103,6 +105,7 @@ export { default as AppResult } from './AppResult.vue';
 export { default as AppSelect } from './AppSelect.vue';
 export { default as AppSpace } from './AppSpace.vue';
 export { default as AppSpin } from './AppSpin.vue';
+export { default as AppSwitch, switchVariants, switchThumbVariants } from './AppSwitch.vue';
 export { default as AppTable } from './AppTable.vue';
 export { default as AppTag } from './AppTag.vue';
 export { default as AppTextarea } from './AppTextarea.vue';

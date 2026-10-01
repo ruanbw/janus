@@ -31,10 +31,12 @@
       />
 
       <!-- Tab 切换 404 与 429 -->
-      <div class="flex border-b border-line">
+      <div class="flex border-b border-line" role="tablist">
         <button
           type="button"
-          class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
+          role="tab"
+          :aria-selected="activeTab === '404'"
+          class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           :class="activeTab === '404'
             ? 'border-brand-600 text-brand-600 dark:border-brand-400 dark:text-brand-400'
             : 'border-transparent text-ink-soft hover:text-ink'"
@@ -46,7 +48,9 @@
         </button>
         <button
           type="button"
-          class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors"
+          role="tab"
+          :aria-selected="activeTab === '429'"
+          class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           :class="activeTab === '429'
             ? 'border-brand-600 text-brand-600 dark:border-brand-400 dark:text-brand-400'
             : 'border-transparent text-ink-soft hover:text-ink'"
@@ -159,13 +163,14 @@
               <span class="text-sm font-semibold text-ink">访客拦截页面沙箱预览 ({{ previewTitle }})</span>
               <span class="text-xs text-ink-faint">已开启 sandbox 安全隔离</span>
             </div>
-            <button
-              type="button"
-              class="rounded p-1 text-ink-soft hover:bg-surface-muted hover:text-ink"
+            <AppButton
+              size="icon"
+              variant="ghost"
+              aria-label="关闭预览"
               @click="previewVisible = false"
             >
               <X :size="18" />
-            </button>
+            </AppButton>
           </div>
           <div class="flex-1 p-3 bg-line/20">
             <iframe

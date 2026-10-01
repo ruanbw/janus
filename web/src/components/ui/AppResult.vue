@@ -4,7 +4,7 @@
       <component :is="icon" :size="30" stroke-width="1.8" />
     </span>
     <h3 class="text-lg font-semibold text-ink">{{ title }}</h3>
-    <p v-if="subTitle" class="mt-1.5 max-w-md text-[13px] leading-relaxed text-ink-soft">{{ subTitle }}</p>
+    <p v-if="subTitle" class="mt-1.5 max-w-md text-xs leading-relaxed text-ink-soft">{{ subTitle }}</p>
     <div v-if="$slots.extra" class="mt-5"><slot name="extra" /></div>
   </div>
 </template>

@@ -6,8 +6,8 @@
   >
     <BrandMark :size="28" class="shrink-0" />
     <span v-if="showLabels" class="flex flex-col leading-tight">
-      <span class="text-[14.5px] font-bold tracking-tight text-white">CLOAK</span>
-      <span class="font-mono text-[10px] tracking-wider text-slate-400 uppercase">Cloak Console</span>
+      <span class="text-sm font-bold tracking-tight text-white">CLOAK</span>
+      <span class="font-mono text-2xs tracking-wider text-sidebar-ink uppercase">Cloak Console</span>
     </span>
   </RouterLink>
 </template>

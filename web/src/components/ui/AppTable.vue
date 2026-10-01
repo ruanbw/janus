@@ -2,14 +2,14 @@
   <div>
     <div class="relative overflow-hidden rounded-xl border border-line bg-surface">
       <div class="overflow-x-auto">
-        <table class="app-table w-full min-w-full border-collapse text-[13px]" :style="tableMinWidth">
+        <table class="app-table w-full min-w-full border-collapse" :style="tableMinWidth">
           <colgroup>
             <col v-for="col in columns" :key="col.key" :style="columnStyle(col)" />
           </colgroup>
           <thead>
             <tr>
               <th
-                v-for="col in columns"
+                v-for="(col, colIndex) in columns"
                 :key="col.key"
                 class="whitespace-nowrap border-b border-line bg-surface-muted px-4 py-2.5 font-semibold text-ink-soft"
                 :class="[
@@ -17,12 +17,21 @@
                 ]"
                 :style="columnStyle(col)"
               >
-                {{ col.title ?? '' }}
+                <slot name="header" :column="col" :index="colIndex">{{ col.title ?? '' }}</slot>
               </th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(record, rowIndex) in dataSource" :key="String(record[rowKey] ?? rowIndex)" class="group transition-colors hover:bg-surface-muted">
+            <tr
+              v-for="(record, rowIndex) in dataSource"
+              :key="String(record[rowKey] ?? rowIndex)"
+              class="group transition-colors hover:bg-surface-muted"
+              :class="[rowClickable ? 'cursor-pointer' : '', rowClass?.(record, rowIndex)]"
+              v-bind="rowProps?.(record, rowIndex) ?? {}"
+              :tabindex="rowClickable ? 0 : undefined"
+              @click="onRowClick(record, $event)"
+              @keydown="onRowKeydown(record, $event)"
+            >
               <td
                 v-for="col in columns"
                 :key="col.key"
@@ -41,7 +50,9 @@
             </tr>
             <tr v-if="dataSource.length === 0 && !loading">
               <td :colspan="columns.length" class="px-4 py-8">
-                <AppEmpty description="暂无数据" />
+                <slot name="empty" :columns="columns" :colspan="columns.length">
+                  <AppEmpty description="暂无数据" />
+                </slot>
               </td>
             </tr>
           </tbody>
@@ -102,27 +113,50 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, getCurrentInstance, ref, watch } from 'vue';
 import { ChevronLeft, ChevronRight, Loader2 } from '@lucide/vue';
 
 import AppEmpty from './AppEmpty.vue';
 import type { TableColumn, TablePaginationConfig } from './types';
 
-const props = withDefaults(
-  defineProps<{
+const props = withDefaults(defineProps<{
     columns: TableColumn[];
     dataSource: Record<string, unknown>[];
     loading?: boolean;
     rowKey?: string;
     pagination?: false | TablePaginationConfig;
     scroll?: { x?: number | string };
-  }>(),
-  { loading: false, rowKey: 'id', pagination: false },
-);
+    /** 行级 class,如按 outcome 给行加失败底色 */
+    rowClass?: (record: Record<string, unknown>, index: number) => string | undefined;
+    /** 行级透传属性,如 data-* 供 scoped 样式使用 */
+    rowProps?: (record: Record<string, unknown>, index: number) => Record<string, unknown> | undefined;
+    /**
+     * 行是否可点击。默认自动检测:挂了 @row-click 就启用(tabindex + 键盘可达),
+     * 显式传 false 可只保留样式不要点击行为。
+     */
+    rowClickable?: boolean;
+  }>(), { loading: false, rowKey: 'id', pagination: false });
 
 const emit = defineEmits<{
   change: [payload: { current: number; pageSize: number }];
+  rowClick: [record: Record<string, unknown>, event: MouseEvent | KeyboardEvent];
 }>();
+
+/** @row-click 存在与否决定行是否可聚焦;vnode.props 是这里唯一可靠的检测点 */
+const hasRowClickListener = !!getCurrentInstance()?.vnode.props?.['onRowClick'];
+const rowClickable = computed(() => props.rowClickable ?? hasRowClickListener);
+
+function onRowClick(record: Record<string, unknown>, event: MouseEvent): void {
+  if (!rowClickable.value) return;
+  emit('rowClick', record, event);
+}
+
+function onRowKeydown(record: Record<string, unknown>, event: KeyboardEvent): void {
+  if (!rowClickable.value) return;
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  event.preventDefault();
+  emit('rowClick', record, event);
+}
 
 const pageSizeOptions = [10, 20, 50];
 

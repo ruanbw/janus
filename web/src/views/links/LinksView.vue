@@ -1,595 +1,479 @@
 <template>
-  <div class="flex flex-col gap-5 pb-10" data-od-id="links-view">
-    <!-- ==================== 短链列表主面板 ==================== -->
-    <section class="panel" data-od-id="link-list">
-      <div class="panel-hd">
-        <div>
-          <h2>短链列表</h2>
-          <p>管理租户名下的短链，支持类型过滤、状态切换与出口多目标轮询配置。</p>
-        </div>
-        <div class="btn-row">
-          <button
-            type="button"
-            class="btn btn-sm"
-            :disabled="loading"
-            title="刷新短链列表"
-            @click="loadData"
-          >
-            <RefreshCw :size="13" :class="loading ? 'animate-spin' : ''" />
-            刷新
-          </button>
-          <button
-            type="button"
-            class="btn btn-sm"
-            @click="openBatchModal"
-          >
-            <Upload :size="13" />
-            批量导入
-          </button>
-          <button
-            type="button"
-            class="btn btn-sm"
-            :disabled="links.length === 0"
-            @click="exportCsv"
-          >
-            <FileDown :size="13" />
-            导出 CSV
-          </button>
-          <button
-            type="button"
-            class="btn btn-sm btn-primary"
-            id="newLink"
-            @click="goCreate"
-          >
-            <Plus :size="14" />
-            新建短链
-          </button>
-        </div>
-      </div>
+  <div class="pb-10" data-od-id="links-view">
+    <PageHeader
+      title="短链列表"
+      description="管理租户名下的短链，支持类型过滤、状态切换与出口多目标轮询配置。"
+    >
+      <template #actions>
+        <AppButton size="sm" variant="outline" :loading="loading" title="刷新短链列表" @click="loadData">
+          <template #icon><RefreshCw :size="13" /></template>
+          刷新
+        </AppButton>
+        <AppButton size="sm" variant="outline" @click="openBatchModal">
+          <template #icon><Upload :size="13" /></template>
+          批量导入
+        </AppButton>
+        <AppButton
+          size="sm"
+          variant="outline"
+          :disabled="links.length === 0"
+          @click="exportCsv"
+        >
+          <template #icon><FileDown :size="13" /></template>
+          导出 CSV
+        </AppButton>
+        <AppButton size="sm" type="primary" @click="goCreate">
+          <template #icon><Plus :size="14" /></template>
+          新建短链
+        </AppButton>
+      </template>
+    </PageHeader>
 
-      <!-- 批量操作条:有选中项时出现 -->
-      <div
-        v-if="selectedCount > 0"
-        class="row-between flex-wrap gap-3"
-        style="padding: 8px 12px; margin: 0 14px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--accent-soft)"
-        data-od-id="link-batch-bar"
+    <!-- 批量操作条:有选中项时出现 -->
+    <div
+      v-if="selectedCount > 0"
+      class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 dark:border-brand-800 dark:bg-brand-950/40"
+      data-od-id="link-batch-bar"
+    >
+      <div class="flex items-center gap-2 text-xs text-ink-soft">
+        <CheckSquare :size="14" />
+        <span>
+          已选
+          <strong class="font-mono text-ink">{{ selectedCount }}</strong>
+          / {{ filteredLinks.length }} 条(当前页筛选结果)
+        </span>
+      </div>
+      <div class="flex items-center gap-2">
+        <AppButton size="sm" variant="outline" :disabled="batchOperating" @click="clearSelection">
+          <template #icon><X :size="12" /></template>
+          清空选择
+        </AppButton>
+        <AppButton
+          size="sm"
+          variant="outline"
+          class="border-err/60 text-err hover:border-err hover:text-err"
+          :disabled="batchOperating"
+          title="批量逻辑删除:记录与历史访问明细保留,「域名/短码」不再对外重定向"
+          @click="handleBatchDelete"
+        >
+          <template #icon><Trash2 :size="12" /></template>
+          批量逻辑删除
+        </AppButton>
+        <AppButton
+          size="sm"
+          variant="destructive"
+          :disabled="batchOperating"
+          title="批量彻底删除:物理移除短链及全部历史访问明细,不可撤销"
+          @click="handleBatchPurge"
+        >
+          <template #icon><Flame :size="12" /></template>
+          批量彻底删除
+        </AppButton>
+      </div>
+    </div>
+
+    <!-- 搜索与筛选工具栏 -->
+    <div class="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_180px_180px_auto]">
+      <AppInput
+        v-model="keyword"
+        allow-clear
+        aria-label="搜索短链"
+        placeholder="搜索短码、域名、目标 URL 或规则名…"
       >
-        <div class="row tiny" style="gap: 8px">
-          <CheckSquare :size="14" />
-          <span>
-            已选
-            <strong class="text-ink font-mono">{{ selectedCount }}</strong>
-            / {{ filteredLinks.length }} 条(当前页筛选结果)
-          </span>
-        </div>
-        <div class="row" style="gap: 8px">
-          <button
-            type="button"
-            class="btn btn-sm"
-            :disabled="batchOperating"
-            @click="clearSelection"
-          >
-            <X :size="12" />
-            清空选择
-          </button>
-          <button
-            type="button"
-            class="btn btn-sm btn-danger"
-            :disabled="batchOperating"
-            title="批量逻辑删除:记录与历史访问明细保留,「域名/短码」不再对外重定向"
-            @click="handleBatchDelete"
-          >
-            <Trash2 :size="12" />
-            批量逻辑删除
-          </button>
-          <button
-            type="button"
-            class="btn btn-sm btn-danger-solid"
-            :disabled="batchOperating"
-            title="批量彻底删除:物理移除短链及全部历史访问明细,不可撤销"
-            @click="handleBatchPurge"
-          >
-            <Flame :size="12" />
-            批量彻底删除
-          </button>
-        </div>
-      </div>
+        <template #prefix><Search :size="15" class="text-ink-faint" /></template>
+      </AppInput>
+      <AppSelect v-model="typeFilter" :options="TYPE_FILTER_OPTIONS" aria-label="按类型过滤" />
+      <AppSelect v-model="statusFilter" :options="STATUS_FILTER_OPTIONS" aria-label="按状态过滤" />
+      <AppButton
+        v-if="hasActiveFilter"
+        size="sm"
+        variant="ghost"
+        class="justify-self-start text-ink-soft"
+        @click="resetFilters"
+      >
+        <template #icon><X :size="13" /></template>
+        清空过滤
+      </AppButton>
+    </div>
 
-      <!-- 搜索与筛选工具栏 -->
-      <div class="panel-bd">
-        <div class="toolbar">
-          <div class="relative grow min-w-[200px]">
-            <input
-              v-model="keyword"
-              class="input input-icon"
-              id="linkSearch"
-              placeholder="搜索短码、域名、目标 URL 或规则名…"
-              aria-label="搜索短链"
-            />
-            <Search
-              :size="14"
-              class="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
-            />
-          </div>
-          <select
-            v-model="typeFilter"
-            class="select"
-            id="typeFilter"
-            aria-label="按类型过滤"
-          >
-            <option value="all">全部类型</option>
-            <option value="redirect">跳转型 (redirect)</option>
-            <option value="landing">落地页型 (landing)</option>
-          </select>
-          <select
-            v-model="statusFilter"
-            class="select"
-            id="linkStatus"
-            aria-label="按状态过滤"
-          >
-            <option value="all">全部状态</option>
-            <option value="enabled">已启用 (enabled)</option>
-            <option value="disabled">已停用 (disabled)</option>
-          </select>
-          <button
-            v-if="hasActiveFilter"
-            type="button"
-            class="btn btn-sm btn-ghost text-muted hover:text-fg"
-            @click="resetFilters"
-          >
-            <X :size="13" />
-            清空过滤
-          </button>
-        </div>
-      </div>
+    <!-- 表格数据区 -->
+    <AppTable
+      :columns="columns"
+      :data-source="tableData"
+      :loading="loading"
+      :scroll="{ x: 1180 }"
+      row-key="id"
+    >
+      <!-- 表头：首列放全选框,其余列回落到 column.title -->
+      <template #header="{ column }">
+        <AppCheckbox
+          v-if="column.key === 'select'"
+          :model-value="allSelected"
+          :indeterminate="someSelected"
+          :disabled="filteredLinks.length === 0"
+          aria-label="全选当前页短链"
+          @change="toggleSelectAll"
+        />
+        <template v-else>{{ column.title }}</template>
+      </template>
 
-      <!-- 表格数据区 -->
-      <div class="tbl-wrap">
-        <table class="tbl" id="linkTable">
-          <thead>
-            <tr>
-              <th class="shrink">
-                <input
-                  type="checkbox"
-                  class="h-4 w-4 rounded accent-brand-600 align-middle"
-                  :checked="allSelected"
-                  :indeterminate.prop="someSelected"
-                  :disabled="filteredLinks.length === 0"
-                  aria-label="全选当前页短链"
-                  @change="toggleSelectAll"
-                />
-              </th>
-              <th>短链链接</th>
-              <th class="shrink">类型</th>
-              <th>出口目标 URL</th>
-              <th
-                class="num"
-                title="访问 = 跳转 / 落地页视图的次数(点击行不计入);点击 = 落地页按钮经 SDK 回传的次数。点击数字可查看访问明细"
+      <template #empty>
+        <AppEmpty
+          :description="
+            links.length === 0
+              ? '暂无短链记录，请点击下方按钮创建第一条短链'
+              : '未找到符合当前筛选条件的短链记录'
+          "
+        />
+        <div class="mt-3 flex justify-center">
+          <AppButton v-if="links.length === 0" size="sm" type="primary" @click="goCreate">
+            <template #icon><Plus :size="14" /></template>
+            新建短链
+          </AppButton>
+          <AppButton v-else size="sm" @click="resetFilters">重置过滤条件</AppButton>
+        </div>
+      </template>
+
+      <template #cell="{ column, record }">
+        <!-- 多选 -->
+        <template v-if="column.key === 'select'">
+          <AppCheckbox
+            :model-value="isSelected(toLink(record).id)"
+            :aria-label="'选中短链 ' + toLink(record).code"
+            @change="toggleSelectOne(toLink(record).id)"
+          />
+        </template>
+
+        <!-- 短链链接:每个关联域名一行完整短链(同短码可被多条域名承载) -->
+        <template v-else-if="column.key === 'link'">
+          <div class="flex flex-col gap-[3px]">
+            <div
+              v-for="url in linkUrls(toLink(record))"
+              :key="url"
+              class="flex min-w-0 items-center gap-1.5"
+            >
+              <a
+                :href="url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="truncate font-mono text-xs underline underline-offset-2 decoration-line-strong hover:decoration-ink"
+                :style="{ maxWidth: 'min(100%, 450px)' }"
+                :title="url + '（新标签页打开）'"
+                @click.stop
               >
-                访问 / 点击
-              </th>
-              <th class="shrink" style="min-width: 118px">状态</th>
-              <th class="shrink" style="width: 220px" title="适用于该短链的规则（全局规则 + 显式关联的规则）">
-                规则
-              </th>
-              <th class="shrink col-actions">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <!-- 加载态 -->
-            <tr v-if="loading && links.length === 0">
-              <td colspan="8" class="empty">
-                <div class="flex items-center justify-center gap-2 text-muted py-6">
-                  <RefreshCw class="animate-spin" :size="16" />
-                  正在加载短链数据...
-                </div>
-              </td>
-            </tr>
-
-            <!-- 空状态 -->
-            <tr v-else-if="filteredLinks.length === 0">
-              <td colspan="8" class="py-8">
-                <AppEmpty
-                  :description="links.length === 0 ? '暂无短链记录，请点击下方按钮创建第一条短链' : '未找到符合当前筛选条件的短链记录'"
-                />
-                <div class="flex justify-center mt-3">
-                  <button
-                    v-if="links.length === 0"
-                    type="button"
-                    class="btn btn-sm btn-primary"
-                    @click="goCreate"
-                  >
-                    <Plus :size="14" />
-                    新建短链
-                  </button>
-                  <button
-                    v-else
-                    type="button"
-                    class="btn btn-sm"
-                    @click="resetFilters"
-                  >
-                    重置过滤条件
-                  </button>
-                </div>
-              </td>
-            </tr>
-
-            <!-- 列表行 -->
-            <tr
-              v-for="link in filteredLinks"
-              :key="link.id"
-              :data-status="link.status === 'enabled' ? 'on' : 'off'"
-            >
-              <!-- 多选 -->
-              <td class="shrink">
-                <input
-                  type="checkbox"
-                  class="h-4 w-4 rounded accent-brand-600 align-middle"
-                  :checked="isSelected(link.id)"
-                  :aria-label="'选中短链 ' + link.code"
-                  @change="toggleSelectOne(link.id)"
-                />
-              </td>
-              <!-- 短链链接:每个关联域名一行完整短链(同短码可被多条域名承载) -->
-              <td>
-                <div class="stack" style="gap: 3px">
-                  <div
-                    v-for="url in linkUrls(link)"
-                    :key="url"
-                    class="row"
-                    style="gap: 6px; flex-wrap: nowrap; min-width: 0"
-                  >
-                    <a
-                      :href="url"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      class="linkish mono tiny truncate"
-                      style="max-width: min(100%, 450px)"
-                      :title="url + '（新标签页打开）'"
-                      @click.stop
-                    >
-                      {{ url }}
-                    </a>
-                    <button
-                      type="button"
-                      class="icon-btn"
-                      style="width: 22px; height: 22px; border: none; background: transparent; padding: 0"
-                      :title="'复制 ' + url"
-                      @click.stop="copyText(url)"
-                    >
-                      <Copy :size="12" />
-                    </button>
-                  </div>
-                </div>
-              </td>
-
-              <!-- 类型 -->
-              <td class="shrink">
-                <span v-if="link.linkType === 'landing'" class="badge badge-neutral">
-                  落地页型
-                </span>
-                <span v-else class="badge badge-neutral">
-                  跳转型 · {{ link.redirectStatus || '302' }}
-                </span>
-              </td>
-
-              <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序。自动适应宽度,超长悬停 tooltip -->
-              <td>
-                <div class="stack" style="gap: 3px">
-                  <div
-                    v-if="link.targetUrls && link.targetUrls.length > 1"
-                    class="tiny muted"
-                  >
-                    {{ link.targetUrls.length }} 个目标 · 轮询分发
-                  </div>
-                  <div
-                    v-for="(url, i) in link.targetUrls || []"
-                    :key="url + '-' + i"
-                    class="row"
-                    style="gap: 6px; flex-wrap: nowrap; min-width: 0"
-                  >
-                    <span
-                      v-if="link.targetUrls && link.targetUrls.length > 1"
-                      class="badge badge-neutral micro shrink-0"
-                      :title="'轮询顺序第 ' + (i + 1) + ' 位'"
-                    >
-                      {{ i + 1 }}
-                    </span>
-                    <AppTooltip
-                      :title="url"
-                      class="max-w-md whitespace-normal break-all"
-                    >
-                      <span class="mono tiny truncate min-w-0 flex-1">{{ url }}</span>
-                    </AppTooltip>
-                  </div>
-                  <span
-                    v-if="!link.targetUrls || link.targetUrls.length === 0"
-                    class="tiny muted"
-                  >
-                    —
-                  </span>
-                </div>
-              </td>
-
-              <!-- 访问 / 点击:访问 = 跳转 / 落地页视图,点击 = 落地页按钮回传(仅落地页型有意义) -->
-              <td class="num">
-                <button
-                  type="button"
-                  class="metric-link"
-                  :title="'查看短链「' + link.code + '」的访问明细'"
-                  :aria-label="'查看短链 ' + link.code + ' 的访问明细'"
-                  @click="goVisits(link)"
-                >
-                  <span class="metric-part metric-visits" title="访问次数:跳转 / 落地页视图">
-                    {{ (link.visits || 0).toLocaleString() }}
-                  </span>
-                  <span class="metric-sep" aria-hidden="true">/</span>
-                  <span
-                    class="metric-part metric-clicks"
-                    :class="{ 'is-empty': link.linkType !== 'landing' }"
-                    :title="link.linkType === 'landing' ? '落地页点击次数' : '非落地页型短链无点击统计'"
-                  >
-                    {{ link.linkType === 'landing' ? (link.clicks || 0).toLocaleString() : '—' }}
-                  </span>
-                  <ChevronRight :size="12" class="metric-arrow" aria-hidden="true" />
-                </button>
-              </td>
-
-
-              <!-- 状态：开关与文案同格。原先这里是「状态」徽标 + 「启用」开关两列,
-                   但两者读的都是 link.status,扫一行得看两处才确认得了状态。 -->
-              <td class="shrink">
-                <div class="row" style="gap: 8px; flex-wrap: nowrap">
-                  <label class="switch">
-                    <input
-                      type="checkbox"
-                      :checked="link.status === 'enabled'"
-                      :disabled="statusUpdatingId === link.id"
-                      :aria-label="(link.status === 'enabled' ? '停用短链 ' : '启用短链 ') + link.code"
-                      @change="onToggleLinkStatus(link)"
-                    />
-                    <i></i>
-                  </label>
-                  <span
-                    class="tiny whitespace-nowrap"
-                    :class="link.status === 'enabled' ? 'text-ink' : 'text-ink-faint'"
-                  >
-                    {{ link.status === 'enabled' ? '已启用' : '已停用' }}
-                  </span>
-                </div>
-              </td>
-
-              <!-- 规则：短链维度开关 + 适用规则摘要 -->
-              <td class="shrink">
-                <div class="row items-center" style="gap: 8px; flex-wrap: nowrap">
-                  <label
-                    class="switch"
-                    :title="
-                      link.ruleCount === 0
-                        ? '未关联规则'
-                        : link.rulesEnabled
-                          ? '点击停用当前短链的规则'
-                          : '点击启用当前短链的规则'
-                    "
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="link.rulesEnabled"
-                      :disabled="rulesUpdatingId === link.id"
-                      :aria-label="(link.rulesEnabled ? '停用短链规则 ' : '启用短链规则 ') + link.code"
-                      @change="onToggleLinkRules(link)"
-                    />
-                    <i></i>
-                  </label>
-                  <template v-if="!link.rulesEnabled">
-                    <span
-                      class="tiny text-ink-faint whitespace-nowrap"
-                      :title="
-                        link.ruleCount > 0
-                          ? '当前短链规则已停用（适用 ' +
-                            (link.ruleNames || []).join('、') +
-                            (link.ruleCount > (link.ruleNames || []).length
-                              ? ' 等 ' + link.ruleCount + ' 条'
-                              : '') +
-                            '）'
-                          : '未关联规则'
-                      "
-                    >
-                      已停用{{ link.ruleCount > 0 ? ` (${link.ruleCount} 条)` : '' }}
-                    </span>
-                  </template>
-                  <template v-else-if="link.ruleCount === 0">
-                    <span class="tiny muted whitespace-nowrap">未关联规则</span>
-                  </template>
-                  <template v-else>
-                    <div
-                      class="row"
-                      style="gap: 4px; flex-wrap: nowrap; max-width: 160px; overflow: hidden"
-                      :title="
-                        '适用规则：' +
-                        (link.ruleNames || []).join('、') +
-                        (link.ruleCount > (link.ruleNames || []).length
-                          ? ' 等 ' + link.ruleCount + ' 条'
-                          : '')
-                      "
-                    >
-                      <span
-                        v-for="name in visibleRuleNames(link)"
-                        :key="name"
-                        class="badge badge-neutral micro min-w-0 truncate"
-                        style="max-width: 75px"
-                        :title="name"
-                      >
-                        {{ name }}
-                      </span>
-                      <span
-                        v-if="link.ruleCount > visibleRuleNames(link).length"
-                        class="mono micro shrink-0 text-ink-faint"
-                        :title="'还有 ' + (link.ruleCount - visibleRuleNames(link).length) + ' 条规则'"
-                      >
-                        +{{ link.ruleCount - visibleRuleNames(link).length }}
-                      </span>
-                      <span
-                        v-if="inheritedRuleCount(link) > 0 && (link.rules || []).length === 0"
-                        class="micro shrink-0 text-ink-faint"
-                        title="全局规则对所有短链生效"
-                      >
-                        · {{ inheritedRuleCount(link) }} 条全局
-                      </span>
-                    </div>
-                  </template>
-                </div>
-              </td>
-
-              <!-- 操作 -->
-              <td class="shrink col-actions">
-                <div class="row" style="gap: 4px; flex-wrap: nowrap">
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-ghost"
-                    title="编辑短链"
-                    @click="goEdit(link)"
-                  >
-                    <Pencil :size="12" />
-                    编辑
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-ghost btn-ghost-danger"
-                    title="逻辑删除（保留记录与历史数据）"
-                    @click="handleDeleteLink(link)"
-                  >
-                    <Trash2 :size="12" />
-                    删除
-                  </button>
-                  <button
-                    type="button"
-                    class="btn btn-sm btn-ghost btn-ghost-danger text-xs opacity-60 hover:opacity-100"
-                    title="彻底清除（物理删除全部数据）"
-                    @click="handlePurgeLink(link)"
-                  >
-                    彻底删除
-                  </button>
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-
-      <!-- 底栏与真实分页 -->
-      <div class="panel-ft row-between flex-wrap gap-3">
-        <div class="row tiny muted" style="gap: 12px">
-          <span>共 <strong class="text-ink font-mono">{{ total }}</strong> 条短链</span>
-        </div>
-        <div class="row" style="gap: 10px">
-          <div class="row tiny muted" style="gap: 6px">
-            <span>每页</span>
-            <select
-              v-model.number="pageSize"
-              class="select"
-              style="min-height: 28px; padding: 2px 20px 2px 8px; font-size: 12px"
-              @change="onPageSizeChange"
-            >
-              <option :value="10">10</option>
-              <option :value="20">20</option>
-              <option :value="50">50</option>
-              <option :value="100">100</option>
-            </select>
-            <span>条</span>
+                {{ url }}
+              </a>
+              <AppButton
+                size="icon"
+                variant="ghost"
+                class="h-[22px] w-[22px] text-ink-faint hover:text-ink"
+                :title="'复制 ' + url"
+                @click.stop="copyText(url)"
+              >
+                <template #icon><Copy :size="12" /></template>
+              </AppButton>
+            </div>
           </div>
-          <div class="row" style="gap: 6px">
-            <button
-              type="button"
-              class="btn btn-sm"
-              :disabled="page <= 1 || loading"
-              @click="goToPage(page - 1)"
+        </template>
+
+        <!-- 类型 -->
+        <template v-else-if="column.key === 'type'">
+          <AppTag color="default">
+            {{
+              toLink(record).linkType === 'landing'
+                ? '落地页型'
+                : `跳转型 · ${toLink(record).redirectStatus || '302'}`
+            }}
+          </AppTag>
+        </template>
+
+        <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序。自动适应宽度,超长悬停 tooltip -->
+        <template v-else-if="column.key === 'targets'">
+          <div class="flex flex-col gap-[3px]">
+            <div v-if="(toLink(record).targetUrls || []).length > 1" class="text-xs text-ink-soft">
+              {{ toLink(record).targetUrls.length }} 个目标 · 轮询分发
+            </div>
+            <div
+              v-for="(url, i) in toLink(record).targetUrls || []"
+              :key="url + '-' + i"
+              class="flex min-w-0 items-center gap-1.5"
             >
-              上一页
-            </button>
-            <span class="mono tiny muted self-center px-1">
-              {{ page }} / {{ totalPages }}
+              <span
+                v-if="(toLink(record).targetUrls || []).length > 1"
+                class="shrink-0 rounded-xs border border-line bg-surface-strong/70 px-1 font-mono text-2xs leading-[1.4] text-ink-soft"
+                :title="'轮询顺序第 ' + (i + 1) + ' 位'"
+              >
+                {{ i + 1 }}
+              </span>
+              <AppTooltip :title="url" class="max-w-md whitespace-normal break-all">
+                <span class="min-w-0 flex-1 truncate font-mono text-xs">{{ url }}</span>
+              </AppTooltip>
+            </div>
+            <span v-if="(toLink(record).targetUrls || []).length === 0" class="text-xs text-ink-soft">
+              —
             </span>
-            <button
-              type="button"
-              class="btn btn-sm"
-              :disabled="page >= totalPages || loading"
-              @click="goToPage(page + 1)"
-            >
-              下一页
-            </button>
           </div>
+        </template>
+
+        <!-- 访问 / 点击:访问 = 跳转 / 落地页视图,点击 = 落地页按钮回传(仅落地页型有意义) -->
+        <template v-else-if="column.key === 'visits'">
+          <AppButton
+            variant="link"
+            size="sm"
+            class="metric-link h-auto px-1 py-0.5 text-xs"
+            :title="'访问 = 跳转 / 落地页视图次数(点击行不计入);点击 = 落地页按钮经 SDK 回传的次数。查看短链「' + toLink(record).code + '」的访问明细'"
+            :aria-label="'查看短链 ' + toLink(record).code + ' 的访问明细'"
+            @click="goVisits(toLink(record))"
+          >
+            <span class="metric-part metric-visits" title="访问次数:跳转 / 落地页视图">
+              {{ (toLink(record).visits || 0).toLocaleString() }}
+            </span>
+            <span class="metric-sep" aria-hidden="true">/</span>
+            <span
+              class="metric-part metric-clicks"
+              :class="{ 'is-empty': toLink(record).linkType !== 'landing' }"
+              :title="toLink(record).linkType === 'landing' ? '落地页点击次数' : '非落地页型短链无点击统计'"
+            >
+              {{
+                toLink(record).linkType === 'landing'
+                  ? (toLink(record).clicks || 0).toLocaleString()
+                  : '—'
+              }}
+            </span>
+            <ChevronRight :size="12" class="metric-arrow" aria-hidden="true" />
+          </AppButton>
+        </template>
+
+        <!-- 状态：开关与文案同格。原先这里是「状态」徽标 + 「启用」开关两列,
+             但两者读的都是 link.status,扫一行得看两处才确认得了状态。 -->
+        <template v-else-if="column.key === 'status'">
+          <div class="flex items-center gap-2 whitespace-nowrap">
+            <AppSwitch
+              :model-value="toLink(record).status === 'enabled'"
+              :disabled="statusUpdatingId === toLink(record).id"
+              :aria-label="
+                (toLink(record).status === 'enabled' ? '停用短链 ' : '启用短链 ') +
+                toLink(record).code
+              "
+              @change="onToggleLinkStatus(toLink(record))"
+            />
+            <span
+              class="text-xs whitespace-nowrap"
+              :class="toLink(record).status === 'enabled' ? 'text-ink' : 'text-ink-faint'"
+            >
+              {{ toLink(record).status === 'enabled' ? '已启用' : '已停用' }}
+            </span>
+          </div>
+        </template>
+
+        <!-- 规则：短链维度开关 + 适用规则摘要 -->
+        <template v-else-if="column.key === 'rules'">
+          <div class="flex items-center gap-2 whitespace-nowrap">
+            <AppSwitch
+              :model-value="toLink(record).rulesEnabled"
+              :disabled="rulesUpdatingId === toLink(record).id"
+              :title="
+                toLink(record).ruleCount === 0
+                  ? '未关联规则'
+                  : toLink(record).rulesEnabled
+                    ? '点击停用当前短链的规则'
+                    : '点击启用当前短链的规则'
+              "
+              :aria-label="
+                (toLink(record).rulesEnabled ? '停用短链规则 ' : '启用短链规则 ') +
+                toLink(record).code
+              "
+              @change="onToggleLinkRules(toLink(record))"
+            />
+            <template v-if="!toLink(record).rulesEnabled">
+              <span
+                class="text-xs whitespace-nowrap text-ink-faint"
+                :title="
+                  toLink(record).ruleCount > 0
+                    ? '当前短链规则已停用（适用 ' +
+                      (toLink(record).ruleNames || []).join('、') +
+                      (toLink(record).ruleCount > (toLink(record).ruleNames || []).length
+                        ? ' 等 ' + toLink(record).ruleCount + ' 条'
+                        : '') +
+                      '）'
+                    : '未关联规则'
+                "
+              >
+                已停用{{ toLink(record).ruleCount > 0 ? ` (${toLink(record).ruleCount} 条)` : '' }}
+              </span>
+            </template>
+            <template v-else-if="toLink(record).ruleCount === 0">
+              <span class="text-xs whitespace-nowrap text-ink-soft">未关联规则</span>
+            </template>
+            <template v-else>
+              <div
+                class="flex items-center gap-1 overflow-hidden"
+                style="max-width: 160px"
+                :title="
+                  '适用规则：' +
+                  (toLink(record).ruleNames || []).join('、') +
+                  (toLink(record).ruleCount > (toLink(record).ruleNames || []).length
+                    ? ' 等 ' + toLink(record).ruleCount + ' 条'
+                    : '')
+                "
+              >
+                <AppTag
+                  v-for="name in visibleRuleNames(toLink(record))"
+                  :key="name"
+                  color="default"
+                  class="max-w-[75px] truncate text-2xs"
+                  :title="name"
+                >
+                  {{ name }}
+                </AppTag>
+                <span
+                  v-if="toLink(record).ruleCount > visibleRuleNames(toLink(record)).length"
+                  class="shrink-0 font-mono text-2xs text-ink-faint"
+                  :title="'还有 ' + (toLink(record).ruleCount - visibleRuleNames(toLink(record)).length) + ' 条规则'"
+                >
+                  +{{ toLink(record).ruleCount - visibleRuleNames(toLink(record)).length }}
+                </span>
+                <span
+                  v-if="inheritedRuleCount(toLink(record)) > 0 && (toLink(record).rules || []).length === 0"
+                  class="shrink-0 text-2xs text-ink-faint"
+                  title="全局规则对所有短链生效"
+                >
+                  · {{ inheritedRuleCount(toLink(record)) }} 条全局
+                </span>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- 操作 -->
+        <template v-else-if="column.key === 'actions'">
+          <div class="flex items-center gap-1">
+            <AppButton size="sm" variant="ghost" title="编辑短链" @click="goEdit(toLink(record))">
+              <template #icon><Pencil :size="12" /></template>
+              编辑
+            </AppButton>
+            <AppButton
+              size="sm"
+              variant="ghost"
+              class="text-err hover:bg-err/10 hover:text-err"
+              title="逻辑删除（保留记录与历史数据）"
+              @click="handleDeleteLink(toLink(record))"
+            >
+              <template #icon><Trash2 :size="12" /></template>
+              删除
+            </AppButton>
+            <AppButton
+              size="sm"
+              variant="ghost"
+              class="text-err opacity-60 hover:bg-err/10 hover:text-err hover:opacity-100"
+              title="彻底清除（物理删除全部数据）"
+              @click="handlePurgeLink(toLink(record))"
+            >
+              彻底删除
+            </AppButton>
+          </div>
+        </template>
+      </template>
+    </AppTable>
+
+    <!-- 底栏与真实分页 -->
+    <div class="mt-4 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-3 text-xs text-ink-soft">
+        <span>共 <strong class="font-mono text-ink">{{ total }}</strong> 条短链</span>
+      </div>
+      <div class="flex items-center gap-2.5">
+        <div class="flex items-center gap-1.5 text-xs text-ink-soft">
+          <span>每页</span>
+          <AppSelect
+            v-model="pageSize"
+            size="sm"
+            class="w-[76px]"
+            :options="PAGE_SIZE_OPTIONS"
+            @change="onPageSizeChange"
+          />
+          <span>条</span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <AppButton
+            size="sm"
+            variant="outline"
+            :disabled="page <= 1 || loading"
+            @click="goToPage(page - 1)"
+          >
+            上一页
+          </AppButton>
+          <span class="px-1 font-mono text-xs text-ink-soft">
+            {{ page }} / {{ totalPages }}
+          </span>
+          <AppButton
+            size="sm"
+            variant="outline"
+            :disabled="page >= totalPages || loading"
+            @click="goToPage(page + 1)"
+          >
+            下一页
+          </AppButton>
         </div>
       </div>
-    </section>
+    </div>
 
     <!-- ==================== 模态框: 批量导入短链 ==================== -->
     <div
       v-if="showBatchModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-xs p-4"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs"
     >
-      <div class="panel w-full max-w-lg shadow-2xl">
-        <div class="panel-hd">
-          <div>
-            <h2 class="text-base font-bold">批量导入短链</h2>
-            <p>每行一条短链，支持「短码 目标URL」或仅「目标URL」自动生成短码。</p>
+      <AppCard :padding="false" class="w-full max-w-lg shadow-2xl">
+        <div class="flex items-start justify-between gap-3.5 p-4 pb-3">
+          <div class="space-y-1">
+            <h3 class="text-base font-bold leading-tight text-ink">批量导入短链</h3>
+            <p class="text-xs text-ink-faint">
+              每行一条短链，支持「短码 目标URL」或仅「目标URL」自动生成短码。
+            </p>
           </div>
-          <button
-            type="button"
-            class="icon-btn text-muted hover:text-fg"
+          <AppButton
+            size="icon"
+            variant="ghost"
+            class="h-8 w-8 text-ink-soft"
+            aria-label="关闭"
             @click="showBatchModal = false"
           >
-            <X :size="15" />
-          </button>
+            <template #icon><X :size="15" /></template>
+          </AppButton>
         </div>
-        <div class="panel-bd stack">
-          <div class="field">
-            <label for="batchDomain">指定承载域名</label>
-            <select v-model="batchDomainId" class="select" id="batchDomain">
-              <option
-                v-for="d in domains"
-                :key="d.id"
-                :value="d.id"
-                :disabled="d.status !== 'active'"
-              >
-                {{ d.fqdn }} ({{ d.origin === 'self' ? '自有' : '默认' }}){{ d.status !== 'active' ? ' - ' + (DOMAIN_STATUS_NOTE[d.status] || '未激活') : '' }}
-              </option>
-            </select>
-          </div>
-          <div class="field">
-            <label for="batchInput">短链行列表</label>
-            <textarea
+        <div class="flex flex-col gap-3 px-4 pb-4">
+          <AppFormItem label="指定承载域名" name="batchDomain">
+            <AppSelect v-model="batchDomainId" :options="batchDomainOptions" placeholder="请选择承载域名" />
+          </AppFormItem>
+          <AppFormItem
+            label="短链行列表"
+            name="batchInput"
+            extra="每行一条，短码与 URL 用空格分隔；若只有 URL 则由后端自动生成短码"
+          >
+            <AppTextarea
               v-model="batchText"
-              class="textarea mono"
-              id="batchInput"
-              rows="6"
+              :rows="6"
+              class="font-mono"
               placeholder="deal-a https://example.com/target-a&#10;deal-b https://example.com/target-b&#10;https://example.com/target-c"
-            ></textarea>
-            <span class="hint">每行一条，短码与 URL 用空格分隔；若只有 URL 则由后端自动生成短码</span>
-          </div>
+            />
+          </AppFormItem>
         </div>
-        <div class="panel-ft row-between">
-          <span class="tiny text-muted">有效行数：{{ parsedBatchLinesCount }}</span>
-          <div class="row" style="gap: 8px">
-            <button
-              type="button"
-              class="btn btn-sm"
-              :disabled="batchImporting"
-              @click="showBatchModal = false"
-            >
+        <div class="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
+          <span class="text-xs text-ink-soft">有效行数：{{ parsedBatchLinesCount }}</span>
+          <div class="flex items-center gap-2">
+            <AppButton size="sm" variant="outline" :disabled="batchImporting" @click="showBatchModal = false">
               取消
-            </button>
-            <button
-              type="button"
-              class="btn btn-sm btn-primary"
+            </AppButton>
+            <AppButton
+              size="sm"
+              type="primary"
               :disabled="batchImporting || parsedBatchLinesCount === 0"
               @click="executeBatchImport"
             >
               {{ batchImporting ? '导入中...' : '开始导入' }}
-            </button>
+            </AppButton>
           </div>
         </div>
-      </div>
+      </AppCard>
     </div>
   </div>
 </template>
@@ -627,18 +511,11 @@ import {
   updateLink,
   uploadLanding,
 } from '@/api/links';
-import AppEmpty from '@/components/ui/AppEmpty.vue';
+import type { TableColumn } from '@/components/ui/types';
 import { confirm } from '@/components/ui/confirm';
 
 import { ApiError } from '@/types/api';
-import type {
-  Domain,
-  LandingSource,
-  Link,
-  LinkStatus,
-  LinkType,
-  RedirectStatus,
-} from '@/types/api';
+import type { Domain, Link, LinkStatus } from '@/types/api';
 import { formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 
@@ -707,9 +584,43 @@ const activeDomains = computed(() => {
   return domains.value.filter((d) => d.status === 'active');
 });
 
+// ==================== 表格列定义与工具栏选项 ====================
+const columns: TableColumn[] = [
+  { key: 'select', title: '', width: 48 },
+  { key: 'link', title: '短链链接' },
+  { key: 'type', title: '类型', width: 96 },
+  { key: 'targets', title: '出口目标 URL' },
+  { key: 'visits', title: '访问 / 点击', width: 140 },
+  { key: 'status', title: '状态', width: 118 },
+  { key: 'rules', title: '规则', width: 220 },
+  { key: 'actions', title: '操作', width: 280 },
+];
+
+const TYPE_FILTER_OPTIONS = [
+  { value: 'all', label: '全部类型' },
+  { value: 'redirect', label: '跳转型' },
+  { value: 'landing', label: '落地页型' },
+];
+
+const STATUS_FILTER_OPTIONS = [
+  { value: 'all', label: '全部状态' },
+  { value: 'enabled', label: '已启用' },
+  { value: 'disabled', label: '已停用' },
+];
+
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100].map((size) => ({ value: size, label: String(size) }));
+
 const hasActiveFilter = computed(() => {
   return keyword.value.trim() !== '' || typeFilter.value !== 'all' || statusFilter.value !== 'all';
 });
+
+/**
+ * AppTable 的行记录是 `Record<string, unknown>`,单元格插槽里统一过一道,
+ * 免得每处都写 `record.code as string`(与 RulesListView / DomainsView 一致)。
+ */
+function toLink(record: Record<string, unknown>): Link {
+  return record as unknown as Link;
+}
 
 const filteredLinks = computed(() => {
   const q = keyword.value.trim().toLowerCase();
@@ -734,6 +645,9 @@ const filteredLinks = computed(() => {
     return okKeyword && okType && okStatus;
   });
 });
+
+/** AppTable 的 dataSource(与 RulesListView / DomainsView 同一套转法) */
+const tableData = computed(() => filteredLinks.value as unknown as Record<string, unknown>[]);
 
 // ==================== 多选与批量删除 ====================
 const selectedIds = ref<number[]>([]);
@@ -843,6 +757,16 @@ const parsedBatchLinesCount = computed(() => {
     .map((s) => s.trim())
     .filter(Boolean).length;
 });
+
+const batchDomainOptions = computed(() =>
+  domains.value.map((d) => ({
+    value: d.id,
+    label: `${d.fqdn} (${d.origin === 'self' ? '自有' : '默认'})${
+      d.status !== 'active' ? ` - ${DOMAIN_STATUS_NOTE[d.status] || '未激活'}` : ''
+    }`,
+    disabled: d.status !== 'active',
+  })),
+);
 
 // ==================== 数据加载 ====================
 async function loadData() {
@@ -1186,11 +1110,11 @@ onUnmounted(() => {
 }
 
 .metric-visits {
-  color: var(--fg);
+  color: var(--ink);
 }
 
 .metric-clicks {
-  color: var(--muted);
+  color: var(--ink-soft);
 }
 
 .metric-clicks.is-empty {
@@ -1212,11 +1136,11 @@ onUnmounted(() => {
 }
 
 .metric-link:hover .metric-part {
-  text-decoration-color: color-mix(in srgb, var(--fg) 55%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--ink) 55%, transparent);
 }
 
 .metric-link:hover .metric-visits {
-  color: var(--accent);
+  color: var(--color-brand-500);
 }
 
 .metric-link:hover .metric-arrow {
@@ -1225,7 +1149,7 @@ onUnmounted(() => {
 }
 
 .metric-link:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--color-brand-500);
   outline-offset: 2px;
 }
 </style>

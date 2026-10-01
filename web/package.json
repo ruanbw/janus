@@ -9,6 +9,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "check:ui": "node scripts/check-ui-consistency.mjs",
     "type-check": "vue-tsc --noEmit"
   },
   "dependencies": {
