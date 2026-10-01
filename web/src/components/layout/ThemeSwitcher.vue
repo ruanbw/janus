@@ -20,7 +20,7 @@
         <DropdownMenuItem
           v-for="option in OPTIONS"
           :key="option.value"
-          class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-ink outline-none data-[highlighted]:bg-brand-50 data-[highlighted]:text-brand-700 dark:data-[highlighted]:bg-brand-500/15 dark:data-[highlighted]:text-brand-300"
+          class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-ink outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
           @select="onSelect(option.value)"
         >
           <component :is="option.icon" :size="14" class="shrink-0 text-ink-soft" />

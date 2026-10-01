@@ -54,14 +54,16 @@
             <div
               role="group"
               aria-label="按设备类型筛选"
-              class="inline-flex gap-0.5 rounded-lg border border-line bg-surface-muted p-0.5"
+              class="inline-flex gap-0.5 rounded-lg border border-border bg-muted p-0.5"
             >
               <AppButton
                 v-for="opt in DEVICE_OPTIONS"
                 :key="opt.value"
                 size="sm"
-                :variant="deviceFilter === opt.value ? 'secondary' : 'ghost'"
-                :class="deviceFilter === opt.value ? 'font-semibold text-ink' : 'text-ink-soft'"
+                variant="ghost"
+                :class="deviceFilter === opt.value
+                  ? 'bg-background font-semibold text-foreground shadow-xs hover:bg-background'
+                  : 'text-muted-foreground'"
                 :aria-pressed="deviceFilter === opt.value"
                 @click="deviceFilter = opt.value"
               >

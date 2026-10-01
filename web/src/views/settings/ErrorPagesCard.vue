@@ -36,10 +36,10 @@
           type="button"
           role="tab"
           :aria-selected="activeTab === '404'"
-          class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           :class="activeTab === '404'
-            ? 'border-brand-600 text-brand-600 dark:border-brand-400 dark:text-brand-400'
-            : 'border-transparent text-ink-soft hover:text-ink'"
+            ? 'border-primary text-primary'
+            : 'border-transparent text-muted-foreground hover:text-foreground'"
           @click="activeTab = '404'"
         >
           <FileQuestion :size="16" />
@@ -50,10 +50,10 @@
           type="button"
           role="tab"
           :aria-selected="activeTab === '429'"
-          class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           :class="activeTab === '429'
-            ? 'border-brand-600 text-brand-600 dark:border-brand-400 dark:text-brand-400'
-            : 'border-transparent text-ink-soft hover:text-ink'"
+            ? 'border-primary text-primary'
+            : 'border-transparent text-muted-foreground hover:text-foreground'"
           @click="activeTab = '429'"
         >
           <ClockAlert :size="16" />

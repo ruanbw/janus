@@ -133,7 +133,7 @@
                 class="z-[75] min-w-40 rounded-xl border border-line bg-surface p-1.5 shadow-xl"
               >
                 <DropdownMenuItem
-                  class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-ink outline-none data-[highlighted]:bg-brand-50 data-[highlighted]:text-brand-700 dark:data-[highlighted]:bg-brand-500/15 dark:data-[highlighted]:text-brand-300"
+                  class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-ink outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
                   @select="go('/account')"
                 >
                   <User :size="14" />
@@ -141,7 +141,7 @@
                 </DropdownMenuItem>
                 <DropdownMenuSeparator class="my-1 h-px bg-line" />
                 <DropdownMenuItem
-                  class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-err outline-none data-[highlighted]:bg-err/10"
+                  class="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-destructive outline-none data-[highlighted]:bg-destructive/10"
                   @select="onLogout"
                 >
                   <LogOut :size="14" />
