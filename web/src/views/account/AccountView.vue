@@ -45,7 +45,7 @@
               </div>
               <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
                 <span class="text-ink-soft">当前生效等级</span>
-                <AppTag color="cyan">{{ auth.tenant?.tier?.name ?? '-' }}</AppTag>
+                <AppTag color="info">{{ auth.tenant?.tier?.name ?? '-' }}</AppTag>
               </div>
               <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
                 <span class="text-ink-soft">平台默认域名</span>

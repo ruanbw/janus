@@ -64,10 +64,10 @@ const resolvedVariant = computed<string>(() => {
 
 const VARIANT_CLASSES: Record<string, string> = {
   default: 'border-line bg-surface text-ink',
-  info: 'border-info/30 bg-info/10 text-info dark:border-info/40 dark:bg-info/15',
-  warning: 'border-warn/30 bg-warn/10 text-warn dark:border-warn/40 dark:bg-warn/15',
-  success: 'border-ok/30 bg-ok/10 text-ok dark:border-ok/40 dark:bg-ok/15',
-  error: 'border-err/30 bg-err/10 text-err dark:border-err/40 dark:bg-err/15',
+  info: 'border-info/30 bg-info/10 text-info',
+  warning: 'border-warn/30 bg-warn/10 text-warn',
+  success: 'border-ok/30 bg-ok/10 text-ok',
+  error: 'border-err/30 bg-err/10 text-err',
 };
 
 const alertClasses = computed(() => {

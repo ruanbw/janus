@@ -100,6 +100,7 @@
   --ring: #6366f1; /* brand-500 */
 
   /* ---- 控件状态层 ---- */
+  --control-bg: var(--surface); /* 输入类控件底色 */
   --control-track: #c6cee4; /* 关态轨道、复选/单选未选填充 */
   --control-track-hover: #bcc5dd;
   --control-thumb: var(--surface); /* 关态滑块 */
@@ -151,6 +152,7 @@
   --input: #3a4459;
   --ring: #818cf8;
 
+  --control-bg: #161c28; /* 输入类控件底色:略高于卡片底色(#10141d)界定输入区 */
   --control-track: #404b66;
   --control-track-hover: #4a5673;
   --control-thumb: var(--ink);
@@ -208,6 +210,7 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
+  --color-control-bg: var(--control-bg);
   --color-control-track: var(--control-track);
   --color-control-track-hover: var(--control-track-hover);
   --color-control-thumb: var(--control-thumb);

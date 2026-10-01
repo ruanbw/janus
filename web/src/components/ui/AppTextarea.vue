@@ -55,7 +55,7 @@ const currentLength = computed(() => String(props.modelValue ?? '').length);
 
 const textareaClasses = computed(() => {
   return cn(
-    'app-field flex min-h-[80px] w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs transition-[color,background-color,border-color,box-shadow] placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30',
+    'app-field flex min-h-[80px] w-full resize-y rounded-md border border-input bg-control-bg px-3 py-2 text-sm shadow-xs transition-[color,background-color,border-color,box-shadow] placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
     props.showCount && 'pb-7',
     isInvalid.value && 'border-err',
     props.class,

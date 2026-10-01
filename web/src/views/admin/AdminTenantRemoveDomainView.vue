@@ -37,7 +37,7 @@
               <span class="text-ink">
                 <code class="font-mono">{{ tenant?.slug ?? '—' }}</code>
                 <span class="text-ink-faint mx-1.5">·</span>
-                <AppTag color="cyan">{{ tenant?.tier?.name ?? '—' }}</AppTag>
+                <AppTag color="info">{{ tenant?.tier?.name ?? '—' }}</AppTag>
               </span>
             </div>
           </div>

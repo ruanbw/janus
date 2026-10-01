@@ -169,7 +169,6 @@ codeFiles.forEach((file) => {
 console.log('5. 检查默认调色板泄漏 (slate, cyan, amber, emerald)...');
 const paletteRegex = /\b(text|bg|border|fill|stroke)-(slate|cyan|amber|emerald)-\d+\b/;
 const paletteAllowList = [
-  'components/ui/AppTag.vue',      // 预设标签支持多色
   'components/BrandMark.vue',      // 品牌 Logo SVG
   'views/rules/RuleSimulatorView.vue' // 访客请求特征模板代码
 ];
@@ -221,12 +220,8 @@ businessViews.forEach((file) => {
     const tagName = match[1].toLowerCase();
     const attrs = match[2];
 
-    // 白名单 1: 隐藏的文件上传 input (<input type="file" ... class="hidden" ...>)
+    // 白名单: 隐藏的文件上传 input (<input type="file" ... class="hidden" ...>)
     if (tagName === 'input' && attrs.includes('type="file"') && attrs.includes('hidden')) {
-      continue;
-    }
-    // 白名单 2: 语义化 Tab 选项卡按钮 (<button ... role="tab" ...>)
-    if (tagName === 'button' && attrs.includes('role="tab"')) {
       continue;
     }
 
@@ -459,6 +454,44 @@ vueFiles.forEach((file) => {
         idx + 1,
         (match.index ?? 0) + 1,
         '禁止硬编码纯白，请改用语义令牌（bg-primary / text-primary-foreground / bg-card / border-input …）',
+      );
+    }
+  });
+});
+
+// 11. 组件库禁止 dark: 类名（强制要求主题差异由 main.css 令牌层接管）
+console.log('11. 检查 src/components/ui/ 下是否存在 dark: 类名补丁...');
+const uiFiles = walkDir(path.resolve(srcDir, 'components/ui'), (p) => p.endsWith('.vue'));
+uiFiles.forEach((file) => {
+  const content = fs.readFileSync(file, 'utf8');
+  const lines = content.split('\n');
+  lines.forEach((line, idx) => {
+    const match = line.match(/\bdark:[a-zA-Z0-9_-]+/);
+    if (match) {
+      reportError(
+        'ComponentDarkLeak',
+        file,
+        idx + 1,
+        (match.index ?? 0) + 1,
+        `组件内部禁止使用 dark: 类名 ("${match[0]}")，所有主题差异必须在 main.css 的 :root / .dark 令牌层换值`,
+      );
+    }
+  });
+});
+
+// 12. 业务视图禁止手搓模态遮罩（强制使用 AppModal / AppDialog）
+console.log('12. 检查业务视图中是否存在手搓模态遮罩 (fixed inset-0)...');
+businessViews.forEach((file) => {
+  const content = fs.readFileSync(file, 'utf8');
+  const lines = content.split('\n');
+  lines.forEach((line, idx) => {
+    if (line.includes('fixed inset-0')) {
+      reportError(
+        'RawModalOverlay',
+        file,
+        idx + 1,
+        line.indexOf('fixed inset-0') + 1,
+        '业务视图中禁止手搓 "fixed inset-0" 模态遮罩，请使用 AppModal / AppDialog 组件',
       );
     }
   });

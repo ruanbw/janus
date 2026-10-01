@@ -91,13 +91,13 @@ export function isBlockingAction(action: RuleAction): boolean {
 export function actionTagColor(action: RuleAction): string {
   switch (action) {
     case 'pass':
-      return 'green';
+      return 'ok';
     case 'redirect':
-      return 'blue';
+      return 'info';
     case 'notfound':
-      return 'red';
+      return 'err';
     case 'throttle':
-      return 'orange';
+      return 'warn';
     default:
       return 'default';
   }

@@ -8,11 +8,11 @@
       :id="uid"
       :value="value"
       :disabled="disabled"
-      class="peer flex size-4 shrink-0 items-center justify-center rounded-full border border-input bg-transparent shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary dark:bg-input/30"
+      class="peer flex size-4 shrink-0 items-center justify-center rounded-full border border-control-thumb-edge bg-control-track shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary data-[state=checked]:bg-primary"
       :class="props.class"
     >
       <RadioGroupIndicator class="flex items-center justify-center">
-        <span class="size-2 rounded-full bg-primary" />
+        <span class="size-1.5 rounded-full bg-primary-foreground" />
       </RadioGroupIndicator>
     </RadioGroupItem>
     <span v-if="$slots.default" class="text-sm font-medium leading-none">

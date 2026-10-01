@@ -12,12 +12,14 @@ import CardTitle from './CardTitle.vue';
 import AppCheckbox from './AppCheckbox.vue';
 import AppDescriptions from './AppDescriptions.vue';
 import AppDescriptionsItem from './AppDescriptionsItem.vue';
+import AppDialog from './AppDialog.vue';
 import AppDivider from './AppDivider.vue';
 import AppEmpty from './AppEmpty.vue';
 import AppForm from './AppForm.vue';
 import AppFormItem from './AppFormItem.vue';
 import AppInput from './AppInput.vue';
 import AppInputNumber from './AppInputNumber.vue';
+import AppModal from './AppModal.vue';
 import AppPopconfirm from './AppPopconfirm.vue';
 import AppProgress from './AppProgress.vue';
 import AppRadio from './AppRadio.vue';
@@ -29,6 +31,10 @@ import AppSpace from './AppSpace.vue';
 import AppSpin from './AppSpin.vue';
 import AppSwitch from './AppSwitch.vue';
 import AppTable from './AppTable.vue';
+import AppTabs from './AppTabs.vue';
+import AppTabsList from './AppTabsList.vue';
+import AppTabsTrigger from './AppTabsTrigger.vue';
+import AppTabsContent from './AppTabsContent.vue';
 import AppTag from './AppTag.vue';
 import AppTextarea from './AppTextarea.vue';
 import AppTooltip from './AppTooltip.vue';
@@ -47,12 +53,14 @@ const components: Record<string, Component> = {
   AppCheckbox,
   AppDescriptions,
   AppDescriptionsItem,
+  AppDialog,
   AppDivider,
   AppEmpty,
   AppForm,
   AppFormItem,
   AppInput,
   AppInputNumber,
+  AppModal,
   AppPopconfirm,
   AppProgress,
   AppRadio,
@@ -64,6 +72,10 @@ const components: Record<string, Component> = {
   AppSpin,
   AppSwitch,
   AppTable,
+  AppTabs,
+  AppTabsList,
+  AppTabsTrigger,
+  AppTabsContent,
   AppTag,
   AppTextarea,
   AppTooltip,
@@ -90,12 +102,14 @@ export { default as CardFooter } from './CardFooter.vue';
 export { default as AppCheckbox } from './AppCheckbox.vue';
 export { default as AppDescriptions } from './AppDescriptions.vue';
 export { default as AppDescriptionsItem } from './AppDescriptionsItem.vue';
+export { default as AppDialog } from './AppDialog.vue';
 export { default as AppDivider } from './AppDivider.vue';
 export { default as AppEmpty } from './AppEmpty.vue';
 export { default as AppForm } from './AppForm.vue';
 export { default as AppFormItem } from './AppFormItem.vue';
 export { default as AppInput } from './AppInput.vue';
 export { default as AppInputNumber } from './AppInputNumber.vue';
+export { default as AppModal } from './AppModal.vue';
 export { default as AppPopconfirm } from './AppPopconfirm.vue';
 export { default as AppProgress } from './AppProgress.vue';
 export { default as AppRadio } from './AppRadio.vue';
@@ -107,6 +121,10 @@ export { default as AppSpace } from './AppSpace.vue';
 export { default as AppSpin } from './AppSpin.vue';
 export { default as AppSwitch, switchVariants, switchThumbVariants } from './AppSwitch.vue';
 export { default as AppTable } from './AppTable.vue';
+export { default as AppTabs } from './AppTabs.vue';
+export { default as AppTabsList } from './AppTabsList.vue';
+export { default as AppTabsTrigger } from './AppTabsTrigger.vue';
+export { default as AppTabsContent } from './AppTabsContent.vue';
 export { default as AppTag } from './AppTag.vue';
 export { default as AppTextarea } from './AppTextarea.vue';
 export { default as AppTooltip } from './AppTooltip.vue';

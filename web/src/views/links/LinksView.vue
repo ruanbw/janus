@@ -418,63 +418,45 @@
     </div>
 
     <!-- ==================== 模态框: 批量导入短链 ==================== -->
-    <div
-      v-if="showBatchModal"
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs"
+    <AppModal
+      v-model:open="showBatchModal"
+      title="批量导入短链"
+      description="每行一条短链，支持「短码 目标URL」或仅「目标URL」自动生成短码。"
+      size="md"
     >
-      <AppCard :padding="false" class="w-full max-w-lg shadow-2xl">
-        <div class="flex items-start justify-between gap-3.5 p-4 pb-3">
-          <div class="space-y-1">
-            <h3 class="text-base font-bold leading-tight text-ink">批量导入短链</h3>
-            <p class="text-xs text-ink-faint">
-              每行一条短链，支持「短码 目标URL」或仅「目标URL」自动生成短码。
-            </p>
-          </div>
-          <AppButton
-            size="icon"
-            variant="ghost"
-            class="h-8 w-8 text-ink-soft"
-            aria-label="关闭"
-            @click="showBatchModal = false"
-          >
-            <template #icon><X :size="15" /></template>
-          </AppButton>
-        </div>
-        <div class="flex flex-col gap-3 px-4 pb-4">
-          <AppFormItem label="指定承载域名" name="batchDomain">
-            <AppSelect v-model="batchDomainId" :options="batchDomainOptions" placeholder="请选择承载域名" />
-          </AppFormItem>
-          <AppFormItem
-            label="短链行列表"
-            name="batchInput"
-            extra="每行一条，短码与 URL 用空格分隔；若只有 URL 则由后端自动生成短码"
-          >
-            <AppTextarea
-              v-model="batchText"
-              :rows="6"
-              class="font-mono"
-              placeholder="deal-a https://example.com/target-a&#10;deal-b https://example.com/target-b&#10;https://example.com/target-c"
-            />
-          </AppFormItem>
-        </div>
-        <div class="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
-          <span class="text-xs text-ink-soft">有效行数：{{ parsedBatchLinesCount }}</span>
-          <div class="flex items-center gap-2">
-            <AppButton size="sm" variant="outline" :disabled="batchImporting" @click="showBatchModal = false">
-              取消
-            </AppButton>
-            <AppButton
-              size="sm"
-              type="primary"
-              :disabled="batchImporting || parsedBatchLinesCount === 0"
-              @click="executeBatchImport"
-            >
-              {{ batchImporting ? '导入中...' : '开始导入' }}
-            </AppButton>
-          </div>
-        </div>
-      </AppCard>
-    </div>
+      <div class="flex flex-col gap-3">
+        <AppFormItem label="指定承载域名" name="batchDomain">
+          <AppSelect v-model="batchDomainId" :options="batchDomainOptions" placeholder="请选择承载域名" />
+        </AppFormItem>
+        <AppFormItem
+          label="短链行列表"
+          name="batchInput"
+          extra="每行一条，短码与 URL 用空格分隔；若只有 URL 则由后端自动生成短码"
+        >
+          <AppTextarea
+            v-model="batchText"
+            :rows="6"
+            class="font-mono"
+            placeholder="deal-a https://example.com/target-a&#10;deal-b https://example.com/target-b&#10;https://example.com/target-c"
+          />
+        </AppFormItem>
+      </div>
+
+      <template #footer>
+        <span class="mr-auto text-xs text-ink-soft">有效行数：{{ parsedBatchLinesCount }}</span>
+        <AppButton size="sm" variant="outline" :disabled="batchImporting" @click="showBatchModal = false">
+          取消
+        </AppButton>
+        <AppButton
+          size="sm"
+          type="primary"
+          :disabled="batchImporting || parsedBatchLinesCount === 0"
+          @click="executeBatchImport"
+        >
+          {{ batchImporting ? '导入中...' : '开始导入' }}
+        </AppButton>
+      </template>
+    </AppModal>
   </div>
 </template>
 

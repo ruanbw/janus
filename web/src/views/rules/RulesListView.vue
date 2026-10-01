@@ -224,12 +224,12 @@ onMounted(loadRules);
 
         <template v-else-if="column.key === 'scope'">
           <div class="flex flex-col items-start gap-1">
-            <AppTag v-if="record.scope === 'global'" color="blue">全局</AppTag>
+            <AppTag v-if="record.scope === 'global'" color="brand">全局</AppTag>
             <div v-else class="flex items-center gap-1.5 text-xs text-ink">
               <Link2 :size="14" class="text-ink-faint" />
               <span>{{ record.linkCount || 0 }} 条短链</span>
             </div>
-            <AppTag v-if="record.scope === 'links' && (record.linkCount || 0) === 0" color="warning">
+            <AppTag v-if="record.scope === 'links' && (record.linkCount || 0) === 0" color="warn">
               未关联短链 · 不会命中
             </AppTag>
           </div>

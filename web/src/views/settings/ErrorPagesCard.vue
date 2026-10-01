@@ -31,36 +31,20 @@
       />
 
       <!-- Tab 切换 404 与 429 -->
-      <div class="flex border-b border-line" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          :aria-selected="activeTab === '404'"
-          class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          :class="activeTab === '404'
-            ? 'border-primary text-primary'
-            : 'border-transparent text-muted-foreground hover:text-foreground'"
-          @click="activeTab = '404'"
-        >
-          <FileQuestion :size="16" />
-          404 Not Found 页面
-          <AppTag v-if="mode404 === 'custom'" color="blue" size="small">自定义</AppTag>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          :aria-selected="activeTab === '429'"
-          class="flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          :class="activeTab === '429'
-            ? 'border-primary text-primary'
-            : 'border-transparent text-muted-foreground hover:text-foreground'"
-          @click="activeTab = '429'"
-        >
-          <ClockAlert :size="16" />
-          429 Too Many Requests 页面
-          <AppTag v-if="mode429 === 'custom'" color="blue" size="small">自定义</AppTag>
-        </button>
-      </div>
+      <AppTabs v-model="activeTab">
+        <AppTabsList variant="line">
+          <AppTabsTrigger value="404" variant="line">
+            <FileQuestion :size="16" />
+            404 Not Found 页面
+            <AppTag v-if="mode404 === 'custom'" color="brand" size="small">自定义</AppTag>
+          </AppTabsTrigger>
+          <AppTabsTrigger value="429" variant="line">
+            <ClockAlert :size="16" />
+            429 Too Many Requests 页面
+            <AppTag v-if="mode429 === 'custom'" color="brand" size="small">自定义</AppTag>
+          </AppTabsTrigger>
+        </AppTabsList>
+      </AppTabs>
 
       <!-- 404 配置区 -->
       <div v-show="activeTab === '404'" class="space-y-4">
@@ -149,39 +133,39 @@
       </div>
     </CardContent>
 
-    <!-- 预览弹窗 (Teleport 到 body，保证完全沙箱隔离与层级覆盖) -->
-    <Teleport to="body">
-      <div
-        v-if="previewVisible"
-        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
-        @click.self="previewVisible = false"
-      >
-        <div class="flex h-[85vh] w-full max-w-4xl flex-col rounded-xl border border-line bg-surface shadow-2xl overflow-hidden">
-          <div class="flex items-center justify-between border-b border-line px-5 py-3 bg-surface-muted/50">
-            <div class="flex items-center gap-2">
-              <Eye :size="16" class="text-brand-600 dark:text-brand-400" />
-              <span class="text-sm font-semibold text-ink">访客拦截页面沙箱预览 ({{ previewTitle }})</span>
-              <span class="text-xs text-ink-faint">已开启 sandbox 安全隔离</span>
-            </div>
-            <AppButton
-              size="icon"
-              variant="ghost"
-              aria-label="关闭预览"
-              @click="previewVisible = false"
-            >
-              <X :size="18" />
-            </AppButton>
+    <!-- 预览弹窗 -->
+    <AppModal
+      v-model:open="previewVisible"
+      size="xl"
+      :padding="false"
+      class="h-[85vh]"
+      body-class="h-[calc(85vh-53px)] flex flex-col"
+    >
+      <template #header>
+        <div class="flex items-center justify-between border-b border-line px-5 py-3 bg-surface-muted/50 rounded-t-xl">
+          <div class="flex items-center gap-2">
+            <Eye :size="16" class="text-primary" />
+            <span class="text-sm font-semibold text-ink">访客拦截页面沙箱预览 ({{ previewTitle }})</span>
+            <span class="text-xs text-ink-faint">已开启 sandbox 安全隔离</span>
           </div>
-          <div class="flex-1 p-3 bg-line/20">
-            <iframe
-              :srcdoc="previewContent"
-              sandbox="allow-same-origin"
-              class="h-full w-full rounded border border-line bg-background shadow-xs"
-            />
-          </div>
+          <AppButton
+            size="icon"
+            variant="ghost"
+            aria-label="关闭预览"
+            @click="previewVisible = false"
+          >
+            <X :size="18" />
+          </AppButton>
         </div>
+      </template>
+      <div class="flex-1 p-3 bg-line/20 h-full">
+        <iframe
+          :srcdoc="previewContent"
+          sandbox="allow-same-origin"
+          class="h-full w-full rounded border border-line bg-background shadow-xs"
+        />
       </div>
-    </Teleport>
+    </AppModal>
   </AppCard>
 </template>
 

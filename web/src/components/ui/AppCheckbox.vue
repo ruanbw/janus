@@ -9,7 +9,7 @@
       :checked="model"
       :disabled="disabled"
       :name="name"
-      class="peer flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-input bg-transparent shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary data-[state=indeterminate]:text-primary-foreground dark:bg-input/30"
+      class="peer flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-control-thumb-edge bg-control-track shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary data-[state=indeterminate]:text-primary-foreground"
       :class="props.class"
       @update:checked="onCheckedChange"
     >

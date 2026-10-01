@@ -180,7 +180,7 @@ const triggerClasses = computed(() => {
   const isLg = props.size === 'large' || props.size === 'lg';
 
   return cn(
-    'app-field flex w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs transition-[color,background-color,border-color,box-shadow] placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30',
+    'app-field flex w-full items-center justify-between gap-2 rounded-md border border-input bg-control-bg px-3 text-sm shadow-xs transition-[color,background-color,border-color,box-shadow] placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
     isSm ? 'min-h-8 py-1 text-xs' : isLg ? 'min-h-10 py-2 text-base' : 'min-h-9 py-1.5',
     isInvalid.value && 'border-err',
     props.class,

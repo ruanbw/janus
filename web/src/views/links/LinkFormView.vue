@@ -93,7 +93,7 @@
                       :icon="Zap"
                     >
                       <template #extra>
-                        <AppTag color="green">推荐</AppTag>
+                        <AppTag color="ok">推荐</AppTag>
                       </template>
                     </AppRadioCard>
                     <AppRadioCard
@@ -173,7 +173,7 @@
                           </AppButton>
                         </AppUpload>
 
-                        <AppTag v-if="form.landingUploaded" color="green">
+                        <AppTag v-if="form.landingUploaded" color="ok">
                           <CheckCircle2 :size="12" class="mr-1" />
                           已托管压缩包
                         </AppTag>
@@ -197,7 +197,7 @@
                           <span class="truncate font-medium">{{ landingFile.name }}</span>
                           <span class="text-2xs opacity-75">({{ formatFileSize(landingFile.size) }})</span>
                         </div>
-                        <AppTag color="blue" class="shrink-0">待上传</AppTag>
+                        <AppTag color="brand" class="shrink-0">待上传</AppTag>
                       </div>
                     </div>
                   </AppFormItem>
@@ -335,8 +335,8 @@
                     </CardDescription>
                   </div>
                   <div class="flex shrink-0 items-center gap-2">
-                    <AppTag v-if="globalRuleCount > 0" color="blue">全局 {{ globalRuleCount }}</AppTag>
-                    <AppTag v-if="scopedCheckedCount > 0" color="green">已选 {{ scopedCheckedCount }}</AppTag>
+                    <AppTag v-if="globalRuleCount > 0" color="brand">全局 {{ globalRuleCount }}</AppTag>
+                    <AppTag v-if="scopedCheckedCount > 0" color="ok">已选 {{ scopedCheckedCount }}</AppTag>
                     <AppButton
                       type="text"
                       class="text-ink-faint hover:text-ink"
@@ -379,7 +379,7 @@
                       <AppCheckbox :checked="row.scope === 'global'" disabled>
                         {{ row.name }}
                       </AppCheckbox>
-                      <AppTag v-if="row.scope === 'global'" color="blue">全局</AppTag>
+                      <AppTag v-if="row.scope === 'global'" color="brand">全局</AppTag>
                       <AppTag v-else color="default">指定短链</AppTag>
                       <span class="ml-auto text-2xs text-ink-faint">
                         {{ row.scope === 'global' ? '对本短链恒生效' : '创建后可勾选' }}
@@ -418,9 +418,9 @@
                         </AppCheckbox>
                       </AppTooltip>
 
-                      <AppTag v-if="row.scope === 'global'" color="blue">全局</AppTag>
+                      <AppTag v-if="row.scope === 'global'" color="brand">全局</AppTag>
                       <AppTag v-else color="default">指定短链</AppTag>
-                      <AppTag v-if="!row.enabled" color="warning">已停用</AppTag>
+                      <AppTag v-if="!row.enabled" color="warn">已停用</AppTag>
 
                       <span class="ml-auto flex shrink-0 items-center gap-2 text-2xs text-ink-faint">
                         <span class="font-mono">优先级 {{ row.priority }}</span>
@@ -506,10 +506,10 @@
 
                   <div class="flex items-center justify-between">
                     <span class="text-ink-soft">短链类型</span>
-                    <AppTag v-if="form.linkType === 'redirect'" color="blue">
+                    <AppTag v-if="form.linkType === 'redirect'" color="brand">
                       跳转型 ({{ form.redirectStatus }})
                     </AppTag>
-                    <AppTag v-else color="purple">
+                    <AppTag v-else color="info">
                       落地页型 ({{ form.landingSource === 'url' ? 'URL' : '压缩包' }})
                     </AppTag>
                   </div>
@@ -548,7 +548,7 @@
 
                   <div v-if="isEdit" class="flex items-center justify-between">
                     <span class="text-ink-soft">服务状态</span>
-                    <AppTag :color="form.status === 'enabled' ? 'green' : 'default'">
+                    <AppTag :color="form.status === 'enabled' ? 'ok' : 'default'">
                       {{ form.status === 'enabled' ? '正常启用' : '暂停停用' }}
                     </AppTag>
                   </div>

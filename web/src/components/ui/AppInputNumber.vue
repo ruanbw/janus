@@ -104,7 +104,7 @@ const containerClasses = computed(() => {
   const isLg = props.size === 'large' || props.size === 'lg';
 
   return cn(
-    'relative flex w-full items-center overflow-hidden rounded-md border border-input bg-background shadow-xs transition-[color,background-color,border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50 dark:bg-input/30',
+    'relative flex w-full items-center overflow-hidden rounded-md border border-input bg-control-bg shadow-xs transition-[color,background-color,border-color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50',
     isSm ? 'h-8' : isLg ? 'h-10' : 'h-9',
     props.disabled && 'cursor-not-allowed opacity-50',
     isInvalid.value && 'border-err focus-within:border-err focus-within:ring-err/40',

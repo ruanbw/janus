@@ -465,37 +465,37 @@ onMounted(async () => {
     </div>
 
     <!-- 访客拦截页面沙箱预览弹窗 -->
-    <Teleport to="body">
-      <div
-        v-if="previewModalVisible"
-        class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
-        @click.self="previewModalVisible = false"
-      >
-        <div class="flex h-[85vh] w-full max-w-4xl flex-col rounded-xl border border-line bg-surface shadow-2xl overflow-hidden">
-          <div class="flex items-center justify-between border-b border-line px-5 py-3 bg-surface-muted/50">
-            <div class="flex items-center gap-2">
-              <Eye :size="16" class="text-brand-600 dark:text-brand-400" />
-              <span class="text-sm font-semibold text-ink">{{ previewModalTitle }}</span>
-              <span class="text-xs text-ink-faint">已开启 sandbox 安全隔离</span>
-            </div>
-            <AppButton
-              size="icon"
-              variant="ghost"
-              aria-label="关闭预览"
-              @click="previewModalVisible = false"
-            >
-              <X :size="18" />
-            </AppButton>
+    <AppModal
+      v-model:open="previewModalVisible"
+      size="xl"
+      :padding="false"
+      class="h-[85vh]"
+      body-class="h-[calc(85vh-53px)] flex flex-col"
+    >
+      <template #header>
+        <div class="flex items-center justify-between border-b border-line px-5 py-3 bg-surface-muted/50 rounded-t-xl">
+          <div class="flex items-center gap-2">
+            <Eye :size="16" class="text-primary" />
+            <span class="text-sm font-semibold text-ink">{{ previewModalTitle }}</span>
+            <span class="text-xs text-ink-faint">已开启 sandbox 安全隔离</span>
           </div>
-          <div class="flex-1 p-3 bg-line/20">
-            <iframe
-              :srcdoc="previewModalHtml"
-              sandbox="allow-same-origin"
-              class="h-full w-full rounded border border-line bg-background shadow-xs"
-            />
-          </div>
+          <AppButton
+            size="icon"
+            variant="ghost"
+            aria-label="关闭预览"
+            @click="previewModalVisible = false"
+          >
+            <X :size="18" />
+          </AppButton>
         </div>
+      </template>
+      <div class="flex-1 p-3 bg-line/20 h-full">
+        <iframe
+          :srcdoc="previewModalHtml"
+          sandbox="allow-same-origin"
+          class="h-full w-full rounded border border-line bg-background shadow-xs"
+        />
       </div>
-    </Teleport>
+    </AppModal>
   </div>
 </template>

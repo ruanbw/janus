@@ -29,7 +29,7 @@
       </p>
     </div>
 
-    <div class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border border-input bg-background transition-colors group-data-[state=checked]:border-primary group-data-[state=checked]:bg-primary">
+    <div class="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border border-control-thumb-edge bg-control-track transition-colors group-data-[state=checked]:border-primary group-data-[state=checked]:bg-primary">
       <RadioGroupIndicator class="flex items-center justify-center">
         <span class="size-1.5 rounded-full bg-primary-foreground" />
       </RadioGroupIndicator>
@@ -57,7 +57,7 @@ const props = withDefaults(
 
 const cardClasses = computed(() => {
   return cn(
-    'group relative flex w-full cursor-pointer items-start gap-3 rounded-xl border border-input bg-background p-4 text-left shadow-xs transition-all outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 hover:border-ring hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary data-[state=checked]:bg-primary/10 dark:data-[state=checked]:bg-primary/15',
+    'group relative flex w-full cursor-pointer items-start gap-3 rounded-xl border border-input bg-background p-4 text-left shadow-xs transition-all outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 hover:border-ring hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary data-[state=checked]:bg-primary/10',
     props.disabled && 'pointer-events-none opacity-50',
     props.class,
   );

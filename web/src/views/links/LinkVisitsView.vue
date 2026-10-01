@@ -191,7 +191,7 @@
                     <div class="flex max-w-[220px] flex-col gap-1">
                       <div class="flex flex-nowrap items-center gap-1">
                         <AppTag :color="toRow(record).action.color">{{ toRow(record).action.text }}</AppTag>
-                        <AppTag :color="toRow(record).visit.outcome === 'failed' ? 'error' : 'success'">
+                        <AppTag :color="toRow(record).visit.outcome === 'failed' ? 'err' : 'ok'">
                           {{ toRow(record).visit.outcome === 'failed' ? '✗ 失败' : '✓ 成功' }}
                         </AppTag>
                       </div>
@@ -304,7 +304,7 @@
                 <div class="min-w-0">
                   <div class="flex items-center gap-2">
                     <h2 class="text-base font-semibold tracking-tight text-ink">访客画像与规则回放</h2>
-                    <AppTag :color="selectedRow.visit.outcome === 'failed' ? 'error' : 'success'">
+                    <AppTag :color="selectedRow.visit.outcome === 'failed' ? 'err' : 'ok'">
                       {{ selectedRow.visit.outcome === 'failed' ? '✗ 访问失败' : '✓ 访问成功' }}
                     </AppTag>
                   </div>
@@ -358,7 +358,7 @@
                   <div class="min-w-0">
                     <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">国家 / 地区</dt>
                     <dd class="m-0 flex items-center gap-1.5 text-xs text-ink">
-                      <AppTag :color="selectedRow.country === '—' ? 'default' : 'success'">
+                      <AppTag :color="selectedRow.country === '—' ? 'default' : 'ok'">
                         {{ selectedRow.country }}
                       </AppTag>
                     </dd>
@@ -469,7 +469,7 @@
                       <span class="font-medium text-ink">
                         命中规则 #{{ selectedRow.matchedRule.id }} · {{ selectedRow.matchedRule.name }}
                       </span>
-                      <AppTag :color="selectedRow.matchedRule.enabled ? 'success' : 'default'">
+                      <AppTag :color="selectedRow.matchedRule.enabled ? 'ok' : 'default'">
                         {{ selectedRow.matchedRule.enabled ? '规则当前启用' : '规则当前已停用' }}
                       </AppTag>
                     </div>
@@ -487,7 +487,7 @@
 
                   <div class="flex flex-wrap items-center gap-1.5">
                     <AppTag :color="realVerdictOf(selectedRow).color">{{ realVerdictOf(selectedRow).text }}</AppTag>
-                    <AppTag :color="selectedRow.visit.outcome === 'failed' ? 'error' : 'success'">
+                    <AppTag :color="selectedRow.visit.outcome === 'failed' ? 'err' : 'ok'">
                       {{ selectedRow.visit.outcome === 'failed' ? '✗ 失败' : '✓ 成功' }}
                     </AppTag>
                     <span v-if="selectedRow.reasonText" class="text-xs text-err">{{ selectedRow.reasonText }}</span>
@@ -550,7 +550,7 @@
                       >
                         <span class="mono text-xs text-ink-faint">#{{ step.ruleId }}</span>
                         <span class="text-xs font-medium text-ink">{{ step.ruleName }}</span>
-                        <AppTag :color="step.status === 'block' ? 'error' : step.status === 'hit' ? 'success' : 'default'">
+                        <AppTag :color="step.status === 'block' ? 'err' : step.status === 'hit' ? 'ok' : 'default'">
                           {{ step.statusText }}
                         </AppTag>
                         <span class="w-full text-xs text-ink-soft">{{ step.whyText }}</span>

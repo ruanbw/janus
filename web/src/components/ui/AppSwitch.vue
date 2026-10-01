@@ -31,9 +31,9 @@ export const switchVariants = cva(
 );
 
 export const switchThumbVariants = cva(
-  // 关态 thumb 与卡片同色(亮色),只有发丝描边能看出轮廓;
-  // 开态用 --primary-foreground,避免深色主题下白块压在浅主色上看不见。
-  'pointer-events-none block rounded-full bg-control-thumb shadow-xs ring-1 ring-inset ring-control-thumb-edge transition-transform duration-150 ease-out data-[state=checked]:bg-primary-foreground dark:data-[state=unchecked]:bg-foreground',
+  // 关态 thumb 采用 --control-thumb,配合发丝描边 --control-thumb-edge 在明暗两套主题下均有清晰轮廓;
+  // 开态统一走 --primary-foreground,随品牌色自适应高对比前景色。
+  'pointer-events-none block rounded-full bg-control-thumb shadow-xs ring-1 ring-inset ring-control-thumb-edge transition-transform duration-150 ease-out data-[state=checked]:bg-primary-foreground',
   {
     variants: {
       size: {

@@ -106,11 +106,11 @@ export function parseUserAgent(ua: string): ParsedUA {
 export function getDeviceTagColor(deviceType: ParsedUA['deviceType']): TagColor {
   switch (deviceType) {
     case '移动端':
-      return 'success';
+      return 'ok';
     case '平板':
-      return 'warning';
+      return 'warn';
     case '爬虫机器人':
-      return 'error';
+      return 'err';
     default:
       return 'default';
   }

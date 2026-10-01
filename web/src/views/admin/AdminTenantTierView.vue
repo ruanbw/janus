@@ -29,7 +29,7 @@
           <div class="rounded-xl border border-line bg-surface-muted/50 p-4 space-y-3">
             <div class="flex items-center justify-between">
               <span class="text-xs font-medium text-ink-soft">目标租户账号</span>
-              <AppTag color="cyan">
+              <AppTag color="info">
                 {{ tenant?.tier?.name ? `当前等级: ${tenant.tier?.name}` : '未指定等级' }}
               </AppTag>
             </div>
@@ -71,7 +71,7 @@
               <div class="rounded-xl border border-line bg-surface-muted/40 p-4 space-y-2">
                 <div class="flex items-center justify-between text-xs text-ink-soft">
                   <span class="font-medium">短链配额上限</span>
-                  <AppTag :color="diffLinks > 0 ? 'green' : diffLinks < 0 ? 'orange' : 'default'">
+                  <AppTag :color="diffLinks > 0 ? 'ok' : diffLinks < 0 ? 'warn' : 'default'">
                     {{ diffLinks > 0 ? `+${diffLinks} 扩容` : diffLinks < 0 ? `${diffLinks} 缩减` : '无变化' }}
                   </AppTag>
                 </div>
@@ -91,7 +91,7 @@
               <div class="rounded-xl border border-line bg-surface-muted/40 p-4 space-y-2">
                 <div class="flex items-center justify-between text-xs text-ink-soft">
                   <span class="font-medium">自有域名配额上限</span>
-                  <AppTag :color="diffDomains > 0 ? 'green' : diffDomains < 0 ? 'orange' : 'default'">
+                  <AppTag :color="diffDomains > 0 ? 'ok' : diffDomains < 0 ? 'warn' : 'default'">
                     {{ diffDomains > 0 ? `+${diffDomains} 扩容` : diffDomains < 0 ? `${diffDomains} 缩减` : '无变化' }}
                   </AppTag>
                 </div>

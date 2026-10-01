@@ -26,7 +26,7 @@
             <AppTooltip :title="String(record.email)">
               <span class="truncate font-medium text-ink">{{ record.email }}</span>
             </AppTooltip>
-            <AppTag v-if="record.isSuperAdmin" color="gold" class="shrink-0">平台管理员</AppTag>
+            <AppTag v-if="record.isSuperAdmin" color="warn" class="shrink-0">平台管理员</AppTag>
           </div>
         </template>
         <template v-else-if="column.key === 'status'">
@@ -35,7 +35,7 @@
           </AppTag>
         </template>
         <template v-else-if="column.key === 'tier'">
-          <AppTag color="cyan">{{ record.tier?.name ?? '-' }}</AppTag>
+          <AppTag color="info">{{ record.tier?.name ?? '-' }}</AppTag>
         </template>
         <template v-else-if="column.key === 'usage'">
           <span class="tabular-nums text-ink-soft">
