@@ -1,0 +1,295 @@
+/* ==========================================================================
+   CLOAK 主题令牌层(nova)
+   ------------------------------------------------------------------------
+   唯一的令牌出处:main.css 只负责基础样式、动效 @utility 与世界地图填色。
+   改主题只改本文件。
+
+   硬性约定:
+   - 令牌值一律 hex 或 rgb()/rgba() 写法。禁止 oklch() / color-mix():
+     门禁脚本的 parseCssColor 只解析 hex 与 rgb(),其他写法无法参与对比度校验。
+   - 令牌变量名不增删(16 个业务视图与门禁脚本都依赖),只换取值,
+     并按设计新增阴影(--elev-*)、控件高度(--control-height-*)与 --brand。
+
+   结构:
+   1. @theme           —— 不随明暗变化的令牌:字体、字号、圆角、品牌色阶
+   2. :root / .dark    —— 明暗两套色板(项目层 / shadcn 语义层 / 控件状态层)
+                         与阴影(--elev-*)、控件高度
+   3. @theme inline    —— 把上面这些「随主题换值」的令牌映射成 Tailwind 工具类
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. @theme:与主题无关的静态令牌
+   -------------------------------------------------------------------------- */
+@theme {
+  /* ---- 字体 ---- */
+  --font-sans:
+    'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono:
+    ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  /* ---- 字号尺度(紧凑,nova) ----
+     11/12/13/14/16/20/24/32,配 line-height 用 Tailwind v4 的 --text-*--line-height 约定 */
+  --text-2xs: 0.6875rem; /* 11px */
+  --text-2xs--line-height: 1.45;
+  --text-xs: 0.75rem; /* 12px */
+  --text-xs--line-height: 1.5;
+  --text-sm: 0.8125rem; /* 13px */
+  --text-sm--line-height: 1.5;
+  --text-base: 0.875rem; /* 14px */
+  --text-base--line-height: 1.55;
+  --text-lg: 1rem; /* 16px */
+  --text-lg--line-height: 1.5;
+  --text-xl: 1.25rem; /* 20px */
+  --text-xl--line-height: 1.4;
+  --text-2xl: 1.5rem; /* 24px */
+  --text-2xl--line-height: 1.3;
+  --text-3xl: 2rem; /* 32px */
+  --text-3xl--line-height: 1.2;
+
+  /* ---- 圆角(不随主题变化) ---- */
+  --radius: 0.5rem; /* 8px 基准 */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px; /* 控件:按钮 / 输入框 / 下拉 */
+  --radius-lg: 8px; /* 卡片 */
+  --radius-xl: 10px; /* 弹窗 / 浮层 */
+  --radius-2xl: 12px;
+  --radius-3xl: 16px;
+
+  /* ---- 品牌色阶:靛蓝 ----
+     nova 下靛蓝只用于焦点环、链接与 brand 标签,不再承担主按钮底色 */
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+  --color-brand-950: #1e1b4b;
+
+  /* ---- 点缀色:青(登录页品牌栏图标在用) ---- */
+  --color-accent-300: #67e8f9;
+  --color-accent-400: #22d3ee;
+  --color-accent-500: #06b6d4;
+  --color-accent-600: #0891b2;
+}
+
+/* --------------------------------------------------------------------------
+   2. 明暗两套色板
+   ------------------------------------------------------------------------
+   分三层,三层都必须在浅色与深色下同时满足
+   scripts/check-ui-consistency.mjs 第 9 项的对比度门禁:
+   1) 项目层(--surface / --ink / --line …):页面骨架与业务视图直接消费。
+   2) shadcn 语义层(--background / --primary / --input / --muted …):
+      ui/ 原语层的组件状态(开/关、选中/未选中、hover、focus)走这层,
+      命名与语义与 shadcn 官方一致,取值由本项目调色板定制。
+   3) 控件状态层(--control-track / --control-thumb …):shadcn 没有对应语义,
+      为 Switch 轨道与滑块补齐。
+   另有两组与主题绑定的结构性令牌:--elev-*(阴影)与 --control-height-*(控件高度)。 */
+
+:root {
+  color-scheme: light;
+
+  --ring-offset: var(--surface); /* 焦点环外圈留白,跟卡片底色走 */
+
+  /* ---- 控件高度(不随主题变化,放这里只为与 --elev-* 同批映射) ---- */
+  --control-height-sm: 1.75rem; /* 28px */
+  --control-height-md: 2rem; /* 32px */
+  --control-height-lg: 2.5rem; /* 40px */
+
+  /* ---- 阴影:nova 浅色下的高度梯 ---- */
+  --elev-2xs: 0 1px 1px rgb(0 0 0 / 0.04);
+  --elev-xs: 0 1px 2px rgb(0 0 0 / 0.05);
+  --elev-sm:
+    0 1px 3px rgb(0 0 0 / 0.07),
+    0 1px 2px -1px rgb(0 0 0 / 0.05);
+  --elev-md: 0 4px 12px rgb(0 0 0 / 0.08);
+  --elev-lg: 0 12px 32px rgb(0 0 0 / 0.1);
+  --elev-xl: 0 24px 56px rgb(0 0 0 / 0.14);
+
+  /* ---- 项目层:页面骨架 ---- */
+  --surface: #ffffff; /* 卡片 / 组件宿主底色 */
+  --surface-muted: #fafafa; /* 页面底色 */
+  --surface-strong: #f4f4f5; /* 强调填充(图标底、标签、次级按钮) */
+  --ink: #09090b;
+  --ink-soft: #52525b;
+  --ink-faint: #71717a;
+  --line: #e4e4e7; /* 容器装饰性描边 */
+  --line-strong: #d4d4d8;
+  --ok: #15803d;
+  --warn: #b45309;
+  --err: #dc2626;
+  --info: #0369a1;
+  --brand: #4f46e5; /* 焦点环 / 链接 / brand 标签专用,不再当主按钮底色 */
+  --sidebar-bg: #17171a;
+  --sidebar-bg-deep: #0a0a0b;
+  --sidebar-ink: rgb(255 255 255 / 0.62);
+  --sidebar-ink-active: #ffffff;
+
+  /* ---- shadcn 语义层:组件状态 ---- */
+  /* 映射说明:本项目页面底色是 --surface-muted、卡片底色是 --surface,
+     而 shadcn 的 --background 语义是「组件所处的那层底色」,故指向 --surface。 */
+  --background: var(--surface);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: #ffffff;
+  --popover-foreground: var(--ink);
+  --primary: #18181b; /* 近黑:nova 的主色是「墨」而不是靛蓝 */
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5; /* 表头 / 悬浮行 / 选中行底 */
+  --muted-foreground: #52525b;
+  --accent: #f4f4f5; /* 菜单项 hover */
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #cfcfd4; /* 控件描边:必须与 --card 可辨(对比 ≥1.5,门禁第 9 项守这条) */
+  --input: #cfcfd4; /* 输入框描边 */
+  --ring: #4f46e5; /* brand-600 */
+
+  /* ---- 控件状态层 ---- */
+  --control-bg: #ffffff; /* 输入类控件底色 */
+  --control-track: #cfcfd4; /* 关态轨道、复选 / 单选未选填充 */
+  --control-track-hover: #c2c2c8;
+  --control-thumb: #ffffff; /* 关态滑块 */
+  /* 亮色下 thumb 与卡片同色(对比 1.00),发丝描边是它唯一的轮廓 */
+  --control-thumb-edge: rgb(0 0 0 / 0.18);
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* ---- 阴影:nova 深色下的高度梯(纯黑,靠不透明度抬高度) ---- */
+  --elev-2xs: 0 1px 1px rgb(0 0 0 / 0.4);
+  --elev-xs: 0 1px 2px rgb(0 0 0 / 0.5);
+  --elev-sm:
+    0 1px 3px rgb(0 0 0 / 0.55),
+    0 1px 2px -1px rgb(0 0 0 / 0.4);
+  --elev-md: 0 4px 14px rgb(0 0 0 / 0.6);
+  --elev-lg: 0 12px 32px rgb(0 0 0 / 0.7);
+  --elev-xl: 0 24px 56px rgb(0 0 0 / 0.75);
+
+  /* ---- 项目层:页面骨架 ---- */
+  --surface: #101012;
+  --surface-muted: #0a0a0b;
+  --surface-strong: #1c1c1f;
+  --ink: #fafafa;
+  --ink-soft: #a1a1aa;
+  --ink-faint: #73737d;
+  --line: #26262a;
+  --line-strong: #35353a;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --err: #f87171;
+  --info: #38bdf8;
+  --brand: #818cf8;
+  --sidebar-bg: #0a0a0b;
+  --sidebar-bg-deep: #000000;
+  --sidebar-ink: rgb(255 255 255 / 0.62);
+  --sidebar-ink-active: #ffffff;
+
+  /* ---- shadcn 语义层:组件状态 ---- */
+  --background: var(--surface);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: #17171a; /* 浮层比卡片亮一档,做出高度差 */
+  --popover-foreground: var(--ink);
+  /* 深色下主色反过来:近黑的墨在深底上读不出来,改用近白前景 + 深色文字 */
+  --primary: #fafafa;
+  --primary-foreground: #18181b;
+  --secondary: #1c1c1f;
+  --secondary-foreground: #fafafa;
+  --muted: #1c1c1f;
+  --muted-foreground: #a1a1aa;
+  --accent: #26262a;
+  --accent-foreground: #fafafa;
+  --destructive: #ef4444;
+  --destructive-foreground: #0a0a0a;
+  --border: #3f3f46;
+  --input: #3f3f46;
+  --ring: #818cf8;
+
+  /* ---- 控件状态层 ---- */
+  --control-bg: #17171a; /* 输入类控件底色:略高于卡片底色界定输入区 */
+  --control-track: #3f3f46;
+  --control-track-hover: #4b4b53;
+  --control-thumb: #fafafa;
+  --control-thumb-edge: rgb(0 0 0 / 0.5);
+}
+
+/* --------------------------------------------------------------------------
+   3. @theme inline:把随主题换值的令牌映射成工具类
+   ------------------------------------------------------------------------
+   inline 的语义是「不把变量输出到 :root,而是直接把值内联进用到的工具类」,
+   于是 bg-surface / shadow-md 这类工具类里写的是 var(--surface),
+   主题一切换就跟着变。 */
+
+@theme inline {
+  /* ---- 阴影 → shadow-2xs / shadow-xs / shadow-sm / shadow-md / shadow-lg / shadow-xl ---- */
+  --shadow-2xs: var(--elev-2xs);
+  --shadow-xs: var(--elev-xs);
+  --shadow-sm: var(--elev-sm);
+  --shadow-md: var(--elev-md);
+  --shadow-lg: var(--elev-lg);
+  --shadow-xl: var(--elev-xl);
+
+  /* ---- 控件高度 → h-control-sm / h-control-md / h-control-lg ----
+     Tailwind 的 h-* 读的是 --height-* 命名空间,所以令牌本体叫
+     --control-height-*,这里映射一层 --height-control-* 才有工具类可用。 */
+  --height-control-sm: var(--control-height-sm);
+  --height-control-md: var(--control-height-md);
+  --height-control-lg: var(--control-height-lg);
+
+  --color-ring: var(--ring);
+  /* shadcn 语义层 → 工具类(bg-primary / text-primary-foreground / border-input …) */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-control-bg: var(--control-bg);
+  --color-control-track: var(--control-track);
+  --color-control-track-hover: var(--control-track-hover);
+  --color-control-thumb: var(--control-thumb);
+  --color-control-thumb-edge: var(--control-thumb-edge);
+  /* 项目层 */
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-surface-strong: var(--surface-strong);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-err: var(--err);
+  --color-info: var(--info);
+  --color-brand: var(--brand);
+  --color-sidebar-bg: var(--sidebar-bg);
+  --color-sidebar-bg-deep: var(--sidebar-bg-deep);
+  --color-sidebar-ink: var(--sidebar-ink);
+  --color-sidebar-ink-active: var(--sidebar-ink-active);
+}

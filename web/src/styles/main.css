@@ -1,238 +1,11 @@
 @import 'tailwindcss';
+@import './theme.css';
 
 /* 深色模式:html.dark 类驱动(class strategy) */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* ============ CLOAK 设计令牌 ============
-   品牌:极光靛蓝(indigo)主色 + 青(cyan)点缀
-   语义色通过 CSS 变量随明暗主题切换,经 @theme inline 映射为
-   bg-surface / text-ink / border-line 等工具类 */
-
-@theme {
-  --font-sans:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
-  --font-mono:
-    ui-monospace, 'SFMono-Regular', 'SF Mono', Menlo, Consolas,
-    'Liberation Mono', monospace;
-
-  /* 字体尺度 */
-  --text-2xs: 0.6875rem;
-  --text-2xs--line-height: calc(1 / 0.6875);
-  --text-xs: 0.75rem;
-  --text-xs--line-height: calc(1 / 0.75);
-  --text-sm: 0.875rem;
-  --text-sm--line-height: calc(1.25 / 0.875);
-  --text-base: 1rem;
-  --text-base--line-height: calc(1.5 / 1);
-
-  /* 品牌色板:靛蓝紫 */
-  --color-brand-50: #eef2ff;
-  --color-brand-100: #e0e7ff;
-  --color-brand-200: #c7d2fe;
-  --color-brand-300: #a5b4fc;
-  --color-brand-400: #818cf8;
-  --color-brand-500: #6366f1;
-  --color-brand-600: #4f46e5;
-  --color-brand-700: #4338ca;
-  --color-brand-800: #3730a3;
-  --color-brand-900: #312e81;
-  --color-brand-950: #1e1b4b;
-
-  /* 点缀色:青 */
-  --color-accent-300: #67e8f9;
-  --color-accent-400: #22d3ee;
-  --color-accent-500: #06b6d4;
-  --color-accent-600: #0891b2;
-}
-
-/* ============ 明暗主题 CSS 变量 ============
-   分三层:
-   1) 项目层(--surface / --ink / --line …):页面骨架与业务视图直接消费。
-   2) shadcn 语义层(--background / --primary / --input / --muted …):
-      UI 组件的状态(开/关、选中/未选中、hover、focus)全部走这层,命名与语义
-      与 shadcn 官方一致,取值由本项目调色板定制。
-   3) 控件状态层(--control-track / --control-thumb …):shadcn 没有对应语义,
-      为 Switch 轨道与滑块补齐。
-   三层在明暗两套主题下都必须满足 scripts/check-ui-consistency.mjs 第 9 项的
-   对比度门禁,改色时请连同对比度一起复验。 */
-
-:root {
-  --radius: 0.5rem;
-  --ring-offset: #ffffff;
-
-  /* ---- 项目层:页面骨架 ---- */
-  --surface: #ffffff; /* 卡片 / 组件宿主底色 */
-  --surface-muted: #f4f6fb; /* 页面底色 */
-  --surface-strong: #e9edf6; /* 强调填充(图标底、标签、次级按钮) */
-  --ink: #0f172a;
-  --ink-soft: #475569;
-  --ink-faint: #94a3b8;
-  --line: #e5e8f2; /* 容器装饰性描边 */
-  --line-strong: #d4d9e8;
-  --ok: #16a34a;
-  --warn: #d97706;
-  --err: #dc2626;
-  --info: #0284c7;
-  --sidebar-bg: #0c0f17;
-
-  /* ---- shadcn 语义层:组件状态 ---- */
-  /* 映射说明:本项目页面底色是 --surface-muted、卡片底色是 --surface,
-     而 shadcn 的 --background 语义是「组件所处的那层底色」,故指向 --surface。 */
-  --background: var(--surface);
-  --foreground: var(--ink);
-  --card: var(--surface);
-  --card-foreground: var(--ink);
-  --popover: var(--surface);
-  --popover-foreground: var(--ink);
-  --primary: #4f46e5; /* brand-600 */
-  --primary-foreground: #ffffff;
-  --secondary: var(--surface-strong);
-  --secondary-foreground: var(--ink);
-  --muted: #eaeef7; /* 表头 / 悬浮行 / 选中行底 */
-  --muted-foreground: var(--ink-soft);
-  --accent: var(--surface-strong); /* 菜单项 hover */
-  --accent-foreground: var(--ink);
-  --destructive: var(--err);
-  --destructive-foreground: #ffffff;
-  --border: #c8d0e4; /* 控件描边:必须与 --card 可辨(对比 ≥1.5,门禁第 9 项守这条) */
-  --input: #c8d0e4; /* 输入框描边 */
-  --ring: #6366f1; /* brand-500 */
-
-  /* ---- 控件状态层 ---- */
-  --control-bg: var(--surface); /* 输入类控件底色 */
-  --control-track: #c6cee4; /* 关态轨道、复选/单选未选填充 */
-  --control-track-hover: #bcc5dd;
-  --control-thumb: var(--surface); /* 关态滑块 */
-  /* 亮色下 thumb 与卡片同色(对比 1.00),发丝描边是它唯一的轮廓 */
-  --control-thumb-edge: rgba(2, 6, 23, 0.22);
-}
-
-.dark {
-  --ring-offset: #10141d;
-
-  /* ---- 项目层:页面骨架 ---- */
-  --surface: #10141d;
-  --surface-muted: #151b28;
-  --surface-strong: #1c2333;
-  --ink: #e6eaf2;
-  --ink-soft: #a3adc2;
-  --ink-faint: #6b7690;
-  --line: #242c3e;
-  --line-strong: #303a52;
-  --ok: #4ade80;
-  --warn: #fbbf24;
-  --err: #f87171;
-  --info: #38bdf8;
-  --sidebar-bg: #070a10;
-  --sidebar-bg-deep: #04060a;
-  --sidebar-ink: rgba(203, 213, 225, 0.62);
-  --sidebar-ink-active: #ffffff;
-
-  /* ---- shadcn 语义层:组件状态 ---- */
-  --background: var(--surface);
-  --foreground: var(--ink);
-  --card: var(--surface);
-  --card-foreground: var(--ink);
-  --popover: #171d2b; /* 浮层比卡片亮一档,做出高度差 */
-  --popover-foreground: var(--ink);
-  /* 深色下主色提亮到 brand-400 并改深色前景:
-     否则白字/白滑块压在 #4f46e5 上只有 ~2:1 */
-  --primary: #818cf8;
-  --primary-foreground: #0b1020;
-  --secondary: var(--surface-strong);
-  --secondary-foreground: var(--ink);
-  --muted: #1c2333;
-  --muted-foreground: var(--ink-soft);
-  --accent: var(--line);
-  --accent-foreground: var(--ink);
-  --destructive: var(--err);
-  --destructive-foreground: #2a0d0d;
-  --border: #3a4459;
-  --input: #3a4459;
-  --ring: #818cf8;
-
-  --control-bg: #161c28; /* 输入类控件底色:略高于卡片底色(#10141d)界定输入区 */
-  --control-track: #404b66;
-  --control-track-hover: #4a5673;
-  --control-thumb: var(--ink);
-  --control-thumb-edge: rgba(2, 6, 23, 0.45);
-  color-scheme: dark;
-}
-
-
-/* ============ 主题切换动画(View Transitions) ============ */
-/* 配合 src/stores/theme.ts 的 setModeAnimated:关掉默认的整页交叉淡入淡出,
-   改成对 ::view-transition-old/new(root) 之一做 clip-path 圆环缩放。
-   层叠顺序跟着 .dark 走 —— class 是在过渡回调里改的,快照绘制时读到的是新状态:
-   浅色下 new 在上层(圆环放大擦出浅色),深色下 old 在上层(浅色圆环收缩擦掉)。 */
-::view-transition-old(root),
-::view-transition-new(root) {
-  animation: none;
-  mix-blend-mode: normal;
-}
-::view-transition-old(root) {
-  z-index: 1;
-}
-::view-transition-new(root) {
-  z-index: 9999;
-}
-.dark::view-transition-old(root) {
-  z-index: 9999;
-}
-.dark::view-transition-new(root) {
-  z-index: 1;
-}
-
-/* 语义色 → 工具类(bg-surface / text-ink / border-line / text-ok …) */
-@theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-  --color-ring: var(--ring);
-  /* shadcn 语义层 → 工具类(bg-primary / text-primary-foreground / border-input …) */
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-control-bg: var(--control-bg);
-  --color-control-track: var(--control-track);
-  --color-control-track-hover: var(--control-track-hover);
-  --color-control-thumb: var(--control-thumb);
-  --color-control-thumb-edge: var(--control-thumb-edge);
-  /* 项目层 */
-  --color-surface: var(--surface);
-  --color-surface-muted: var(--surface-muted);
-  --color-surface-strong: var(--surface-strong);
-  --color-ink: var(--ink);
-  --color-ink-soft: var(--ink-soft);
-  --color-ink-faint: var(--ink-faint);
-  --color-line: var(--line);
-  --color-line-strong: var(--line-strong);
-  --color-ok: var(--ok);
-  --color-warn: var(--warn);
-  --color-err: var(--err);
-  --color-info: var(--info);
-  --color-sidebar-bg: var(--sidebar-bg);
-  --color-sidebar-bg-deep: var(--sidebar-bg-deep);
-  --color-sidebar-ink: var(--sidebar-ink);
-  --color-sidebar-ink-active: var(--sidebar-ink-active);
-}
+/* 本文件只放「与主题无关」的东西:基础样式、动效 shim、世界地图填色。
+   令牌(字体 / 字号 / 圆角 / 阴影 / 明暗色板)全部在 ./theme.css。 */
 
 
 /* ============ 全局基础 ============ */
@@ -245,6 +18,10 @@ body,
 body {
   background: var(--surface-muted);
   color: var(--ink);
+  /* Inter 的单双 a 形与开 / 闭尾 */
+  font-feature-settings: 'cv11', 'ss01';
+  /* 后台表格与 KPI 的数字对齐 */
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -279,7 +56,7 @@ body {
 }
 
 /* 表单控件统一焦点环:等价于 shadcn 的 border-ring + ring-[3px] ring-ring/50,
-   收在 main.css 做单一出处——组件只挂 .app-field,不再各自写 ring 工具类。 */
+   收在本文件做单一出处——组件只挂 .app-field,不再各自写 ring 工具类。 */
 .app-field:focus-visible {
   outline: none;
   border-color: var(--ring);
@@ -290,7 +67,31 @@ body {
   --tw-ring-offset-color: var(--surface);
 }
 
-/* shadcn 进出场动效与关键帧 */
+/* ============ 主题切换动画(View Transitions) ============ */
+/* 配合 src/stores/theme.ts 的 setModeAnimated:关掉默认的整页交叉淡入淡出,
+   改成对 ::view-transition-old/new(root) 之一做 clip-path 圆环缩放。
+   层叠顺序跟着 .dark 走 —— class 是在过渡回调里改的,快照绘制时读到的是新状态:
+   浅色下 new 在上层(圆环放大擦出浅色),深色下 old 在上层(浅色圆环收缩擦掉)。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 9999;
+}
+.dark::view-transition-old(root) {
+  z-index: 9999;
+}
+.dark::view-transition-new(root) {
+  z-index: 1;
+}
+
+
+/* ============ 动效 shim(shadcn 进出场) ============ */
 @keyframes enter {
   from {
     opacity: var(--tw-enter-opacity, 1);
@@ -383,7 +184,9 @@ body {
 
 /* ==========================================================================
    世界地图填色 (World Map Choropleth - 供 WorldMapPanel.vue 消费)
-   ========================================================================== */
+   ==========================================================================
+   填色走 --color-brand-* 色阶:浅色用 100/300/500/700,
+   深色反相成 900/800/600/400(浅色下最浅的一档在深底上会糊掉)。 */
 .map-shape {
   stroke: var(--surface);
   stroke-width: 0.7;
