@@ -88,7 +88,7 @@
 | POST | /api/links/batch-delete | `{ids: number[]}` | 200 {deleted} | 批量逻辑删除(等价逐条 DELETE,`deleted_at` 置位,记录/关联/访问明细保留);400 ids 为空/数量 > 200/含 ≤ 0 的 id;不属于本租户、已删除或不存在的 id 静默跳过(幂等),`deleted` 为实际置位行数;需 X-CSRF-Token |
 | POST | /api/links/batch-purge | `{ids: number[]}` | 200 {deleted} | 批量物理删除(连同 visits/link_targets/link_domains 走库内 ON DELETE CASCADE,并清理各短链落地页文件);400 条件同上;跨租户/不存在的 id 静默跳过(幂等),`deleted` 为实际删除行数(已逻辑删除的行同样被物理清除);需 X-CSRF-Token |
 | GET | /api/links/{id}/visits | query `page,pageSize,action?` | 200 {items, total} | 访问明细列表(含跳转/落地页/点击三类动作);`action` 可选 `redirect` / `landing_view` / `click`,省略则不过滤,非法值 400 |
-| GET | /api/links/{id}/stats | - | 200 {visits, clicks} | 访问数与点击数 |
+| GET | /api/links/{id}/stats | - | 200 {visits, clicks, clicksTotal} | 访问数与点击数。`clicks` 为**同源同期**口径(与 `visits` 同表同窗口,算 CTR 用这个);`clicksTotal` 为永久累计(`links.clicks`,不随保留期衰减)。原先 `clicks` 直接返回永久计数器,与 `visits` 配对会在清理后台面 CTR 虚高 |
 
 > 目标 URL 支持多个;跳转命中后默认按轮询(round-robin)在 `targetUrls` 中选择一个作为重定向目的地。
 

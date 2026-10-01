@@ -1,8 +1,9 @@
 <div align="center">
 
-# CLOAK
+# Janus
 
-**自托管多租户短链服务** — Self-hosted multi-tenant short-link platform
+**每一次跳转，皆为裁决。**  
+*Every jump is a verdict.*
 
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
@@ -17,7 +18,7 @@
 
 ---
 
-CLOAK 是一个自托管的**多租户短链服务**:租户注册后管理自己的域名与短链,系统为每个已激活域名**自动签发并续期 HTTPS 证书**,把 `域名/短码` 的访问重定向到目标 URL。除跳转外,还提供**落地页型短链**、**访问明细与地理统计**、**租户级访问处置规则引擎**与**自定义错误页**,以及给脚本用的 **Bearer JWT API**。
+Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己的域名与短链,系统为每个已激活域名**自动签发并续期 HTTPS 证书**,把 `域名/短码` 的访问重定向到目标 URL。除跳转外,还提供**落地页型短链**、**访问明细与地理统计**、**租户级访问处置规则引擎**与**自定义错误页**,以及给脚本用的 **Bearer JWT API**。
 
 - **单服务器部署** — Go 后端(Gin + GORM)+ Vue 3 SPA(nginx)+ PostgreSQL 16 + Caddy(on-demand TLS,Let's Encrypt 自动签发/续期),`docker compose up -d` 全部跑起来。
 - **多租户隔离** — 租户之间的域名、短链、规则、落地页完全隔离;部署者持有平台管理员角色,可治理全平台。
@@ -52,9 +53,9 @@ CLOAK 是一个自托管的**多租户短链服务**:租户注册后管理自己
 
 ### 1.1 它解决什么问题
 
-市面上的短链服务要么按点击收费,要么不给你自己的域名。CLOAK 的取舍很直接:**部署在自己服务器上,租户带自己的域名进来**。
+市面上的短链服务要么按点击收费,要么不给你自己的域名。Janus 的取舍很直接:**部署在自己服务器上,租户带自己的域名进来**。
 
-| 需求 | CLOAK 的做法 |
+| 需求 | Janus 的做法 |
 | --- | --- |
 | 短链要用自己的域名 | 自有域名加进来做 DNS 激活校验,证书由 Caddy on-demand TLS 自动签发与续期 |
 | 不想为每个租户手工配证书 | 平台域名配一条 `*.<平台域名>` 泛解析,每个租户自动获得 `<slug>.<平台域名>` |
@@ -791,4 +792,4 @@ SPDX-License-Identifier: AGPL-3.0-only
 | [`.scratch/cloak/`](.scratch/cloak/) | 需求规格、API 完整契约、逐功能票据 |
 | [`.env.example`](.env.example) | 环境变量模板(带逐项说明) |
 
-**一句话总结**:CLOAK 是一台"接上 DNS 就能用"的短链服务 —— 租户带域名进来,证书与统计与规则都自带。
+**一句话总结**:Janus 是一台"接上 DNS 就能用"的短链服务 —— 租户带域名进来,证书与统计与规则都自带。

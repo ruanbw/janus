@@ -1,8 +1,9 @@
 <div align="center">
 
-# CLOAK
+# Janus
 
-**Self-hosted multi-tenant short-link platform**
+**每一次跳转，皆为裁决。**  
+*Every jump is a verdict.*
 
 [![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
@@ -17,7 +18,7 @@
 
 ---
 
-CLOAK is a **self-hosted multi-tenant short-link platform**: tenants sign up, bring their own domains, and the system issues and renews HTTPS certificates automatically for every activated domain, redirecting `domain/code` hits to a target URL. Beyond plain redirects it ships **landing-page links**, **visit detail with geographic attribution**, a **tenant-level access rule engine**, **custom error pages**, and a **Bearer JWT API** for scripts.
+Janus is a **self-hosted multi-tenant short-link platform**: tenants sign up, bring their own domains, and the system issues and renews HTTPS certificates automatically for every activated domain, redirecting `domain/code` hits to a target URL. Beyond plain redirects it ships **landing-page links**, **visit detail with geographic attribution**, a **tenant-level access rule engine**, **custom error pages**, and a **Bearer JWT API** for scripts.
 
 - **Single-server deployment** — Go backend (Gin + GORM) + Vue 3 SPA served by nginx + PostgreSQL 16 + Caddy (on-demand TLS, automatic Let's Encrypt issuance/renewal). `docker compose up -d` brings it all up.
 - **Tenant isolation** — domains, links, rules and landing pages of one tenant are invisible to every other. The deployer holds a platform-admin role and can govern the whole platform.
@@ -52,9 +53,9 @@ CLOAK is a **self-hosted multi-tenant short-link platform**: tenants sign up, br
 
 ### 1.1 What problem it solves
 
-Off-the-shelf short-link services either charge per click or refuse to let you use your own domain. CLOAK's trade-off is simple: **it runs on your own server, and tenants bring their own domains**.
+Off-the-shelf short-link services either charge per click or refuse to let you use your own domain. Janus's trade-off is simple: **it runs on your own server, and tenants bring their own domains**.
 
-| Need | How CLOAK handles it |
+| Need | How Janus handles it |
 | --- | --- |
 | Short links on your own domain | Add a self-owned domain, pass a DNS activation check; Caddy on-demand TLS issues and renews the certificate |
 | No manual certificate per tenant | One wildcard record `*.<platform-domain>` gives every tenant an automatic `<slug>.<platform-domain>` |
@@ -793,4 +794,4 @@ In short:
 | [`.scratch/cloak/`](.scratch/cloak/) | Requirement spec, full API contract, per-feature tickets |
 | [`.env.example`](.env.example) | Environment variable template with per-variable notes |
 
-**In one line**: CLOAK is a short-link service that works the moment DNS points at it — tenants bring domains, and certificates, analytics and rules come included.
+**In one line**: Janus is a short-link service that works the moment DNS points at it — tenants bring domains, and certificates, analytics and rules come included.
