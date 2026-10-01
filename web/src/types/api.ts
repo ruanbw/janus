@@ -79,9 +79,12 @@ export type RuleOperator =
   | 'neq'
   | 'contains'
   | 'not_contains'
+  | 'starts_with'
+  | 'ends_with'
   | 'gt'
   | 'lt'
   | 'regex'
+  | 'in_cidr'
   | 'duplicated';
 
 /** 单条条件:values 为复数形式(逗号 / 换行分隔录入) */

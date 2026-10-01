@@ -211,6 +211,7 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 	}
 	// ⑦⑧ 条件字段与运算符必须都在 v1 白名单内(白名单以 rules 包为准,httpapi 只引用)。
 	// 条件树里的每个叶子都要校验,报错带 JSON 路径——不指明位置的话用户没法改。
+	// 注:visual 形态允许零条件——那是刻意的"兜底规则"(无条件即命中,见 eval_test.go)。
 	if req.Conditions != nil {
 		if err := validateConditionTree(*req.Conditions); err != nil {
 			return ruleWrite{}, err
@@ -1165,4 +1166,3 @@ func (a *API) handleValidateExpr(c *gin.Context) {
 	}
 	writeJSON(c, http.StatusOK, validateExprResp{Valid: true})
 }
-

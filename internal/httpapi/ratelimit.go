@@ -118,23 +118,28 @@ func remoteHostOnly(remote string) string {
 }
 
 // forwardedClientIP 仅在直连来源是内网/回环(即部署前置 Caddy/本机代理)时,
-// 才信任 X-Forwarded-For 首段;公网直连时忽略该头,防止客户端伪造来源 IP
-// 绕过限流或污染访问统计。首段必须是合法 IP,否则回退 RemoteAddr。
+// 才信任 X-Forwarded-For,且取**最右**一段——那才是本跳代理追加的真实客户端 IP。
+//
+// 为什么不是最左:反向代理(Caddy 2 默认行为)是把客户端 IP **追加**到既有
+// XFF 之后,而不是覆盖。客户端自带 `X-Forwarded-For: 9.9.9.9` 时,后端看到的是
+// `9.9.9.9, <真实 IP>`,取最左等于采信访客自选值 → 注册/登录限流可绕过、
+// visits.ip 与国家码被污染、规则的 ip/ipattr/country 条件可被规避。
+// 部署侧对应地在 Caddyfile 里用 `header_up X-Forwarded-For {remote_host}` 覆盖该头。
 func forwardedClientIP(r *http.Request) string {
 	peer := net.ParseIP(remoteHostOnly(r.RemoteAddr))
 	if peer == nil || (!peer.IsLoopback() && !peer.IsPrivate()) {
 		return ""
 	}
+	var last string
 	for _, part := range strings.Split(r.Header.Get("X-Forwarded-For"), ",") {
-		first := strings.TrimSpace(part)
-		if ip := net.ParseIP(first); ip != nil {
-			return ip.String()
+		if ip := net.ParseIP(strings.TrimSpace(part)); ip != nil {
+			last = ip.String()
 		}
 	}
-	return ""
+	return last
 }
 
-// clientIP 解析请求来源 IP:内网反代场景取可信的 X-Forwarded-For 首段,
+// clientIP 解析请求来源 IP:内网反代场景取可信的 X-Forwarded-For 最右段,
 // 否则取 RemoteAddr。
 func clientIP(r *http.Request) string {
 	if ip := forwardedClientIP(r); ip != "" {

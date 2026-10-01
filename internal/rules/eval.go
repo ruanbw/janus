@@ -135,12 +135,12 @@ func compileRule(r store.Rule, log *slog.Logger) (Compiled, bool) {
 			log.Warn("表达式规则的 expression 为空,整条规则不参与求值", "rule", r.ID, "name", r.Name)
 			return Compiled{}, false
 		}
-		prog, err := CompileExpression(r.Expression)
+		prog, refs, err := compileExpression(r.Expression)
 		if err != nil {
 			log.Warn("表达式规则编译失败,整条规则不参与求值", "rule", r.ID, "name", r.Name, "err", err)
 			return Compiled{}, false
 		}
-		c.evaluator = &exprEvaluator{program: prog, log: log}
+		c.evaluator = &exprEvaluator{program: prog, refs: refs, log: log}
 		return c, true
 	}
 

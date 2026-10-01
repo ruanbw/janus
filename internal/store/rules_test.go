@@ -938,12 +938,12 @@ func TestRuleTypeAndExpressionPersistence(t *testing.T) {
 
 	// 1. 创建 Expr 规则
 	created, err := s.CreateRule(ctx, tenantID, Rule{
-		Name:        "Expr 规则",
-		Scope:       RuleScopeGlobal,
-		Action:      RuleActionPass,
-		RuleType:    RuleTypeExpression,
-		Expression:  `Country in ["US", "CA"] && DevType == "bot"`,
-		Enabled:     true,
+		Name:       "Expr 规则",
+		Scope:      RuleScopeGlobal,
+		Action:     RuleActionPass,
+		RuleType:   RuleTypeExpression,
+		Expression: `Country in ["US", "CA"] && DevType == "bot"`,
+		Enabled:    true,
 	})
 	if err != nil {
 		t.Fatalf("CreateRule: %v", err)
@@ -981,4 +981,3 @@ func TestRuleTypeAndExpressionPersistence(t *testing.T) {
 		t.Fatalf("更新后查库异常: %+v", gotAfterUpdate)
 	}
 }
-

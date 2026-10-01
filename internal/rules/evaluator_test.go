@@ -50,6 +50,27 @@ func TestExprCompileAndEvaluate(t *testing.T) {
 			fact:       Fact{IP: "172.16.0.1"},
 			wantMatch:  false,
 		},
+		// 以下三条锁定与 Tier-1 相同的不变式:字段取不到时恒不命中。
+		// 取反写法(Country != "US")在 country 为空时若参与求值会变成"拦截所有人";
+		// asn 当前无数据源(fields.go:恒空),`asn == ""` 恒真等于无条件拦截。
+		{
+			name:       "取不到 country 时取反写法不得命中",
+			expression: `Country != "US"`,
+			fact:       Fact{UA: "Mozilla/5.0"},
+			wantMatch:  false,
+		},
+		{
+			name:       "asn 无数据源时等空判定不得命中",
+			expression: `asn == ""`,
+			fact:       Fact{UA: "Mozilla/5.0"},
+			wantMatch:  false,
+		},
+		{
+			name:       "引用的任一字段取不到则整体不命中(fail-open)",
+			expression: `ua contains "Googlebot" && !(country == "CN")`,
+			fact:       Fact{UA: "Mozilla/5.0 (compatible; Googlebot/2.1)"},
+			wantMatch:  false,
+		},
 	}
 
 	for _, tc := range cases {

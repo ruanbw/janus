@@ -152,7 +152,8 @@ CLOAK 是一个自托管的**多租户短链服务**:租户注册后管理自己
 租户级的**访问处置规则**:一个条件集合 + 一个动作(ADR-0008)。
 
 - **13 个可求值访客字段**:`ip`(支持 CIDR)、`ipattr`(private / loopback / linklocal)、`country`、`asn`、`lang`、`ref`、`utm_source`、`ua`、`devtype`(bot / mobile / tablet / desktop)、`os`、`browser`、`path`、`domain`。
-- **操作符**:属于 / 不属于 / 等于 / 不等于 / 包含 / 不包含 / 大于 / 小于 / 正则(RE2,大小写敏感);`ip` 字段按 CIDR 网段或字面量匹配,数值比较遇到非数值恒不命中。v1 不做嵌套分组,条件之间由 `logic` 决定「全部满足」或「任一满足」。
+- **操作符**:属于 / 不属于 / 等于 / 不等于 / 包含 / 不包含 / 开头是(`starts_with`)/ 结尾是(`ends_with`)/ 大于 / 小于 / 正则(RE2,大小写敏感)/ 落在 IP 网段(`in_cidr`,仅 `ip` 字段);`ip` 字段按 CIDR 网段或字面量匹配,数值比较遇到非数值恒不命中。v1 不做嵌套分组,条件之间由 `logic` 决定「全部满足」或「任一满足」。
+- **取不到数据恒不命中**(两个编辑方式一致):字段值为空时条件不成立,**取反写法也不例外**——`country != "US"` 在 `country` 为空时不命中,否则「拦截非美国访客」会变成拦截所有人。`asn` 当前无数据源(`fields.go` 标为恒空),凡引用它的条件恒不成立。零条件规则是**有意的兜底规则**(无条件即命中)。
 - **两种编辑方式**:`visual`(可视化条件树,默认)与 `expression`(Expr 表达式,给高级用户,`POST /api/rules/validate-expr` 校验语法)。
 - **动作(裁决)**:放行 `pass`(记录命中后继续原跳转流程)/ 改写目标 `redirect`(改写地址不参与短链目标池轮询)/ 返回 404 `notfound`(记 `outcome=failed`、`reason=rule_blocked`)/ 限流 `throttle`(返回 429,记 `reason=rule_throttled`);后两者不计入访问量。
 - **作用域**:**全局**对租户所有短链生效;**指定短链**只对被显式关联的短链生效——关联由规则侧声明,规则是这份关联的唯一写入口(短链侧看到的是同一份数据)。指定短链但零关联的规则永远不命中,界面显式标出该状态。
@@ -295,7 +296,7 @@ CLOAK 是一个自托管的**多租户短链服务**:租户注册后管理自己
 ├── web/                        # 前端 SPA(见 web/README.md、web/UI_KIT.md)
 │   ├── src/
 │   │   ├── api/  types/  utils/ # 请求封装、类型、错误与工具
-│   │   ├── components/          # app/(业务)与 ui/(App* 无头组件封装)
+│   │   ├── components/          # app/(项目组件 App*)+ ui/(shadcn 原语,kebab-case)
 │   │   ├── layouts/  views/     # 后台骨架与各功能页
 │   │   └── styles/              # Tailwind 入口与三层设计令牌
 │   ├── scripts/check-ui-consistency.mjs  # UI 规范门禁
@@ -484,6 +485,7 @@ pnpm build
 
 - 迁移文件放在 `migrations/`,命名 `NNNN_snake_case.sql`,由 **goose** 执行;文件头写 `-- +goose Up` / `-- +goose Down`。
 - 只增不改:已发布的迁移**不修改**,新增一条向后兼容的迁移。
+- 当前 14 条迁移只提供 `-- +goose Up`(v1 不支持 `goose down`),回滚靠反向迁移。
 - 启动时自动 `goose up`,幂等;新增迁移后同时更新 `internal/store` 的读写代码与相关测试。
 
 ### 7.4 前端约定
@@ -491,8 +493,8 @@ pnpm build
 完整契约见 [`web/UI_KIT.md`](web/UI_KIT.md);门禁脚本 `web/scripts/check-ui-consistency.mjs` 会强制以下规则:
 
 - **三层设计令牌**:`main.css` 的 `:root` / `.dark` 定义项目层(surface / ink / line / ok-warn-err)、shadcn 语义层(background / primary / destructive / …)、控件状态层(control-bg / control-track / control-thumb)三层,再经 `@theme inline` 映射成 Tailwind 工具类。
-- **组件状态色一律走语义层**:`components/ui/` 内部**禁止**写 `dark:` 补丁类名,所有主题差异由令牌自身换值保证(例:开关轨道用 `data-[state=unchecked]:bg-control-track`,不是 `bg-surface-muted dark:bg-…`)。
-- **只用 `App*` 组件**:业务视图里不写裸 `<button>` / `<input>` / `<select>` / `<table>`,统一用 `components/ui/` 的封装(底层是 Reka UI 无头组件)。
+- **组件状态色一律走语义层**:`components/app/` 内部**禁止**写 `dark:` 补丁类名,所有主题差异由令牌自身换值保证(例:开关轨道用 `data-[state=unchecked]:bg-control-track`,不是 `bg-surface-muted dark:bg-…`)。
+- **只用 `App*` 组件**:业务视图里不写裸 `<button>` / `<input>` / `<select>` / `<table>`,统一用 `components/app/` 的封装。两层分工(ADR-0011):`components/ui/` 是 shadcn/Reka UI 原语(kebab-case 文件,可整目录替换),`components/app/` 是项目组件(`App*` 前缀),**`app/` 不得直接 import `reka-ui`**,要新原语先在 `ui/` 包一层。
 - **禁止重新引入 ant-design-vue**;禁止 legacy 类名与 legacy 令牌;禁止硬编码纯白 `bg-white` / `text-white`(带 alpha 的合法)。
 - **响应式一律用 Tailwind 断点工具类**,不在 JS 里判断视口宽度;需要按自身宽度换挡的用 CSS container query。
 - **深色模式**:`html.dark` 由 `stores/theme.ts` 控制并持久化到 localStorage。
@@ -740,7 +742,7 @@ cd web && pnpm type-check && pnpm check:ui && pnpm build
 **代码风格**
 
 - Go:`gofmt`;注释解释"为什么"与不变式,不写复述代码的注释;新依赖前先确认标准库/已有依赖不能解决(仓库已明确不自造轮子:迁移、限流、邮件、配置、CIDR 匹配、表达式引擎都用成熟库)。
-- Vue:三层令牌 + `App*` 组件(见 7.4);不引入 ant-design-vue;不在 `components/ui/` 写 `dark:` 补丁;不写裸 HTML 原语;响应式只用 Tailwind 断点或 container query。
+- Vue:三层令牌 + `App*` 组件(见 7.4);不引入 ant-design-vue;不在 `components/app/` 写 `dark:` 补丁;不写裸 HTML 原语;响应式只用 Tailwind 断点或 container query。
 - 数据库:迁移只增不改,已发布迁移不修改。
 
 **Issue 与规格**:票据与规格以 markdown 形式放在 `.scratch/<feature-slug>/`(见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md));领域词汇变更改 [`CONTEXT.md`](CONTEXT.md)(见 [`docs/agents/domain.md`](docs/agents/domain.md));架构取舍写 `docs/adr/NNNN-*.md`,格式参照现有 ADR(背景 → 权衡 → 后果)。**不显然的决策要有 ADR,不要只写在提交信息里。**

@@ -19,16 +19,22 @@
 	}
 }
 
+# 反代到后端时覆盖 X-Forwarded-For 为真实客户端 IP(Caddy 2 默认追加而非覆盖;
+# 后端取最右一段,两侧约定必须同时成立,否则访客可自带 XFF 伪造来源 IP)。
+(backend_proxy) {
+	reverse_proxy host.docker.internal:8080 {
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+
 # 后台域名分流规则(app 后台域名与裸平台域名行为一致)
+# 不代理 /internal/*:授权端点只接受本网络直连,经反代后内网判定恒真
 (console) {
 	handle /api/* {
-		reverse_proxy host.docker.internal:8080
-	}
-	handle /internal/* {
-		reverse_proxy host.docker.internal:8080
+		import backend_proxy
 	}
 	handle /healthz {
-		reverse_proxy host.docker.internal:8080
+		import backend_proxy
 	}
 	handle {
 		# Vite dev server:Caddy 默认透传原始 Host 头,配合 vite.config.ts 的
@@ -54,5 +60,10 @@ app.cloak.test {
 	tls internal {
 		on_demand
 	}
-	reverse_proxy host.docker.internal:8080
+	handle /internal/* {
+		respond 404
+	}
+	handle {
+		import backend_proxy
+	}
 }

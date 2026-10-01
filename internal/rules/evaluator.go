@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"sort"
 	"strings"
 
 	"github.com/expr-lang/expr"
@@ -28,7 +29,10 @@ func (e *nativeVisualEvaluator) Match(ctx VisitorContext) bool {
 // exprEvaluator Tier-2 Expr 字节码虚拟机求值器。
 type exprEvaluator struct {
 	program *vm.Program
-	log     *slog.Logger
+	// refs 编译期收集的、表达式真正引用到的访客字段(小写规范名,即 ctx.Field 的入参)。
+	// 求值前逐个确认可取,任一取不到即整体不命中——见 Match 的不变式注释。
+	refs []string
+	log  *slog.Logger
 }
 
 func (e *exprEvaluator) Match(ctx VisitorContext) (matched bool) {
@@ -40,6 +44,17 @@ func (e *exprEvaluator) Match(ctx VisitorContext) (matched bool) {
 			}
 		}
 	}()
+	// 关键不变式(与 Tier-1 compiledCond.match 同源,见 eval.go):
+	// 字段值取不到(空)时恒不命中。表达式层若不守住这条,取反写法会把它反过来 ——
+	// `country != "US"` 在 country 为空时为真(把"拦截非美国"变成拦截所有人),
+	// `asn == ""` 因 ASN 当前无数据源而恒真(等价于一条无条件拦截)。
+	// 代价:混合引用时可能放弃一次本可命中的判定(fail-open 方向,与既有约定一致)。
+	for _, name := range e.refs {
+		if _, ok := ctx.Field(name); !ok {
+			return false
+		}
+	}
+
 	fact := FactFromContext(ctx)
 	out, err := vm.Run(e.program, &fact)
 	if err != nil {
@@ -86,37 +101,37 @@ func FactFromContext(ctx VisitorContext) Fact {
 }
 
 // fieldCasePatcher 兼容小写字段标识符(如 country == "US" 自动映射到 Country == "US")。
-type fieldCasePatcher struct{}
+// 同时收集表达式引用到的字段(存小写规范名,与 ctx.Field 的入参一致),
+// 供求值前的"取不到即不命中"闸门使用。
+type fieldCasePatcher struct {
+	refs map[string]struct{}
+}
 
-func (fieldCasePatcher) Visit(node *ast.Node) {
+// exprFieldNames 小写规范名 → expr 环境(Fact)里的 Go 字段名。
+var exprFieldNames = map[string]string{
+	"ip":      "IP",
+	"ipattr":  "IPAttr",
+	"country": "Country",
+	"asn":     "ASN",
+	"lang":    "Lang",
+	"ref":     "Ref",
+	"utm":     "UTM",
+	"ua":      "UA",
+	"devtype": "DevType",
+	"os":      "OS",
+	"browser": "Browser",
+	"path":    "Path",
+	"domain":  "Domain",
+}
+
+func (p fieldCasePatcher) Visit(node *ast.Node) {
 	if id, ok := (*node).(*ast.IdentifierNode); ok {
-		switch strings.ToLower(id.Value) {
-		case "ip":
-			id.Value = "IP"
-		case "ipattr":
-			id.Value = "IPAttr"
-		case "country":
-			id.Value = "Country"
-		case "asn":
-			id.Value = "ASN"
-		case "lang":
-			id.Value = "Lang"
-		case "ref":
-			id.Value = "Ref"
-		case "utm":
-			id.Value = "UTM"
-		case "ua":
-			id.Value = "UA"
-		case "devtype":
-			id.Value = "DevType"
-		case "os":
-			id.Value = "OS"
-		case "browser":
-			id.Value = "Browser"
-		case "path":
-			id.Value = "Path"
-		case "domain":
-			id.Value = "Domain"
+		lower := strings.ToLower(id.Value)
+		if goName, known := exprFieldNames[lower]; known {
+			id.Value = goName
+			if p.refs != nil {
+				p.refs[lower] = struct{}{}
+			}
 		}
 	}
 }
@@ -144,12 +159,28 @@ var inCIDRFunction = expr.Function("in_cidr", func(params ...any) (any, error) {
 
 // CompileExpression 编译一条规则表达式。
 func CompileExpression(code string) (*vm.Program, error) {
-	return expr.Compile(code,
+	prog, _, err := compileExpression(code)
+	return prog, err
+}
+
+// compileExpression 编译并同时返回表达式引用到的字段集合(小写规范名)。
+func compileExpression(code string) (*vm.Program, []string, error) {
+	refs := map[string]struct{}{}
+	prog, err := expr.Compile(code,
 		expr.Env(&Fact{}),
 		expr.AsBool(),
-		expr.Patch(fieldCasePatcher{}),
+		expr.Patch(fieldCasePatcher{refs: refs}),
 		inCIDRFunction,
 	)
+	if err != nil {
+		return nil, nil, err
+	}
+	names := make([]string, 0, len(refs))
+	for name := range refs {
+		names = append(names, name)
+	}
+	sort.Strings(names) // 求值前的闸门按稳定顺序遍历,便于测试与调试复现
+	return prog, names, nil
 }
 
 // ValidateExpression 校验一条规则表达式语法与类型(必须返回 bool)。

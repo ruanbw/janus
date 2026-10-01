@@ -18,12 +18,13 @@ export type SwitchSize = 'sm' | 'default';
 export { switchThumbVariants };
 
 /**
- * 轨道尺寸。default 档与 ui/switch 原生一致（p-0.5 + thumb size-4 + translate-x-4），
- * 只有 sm 档需要收窄——thumb 由 ui/switch 内部渲染，项目层拿不到它的 class，
- * 因此 sm 档用后代选择器把 thumb 一并缩小，保证轨道与滑块同步。
+ * 轨道尺寸。default 档必须显式给尺寸：ui/switch 原语的根元素只有 p-0.5,
+ * 宽度是 shrink-to-fit(thumb size-4 + padding),只有 20px,而 thumb 勾选态
+ * translate-x-4 位移 16px,右边缘到 34px —— 会直接溢出轨道压到旁边文案上。
+ * 两档都在项目层锁定 h/w,thumb 用后代选择器同步缩放。
  */
 const SWITCH_SIZE_CLASSES: Record<SwitchSize, string> = {
-  default: '',
+  default: 'h-5 w-9 p-0.5',
   sm: 'h-[17px] w-[30px] p-0 [&>span]:size-[11px] [&>span]:data-[state=checked]:translate-x-[13px]',
 };
 

@@ -460,8 +460,22 @@ export function evalCondition(cond: RuleCondition, facts: VisitorFacts): TraceFa
       // 仅为读回经 API 写入的历史条件而保留:没有计数数据源时恒判不成立
       hit = false;
       break;
+    // 后端已支持且正常工作的三个运算符（eval.go:matchStartsWith/matchEndsWith/in_cidr）。
+    // 之前落到 default 分支静默判否,会把生效中的规则显示成“未命中”——比不显示更糟。
+    case 'starts_with':
+      hit = actual !== '' && values.some((v) => actual.toLowerCase().startsWith(v.toLowerCase()));
+      break;
+    case 'ends_with':
+      hit = actual !== '' && values.some((v) => actual.toLowerCase().endsWith(v.toLowerCase()));
+      break;
+    case 'in_cidr':
+      hit = values.some((v) => ipInCidr(actual, v));
+      if (note === '' && !hit) note = '（前端 CIDR 匹配为近似实现,IPv6 网段以服务端为准）';
+      break;
     default:
       hit = false;
+      // 前端不认识的运算符不能静默当成“不成立”——那会让用户以为规则没生效
+      note = '（前端无法复算该运算符,判定以后端为准）';
   }
 
   return {

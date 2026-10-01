@@ -481,26 +481,26 @@ func (s *Store) CountActiveLinks(ctx context.Context, tenantID int64) (int, erro
 
 // lookupRow 跳转/落地路由的命中行(短链 + 域名 + deleted_at)。
 type lookupRow struct {
-	LinkID          int64
-	LinkTenantID    int64
-	Code            string
-	RedirectStatus  RedirectStatus
-	LinkType        string
-	LandingSource   string
-	LandingURL      string
-	LinkStatus      string
+	LinkID           int64
+	LinkTenantID     int64
+	Code             string
+	RedirectStatus   RedirectStatus
+	LinkType         string
+	LandingSource    string
+	LandingURL       string
+	LinkStatus       string
 	LinkRulesEnabled bool
-	LinkDeletedAt   *time.Time
-	LinkCreatedAt   time.Time
-	DomainID        int64
-	DomainTenantID  int64
-	FQDN            string
-	Description     string
-	Origin          string
-	DomainStatus    string
-	CertStatus      string
-	ActivatedAt     *time.Time
-	DomainCreatedAt time.Time
+	LinkDeletedAt    *time.Time
+	LinkCreatedAt    time.Time
+	DomainID         int64
+	DomainTenantID   int64
+	FQDN             string
+	Description      string
+	Origin           string
+	DomainStatus     string
+	CertStatus       string
+	ActivatedAt      *time.Time
+	DomainCreatedAt  time.Time
 }
 
 // link 把命中行装配为 Link(含轮询目标列表)。

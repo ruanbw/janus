@@ -457,7 +457,9 @@
                 <div class="flex flex-col gap-2">
                   <div class="flex flex-wrap items-baseline justify-between gap-2">
                     <span class="mono text-2xs font-semibold text-ink-soft">真实裁决 · 后端记录</span>
-                    <span class="text-xs text-ink-soft">后端处理该请求时的实际处置结果</span>
+                    <span class="text-xs text-ink-soft">
+                      裁决动作与命中规则由后端写入；下方命中条件为按当前规则集的前端回算
+                    </span>
                   </div>
 
                   <!-- 命中的规则卡片 -->
@@ -475,7 +477,9 @@
                     </div>
                     <!-- 只展示具体命中的条件，不展示全部条件 -->
                     <div v-if="selectedRow.hitConditionText" class="mono text-xs leading-relaxed text-err">
-                      <span class="font-medium">命中条件：</span>{{ selectedRow.hitConditionText }}
+                      <span class="font-medium">命中条件（前端回算，仅供参考）：</span>{{
+                        selectedRow.hitConditionText
+                      }}
                     </div>
                     <div
                       v-else-if="selectedRow.matchedRule.conditions?.length"

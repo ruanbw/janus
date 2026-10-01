@@ -96,4 +96,3 @@ func (a *API) handlePatchErrorPages(c *gin.Context) {
 		Custom429HTML: p429,
 	})
 }
-

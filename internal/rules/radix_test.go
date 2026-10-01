@@ -26,10 +26,10 @@ func mustAddr(t *testing.T, s string) netip.Addr {
 // TestRadixExactAndPrefixMatch 前缀命中与落空都要准,IPv4/IPv6 各测一遍。
 func TestRadixExactAndPrefixMatch(t *testing.T) {
 	cases := []struct {
-		name    string
-		prefix  string
-		addr    string
-		want    bool
+		name   string
+		prefix string
+		addr   string
+		want   bool
 	}{
 		{"v4 网段内", "10.0.0.0/8", "10.1.2.3", true},
 		{"v4 网段外", "10.0.0.0/8", "11.0.0.1", false},

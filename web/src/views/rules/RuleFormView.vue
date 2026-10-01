@@ -29,7 +29,7 @@ import PageHeader from '@/components/PageHeader.vue';
 import { confirm } from '@/components/app/confirm';
 import type { FormRule } from '@/components/app/types';
 import { COUNTRY_OPTIONS } from '@/constants/countries';
-import type { Rule, RuleCondition, RulePageMode, RuleScope } from '@/types/api';
+import type { Rule, RuleCondition, RuleOperator, RulePageMode, RuleScope } from '@/types/api';
 import { message } from '@/utils/toast';
 import {
   ACTION_OPTIONS,
@@ -210,7 +210,14 @@ const fieldOptions = computed(() =>
     disabled: f.pending === true,
   })),
 );
-const operatorOptions = computed(() => OPERATOR_OPTIONS.map((o) => ({ value: o.value as string, label: o.label })));
+// 运算符按字段过滤：in_cidr 后端只允许 ip 字段（eval.go 会 drop 其它字段的 in_cidr，
+// 条件被丢弃 = 规则被静默收紧），ip 之外不出现在下拉里。
+const IP_ONLY_OPERATORS: RuleOperator[] = ['in_cidr'];
+const operatorOptions = (field: string) =>
+  OPERATOR_OPTIONS.filter((o) => !IP_ONLY_OPERATORS.includes(o.value) || field === 'ip').map((o) => ({
+    value: o.value as string,
+    label: o.label,
+  }));
 const logicOptions = LOGIC_OPTIONS.map((l) => ({ value: l.value as string, label: l.label }));
 const actionOptions = ACTION_OPTIONS.map((a) => ({
   value: a.value as string,
@@ -328,6 +335,9 @@ function buildConditions(): RuleCondition[] {
       throw new Error(
         `第 ${idx + 1} 条条件的运算符「${cond.operator}」当前版本不可选（恒不命中，未接入数据源），请改为其他运算符`,
       );
+    }
+    if (IP_ONLY_OPERATORS.includes(cond.operator as RuleOperator) && cond.field !== 'ip') {
+      throw new Error(`第 ${idx + 1} 条条件的运算符「${cond.operator}」仅支持 ip 字段`);
     }
     // regex / gt / lt 不做多值切分：后端把 values 当 JSON 数组原样透传，
     // 按逗号/分号切会把 `^/promo{1,3}$` 撕成 `^/promo{1` 和 `3}$` 两条，
@@ -680,7 +690,7 @@ onMounted(init);
                     />
                     <AppSelect
                       :model-value="cond.operator"
-                      :options="operatorOptions"
+                      :options="operatorOptions(cond.field)"
                       placeholder="选择运算符"
                       @change="(v: string) => (cond.operator = v)"
                     />

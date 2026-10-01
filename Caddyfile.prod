@@ -19,16 +19,26 @@
 	}
 }
 
+# 反代到后端时覆盖 X-Forwarded-For 为真实客户端 IP。
+# Caddy 2 默认是**追加**到客户端自带值之后,不覆盖;后端取最右一段,
+# 两侧约定必须同时成立,否则客户端可自带 XFF 伪造来源 IP(绕过限流/污染统计)。
+(backend_proxy) {
+	reverse_proxy backend:8080 {
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+
 # 后台域名分流规则在两个站点间复用(app 后台域名与裸平台域名行为一致)
+# 注意:这里**不**代理 /internal/*。授权端点只接受来自本网络的直连,
+# 经反代后 RemoteAddr 是 Caddy 容器地址、内网判定恒真,公网可达就等于
+# 任意访客可枚举哪些租户域名处于 active。on_demand_tls 的 ask 由 Caddy
+# 进程直连 backend:8080,不经站点路由,删掉不影响签发。
 (console) {
 	handle /api/* {
-		reverse_proxy backend:8080
-	}
-	handle /internal/* {
-		reverse_proxy backend:8080
+		import backend_proxy
 	}
 	handle /healthz {
-		reverse_proxy backend:8080
+		import backend_proxy
 	}
 	handle {
 		reverse_proxy web:80
@@ -57,5 +67,11 @@ app.example.com {
 	tls {
 		on_demand
 	}
-	reverse_proxy backend:8080
+	# 同 console:授权端点不暴露给公网(整站反代会让它从任意租户子域可达)
+	handle /internal/* {
+		respond 404
+	}
+	handle {
+		import backend_proxy
+	}
 }
