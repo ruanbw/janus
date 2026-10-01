@@ -1,3 +1,4 @@
+-- +goose Up
 -- 0012_custom_error_pages.sql — 自定义 404 与 429 错误页面
 --
 -- 1. 租户全局默认错误页面 (tenants)

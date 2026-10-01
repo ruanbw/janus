@@ -1,3 +1,4 @@
+-- +goose Up
 -- 0006_multi_targets.sql — 短链多目标 URL(默认轮询)
 CREATE TABLE link_targets (
     id       BIGSERIAL PRIMARY KEY,

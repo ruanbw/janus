@@ -1,3 +1,4 @@
+-- +goose Up
 -- 0007_landing_pages.sql — 落地页型短链:短链类型、落地页来源、落地页地址与点击计数
 -- 短链类型:redirect(访问即跳转目标)/ landing(访问先到落地页,按钮点击后到目标)
 ALTER TABLE links ADD COLUMN link_type TEXT NOT NULL DEFAULT 'redirect'

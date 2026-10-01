@@ -1,3 +1,4 @@
+-- +goose Up
 -- 0009_rule_link_scope.sql — 规则表与规则-短链关联表
 --
 -- 为什么这么改:

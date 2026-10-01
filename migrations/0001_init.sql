@@ -1,3 +1,4 @@
+-- +goose Up
 -- 0001_init.sql — CLOAK 初始表结构(见 spec 决策 #5)
 
 CREATE TABLE tiers (

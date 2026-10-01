@@ -1,3 +1,4 @@
+-- +goose Up
 -- 0014_rule_expression.sql — 规则表达式扩展 (Expr)
 --
 -- 支持高级用户使用 Expr 语言编写自定义求值逻辑 (Tier-2 规则)。

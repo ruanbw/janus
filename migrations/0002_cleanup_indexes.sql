@@ -1,3 +1,4 @@
+-- +goose Up
 -- 0002_cleanup_indexes.sql — 后台清理任务索引
 -- worker 定期清理过期会话/访问记录(见 internal/domain/worker.go);
 -- 按 expires_at 删除,索引避免全表扫描。
