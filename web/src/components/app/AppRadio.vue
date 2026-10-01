@@ -20,6 +20,8 @@
 <script setup lang="ts">
 import RadioGroupItem from '@/components/ui/radio-group-item.vue';
 
+import { useFormItem } from './form';
+
 const props = withDefaults(
   defineProps<{
     value: string | number;
@@ -30,5 +32,7 @@ const props = withDefaults(
   { disabled: false },
 );
 
-const uid = props.id ?? 'radio-' + Math.random().toString(36).slice(2, 9);
+// 优先级：显式 id > 所属 AppFormItem 的 id（让 <label for> 能命中）> 兜底随机 id。
+const formItem = useFormItem();
+const uid = props.id ?? formItem?.id ?? 'radio-' + Math.random().toString(36).slice(2, 9);
 </script>

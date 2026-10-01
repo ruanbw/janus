@@ -8,6 +8,7 @@
     </span>
 
     <UiInput
+      :id="fieldId"
       :type="inputType"
       :value="modelValue"
       :placeholder="placeholder"
@@ -33,7 +34,8 @@
         type="button"
         tabindex="-1"
         title="清空"
-        class="flex h-5 w-5 items-center justify-center rounded-sm transition-colors hover:bg-surface-strong hover:text-ink focus-visible:outline-none"
+        aria-label="清空输入框"
+        class="relative flex h-5 w-5 items-center justify-center rounded-sm text-ink-faint transition-colors after:absolute after:-inset-1 after:content-[''] hover:bg-surface-strong hover:text-ink focus-visible:outline-none"
         @click.stop="onClear"
       >
         <X :size="13" />
@@ -44,7 +46,8 @@
         type="button"
         tabindex="-1"
         :title="showPassword ? '隐藏密码' : '显示密码'"
-        class="flex h-5 w-5 items-center justify-center rounded-sm transition-colors hover:bg-surface-strong hover:text-ink focus-visible:outline-none"
+        :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+        class="relative flex h-5 w-5 items-center justify-center rounded-sm text-ink-faint transition-colors after:absolute after:-inset-1 after:content-[''] hover:bg-surface-strong hover:text-ink focus-visible:outline-none"
         @click.stop="showPassword = !showPassword"
       >
         <EyeOff v-if="showPassword" :size="14" />
@@ -79,6 +82,8 @@ const props = withDefaults(
     size?: 'large' | 'middle' | 'small' | 'default' | 'sm' | 'lg';
     allowClear?: boolean;
     invalid?: boolean;
+    /** 显式 id；缺省时自动跟随外层 AppFormItem，保证 <label for> 能命中 */
+    id?: string;
     class?: any;
   }>(),
   { modelValue: '', type: 'text', size: 'middle', allowClear: false },
@@ -94,6 +99,9 @@ const emit = defineEmits<{
 
 const slots = useSlots();
 const formItem = useFormItem();
+
+/** 显式 id 优先；否则跟随所属 AppFormItem，让外层 <label for> 真正指向本控件。 */
+const fieldId = computed(() => props.id ?? formItem?.id);
 const showPassword = ref(false);
 
 const isPassword = computed(() => props.type === 'password');

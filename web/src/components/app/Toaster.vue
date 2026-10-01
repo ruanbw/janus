@@ -13,8 +13,8 @@
         <p class="min-w-0 flex-1 break-words text-xs font-medium leading-relaxed text-ink">{{ t.content }}</p>
         <button
           type="button"
-          tabindex="-1"
-          class="shrink-0 rounded-xs p-0.5 text-ink-faint opacity-60 transition-opacity hover:opacity-100 hover:text-ink focus-visible:outline-none"
+          class="-mr-1 -mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md text-ink-faint opacity-60 transition-opacity hover:bg-accent hover:opacity-100 hover:text-ink focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          :aria-label="'关闭提示：' + t.content"
           @click="dismiss(t.id)"
         >
           <X :size="14" />

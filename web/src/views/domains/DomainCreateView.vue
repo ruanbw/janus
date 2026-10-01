@@ -121,7 +121,7 @@
                 <CopyText
                   v-if="serverIp"
                   :text="serverIp"
-                  class="text-xs font-medium text-brand-600 hover:text-brand-700"
+                  class="text-xs font-medium text-brand hover:text-brand/75"
                 >
                   复制 IP
                 </CopyText>

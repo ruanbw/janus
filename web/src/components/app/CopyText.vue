@@ -1,7 +1,9 @@
 <template>
-  <span
-    class="group inline-flex max-w-full cursor-pointer items-center gap-1 align-middle"
+  <button
+    type="button"
+    class="group -my-1 inline-flex max-w-full items-center gap-1 align-middle py-1 text-left text-inherit"
     :title="title"
+    :aria-label="'复制 ' + text"
     @click="handleCopy"
   >
     <span class="min-w-0 truncate"><slot /></span>
@@ -9,7 +11,7 @@
       <Check v-if="copied" :size="13" class="text-ok" />
       <Copy v-else :size="13" />
     </span>
-  </span>
+  </button>
 </template>
 
 <script setup lang="ts">
@@ -23,7 +25,7 @@ const props = defineProps<{
 }>();
 
 const { copy, copied, isSupported } = useClipboard({ copiedDuring: 1500 });
-const title = '点击复制';
+const title = '点击复制（回车或空格同样可用）';
 
 async function handleCopy(): Promise<void> {
   if (!isSupported.value) {

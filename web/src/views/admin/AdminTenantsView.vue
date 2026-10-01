@@ -114,7 +114,7 @@ const columns: TableColumn[] = [
   { title: '等级', key: 'tier', dataIndex: 'tier', width: 110, nowrap: true },
   { title: '用量(短链/域名)', key: 'usage', dataIndex: 'usage', width: 200, nowrap: true },
   { title: '注册时间', key: 'createdAt', dataIndex: 'createdAt', width: 180, nowrap: true },
-  { title: '操作', key: 'action', width: 310, nowrap: true },
+  { title: '操作', key: 'action', width: 310, nowrap: true, fixed: 'right' },
 ];
 
 async function load() {

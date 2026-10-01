@@ -31,6 +31,7 @@ import UiCheckbox from '@/components/ui/checkbox.vue';
 import UiLabel from '@/components/ui/label.vue';
 
 import { cn } from '@/lib/utils';
+import { useFormItem } from './form';
 
 const props = withDefaults(
   defineProps<{
@@ -60,7 +61,9 @@ const emit = defineEmits<{
   change: [val: boolean];
 }>();
 
-const uid = props.id ?? 'checkbox-' + Math.random().toString(36).slice(2, 9);
+// 优先级：显式 id > 所属 AppFormItem 的 id（让 <label for> 能命中）> 兜底随机 id。
+const formItem = useFormItem();
+const uid = props.id ?? formItem?.id ?? 'checkbox-' + Math.random().toString(36).slice(2, 9);
 
 const model = computed<boolean | 'indeterminate'>(() => {
   if (props.indeterminate) return 'indeterminate';

@@ -133,6 +133,7 @@
                     v-if="form.landingSource === 'url'"
                     name="landingUrl"
                     label="落地页地址"
+                    :required="form.linkType === 'landing'"
                     extra="访问此短链时首先呈现的在线落地页 URL，最长 4096 字符。"
                   >
                     <AppInput
@@ -157,7 +158,7 @@
                       :class="
                         isDragging
                           ? 'border-primary bg-primary/10'
-                          : 'border-line-strong hover:border-brand-400 bg-surface/40 hover:bg-surface'
+                          : 'border-line-strong hover:border-brand bg-surface/40 hover:bg-surface'
                       "
                       @dragover.prevent="isDragging = true"
                       @dragleave.prevent="isDragging = false"
@@ -261,7 +262,7 @@
                         v-if="form.targetUrls.length > 1"
                         class="text-xs text-ink-faint flex items-center gap-1"
                       >
-                        <RefreshCw :size="12" class="text-brand-600" />
+                        <RefreshCw :size="12" class="text-brand" />
                         已启用多地址轮询分发机制（共 {{ form.targetUrls.length }} 个目标）
                       </span>
                     </div>
@@ -478,11 +479,11 @@
                       +{{ selectedDomains.length - 1 }} 个备选域名
                     </span>
                   </div>
-                  <div class="mono break-all text-xs font-semibold text-ink selection:bg-brand-100">
+                  <div class="mono break-all text-xs font-semibold text-ink selection:bg-brand/30">
                     {{ previewUrl }}
                   </div>
                   <div class="pt-1 flex items-center justify-between">
-                    <CopyText :text="previewUrl" class="text-xs text-brand-600 hover:text-brand-700 font-medium">
+                    <CopyText :text="previewUrl" class="text-xs text-brand hover:text-brand/75 font-medium">
                       复制完整地址
                     </CopyText>
                     <a
@@ -557,7 +558,7 @@
                 <!-- 指南小卡片 -->
                 <div class="rounded-lg border border-line-strong/60 bg-surface/50 p-3 text-2xs leading-relaxed text-ink-faint space-y-1.5">
                   <div class="flex items-center gap-1 font-medium text-ink-soft">
-                    <Info :size="13" class="text-brand-600" />
+                    <Info :size="13" class="text-brand" />
                     温馨提示
                   </div>
                   <p>• 同一短码可在不同域名下指向不同目标，实现域名隔离。</p>
@@ -757,6 +758,10 @@ const rules: Record<string, FormRule[]> = {
   ],
   targetUrls: [
     {
+      // 标 required 才会显示红星；空值判定仍交给下面的自定义校验，
+      // 因为 targetUrls 的初始值是 ['']（数组非空但首个元素为空），
+      // 只用 isBlank 判不出「没填」这种真正要报错的情况。
+      required: true,
       validator: (_rule, value: unknown) => {
         if (!Array.isArray(value) || value.length === 0) {
           return Promise.reject(new Error('请至少填写一个目标 URL'));
@@ -800,6 +805,9 @@ const rules: Record<string, FormRule[]> = {
   ],
   domainIds: [
     {
+      // 同上：空数组能被 isBlank 认出，这里给出更准确的文案
+      required: true,
+      message: '请至少选择一个关联域名',
       validator: (_rule, value: unknown) => {
         if (!Array.isArray(value) || value.length === 0) {
           return Promise.reject(new Error('请至少选择一个关联域名'));

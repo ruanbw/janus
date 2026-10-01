@@ -8,6 +8,7 @@
   >
     <!-- 触发器外观来自 ui/select.vue(原语层只管外观) -->
     <SelectTrigger
+      :id="fieldId"
       :class="triggerClasses"
       :aria-invalid="isInvalid ? 'true' : 'false'"
     >
@@ -21,10 +22,11 @@
             <button
               type="button"
               tabindex="-1"
-              class="shrink-0 rounded-xs text-ink-faint transition-colors hover:bg-surface-strong hover:text-ink"
+              class="relative -mr-0.5 flex size-4 shrink-0 items-center justify-center rounded-xs text-ink-faint transition-colors after:absolute after:-inset-1 after:content-[''] hover:bg-surface-strong hover:text-ink focus-visible:outline-none"
+              :aria-label="'移除 ' + tag.label"
               @click.stop="removeTag(tag.value)"
             >
-              <X :size="11" />
+              <X :size="12" />
             </button>
           </span>
         </template>
@@ -44,7 +46,8 @@
           v-else-if="allowClear && hasValue && !disabled"
           type="button"
           tabindex="-1"
-          class="flex size-4 items-center justify-center rounded-md transition-colors hover:bg-surface-strong hover:text-ink"
+          class="flex size-5 items-center justify-center rounded-md transition-colors hover:bg-surface-strong hover:text-ink focus-visible:outline-none"
+          aria-label="清除选择"
           @click.stop="clearValue"
         >
           <X :size="12" />
@@ -141,6 +144,8 @@ const props = withDefaults(
     size?: 'large' | 'middle' | 'small' | 'default' | 'sm' | 'lg';
     name?: string;
     invalid?: boolean;
+    /** 显式 id；缺省时自动跟随外层 AppFormItem */
+    id?: string;
     class?: any;
   }>(),
   {
@@ -160,6 +165,9 @@ const emit = defineEmits<{
 }>();
 
 const formItem = useFormItem();
+
+/** 显式 id 优先；否则跟随所属 AppFormItem */
+const fieldId = computed(() => props.id ?? formItem?.id);
 const open = ref(false);
 const search = ref('');
 const searchRef = ref<HTMLInputElement | null>(null);

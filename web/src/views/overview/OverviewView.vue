@@ -1,5 +1,5 @@
 <template>
-  <div class="space-y-5 pb-10" data-od-id="overview-view">
+  <div class="space-y-5" data-od-id="overview-view">
     <!-- KPI 卡片网格 (真实数据驱动：3列自适应、高度统一) -->
     <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
       <AppCard

@@ -79,7 +79,7 @@ const columns: TableColumn[] = [
   { title: '去向', key: 'destination', minWidth: 170, ellipsis: true },
   { title: '24h 命中', key: 'hits24h', width: 104, align: 'right' },
   { title: '状态', key: 'enabled', width: 80 },
-  { title: '操作', key: 'actions', width: 128, align: 'right', nowrap: true },
+  { title: '操作', key: 'actions', width: 128, align: 'right', nowrap: true, fixed: 'right' },
 ];
 
 /** AppTable 插槽 record 为 Record<string, unknown>,转换为领域类型以访问字段 */
@@ -273,7 +273,14 @@ onMounted(loadRules);
               <template #icon><Pencil :size="14" /></template>
               编辑
             </AppButton>
-            <AppButton size="small" type="text" danger @click="handleDeleteRule(toRule(record))">
+            <AppButton
+              size="small"
+              type="text"
+              danger
+              :title="'删除规则 ' + toRule(record).name"
+              :aria-label="'删除规则 ' + toRule(record).name"
+              @click="handleDeleteRule(toRule(record))"
+            >
               <template #icon><Trash2 :size="14" /></template>
             </AppButton>
           </div>

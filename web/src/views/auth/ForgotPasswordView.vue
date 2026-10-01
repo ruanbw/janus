@@ -21,9 +21,11 @@
     </AppForm>
 
     <div v-if="!sent" class="auth-footer-links mt-6 text-center text-sm text-ink-faint">
-      <router-link to="/login" class="font-medium text-brand-600 transition-colors hover:text-brand-500">返回登录</router-link>
-      <span class="mx-2 text-line-strong">·</span>
-      <router-link to="/register" class="font-medium text-brand-600 transition-colors hover:text-brand-500">注册新租户</router-link>
+      <router-link to="/login" class="font-medium text-brand transition-colors hover:text-brand/75">返回登录</router-link>
+      <!-- 分隔点继承外层的 text-ink-faint：原先写 text-line-strong，把「描边令牌」
+           当成了文字色，深色下对比度只有 1.56:1，几乎看不见。 -->
+      <span class="mx-2">·</span>
+      <router-link to="/register" class="font-medium text-brand transition-colors hover:text-brand/75">注册新租户</router-link>
     </div>
   </AuthShell>
 </template>

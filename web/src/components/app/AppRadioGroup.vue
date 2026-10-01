@@ -1,6 +1,8 @@
 <template>
   <RadioGroup
     v-bind="rootProps"
+    role="radiogroup"
+    :aria-labelledby="formItem?.labelId"
     :class="groupClasses"
   >
     <slot />
@@ -12,6 +14,7 @@ import { computed } from 'vue';
 
 import RadioGroup from '@/components/ui/radio-group.vue';
 import { cn } from '@/lib/utils';
+import { useFormItem } from './form';
 
 const props = withDefaults(
   defineProps<{
@@ -28,6 +31,13 @@ const emit = defineEmits<{
   'update:modelValue': [value: string | number | undefined];
   change: [value: string | number | undefined];
 }>();
+
+/**
+ * 一组单选按钮没有「一个」可被 label[for] 指向的控件，所以 AppFormItem 的 for 在
+ * 这里注定落空。改为 role="radiogroup" + aria-labelledby 指回外层 label，
+ * 读屏进入这一组时才会先念「短链类型」，而不是逐个念「单选按钮」。
+ */
+const formItem = useFormItem();
 
 const rootProps = computed(() => ({
   modelValue: props.modelValue,

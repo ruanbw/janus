@@ -14,6 +14,7 @@
                 class="whitespace-nowrap border-b border-line bg-muted px-4 py-2.5 font-semibold text-muted-foreground"
                 :class="[
                   col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left',
+                  pinnedClasses(col, true),
                 ]"
                 :style="columnStyle(col)"
               >
@@ -40,6 +41,7 @@
                   col.ellipsis ? 'max-w-0 truncate' : '',
                   col.nowrap ? 'whitespace-nowrap' : '',
                   col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left',
+                  pinnedClasses(col, false),
                 ]"
                 :style="columnStyle(col)"
               >
@@ -83,6 +85,8 @@
           type="button"
           class="flex h-7 w-7 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-40 disabled:hover:border-input disabled:hover:text-muted-foreground"
           :disabled="currentPage <= 1"
+          aria-label="上一页"
+          :title="'上一页'"
           @click="goPage(currentPage - 1)"
         >
           <ChevronLeft :size="14" />
@@ -103,6 +107,8 @@
           type="button"
           class="flex h-7 w-7 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-40 disabled:hover:border-input disabled:hover:text-muted-foreground"
           :disabled="currentPage >= totalPages"
+          aria-label="下一页"
+          :title="'下一页'"
           @click="goPage(currentPage + 1)"
         >
           <ChevronRight :size="14" />
@@ -186,6 +192,21 @@ function columnStyle(col: TableColumn): Record<string, string> | undefined {
     style.minWidth = typeof col.minWidth === 'number' ? `${col.minWidth}px` : col.minWidth;
   }
   return Object.keys(style).length > 0 ? style : undefined;
+}
+
+/**
+ * 固定列（当前仅 right）的样式。
+ *
+ * sticky 单元格必须自带不透明底色，否则右侧被横向滚走的内容会从它下面透出来；
+ * 表头沿用已有的 bg-muted，数据格补 bg-surface 并跟随行的 hover 变 bg-muted，
+ * 否则鼠标划过时行底色到了固定列就断了，出现一块颜色不一样的"补丁"。
+ * 左侧再加一条 border-line 作为与滚动区的分界，滚到哪都看得清操作列在哪。
+ */
+function pinnedClasses(col: TableColumn, isHeader: boolean): string {
+  if (col.fixed !== 'right') return '';
+  return isHeader
+    ? 'sticky right-0 z-20 border-l border-line'
+    : 'sticky right-0 z-10 border-l border-line bg-surface group-hover:bg-muted';
 }
 
 const tableMinWidth = computed(() => {

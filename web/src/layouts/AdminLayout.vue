@@ -5,13 +5,13 @@
          JS 不参与断点判断,因此不存在「CSS 已切换、JS 还没跟上」的状态。 -->
     <aside
       aria-label="侧边栏"
-      class="fixed inset-y-0 left-0 z-30 hidden w-[var(--sidebar-w)] flex-col overflow-hidden bg-[var(--sidebar-bg)] transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex"
+      class="fixed inset-y-0 left-0 z-30 hidden w-[var(--sidebar-w)] flex-col overflow-hidden border-r border-line bg-[var(--sidebar-bg)] transition-[width] duration-200 ease-out motion-reduce:transition-none md:flex"
     >
       <SidebarBrand :collapsed="collapsed" />
       <NavList :collapsed="collapsed" />
 
       <div
-        class="border-t border-white/10 px-3.5 py-3"
+        class="border-t border-line px-3.5 py-3"
         :class="collapsed ? 'flex justify-center' : ''"
         :title="collapsed ? auth.tenant?.email : undefined"
       >
@@ -23,7 +23,7 @@
         </div>
         <div class="flex items-center gap-2.5" :class="collapsed ? '' : 'mt-2'">
           <span
-            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/10 font-mono text-2xs font-semibold text-sidebar-ink-active"
+            class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-strong font-mono text-2xs font-semibold text-sidebar-ink-active"
           >
             {{ avatarInitial }}
           </span>
@@ -51,7 +51,7 @@
               <button
                 type="button"
                 aria-label="关闭菜单"
-                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sidebar-ink transition-colors hover:bg-white/5 hover:text-sidebar-ink-active"
+                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sidebar-ink transition-colors hover:bg-accent hover:text-sidebar-ink-active"
               >
                 <X :size="18" />
               </button>
@@ -116,7 +116,7 @@
                 class="flex items-center gap-2 rounded-full py-1 pr-1.5 pl-1 transition-colors hover:bg-surface-strong"
               >
                 <span
-                  class="flex h-7 w-7 items-center justify-center rounded-full bg-brand-600 text-xs font-semibold text-white"
+                  class="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground"
                 >
                   {{ avatarInitial }}
                 </span>
@@ -153,8 +153,10 @@
         </div>
       </header>
 
-      <!-- 内容宽度跟随侧边栏伸缩:不加固定 max-width,否则宽屏下收缩侧边栏时右侧不会变宽 -->
-      <main class="w-full flex-1 px-4 py-5 md:px-6">
+      <!-- 内容宽度跟随侧边栏伸缩:不加固定 max-width,否则宽屏下收缩侧边栏时右侧不会变宽。
+           页面底部留白由这里单点给出,视图层不再各自挂 pb-* ——
+           过去只有总览与短链页带 pb-10,其余八页没有,翻页时页脚与内容的间距会跳。 -->
+      <main class="w-full flex-1 px-4 pt-5 pb-10 md:px-6">
         <!-- 错误边界只包住页面本身:页面抛错时顶栏与侧边栏仍可用,能直接切走 -->
         <ErrorBoundary v-slot="{ attempt }" :reset-key="route.fullPath">
           <router-view v-slot="{ Component }">

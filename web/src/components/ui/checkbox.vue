@@ -2,7 +2,12 @@
 import { cva } from 'class-variance-authority';
 
 export const checkboxVariants = cva(
-  'peer flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-input shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary data-[state=indeterminate]:text-primary-foreground',
+  // 16px 的方框直接当热区太小,尤其是表格里的全选/多选。透明伪元素把可点区域
+  // 撑到 32×32(移动端舒适值),视觉尺寸不变;点击经伪元素冒泡回 CheckboxRoot,
+  // 键盘可达性与 aria 语义都不受影响。
+  // 未选中态悬停时描边转主色(Element 同款),是"可以点我"的第一层信号;
+  // 已选中/半选的填充由 data-[state=*] 变体接管,悬停不再改变填充,只保持描边。
+  'peer relative flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-input shadow-xs transition-colors outline-none after:absolute after:-inset-2 after:content-[""] hover:border-primary focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-input data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground data-[state=indeterminate]:border-primary data-[state=indeterminate]:bg-primary data-[state=indeterminate]:text-primary-foreground',
 );
 
 export const checkboxIndicatorVariants = cva(

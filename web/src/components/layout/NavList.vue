@@ -18,8 +18,8 @@
         class="mb-0.5 flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-xs transition-colors"
         :class="
           isActive(item.to)
-            ? 'bg-brand-600 font-semibold text-white shadow-sm'
-            : 'text-sidebar-ink hover:bg-white/5 hover:text-sidebar-ink-active'
+            ? 'bg-primary font-semibold text-primary-foreground shadow-sm'
+            : 'text-sidebar-ink hover:bg-accent hover:text-sidebar-ink-active'
         "
       >
         <component :is="item.icon" :size="16" class="shrink-0" :class="showLabels ? '' : 'mx-auto'" />

@@ -1,6 +1,7 @@
 <template>
   <div class="relative w-full" :class="isInvalid ? 'data-invalid-wrap' : ''">
     <UiTextarea
+      :id="fieldId"
       :value="modelValue"
       :placeholder="placeholder"
       :maxlength="maxlength"
@@ -40,6 +41,8 @@ const props = withDefaults(
     readonly?: boolean;
     showCount?: boolean;
     invalid?: boolean;
+    /** 显式 id；缺省时自动跟随外层 AppFormItem */
+    id?: string;
     class?: any;
   }>(),
   { modelValue: '', rows: 3, showCount: false, disabled: false, readonly: false },
@@ -52,6 +55,9 @@ const emit = defineEmits<{
 }>();
 
 const formItem = useFormItem();
+
+/** 显式 id 优先；否则跟随所属 AppFormItem */
+const fieldId = computed(() => props.id ?? formItem?.id);
 const isInvalid = computed(() => Boolean(props.invalid || formItem?.invalid.value));
 const currentLength = computed(() => String(props.modelValue ?? '').length);
 

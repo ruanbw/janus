@@ -1,6 +1,7 @@
 <template>
   <div :class="containerClasses">
     <UiInput
+      :id="fieldId"
       :value="raw"
       :placeholder="placeholder"
       :disabled="disabled"
@@ -16,11 +17,13 @@
     />
     <div
       v-if="!readonly"
-      class="flex h-full w-6 shrink-0 flex-col divide-y divide-line border-l border-line select-none"
+      class="flex h-full w-7 shrink-0 flex-col divide-y divide-line border-l border-line select-none"
     >
       <button
         type="button"
         tabindex="-1"
+        aria-label="增加"
+        title="增加（也可聚焦输入框后按 ↑）"
         :disabled="disabled || isAtMax"
         class="flex flex-1 items-center justify-center text-ink-faint transition-colors hover:bg-surface-strong hover:text-ink disabled:pointer-events-none disabled:opacity-30"
         @click="stepUp"
@@ -30,6 +33,8 @@
       <button
         type="button"
         tabindex="-1"
+        aria-label="减少"
+        title="减少（也可聚焦输入框后按 ↓）"
         :disabled="disabled || isAtMin"
         class="flex flex-1 items-center justify-center text-ink-faint transition-colors hover:bg-surface-strong hover:text-ink disabled:pointer-events-none disabled:opacity-30"
         @click="stepDown"
@@ -61,6 +66,8 @@ const props = withDefaults(
     readonly?: boolean;
     size?: 'large' | 'middle' | 'small' | 'default' | 'sm' | 'lg';
     invalid?: boolean;
+    /** 显式 id；缺省时自动跟随外层 AppFormItem */
+    id?: string;
     class?: any;
   }>(),
   { size: 'middle', step: 1, disabled: false, readonly: false },
@@ -74,6 +81,9 @@ const emit = defineEmits<{
 }>();
 
 const formItem = useFormItem();
+
+/** 显式 id 优先；否则跟随所属 AppFormItem */
+const fieldId = computed(() => props.id ?? formItem?.id);
 
 const raw = ref<string>(props.modelValue === undefined ? '' : String(props.modelValue));
 

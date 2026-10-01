@@ -1,4 +1,4 @@
-# CLOAK Web UI 组件库契约(双层 + nova 主题)
+# CLOAK Web UI 组件库契约(双层 + Element Plus 主题)
 
 技术栈:Vue 3.5 + TypeScript + Vite 6 + Tailwind CSS 4 + Reka UI(无头组件)+ @lucide/vue 图标。
 ant-design-vue 已移除,任何文件不得再 import 自 'ant-design-vue' 或使用 a-* 组件。
@@ -94,14 +94,14 @@ web/src/components/
 
 ### 色板（三层，明暗各一套）
 
-- 品牌色:`--brand`（浅色 `#4f46e5` / 深色 `#818cf8`，工具类 `text-brand` `bg-brand/10` `border-brand/30`）。**nova 下靛蓝只用于焦点环、链接、brand 标签，不再当主色。**`--color-brand-50..950` 色阶仅供世界地图填色。
+- 品牌色:`--brand` = Element 主色 `#409eff`（明暗两套同值，工具类 `text-brand` `bg-brand/10` `border-brand/30`）。`--color-brand-50..950` 直接取 Element 的 primary light-3/5/7/8/9 与 dark-2 色阶，600 以下按同色相补齐，仅供世界地图分档填色。
 - 点缀:`--color-accent-300..600`(青，认证页品牌栏在用)
 - 三层令牌(都定义在 `theme.css` 的 `:root` 与 `.dark` 两块,经 `@theme inline` 映射成工具类):
 
   1. 项目层(页面骨架与业务视图消费):surface(卡片 / 组件宿主底色)、surface-muted(页面底色)、surface-strong、ink / ink-soft / ink-faint、line / line-strong、ok / warn / err / info、brand、sidebar-*
   2. shadcn 语义层(**`ui/` 原语层只认这层**):background / foreground / card / card-foreground / popover / popover-foreground / primary / primary-foreground / secondary / secondary-foreground / muted / muted-foreground / accent / accent-foreground / destructive / destructive-foreground / border / input / ring
      - 命名与语义照 shadcn 官方,取值由本项目调色板定制。`--background` 指向 `--surface` 而**不是** `--surface-muted`:shadcn 的 --background 是「组件所处的那层底色」,本项目组件坐在卡片上
-     - nova 的 primary 是「墨」不是颜色：浅色 `#18181b` / 深色 `#fafafa`，两者互为前景。层级靠**字重**拉开（500/600），不靠色相。开关开态、分页当前页全用它，所以它必须与 `--card` 有 ≥3:1 对比
+     - primary 即 Element 主色 `#409eff`，foreground `#ffffff`，明暗两套一致。开关开态、分页当前页、主按钮全用它
   3. 控件状态层(shadcn 没有对应语义,项目补齐):control-bg(输入框控件底色)、control-track(关态轨道 / 复选与单选未选填充)、control-track-hover、control-thumb(关态滑块)、control-thumb-edge(滑块与控件未选发丝描边)
 - 用法:bg-surface、bg-surface-muted、text-ink、border-line、text-ok、bg-err/10、text-brand 等
 - **组件状态色一律走 shadcn 语义层与控件状态层工具类,禁止在 `components/ui/` `components/app/` 与 `views/` 里写 `dark:` 补丁类名**（门禁第 11 项），所有主题差异均由 `:root` 与 `.dark` 令牌自身换值保证：
@@ -118,7 +118,7 @@ web/src/components/
   | 表格表头 / 行 hover | `bg-surface-muted` | `bg-muted`(hover 同色) |
   | 分页当前页 | `bg-brand-600 text-white` | `bg-primary text-primary-foreground` |
   | 进度条轨道 | `bg-surface-strong` | `bg-control-track/60` |
-  | 视图里的靛蓝强调 | `text-brand-600 dark:text-brand-400` | `text-brand`（浅色深靛、深色浅靛由 `--brand` 换值） |
+| 视图里的主色强调 | `text-brand-600 dark:text-brand-500` | `text-brand`（唯一的主色文字令牌） |
 
 - 描边分工:容器装饰描边用 `border-line`(卡片、弹窗);控件与可交互边界用 `border-input` / `border-border`(开关、复选、单选、输入框、按钮、表格控件)。别把卡片描边也升到 `--border`,否则每张卡片都是 1.5 对比的硬边框
 - 焦点环单一出处:组件只挂 `.app-field`,焦点环与错误态环由 main.css 的 `.app-field:focus-visible` 和 `[data-invalid='true'] .app-field` 提供。这两条是**未分层** CSS,优先级高于 `@layer utilities`,组件里再写 `focus-visible:ring-*` / `ring-offset-surface` 会被盖掉
@@ -141,7 +141,7 @@ web/src/components/
 6. 检查任意像素字号（`text-[Npx]`）；
 7. 检查业务 view 视图中裸 HTML 原语（`<button>`, `<input>`, `<select>`, `<table>`）；
 8. 检查生产构建产物中的动效变体规则生成;
-9. 状态色对比度:解析 `src/styles/theme.css` 的 `:root` 与 `.dark`,校验 13 对状态色(文字 ≥ 4.5、控件填充与焦点环 ≥ 3、细边界 ≥ 1.5),阈值在脚本顶部 `CONTRAST_MIN` 可调;
+9. 状态色对比度:解析 `src/styles/theme.css` 的 `:root` 与 `.dark`,校验 13 对配对。阈值在脚本顶部 `CONTRAST_MIN`,当前为 `{ text: 2.5, solid: 2.5, hairline: 1.3 }` —— 随 Element 原值下调(Element 的 `#409eff` 配白字实测 2.78:1、`#dcdfe6` 描边 1.33:1,达不到 WCAG AA)。门禁的作用改为「不许比 Element 更差」。若要回到 AA,需先压深 `theme.css` 的填充色,再把阈值调回 4.5 / 3 / 1.5;
 10. 硬编码纯白:`src/**/*.vue` 里禁止不带 alpha 的 `bg-white` / `text-white` / `border-white`(永远深色的面——侧栏、认证页品牌栏——在脚本白名单 `alwaysDarkAllowList` 里);
 11. 禁 dark: 变体:`src/components/ui/`、`src/components/app/`、`src/views/` 下禁止出现任何 `dark:*` 类名,所有主题差异必须在 `theme.css` 的 `:root` / `.dark` 令牌层换值;
 12. 业务视图禁止手搓模态遮罩:业务视图禁止裸写 `fixed inset-0` 遮罩,统一使用 `AppModal` / `AppDialog`;

@@ -6,7 +6,7 @@
   >
     <div
       v-if="$slots.icon || icon"
-      class="mt-0.5 shrink-0 text-ink-soft transition-colors group-data-[state=checked]:text-primary"
+      class="mt-0.5 shrink-0 text-ink-soft transition-colors group-data-[state=checked]:text-brand"
     >
       <slot name="icon">
         <component :is="icon" :size="20" />
@@ -15,7 +15,7 @@
 
     <div class="min-w-0 flex-1">
       <div class="flex items-center justify-between gap-2">
-        <div class="text-sm font-semibold text-ink transition-colors group-data-[state=checked]:text-primary">
+        <div class="text-sm font-semibold text-ink transition-colors group-data-[state=checked]:text-brand">
           <slot name="title">{{ title }}</slot>
           <slot v-if="!title && !$slots.title" />
         </div>

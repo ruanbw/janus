@@ -1,5 +1,5 @@
 <template>
-  <div class="pb-10" data-od-id="links-view">
+  <div data-od-id="links-view">
     <PageHeader
       title="短链列表"
       description="管理租户名下的短链，支持类型过滤、状态切换与出口多目标轮询配置。"
@@ -156,7 +156,7 @@
                 :href="url"
                 target="_blank"
                 rel="noopener noreferrer"
-                class="truncate font-mono text-xs underline underline-offset-2 decoration-line-strong hover:decoration-ink"
+                class="-my-1 truncate py-1 font-mono text-xs underline underline-offset-2 decoration-line-strong hover:decoration-ink"
                 :style="{ maxWidth: 'min(100%, 450px)' }"
                 :title="url + '（新标签页打开）'"
                 @click.stop
@@ -166,7 +166,7 @@
               <AppButton
                 size="icon"
                 variant="ghost"
-                class="h-[22px] w-[22px] text-ink-faint hover:text-ink"
+                class="size-6 text-ink-faint hover:text-ink"
                 :title="'复制 ' + url"
                 @click.stop="copyText(url)"
               >
@@ -493,6 +493,7 @@ import {
   updateLink,
   uploadLanding,
 } from '@/api/links';
+import PageHeader from '@/components/PageHeader.vue';
 import type { TableColumn } from '@/components/app/types';
 import { confirm } from '@/components/app/confirm';
 
@@ -575,7 +576,7 @@ const columns: TableColumn[] = [
   { key: 'visits', title: '访问 / 点击', width: 140 },
   { key: 'status', title: '状态', width: 118 },
   { key: 'rules', title: '规则', width: 220 },
-  { key: 'actions', title: '操作', width: 280 },
+  { key: 'actions', title: '操作', width: 280, fixed: 'right' },
 ];
 
 const TYPE_FILTER_OPTIONS = [
@@ -1122,7 +1123,7 @@ onUnmounted(() => {
 }
 
 .metric-link:hover .metric-visits {
-  color: var(--color-brand-500);
+  color: var(--brand);
 }
 
 .metric-link:hover .metric-arrow {
@@ -1131,7 +1132,7 @@ onUnmounted(() => {
 }
 
 .metric-link:focus-visible {
-  outline: 2px solid var(--color-brand-500);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 </style>

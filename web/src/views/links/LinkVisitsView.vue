@@ -1,5 +1,5 @@
 <template>
-  <div class="pb-10" data-od-id="link-visits-view">
+  <div data-od-id="link-visits-view">
     <!-- ==================== 页头:短码 / 承载域名 / 类型 + 返回 ==================== -->
     <PageHeader title="短链访问明细" :description="headerDescription">
       <template #actions>
@@ -288,7 +288,7 @@
             v-if="!selectedRow"
             class="my-auto flex min-h-[380px] flex-col items-center justify-center p-10 text-center"
           >
-            <div class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand-500/10 text-brand-600">
+            <div class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand/10 text-brand">
               <MousePointerClick :size="22" />
             </div>
             <h3 class="text-sm font-semibold text-ink">选择访问记录</h3>
@@ -512,7 +512,7 @@
                   </div>
 
                   <div v-if="traceStateOf(selectedRow.visit.id)?.loading" class="flex items-center gap-2 py-3">
-                    <RefreshCw class="animate-spin text-brand-500" :size="14" />
+                    <RefreshCw class="animate-spin text-brand" :size="14" />
                     <span class="text-xs text-ink-soft">正在回放规则链…</span>
                   </div>
 
@@ -1147,15 +1147,15 @@ watch(linkId, () => {
   background: color-mix(in srgb, var(--err) 18%, var(--surface));
 }
 :deep(.app-table tbody tr[data-selected='true']) {
-  background: color-mix(in srgb, var(--color-brand-500) 10%, var(--surface)) !important;
-  box-shadow: inset 3px 0 0 var(--color-brand-500);
+  background: color-mix(in srgb, var(--brand) 10%, var(--surface)) !important;
+  box-shadow: inset 3px 0 0 var(--brand);
 }
 :deep(.app-table tbody tr[data-outcome='failed'][data-selected='true']) {
   background: color-mix(in srgb, var(--err) 22%, var(--surface)) !important;
   box-shadow: inset 3px 0 0 var(--err);
 }
 :deep(.app-table tbody tr[data-selected='true']:focus-visible) {
-  outline: 2px solid var(--color-brand-500);
+  outline: 2px solid var(--brand);
   outline-offset: -2px;
 }
 </style>

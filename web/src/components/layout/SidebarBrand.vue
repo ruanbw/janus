@@ -6,7 +6,7 @@
   >
     <BrandMark :size="28" class="shrink-0" />
     <span v-if="showLabels" class="flex flex-col leading-tight">
-      <span class="text-sm font-bold tracking-tight text-white">CLOAK</span>
+      <span class="text-sm font-bold tracking-tight text-sidebar-ink-active">CLOAK</span>
       <span class="font-mono text-2xs tracking-wider text-sidebar-ink uppercase">Cloak Console</span>
     </span>
   </RouterLink>

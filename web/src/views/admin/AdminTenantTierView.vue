@@ -62,7 +62,7 @@
           <!-- 动态配额变动对比卡片 -->
           <div v-if="selectedTier" class="space-y-3">
             <div class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-ink-soft">
-              <TrendingUp :size="14" class="text-brand-600" />
+              <TrendingUp :size="14" class="text-brand" />
               配额变动对比预览
             </div>
 

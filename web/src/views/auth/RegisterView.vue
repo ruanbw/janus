@@ -55,7 +55,7 @@
 
     <div class="auth-footer-links mt-6 text-center text-xs text-ink-faint">
       已有账号?
-      <router-link to="/login" class="font-medium text-brand-600 transition-colors hover:text-brand-500">
+      <router-link to="/login" class="font-medium text-brand transition-colors hover:text-brand/75">
         直接登录
       </router-link>
     </div>

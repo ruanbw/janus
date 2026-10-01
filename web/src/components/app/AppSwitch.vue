@@ -1,5 +1,6 @@
 <template>
   <UiSwitch
+    :id="fieldId"
     :model-value="model"
     :disabled="disabled"
     :name="name"
@@ -47,6 +48,8 @@ import { computed } from 'vue';
 
 import UiSwitch from '@/components/ui/switch.vue';
 
+import { useFormItem } from './form';
+
 const props = withDefaults(
   defineProps<{
     modelValue?: boolean;
@@ -54,6 +57,8 @@ const props = withDefaults(
     name?: string;
     disabled?: boolean;
     size?: SwitchSize;
+    /** 显式 id；缺省时自动跟随外层 AppFormItem */
+    id?: string;
     class?: any;
   }>(),
   { disabled: false },
@@ -70,6 +75,10 @@ const model = computed(() => {
   if (props.checked !== undefined) return props.checked;
   return false;
 });
+
+/** 显式 id 优先；否则跟随所属 AppFormItem，让外层 <label for> 能命中 */
+const formItem = useFormItem();
+const fieldId = computed(() => props.id ?? formItem?.id);
 
 const switchClasses = computed(() =>
   // 关态 thumb 用 --control-thumb + 发丝描边 --control-thumb-edge，与 --primary-foreground

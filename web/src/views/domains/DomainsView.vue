@@ -128,7 +128,7 @@ const columns: TableColumn[] = [
   { title: '证书', key: 'certStatus', dataIndex: 'certStatus', width: 100, nowrap: true },
   { title: '激活时间', key: 'activatedAt', dataIndex: 'activatedAt', width: 180, nowrap: true },
   { title: '创建时间', key: 'createdAt', dataIndex: 'createdAt', width: 180, nowrap: true },
-  { title: '操作', key: 'action', width: 280, nowrap: true },
+  { title: '操作', key: 'action', width: 280, nowrap: true, fixed: 'right' },
 ];
 
 let timer: number | undefined;

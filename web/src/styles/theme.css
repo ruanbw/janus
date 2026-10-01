@@ -59,19 +59,20 @@
   --radius-2xl: 12px;
   --radius-3xl: 16px;
 
-  /* ---- 品牌色阶:靛蓝 ----
-     nova 下靛蓝只用于焦点环、链接与 brand 标签,不再承担主按钮底色 */
-  --color-brand-50: #eef2ff;
-  --color-brand-100: #e0e7ff;
-  --color-brand-200: #c7d2fe;
-  --color-brand-300: #a5b4fc;
-  --color-brand-400: #818cf8;
-  --color-brand-500: #6366f1;
-  --color-brand-600: #4f46e5;
-  --color-brand-700: #4338ca;
-  --color-brand-800: #3730a3;
-  --color-brand-900: #312e81;
-  --color-brand-950: #1e1b4b;
+  /* ---- 品牌色阶:Element Plus 主色 ramp ----
+     light-3/5/7/8/9 与 dark-2 全部取 Element 原值；600 以下 Element 未定义，
+     按同一色相继续压深补齐，供世界地图分档填色使用。 */
+  --color-brand-50: #ecf5ff; /* el-color-primary-light-9 */
+  --color-brand-100: #d9ecff; /* el-color-primary-light-8 */
+  --color-brand-200: #c6e2ff; /* el-color-primary-light-7 */
+  --color-brand-300: #a0cfff; /* el-color-primary-light-5 */
+  --color-brand-400: #79bbff; /* el-color-primary-light-3 */
+  --color-brand-500: #409eff; /* el-color-primary */
+  --color-brand-600: #337ecc; /* el-color-primary-dark-2 */
+  --color-brand-700: #2b689f;
+  --color-brand-800: #245280;
+  --color-brand-900: #1d3c61;
+  --color-brand-950: #0f1f33;
 
   /* ---- 点缀色:青(登录页品牌栏图标在用) ---- */
   --color-accent-300: #67e8f9;
@@ -113,24 +114,29 @@
   --elev-lg: 0 12px 32px rgb(0 0 0 / 0.1);
   --elev-xl: 0 24px 56px rgb(0 0 0 / 0.14);
 
-  /* ---- 项目层:页面骨架 ---- */
-  --surface: #ffffff; /* 卡片 / 组件宿主底色 */
-  --surface-muted: #fafafa; /* 页面底色 */
-  --surface-strong: #f4f4f5; /* 强调填充(图标底、标签、次级按钮) */
-  --ink: #09090b;
-  --ink-soft: #52525b;
-  --ink-faint: #71717a;
-  --line: #e4e4e7; /* 容器装饰性描边 */
-  --line-strong: #d4d4d8;
-  --ok: #15803d;
-  --warn: #b45309;
-  --err: #dc2626;
-  --info: #0369a1;
-  --brand: #4f46e5; /* 焦点环 / 链接 / brand 标签专用,不再当主按钮底色 */
-  --sidebar-bg: #17171a;
-  --sidebar-bg-deep: #0a0a0b;
-  --sidebar-ink: rgb(255 255 255 / 0.62);
-  --sidebar-ink-active: #ffffff;
+  /* ---- 项目层:页面骨架 ----
+     取值全部来自 Element Plus / vue-element-admin,一一对到它的 --el-* 变量,
+     不做任何加深或压暗的私自调整。 */
+  --surface: #ffffff; /* el-bg-color */
+  --surface-muted: #f2f3f5; /* el-bg-color-page */
+  --surface-strong: #f0f2f5; /* el-fill-color */
+  --ink: #303133; /* el-text-color-primary */
+  --ink-soft: #606266; /* el-text-color-regular */
+  --ink-faint: #909399; /* el-text-color-secondary */
+  --line: #e4e7ed; /* el-border-color-light */
+  --line-strong: #dcdfe6; /* el-border-color */
+  --ok: #67c23a; /* el-color-success */
+  --warn: #e6a23c; /* el-color-warning */
+  --err: #f56c6c; /* el-color-danger */
+  --info: #909399; /* el-color-info */
+  --brand: #409eff; /* el-color-primary */
+  /* 侧栏跟主题走,对齐 Element 的 el-menu:浅色下菜单是白底深字,
+     深色下才是 #1d1e1f。原先两套主题都用 #304156 深蓝灰,浅色下就完全
+     不像 Element(那是 vue-element-admin 的皮肤,不是 Element Plus 本身)。 */
+  --sidebar-bg: #ffffff; /* el-menu-bg-color = el-bg-color-overlay */
+  --sidebar-bg-deep: #1f2d3d; /* 仅登录页品牌栏使用,两套主题都保持深色 */
+  --sidebar-ink: #606266; /* el-menu-text-color */
+  --sidebar-ink-active: #303133; /* el-text-color-primary */
 
   /* ---- shadcn 语义层:组件状态 ---- */
   /* 映射说明:本项目页面底色是 --surface-muted、卡片底色是 --surface,
@@ -141,24 +147,24 @@
   --card-foreground: var(--ink);
   --popover: #ffffff;
   --popover-foreground: var(--ink);
-  --primary: #18181b; /* 近黑:nova 的主色是「墨」而不是靛蓝 */
-  --primary-foreground: #fafafa;
-  --secondary: #f4f4f5;
-  --secondary-foreground: #18181b;
-  --muted: #f4f4f5; /* 表头 / 悬浮行 / 选中行底 */
-  --muted-foreground: #52525b;
-  --accent: #f4f4f5; /* 菜单项 hover */
-  --accent-foreground: #18181b;
-  --destructive: #dc2626;
+  --primary: #409eff;
+  --primary-foreground: #ffffff;
+  --secondary: #f0f2f5; /* el-fill-color */
+  --secondary-foreground: #303133;
+  --muted: #f5f7fa; /* el-fill-color-light:表头 / 悬浮行 / 选中行底 */
+  --muted-foreground: #606266;
+  --accent: #ecf5ff; /* el-color-primary-light-9:菜单项 hover */
+  --accent-foreground: #303133;
+  --destructive: #f56c6c;
   --destructive-foreground: #ffffff;
-  --border: #cfcfd4; /* 控件描边:必须与 --card 可辨(对比 ≥1.5,门禁第 9 项守这条) */
-  --input: #cfcfd4; /* 输入框描边 */
-  --ring: #4f46e5; /* brand-600 */
+  --border: #dcdfe6; /* el-border-color */
+  --input: #dcdfe6;
+  --ring: #409eff;
 
   /* ---- 控件状态层 ---- */
-  --control-bg: #ffffff; /* 输入类控件底色 */
-  --control-track: #cfcfd4; /* 关态轨道、复选 / 单选未选填充 */
-  --control-track-hover: #c2c2c8;
+  --control-bg: #ffffff; /* el-fill-color-blank:输入类控件底色 */
+  --control-track: #dcdfe6; /* 关态轨道、复选 / 单选未选填充 */
+  --control-track-hover: #d4d7de; /* el-border-color-dark */
   --control-thumb: #ffffff; /* 关态滑块 */
   /* 亮色下 thumb 与卡片同色(对比 1.00),发丝描边是它唯一的轮廓 */
   --control-thumb-edge: rgb(0 0 0 / 0.18);
@@ -177,52 +183,52 @@
   --elev-lg: 0 12px 32px rgb(0 0 0 / 0.7);
   --elev-xl: 0 24px 56px rgb(0 0 0 / 0.75);
 
-  /* ---- 项目层:页面骨架 ---- */
-  --surface: #101012;
-  --surface-muted: #0a0a0b;
-  --surface-strong: #1c1c1f;
-  --ink: #fafafa;
-  --ink-soft: #a1a1aa;
-  --ink-faint: #73737d;
-  --line: #26262a;
-  --line-strong: #35353a;
-  --ok: #4ade80;
-  --warn: #fbbf24;
-  --err: #f87171;
-  --info: #38bdf8;
-  --brand: #818cf8;
-  --sidebar-bg: #0a0a0b;
-  --sidebar-bg-deep: #000000;
-  --sidebar-ink: rgb(255 255 255 / 0.62);
-  --sidebar-ink-active: #ffffff;
+  /* ---- 项目层:页面骨架 ----
+     取值全部来自 Element Plus 的深色 --el-* 变量,不做私自调整。 */
+  --surface: #1d1e1f; /* el-bg-color-overlay */
+  --surface-muted: #141414; /* el-bg-color */
+  --surface-strong: #252629; /* el-fill-color */
+  --ink: #e5eaf3; /* el-text-color-primary */
+  --ink-soft: #cfd3dc; /* el-text-color-regular */
+  --ink-faint: #a3a6ad; /* el-text-color-secondary */
+  --line: #363637; /* el-border-color-light */
+  --line-strong: #4c4d4f; /* el-border-color */
+  --ok: #67c23a; /* el-color-success */
+  --warn: #e6a23c; /* el-color-warning */
+  --err: #f56c6c; /* el-color-danger */
+  --info: #909399; /* el-color-info */
+  --brand: #409eff; /* el-color-primary */
+  --sidebar-bg: #1d1e1f; /* el-menu-bg-color = el-bg-color-overlay */
+  --sidebar-bg-deep: #1f2d3d; /* 仅登录页品牌栏使用,两套主题都保持深色 */
+  --sidebar-ink: #cfd3dc; /* el-menu-text-color */
+  --sidebar-ink-active: #e5eaf3;
 
   /* ---- shadcn 语义层:组件状态 ---- */
   --background: var(--surface);
   --foreground: var(--ink);
   --card: var(--surface);
   --card-foreground: var(--ink);
-  --popover: #17171a; /* 浮层比卡片亮一档,做出高度差 */
+  --popover: #1d1e1f; /* el-bg-color-overlay */
   --popover-foreground: var(--ink);
-  /* 深色下主色反过来:近黑的墨在深底上读不出来,改用近白前景 + 深色文字 */
-  --primary: #fafafa;
-  --primary-foreground: #18181b;
-  --secondary: #1c1c1f;
-  --secondary-foreground: #fafafa;
-  --muted: #1c1c1f;
-  --muted-foreground: #a1a1aa;
-  --accent: #26262a;
-  --accent-foreground: #fafafa;
-  --destructive: #ef4444;
-  --destructive-foreground: #0a0a0a;
-  --border: #3f3f46;
-  --input: #3f3f46;
-  --ring: #818cf8;
+  --primary: #409eff;
+  --primary-foreground: #ffffff;
+  --secondary: #252629; /* el-fill-color */
+  --secondary-foreground: #e5eaf3;
+  --muted: #1d1e1f; /* el-fill-color-light */
+  --muted-foreground: #a3a6ad;
+  --accent: #1d1e1f; /* el-fill-color-light */
+  --accent-foreground: #e5eaf3;
+  --destructive: #f56c6c;
+  --destructive-foreground: #ffffff;
+  --border: #4c4d4f; /* el-border-color */
+  --input: #4c4d4f;
+  --ring: #409eff;
 
   /* ---- 控件状态层 ---- */
-  --control-bg: #17171a; /* 输入类控件底色:略高于卡片底色界定输入区 */
-  --control-track: #3f3f46;
-  --control-track-hover: #4b4b53;
-  --control-thumb: #fafafa;
+  --control-bg: #1d1e1f; /* el-fill-color-light:输入类控件底色 */
+  --control-track: #4c4d4f; /* el-border-color */
+  --control-track-hover: #58585b; /* el-border-color-dark */
+  --control-thumb: #e5eaf3;
   --control-thumb-edge: rgb(0 0 0 / 0.5);
 }
 

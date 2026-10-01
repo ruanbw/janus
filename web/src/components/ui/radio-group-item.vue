@@ -2,7 +2,9 @@
 import { cva } from 'class-variance-authority';
 
 export const radioGroupItemVariants = cva(
-  'flex size-4 shrink-0 items-center justify-center rounded-full border border-input text-primary shadow-xs transition-colors outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-primary',
+  // 未选中态悬停描边转主色(Element 同款)。AppRadioCard 会用 class 覆盖掉
+  // size-4 / rounded-full 变成整张卡片,圆点本身不再单独 hover。
+  'flex size-4 shrink-0 items-center justify-center rounded-full border border-input text-primary shadow-xs transition-colors outline-none hover:border-primary focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-input data-[state=checked]:border-primary',
 );
 </script>
 

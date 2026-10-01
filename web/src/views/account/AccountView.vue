@@ -51,7 +51,7 @@
                 <span class="text-ink-soft">平台默认域名</span>
                 <CopyText
                   :text="auth.tenant?.defaultDomain ?? ''"
-                  class="mono text-xs font-semibold text-brand-600 hover:text-brand-700"
+                  class="mono text-xs font-semibold text-brand hover:text-brand/75"
                 >
                   {{ auth.tenant?.defaultDomain ?? '-' }}
                 </CopyText>
