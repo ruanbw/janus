@@ -1,16 +1,17 @@
 package httpapi
 
-// 安全与防滥用(spec 决策 #12):注册/登录/忘记密码/验证邮箱/重置密码按来源 IP 做内存限流。
-// 标准库实现(固定窗口计数器),可配置、可测试;limit<=0 表示关闭。
+// 安全与防滥用:注册/登录/忘记密码/验证邮箱/重置密码按来源 IP 做内存限流。
+// 使用 Go 官方扩展库 golang.org/x/time/rate 令牌桶算法，成熟、稳定、抗突发。
 
 import (
 	"net"
 	"net/http"
-
-	"github.com/gin-gonic/gin"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"golang.org/x/time/rate"
 )
 
 // RateLimitConfig 认证类端点的每 IP 限流配置(0 或负数 = 关闭)。
@@ -32,20 +33,22 @@ func DefaultRateLimit() RateLimitConfig {
 	}
 }
 
-type rateWindow struct {
-	start time.Time
-	count int
-}
-
-// rateLimiter 固定窗口计数器:每 (limit, window) 内允许 limit 次;limit<=0 关闭。
 // maxRateKeys 内存上限:超过该数量时淘汰过期条目,防止恶意来源 IP 撑爆内存。
 const maxRateKeys = 8192
 
+type visitorBucket struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
+// rateLimiter 基于 golang.org/x/time/rate 的令牌桶限流器包装。
 type rateLimiter struct {
 	mu      sync.Mutex
 	limit   int
 	window  time.Duration
-	buckets map[string]*rateWindow
+	rLimit  rate.Limit
+	burst   int
+	buckets map[string]*visitorBucket
 	now     func() time.Time
 }
 
@@ -53,17 +56,19 @@ func newRateLimiter(limit int, window time.Duration) *rateLimiter {
 	if limit <= 0 || window <= 0 {
 		return &rateLimiter{limit: 0}
 	}
+	// 速率: limit 次 / window 时间
+	rLimit := rate.Every(window / time.Duration(limit))
 	return &rateLimiter{
 		limit:   limit,
 		window:  window,
-		buckets: make(map[string]*rateWindow),
+		rLimit:  rLimit,
+		burst:   limit,
+		buckets: make(map[string]*visitorBucket),
 		now:     time.Now,
 	}
 }
 
 // Allow 对 key 计数;未超限返回 true,超限返回 false。
-// 计数器 map 严格限制在 maxRateKeys 以内:满载且无过期条目时拒绝新 key,
-// 防止海量伪造来源撑爆内存(固定窗口计数器的有界退化,而非无界增长)。
 func (l *rateLimiter) Allow(key string) bool {
 	if l == nil || l.limit <= 0 {
 		return true
@@ -71,27 +76,31 @@ func (l *rateLimiter) Allow(key string) bool {
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	w, ok := l.buckets[key]
-	if !ok || now.Sub(w.start) >= l.window {
-		// 仅重置当前 key 的窗口,不得清空其他 IP 的计数(否则会削弱限流)。
-		// 顺带在 map 偏大时淘汰过期条目,避免无限增长。
+
+	b, ok := l.buckets[key]
+	if !ok {
+		// 当 map 偏大时清理超过 2 个窗口未访问的条目
 		if len(l.buckets) >= maxRateKeys {
 			l.purgeExpired(now)
 		}
 		if len(l.buckets) >= maxRateKeys {
 			return false
 		}
-		l.buckets[key] = &rateWindow{start: now, count: 1}
-		return true
+		b = &visitorBucket{
+			limiter:  rate.NewLimiter(l.rLimit, l.burst),
+			lastSeen: now,
+		}
+		l.buckets[key] = b
 	}
-	w.count++
-	return w.count <= l.limit
+
+	b.lastSeen = now
+	return b.limiter.Allow()
 }
 
-// purgeExpired 删除已过期窗口的条目,控制 map 大小。调用方须持有 mu。
+// purgeExpired 删除过期条目，防止无界增长。调用方须持有 mu。
 func (l *rateLimiter) purgeExpired(now time.Time) {
-	for k, w := range l.buckets {
-		if now.Sub(w.start) >= l.window {
+	for k, b := range l.buckets {
+		if now.Sub(b.lastSeen) >= l.window*2 {
 			delete(l.buckets, k)
 		}
 	}
