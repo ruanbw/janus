@@ -450,12 +450,12 @@ func TestLandingClickRecordsUnavailableLink(t *testing.T) {
 	c := loggedInTenant(t, env, "alice")
 	addDomain(t, c, "localhost")
 	lid := localhostDomainID(t, c)
-	link := createLandingLink(t, c, lid, "kclick", "url", "https://page.example.com/lp")
+	link := createLandingLink(t, c, lid, "kcpick", "url", "https://page.example.com/lp")
 
 	resp := c.patch(fmt.Sprintf("/api/links/%d", link.ID), map[string]any{"status": "disabled"})
 	assertStatus(t, resp, http.StatusOK)
 	_ = resp.Body.Close()
-	resp = redirectGet(t, env, "localhost", "/kclick/click")
+	resp = redirectGet(t, env, "localhost", "/kcpick/click")
 	assertStatus(t, resp, http.StatusNotFound)
 	action, outcome, reason, _, _ := ruleVisit(t, env, link.ID)
 	if action != store.VisitActionClick || outcome != store.VisitOutcomeFailed ||
@@ -469,7 +469,7 @@ func TestLandingClickRecordsUnavailableLink(t *testing.T) {
 	resp = c.del("/api/links/" + strconv.FormatInt(link.ID, 10))
 	assertStatus(t, resp, http.StatusNoContent)
 	_ = resp.Body.Close()
-	resp = redirectGet(t, env, "localhost", "/kclick/click")
+	resp = redirectGet(t, env, "localhost", "/kcpick/click")
 	assertStatus(t, resp, http.StatusNotFound)
 	action, outcome, reason, _, _ = ruleVisit(t, env, link.ID)
 	if action != store.VisitActionClick || outcome != store.VisitOutcomeFailed ||

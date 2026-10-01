@@ -795,13 +795,13 @@ func TestLandingTypeResetsRedirectStatus(t *testing.T) {
 	addDomain(t, c, "localhost")
 	lid := localhostDomainID(t, c)
 	link := createLink(t, c, map[string]any{
-		"code":           "k301",
+		"code":           "kredir",
 		"targetUrls":     []string{"https://a.example.com"},
 		"domainIds":      []int64{lid},
 		"redirectStatus": "301",
 	})
 	// 跳转型确实按 301 发
-	resp := redirectGet(t, env, "localhost", "/k301")
+	resp := redirectGet(t, env, "localhost", "/kredir")
 	assertStatus(t, resp, http.StatusMovedPermanently)
 	_ = resp.Body.Close()
 
@@ -822,7 +822,7 @@ func TestLandingTypeResetsRedirectStatus(t *testing.T) {
 		"conditions":  ruleOnPath(link.Code),
 		"destination": "https://rule.example.com/landing",
 	})
-	resp = redirectGet(t, env, "localhost", "/k301")
+	resp = redirectGet(t, env, "localhost", "/kredir")
 	assertStatus(t, resp, http.StatusFound)
 	if loc := resp.Header.Get("Location"); loc != "https://rule.example.com/landing" {
 		t.Errorf("Location = %q", loc)
@@ -848,7 +848,7 @@ func TestLandingCreateNeverKeeps301(t *testing.T) {
 	addDomain(t, c, "localhost")
 	lid := localhostDomainID(t, c)
 	resp := c.post("/api/links", map[string]any{
-		"code": "k301b", "targetUrls": []string{"https://a.example.com"},
+		"code": "kredirb", "targetUrls": []string{"https://a.example.com"},
 		"domainIds": []int64{lid}, "linkType": "landing",
 		"landingSource": "url", "landingUrl": "https://page.example.com/lp",
 		"redirectStatus": "301",
@@ -973,12 +973,12 @@ func TestPickTargetSkipsWriteForSingleTarget(t *testing.T) {
 	addDomain(t, c, "localhost")
 	lid := localhostDomainID(t, c)
 	link := createLink(t, c, map[string]any{
-		"code":       "ksolo",
+		"code":       "ksoto",
 		"targetUrls": []string{"https://only.example.com"},
 		"domainIds":  []int64{lid},
 	})
 	for i := 0; i < 5; i++ {
-		resp := redirectGet(t, env, "localhost", "/ksolo")
+		resp := redirectGet(t, env, "localhost", "/ksoto")
 		assertStatus(t, resp, http.StatusFound)
 		if loc := resp.Header.Get("Location"); loc != "https://only.example.com" {
 			t.Fatalf("Location = %q", loc)
@@ -998,12 +998,12 @@ func TestPickTargetStillRoundRobinsMultiTarget(t *testing.T) {
 	addDomain(t, c, "localhost")
 	lid := localhostDomainID(t, c)
 	link := createLink(t, c, map[string]any{
-		"code":       "kmulti",
+		"code":       "kmuto",
 		"targetUrls": []string{"https://a.example.com", "https://b.example.com"},
 		"domainIds":  []int64{lid},
 	})
 	for i := 0; i < 4; i++ {
-		resp := redirectGet(t, env, "localhost", "/kmulti")
+		resp := redirectGet(t, env, "localhost", "/kmuto")
 		assertStatus(t, resp, http.StatusFound)
 		_ = resp.Body.Close()
 	}

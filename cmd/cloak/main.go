@@ -109,7 +109,9 @@ func main() {
 	workerCancel()
 	select {
 	case <-workerDone:
-	case <-time.After(5 * time.Second):
-		log.Printf("worker did not stop within 5s")
+	// worker 现在会等所有循环收口才返回,而循环里可能有进行中的出网调用
+	// (证书探活 10s 超时),所以等待窗口要盖得住单次调用的上限。
+	case <-time.After(12 * time.Second):
+		log.Printf("worker did not stop within 12s")
 	}
 }

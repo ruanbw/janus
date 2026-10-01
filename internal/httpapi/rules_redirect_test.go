@@ -604,13 +604,15 @@ func TestVisitorErrorPages(t *testing.T) {
 	}
 
 	// 2. 租户配置全局 404 页面后未命中: 返回租户全局自定义 HTML
-	tenant, err := env.Store.GetTenantByEmail(context.Background(), "alice@example.com")
-	if err != nil {
-		t.Fatalf("get tenant: %v", err)
-	}
-	if err := env.Store.UpdateTenantErrorPages(context.Background(), tenant.ID, "<h1>Alice 404</h1>", "<h1>Alice 429</h1>"); err != nil {
-		t.Fatalf("update tenant error pages: %v", err)
-	}
+	// 走 HTTP 接口而不是直接写库:访客错误页有租户级内存快照,失效挂在
+	// PATCH /api/me/error-pages 这条路径上。直接 store.UpdateTenantErrorPages
+	// 绕过了失效,快照里还是旧值(而且那样也测不到"改完立刻生效"这条契约)。
+	resp = c.patch("/api/me/error-pages", map[string]any{
+		"custom404Html": "<h1>Alice 404</h1>",
+		"custom429Html": "<h1>Alice 429</h1>",
+	})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
 
 	resp = redirectGet(t, env, "localhost", "/nonexistent_code")
 	assertStatus(t, resp, http.StatusNotFound)

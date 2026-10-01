@@ -33,7 +33,48 @@ func addDomain(t *testing.T, c *testClient, fqdn string) *store.Domain {
 	resp := c.post("/api/domains", map[string]string{"fqdn": fqdn})
 	assertStatus(t, resp, http.StatusCreated)
 	d := decodeBody[store.Domain](t, resp)
+	// 归属证明现在要求「权威 DNS 上发布一次性 TXT」,创建时还拿不到挑战 token,
+	// 所以域名会以 pending 落库,需要一次重检才可能激活(见 handleCreateDomain
+	// 的注释)。testutil 注入的假校验器只认 localhost 系列,于是:
+	//   - localhost / *.localhost:重检 → verified → 激活。绝大多数用例要的是
+	//     "一个可用的自有域名",这一步对它们是必要的。
+	//   - 其他名字(如 .invalid):假校验器给 need_dns,保持 pending ——
+	//     有些用例正是要断言"解析不到 → 进重试队列",不能在这里替它激活。
+	if isLocalthostFQDN(fqdn) {
+		activateDomain(t, c, d.ID)
+		d = getDomain(t, c, d.ID)
+	}
 	return &d
+}
+
+func isLocalthostFQDN(fqdn string) bool {
+	f := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(fqdn), "."))
+	return f == "localhost" || strings.HasSuffix(f, ".localhost")
+}
+
+// activateDomain 重检并等到域名真正激活。重检是异步任务(TXT 查询 + A/AAAA),
+// 这里轮询到终态,避免"提交了就当成功"导致后续用例偶发拿不到可用域名。
+func activateDomain(t *testing.T, c *testClient, id int64) {
+	t.Helper()
+	resp := c.post("/api/domains/"+strconv.FormatInt(id, 10)+"/recheck", nil)
+	assertStatus(t, resp, http.StatusAccepted)
+	_ = resp.Body.Close()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if getDomain(t, c, id).Status == "active" {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("域名 %d 在 3s 内未激活(最后状态 %q)", id, getDomain(t, c, id).Status)
+}
+
+func getDomain(t *testing.T, c *testClient, id int64) store.Domain {
+	t.Helper()
+	resp := c.get("/api/domains/" + strconv.FormatInt(id, 10))
+	assertStatus(t, resp, http.StatusOK)
+	return decodeBody[store.Domain](t, resp)
 }
 
 func TestCreateDomainDNSActive(t *testing.T) {
@@ -144,22 +185,35 @@ func TestCreateDomainPendingAndTimeoutFailed(t *testing.T) {
 		t.Fatalf("after recheck status = %s, want pending", d2.Status)
 	}
 
-	// 超过最长重试时长(72h)→ worker 置 failed
+	// 超过最长重试时长(72h)→ worker 置终态 expired。
+	//
+	// 为什么是 expired 而不是 failed:failed 仍是重试队列的成员,超期后每轮
+	// 都会被扫到并无条件写一次库(写放大且永远没有出口)。expired 让它离开
+	// 扫描集合,租户想重来必须显式点「重新校验」。
 	env.BackdateDomain(t, d.ID, 73*time.Hour)
-	testutil.Poll(t, 5*time.Second, "domain failed", func() bool {
+	testutil.Poll(t, 5*time.Second, "domain expired", func() bool {
 		resp := c.get("/api/domains/" + strconv.FormatInt(d.ID, 10))
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
 			return false
 		}
 		dd := decodeBody[store.Domain](t, resp)
-		return dd.Status == "failed"
+		return dd.Status == "expired"
 	})
 
-	// failed 后可手动重检(仍失败保持 failed)
+	// 终态可被手动重检复活:重新签发挑战 token 并回到 pending
 	resp = c.post("/api/domains/"+strconv.FormatInt(d.ID, 10)+"/recheck", nil)
 	assertStatus(t, resp, http.StatusAccepted)
 	_ = resp.Body.Close()
+	testutil.Poll(t, 5*time.Second, "domain revived", func() bool {
+		resp := c.get("/api/domains/" + strconv.FormatInt(d.ID, 10))
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
+		dd := decodeBody[store.Domain](t, resp)
+		return dd.Status == "pending"
+	})
 }
 
 func TestDomainStopAndRestore(t *testing.T) {

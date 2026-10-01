@@ -3,12 +3,16 @@ module cloak
 go 1.26.0
 
 require (
+	github.com/caarlos0/env/v11 v11.4.1
 	github.com/casbin/casbin/v2 v2.135.0
 	github.com/expr-lang/expr v1.17.8
 	github.com/gin-contrib/authz v1.0.7
 	github.com/gin-gonic/gin v1.12.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/lionsoul2014/ip2region/binding/golang v0.0.0-20260901011515-c1a1fc7d5941
+	github.com/pressly/goose/v3 v3.28.0
+	github.com/wneessen/go-mail v0.8.1
+	github.com/yl2chen/cidranger v1.0.2
 	golang.org/x/crypto v0.55.0
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/gorm v1.31.2
@@ -16,17 +20,11 @@ require (
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.9.1 // indirect
-	github.com/caarlos0/env/v11 v11.4.1 // indirect
 	github.com/casbin/govaluate v1.10.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
-	github.com/pressly/goose/v3 v3.28.0 // indirect
 	github.com/sethvargo/go-retry v0.4.0 // indirect
-	github.com/stretchr/testify v1.12.1 // indirect
-	github.com/wneessen/go-mail v0.8.1 // indirect
-	github.com/yl2chen/cidranger v1.0.2 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/time v0.16.0 // indirect
 )
 
 require (

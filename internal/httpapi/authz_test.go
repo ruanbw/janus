@@ -99,10 +99,10 @@ func TestAuthzBearerWriteNoCSRF(t *testing.T) {
 
 	resp := bearerReq(t, env, http.MethodPost, "/api/domains", map[string]string{"fqdn": "localhost"}, tok)
 	assertStatus(t, resp, http.StatusCreated)
-	d := decodeBody[store.Domain](t, resp)
-	if d.Status != "active" {
-		t.Fatalf("domain status = %s, want active", d.Status)
-	}
+	// 不在这里断言域名状态:这个用例验的是「Bearer 通道不需要 CSRF token」,
+	// 而域名激活现在要求一次 TXT 归属挑战(创建时只有 A 记录,状态是 pending,
+	// 需要重检才可能 active)。激活路径由 domains_test.go 单独覆盖。
+	_ = decodeBody[store.Domain](t, resp)
 }
 
 // TestAuthzTenantForbiddenAdmin ④ tenant 角色访问平台管理端点 → 403,

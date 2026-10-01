@@ -25,11 +25,13 @@ func TestRuleEndpointsRejectOversizeBody(t *testing.T) {
 	// 一条合法规则(用于对照:限的是体积,不是内容)
 	createRule(t, c, baseRuleBody("正常规则"))
 
-	// customHtml 撑到 600KB:既超过 512KB 的字段上限,也远超 body 上限。
-	// 期望报"body 太大" —— 它发生在解码前,比逐字段校验更早、更省。
+	// body 上限是 1MB(maxRuleBodyBytes)。下面三处 payload 必须**真的超过 1MB**,
+	// 否则读到的是逐字段上限(customHtml 512KB / 表达式长度上限)那条路径,
+	// 测不到 body 上限本身 —— simulate 与 validate-expr 没有字段上限,600KB 会
+	// 被正常接受并返回 200。
 	huge := map[string]any{
 		"name": "超大 body", "scope": "global", "action": "notfound",
-		"pageMode": "custom", "customHtml": strings.Repeat("x", 600*1024),
+		"pageMode": "custom", "customHtml": strings.Repeat("x", 1200*1024),
 	}
 	resp := c.post("/api/rules", huge)
 	if resp.StatusCode != http.StatusBadRequest {
@@ -49,7 +51,7 @@ func TestRuleEndpointsRejectOversizeBody(t *testing.T) {
 	// simulate 也接一个自由形状的 JSON,同样要限
 	resp = c.post("/api/rules/simulate", map[string]any{
 		"url":       "https://localhost/x",
-		"userAgent": strings.Repeat("u", 600*1024),
+		"userAgent": strings.Repeat("u", 1200*1024),
 	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("simulate 超大 body 状态码 = %d, want 400", resp.StatusCode)
@@ -57,7 +59,7 @@ func TestRuleEndpointsRejectOversizeBody(t *testing.T) {
 
 	// 校验表达式端点同样受限
 	resp = c.post("/api/rules/validate-expr", map[string]any{
-		"expression": strings.Repeat("a", 600*1024),
+		"expression": strings.Repeat("a", 1200*1024),
 	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("validate-expr 超大 body 状态码 = %d, want 400", resp.StatusCode)

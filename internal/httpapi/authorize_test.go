@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"cloak/internal/httpapi"
 	"cloak/internal/testutil"
 )
 
@@ -55,7 +56,13 @@ func TestAuthorizeInternalOnly(t *testing.T) {
 
 func get(t *testing.T, env *testutil.Env, path string) *http.Response {
 	t.Helper()
-	resp, err := env.Server.Client().Get(env.Server.URL + path)
+	req, err := http.NewRequest(http.MethodGet, env.Server.URL+path, nil)
+	if err != nil {
+		t.Fatalf("build GET %s: %v", path, err)
+	}
+	// Caddy 授权端点校验共享密钥(未配置时 fail-closed),测试要像 Caddy 一样带上它。
+	req.Header.Set(httpapi.CaddyAskTokenHeader, testutil.TestCaddyAskToken)
+	resp, err := env.Server.Client().Do(req)
 	if err != nil {
 		t.Fatalf("GET %s: %v", path, err)
 	}

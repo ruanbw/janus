@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,11 @@ var TestDatabaseURL = getenv("CLOAK_TEST_DATABASE_URL",
 
 // PlatformDomain 测试用平台域名(cloak.test,与开发一致)。
 const PlatformDomain = "cloak.test"
+
+// TestCaddyAskToken 测试用 Caddy on-demand TLS 回调共享密钥。
+// 生产环境由 CLOAK_CADDY_ASK_TOKEN 配置;该端点在未配置时 fail-closed,
+// 测试必须显式带上它(见 httpapi.CaddyAskTokenHeader)。
+const TestCaddyAskToken = "test-caddy-ask-token"
 
 func getenv(k, def string) string {
 	if v := os.Getenv(k); v != "" {
@@ -121,6 +127,7 @@ func setup(t *testing.T, rc *httpapi.RateLimitConfig, geoLookup geo.Lookup) *Env
 		ResetTokenTTL:        time.Hour,
 		JWTSecret:            "test-jwt-secret",
 		JWTTTL:               24 * time.Hour,
+		CaddyAskToken:        TestCaddyAskToken,
 		DNSRetryInterval:     50 * time.Millisecond,
 		DNSMaxAge:            72 * time.Hour,
 		VisitRetention:       90 * 24 * time.Hour,
@@ -162,6 +169,7 @@ func setup(t *testing.T, rc *httpapi.RateLimitConfig, geoLookup geo.Lookup) *Env
 	}
 	srv := httptest.NewServer(httpapi.New(httpapi.Deps{
 		Store: st, Mailer: m, Cfg: cfg, RateLimit: rc, GeoLookup: geoLookup,
+		DomainOwnership: newFakeOwnership(),
 	}))
 	t.Cleanup(srv.Close)
 
@@ -171,19 +179,82 @@ func setup(t *testing.T, rc *httpapi.RateLimitConfig, geoLookup geo.Lookup) *Env
 // MailOutput 返回控制台 mailer 的全部输出(用于黑盒提取验证/重置 token)。
 func (e *Env) MailOutput() string { return e.mail.String() }
 
+// fakeOwnership 是域名归属校验的测试替身。
+//
+// 生产实现靠「权威 DNS 上发布一次性 TXT」证明域名归属,并用 A/AAAA 确认指向本机。
+// 黑盒测试既无法在权威 DNS 上发布 TXT,也不该依赖外网解析结果(同 geo.Disabled 的
+// 理由:外部数据的准确性不该由单元测试负责)。
+//
+// 但它不是"一律通过"——那样会掩盖真实的判定分支。这里忠实复刻生产语义:
+//   - localhost / *.localhost 解析到本机(CLOAK_SERVER_PUBLIC_IP=127.0.0.1)→ 可激活;
+//     刚创建还没有 token 时是 need_txt,拿到 token 后才 verified。
+//   - 其他名字(如 .invalid)解析不到 → need_dns,域名停在 pending 进入重试队列。
+//
+// TXT 的比对逻辑本身(归一化、常量时间比较、一次性消费)在 internal/domain 的
+// 单测里用假解析服务器覆盖,那里才是它的正确测试位置。
+type fakeOwnership struct {
+	tasks *domain.TaskQueue
+}
+
+func newFakeOwnership() *fakeOwnership {
+	return &fakeOwnership{tasks: domain.NewTaskQueue(0, 0)}
+}
+
+func (f *fakeOwnership) Tasks() *domain.TaskQueue { return f.tasks }
+
+func (f *fakeOwnership) Verify(_ context.Context, fqdn, token string) (domain.VerifyResult, error) {
+	host := domain.NormalizeFQDN(fqdn)
+	if host != "localhost" && !strings.HasSuffix(host, ".localhost") {
+		return domain.VerifyResult{Status: domain.VerifyNeedDNS}, nil
+	}
+	if token == "" {
+		// 刚创建:已指向本机但还拿不到挑战 token,租户需要去 DNS 发布 TXT。
+		return domain.VerifyResult{Status: domain.VerifyNeedTXT, PointsToServer: true}, nil
+	}
+	return domain.VerifyResult{
+		Status:         domain.VerifyVerified,
+		PointsToServer: true,
+		TokenMatched:   true,
+	}, nil
+}
+
 // StartWorker 启动后台任务(DNS 重试/证书探活/访问清理),测试结束时自动停止。
 func (e *Env) StartWorker(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go domain.NewWorker(e.Store, e.Cfg).Run(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		domain.NewWorker(e.Store, e.Cfg).Run(ctx)
+	}()
+	// 必须等 worker 真正退出再让下一个用例开始:它持有的会话级咨询锁会把别的
+	// worker 全部挡掉(表现为 "咨询锁被其它副本持有,本轮跳过"),用例就会随机失败。
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Log("worker 未在 10s 内退出(通常卡在出网调用上)")
+		}
+	})
 }
 
-// BackdateDomain 把域名 created_at 改为 age 之前(模拟 72h 重试超时场景;测试数据准备)。
+// BackdateDomain 把域名的 created_at、dns_checked_at 与 verify_token_created_at
+// 一并回溯到 age 之前(模拟"过了 maxAge 仍未完成归属证明"的重试超时场景;测试数据准备)。
+//
+// 三个时间戳缺一不可,它们在后台扫描里各管一件事:
+//   - dns_checked_at:决定这一轮要不要被选中复检(COALESCE(dns_checked_at, created_at));
+//   - verify_token_created_at:决定是否超期(overdue → expired 终态);
+//   - created_at:前两者的兜底。
+//
+// 只回溯其中一个,行要么压根不进扫描集,要么进了也不会被判超期。
 func (e *Env) BackdateDomain(t *testing.T, domainID int64, age time.Duration) {
 	t.Helper()
 	if _, err := e.Pool.Exec(context.Background(),
-		`UPDATE domains SET created_at = now() - $1::interval WHERE id=$2`, age, domainID); err != nil {
+		`UPDATE domains SET created_at = now() - $1::interval,
+		                    dns_checked_at = now() - $1::interval,
+		                    verify_token_created_at = now() - $1::interval
+		 WHERE id=$2`, age, domainID); err != nil {
 		t.Fatalf("backdate domain: %v", err)
 	}
 }

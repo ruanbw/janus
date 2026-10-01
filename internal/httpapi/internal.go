@@ -16,7 +16,7 @@ import (
 // CaddyAskTokenQuery Caddy 回调时携带共享密钥的查询参数名。
 //
 // 两个都收:Caddy 2.11 的 Caddyfile **不能**给 ask 请求加自定义头
-//(`ask <url> { header ... }` 直接报 unrecognized parameter '{';`permission` 的块
+// (`ask <url> { header ... }` 直接报 unrecognized parameter '{';`permission` 的块
 // 里的子指令在该版本被静默忽略),所以 Caddyfile 只能用查询参数传密钥
 // (`?token={$CADDY_ASK_TOKEN}`,{$ENV} 由 Caddyfile 适配器在 adapt 时展开)。
 // 头部的形式留给支持它的 Caddy 版本与手工测试 —— 两侧比对逻辑完全相同。

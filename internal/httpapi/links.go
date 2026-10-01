@@ -452,11 +452,16 @@ type patchLinkReq struct {
 	LandingURL     *string         `json:"landingUrl"`
 	Status         *string         `json:"status"`
 	RulesEnabled   *bool           `json:"rulesEnabled"`
-	// DeletedAt 是三态字段:未提供(指针 nil)/ 显式 null(指针非 nil、内容为 "null")。
+	// DeletedAt 是三态字段:未提供(长度为 0)/ 显式 null(内容为 "null")/ 其他值。
 	// 显式 null 的语义是「还原这条逻辑删除的短链」—— PATCH 改资源字段,
-	// 把 deleted_at 写回 NULL 就是撤销删除,与 POST /links/{id}/restore 等价。
-	// 没有单独开一条路由是因为新增路由要动 internal/httpapi/server.go(他人文件)。
-	DeletedAt *json.RawMessage `json:"deletedAt"`
+	// 把 deleted_at 写回 NULL 就是撤销删除。
+	//
+	// 这里必须用值类型 json.RawMessage 而不是 *json.RawMessage:encoding/json
+	// 遇到 JSON null 时对**指针**字段的处理是「把指针置 nil」,不会调用
+	// UnmarshalJSON,于是「显式 null」和「未提供」被压成同一个状态,还原请求
+	// 会被当成普通 PATCH 走 GetLinkByID → 对已软删短链返回 404。
+	// 值类型才能让 UnmarshalJSON 收到 "null" 这四个字节,把三态区分开。
+	DeletedAt json.RawMessage `json:"deletedAt"`
 }
 
 func (a *API) handlePatchLink(c *gin.Context) {
@@ -477,7 +482,7 @@ func (a *API) handlePatchLink(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
-	if req.DeletedAt != nil {
+	if len(req.DeletedAt) > 0 {
 		a.restoreLink(c, t, id, req)
 		return
 	}
@@ -510,7 +515,22 @@ func (a *API) handlePatchLink(c *gin.Context) {
 			"落地页型短链(upload 来源)必须先上传落地页压缩包")
 		return
 	}
-	upd := store.LinkUpdate{LinkType: &linkType, LandingSource: &landingSource, LandingURL: &landingURL}
+	// 只下发**请求真正改动过**的字段。
+	//
+	// 上面那三个值是从事务外读到的 cur 推导出来的,不能无条件写回:两个并发
+	// PATCH 各自带着自己的旧快照进来时,"只改 status"的那个请求也会把 linkType
+	// 覆写成旧值 —— store 层 UpdateLink 里的 SELECT ... FOR UPDATE + 读当前值
+	// 合并就这样被绕过去了,丢更新又回来了(见 TestConcurrentPatchKeepsBothWrites)。
+	upd := store.LinkUpdate{}
+	if linkType != cur.LinkType {
+		upd.LinkType = &linkType
+	}
+	if landingSource != cur.LandingSource {
+		upd.LandingSource = &landingSource
+	}
+	if landingURL != cur.LandingURL {
+		upd.LandingURL = &landingURL
+	}
 	if req.TargetURLs != nil {
 		targets, err := validTargetURLs(*req.TargetURLs, a.maxTargetURLs())
 		if err != nil {
@@ -519,17 +539,17 @@ func (a *API) handlePatchLink(c *gin.Context) {
 		}
 		upd.TargetURLs = &targets
 	}
-	// 跳转方式:请求没带就沿用当前值,但落地页型一律归一为 302(见 normalizeRedirectStatus)
-	effectiveStatus := cur.RedirectStatus
+	// 跳转方式:只在请求显式给出时才下发。
+	// 「落地页型一律 302」这条不变式由 store 在锁内按生效 linkType 归一
+	// (effectiveRedirectStatus),handler 不必再实现一遍。
 	if req.RedirectStatus != nil {
 		if *req.RedirectStatus != "301" && *req.RedirectStatus != "302" {
 			writeErr(c, http.StatusBadRequest, errValidation, "redirectStatus 必须为 301 或 302")
 			return
 		}
-		effectiveStatus = store.RedirectStatus(*req.RedirectStatus)
+		rs := store.RedirectStatus(*req.RedirectStatus)
+		upd.RedirectStatus = &rs
 	}
-	normalized := normalizeRedirectStatus(effectiveStatus, linkType)
-	upd.RedirectStatus = &normalized
 	if req.Status != nil {
 		if *req.Status != "enabled" && *req.Status != "disabled" {
 			writeErr(c, http.StatusBadRequest, errValidation, "status 必须为 enabled 或 disabled")
@@ -574,7 +594,7 @@ func (a *API) handlePatchLink(c *gin.Context) {
 // 若该 (domain_id, code) 已被另一条存活短链占用,部分唯一索引直接报 23505 → 409。
 // 落地页文件在软删期间一直保留,所以还原后落地页原样可用,不需要重新上传。
 func (a *API) restoreLink(c *gin.Context, t *store.Tenant, id int64, req patchLinkReq) {
-	if strings.TrimSpace(string(*req.DeletedAt)) != "null" {
+	if strings.TrimSpace(string(req.DeletedAt)) != "null" {
 		writeErr(c, http.StatusBadRequest, errValidation, "deletedAt 只支持显式 null(还原逻辑删除的短链)")
 		return
 	}
@@ -819,8 +839,17 @@ func (a *API) handleListVisits(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "action 必须为 redirect / landing_view / click")
 		return
 	}
+	// outcome 可选过滤(success / failed),省略则不过滤。
+	// 前端要"只统计成功访问"时必须显式传:不过滤会把点击行与失败行一起算进去,
+	// 同一访客被计两次,而点击与失败都不计入访问次数(见 CONTEXT.md 计数口径)。
+	outcome := c.Request.URL.Query().Get("outcome")
+	if !store.ValidVisitOutcome(outcome) {
+		writeErr(c, http.StatusBadRequest, errValidation, "outcome 必须为 success / failed")
+		return
+	}
 	page, pageSize := pageParams(c)
-	items, total, err := a.store.ListVisitsByLink(c.Request.Context(), id, action, page, pageSize)
+	items, total, err := a.store.ListVisitsByLinkFiltered(c.Request.Context(), id,
+		store.VisitFilter{Action: action, Outcome: outcome}, page, pageSize)
 	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return

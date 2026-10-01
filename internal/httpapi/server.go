@@ -3,6 +3,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -39,13 +40,24 @@ type Deps struct {
 	// GeoLookup IP → 地理值;nil 时用内嵌的离线 ip2region 库。
 	// 测试注入 geo.Disabled 关掉地理解析(黑盒测试不该依赖外部数据的准确性)。
 	GeoLookup geo.Lookup
+	// DomainOwnership 域名归属校验;nil 时用真实 DNSChecker(查 TXT + A/AAAA)。
+	// 测试注入假校验器:归属证明依赖公网 DNS,而黑盒测试既无法在权威 DNS 上
+	// 发布 TXT,也不该依赖外网解析结果(同 GeoLookup 的理由)。
+	DomainOwnership OwnershipChecker
+}
+
+// OwnershipChecker 抽象域名归属校验(见 Deps.DomainOwnership)。
+// *domain.DNSChecker 是生产实现。
+type OwnershipChecker interface {
+	Verify(ctx context.Context, fqdn, token string) (domain.VerifyResult, error)
+	Tasks() *domain.TaskQueue
 }
 
 type API struct {
 	store        *store.Store
 	mailer       mailer.Mailer
 	cfg          config.Config
-	dns          *domain.DNSChecker
+	dns          OwnershipChecker
 	registerRate *rateLimiter // POST /api/auth/register
 	authRate     *rateLimiter // login/verify-email/forgot/reset
 	// setupRate 限制「首次设置密码 setup token」的补发速度(按租户邮箱分桶),
@@ -118,7 +130,7 @@ func New(d Deps) http.Handler {
 		store:        d.Store,
 		mailer:       d.Mailer,
 		cfg:          d.Cfg,
-		dns:          &domain.DNSChecker{ExpectedIP: d.Cfg.ServerPublicIP},
+		dns:          d.DomainOwnership,
 		registerRate: newRateLimiter(rl.RegisterLimit, rl.RegisterWindow),
 		authRate:     newRateLimiter(rl.AuthLimit, rl.AuthWindow),
 		// 每 15 分钟最多一封:够运维在丢失邮件后自助补发,又挡得住邮件轰炸。
@@ -129,6 +141,9 @@ func New(d Deps) http.Handler {
 		jwtMgr:           jwtMgr,
 		ruleCache:        ruleCache,
 		geo:              geoLookup,
+	}
+	if a.dns == nil {
+		a.dns = &domain.DNSChecker{ExpectedIP: d.Cfg.ServerPublicIP}
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -181,6 +196,10 @@ func New(d Deps) http.Handler {
 	prot.POST("/links/batch-purge", a.handleBatchPurgeLinks)
 	prot.GET("/links/:id/visits", a.handleListVisits)
 	prot.GET("/links/:id/stats", a.handleLinkStats)
+	// 总览统计:按租户全量 GROUP BY 聚合各维度分布。
+	// 不走"前端拉最近 N 条明细自己数"的路径 —— 那既会漏(超过 N 条就不准),
+	// 又会让点击行与失败行混进访问量(违反 CONTEXT.md 的计数口径)。
+	prot.GET("/visits/overview", a.handleVisitsOverview)
 	// 16:落地页上传(zip 替换式)
 	prot.POST("/links/:id/landing", a.handleUploadLanding)
 	// 规则与「规则 ↔ 短链」关联(关联只存在规则一侧,spec D1;
@@ -209,7 +228,10 @@ func New(d Deps) http.Handler {
 	prot.DELETE("/admin/domains/:id", a.handleAdminDeleteDomain)
 
 	// 跳转(公开):路径首段为短码,由 Host 决定域名(在受保护组外注册)
-	r.GET("/:code", a.handleRedirect)
+	// 公开跳转路由挂访客限流:落地页型短链每次访问都要写一行访问明细,
+	// 点击回传还要额外做一次地理解析,无节制的脚本刷量会同时撑大 visits 表
+	// 与吃掉 CPU。阈值按"CGNAT/公司出口下正常用户感知不到"来定。
+	r.GET("/:code", a.visitorGuard(), a.handleRedirect)
 	// 16:落地页型短链二级路径(点击端点/每短链 SDK/上传落地页静态服务)。
 	// gin 路由树不支持 /:code 与 /:code/... 子路由并存,统一由 NoRoute 兜底分发;
 	// 关闭尾斜杠重定向,避免 gin 把 /{code}/ 重定向回 /{code} 造成环。

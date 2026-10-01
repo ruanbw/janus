@@ -33,6 +33,7 @@ ALTER TABLE domains ADD CONSTRAINT domains_status_check
 -- 同一主机被绑定多次时保留 id 最小的那条(最早建立的关联得以保留),删掉其余:
 --   visits 先删(visits.domain_id 无 ON DELETE,会挡住域名删除);
 --   link_domains 由 domains 的 ON DELETE CASCADE 连带清除,短链本身保留。
+-- +goose StatementBegin
 DO $$
 DECLARE
   dupes BIGINT;
@@ -48,6 +49,7 @@ BEGIN
       dupes;
   END IF;
 END $$;
+-- +goose StatementEnd
 
 DELETE FROM visits WHERE domain_id IN (
   SELECT id FROM (

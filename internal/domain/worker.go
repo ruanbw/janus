@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"cloak/internal/config"
@@ -30,6 +31,22 @@ const (
 // 多副本部署时每一轮 DNS 校验 / 证书探活都会被执行 N 遍(N 倍出网、N 倍写库),
 // 而单副本 compose 下这个问题完全看不见 —— 加一个取不到的副本直接跳过本轮即可。
 const workerAdvisoryLockKey int64 = 0x1c0a2
+
+// lockKeyFor 按 pass 名字派生独立的咨询锁键。
+//
+// 为什么不能三个循环共用一个键:咨询锁要解决的是**跨副本**重复执行,不是让
+// 同一进程内的不同后台任务互相排队。共用一个键时,慢的那个(cert-probe 要发
+// HTTPS、ownership-recheck 要发 DNS)会把快的那个(dns-retry,50ms 一轮)反复挡掉,
+// 日志里表现为"咨询锁被其它副本持有,本轮跳过"—— 而实际上根本没有别的副本。
+// 派生方式必须跨进程稳定(同名 → 同键),所以用 FNV-1a 而不是进程内计数器。
+func lockKeyFor(name string) int64 {
+	var h uint32 = 2166136261
+	for i := 0; i < len(name); i++ {
+		h ^= uint32(name[i])
+		h *= 16777619
+	}
+	return workerAdvisoryLockKey + int64(h%100000)
+}
 
 // Worker 运行后台任务:DNS 重试队列、证书预签发探活、访问/会话清理。
 type Worker struct {
@@ -77,14 +94,28 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 	// 这三个循环都会出网(DNS 查询 / HTTPS 探活),加咨询锁做副本间抢占:
 	// 多副本时每轮只由一个副本执行,其余跳过。
-	go w.guardedLoop(ctx, w.cfg.DNSRetryInterval, w.dnsRetryPass, "dns-retry")
-	go w.guardedLoop(ctx, certProbeInterval, w.certProbePass, "cert-probe")
-	go w.guardedLoop(ctx, OwnershipRecheckInterval, w.ownershipRecheckPass, "ownership-recheck")
-	go w.loop(ctx, w.cfg.VisitCleanupEvery, w.visitCleanupPass, "visit-cleanup")
+	//
+	// 用 WaitGroup 收口:ctx 取消后 Run 必须等这些循环真正退出才返回。
+	// 否则 Run 一返回、调用方以为 worker 已经停掉,而循环还在跑最后一轮 ——
+	// 它持有的会话级咨询锁会把下一个(测试里就是下一个用例的)worker 全部挡掉,
+	// 表现为"dns-retry: 咨询锁被其它副本持有,本轮跳过"并让断言随机失败。
+	var wg sync.WaitGroup
+	start := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
+	}
+	start(func() { w.guardedLoop(ctx, w.cfg.DNSRetryInterval, w.dnsRetryPass, "dns-retry") })
+	start(func() { w.guardedLoop(ctx, certProbeInterval, w.certProbePass, "cert-probe") })
+	start(func() { w.guardedLoop(ctx, OwnershipRecheckInterval, w.ownershipRecheckPass, "ownership-recheck") })
+	start(func() { w.loop(ctx, w.cfg.VisitCleanupEvery, w.visitCleanupPass, "visit-cleanup") })
 	// 过期会话与邮箱 token 清理与访问清理同一节奏(默认 24h)。
 	// email_tokens 仅消费时惰性校验过期,需定期物理清理防表膨胀;spec 未禁止,属合理运维。
-	go w.loop(ctx, w.cfg.VisitCleanupEvery, w.sessionCleanupPass, "session-cleanup")
+	start(func() { w.loop(ctx, w.cfg.VisitCleanupEvery, w.sessionCleanupPass, "session-cleanup") })
 	<-ctx.Done()
+	wg.Wait()
 }
 
 func (w *Worker) loop(ctx context.Context, interval time.Duration, pass func(context.Context), name string) {
@@ -100,11 +131,11 @@ func (w *Worker) guardedLoop(ctx context.Context, interval time.Duration, pass f
 // 兜底:非正时长会让 time.NewTicker panic,而 panic 发生在 goroutine 里会终止
 // 整个进程(连带 HTTP 服务),不是"这个循环停掉"。
 func (w *Worker) tickLoop(ctx context.Context, interval time.Duration, run func(context.Context), name string) {
-	run(ctx)
 	if interval <= 0 {
 		log.Printf("worker %s: 间隔 %v 非法,循环不启动", name, interval)
 		return
 	}
+	run(ctx)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -134,7 +165,7 @@ func (w *Worker) safePass(ctx context.Context, pass func(context.Context), name 
 // guarded 在执行 pass 前抢一次会话级咨询锁:多副本时只有取到锁的那个副本跑本轮。
 // 取锁失败不是错误,直接跳过(记一行日志便于排障)。
 func (w *Worker) guarded(ctx context.Context, pass func(context.Context), name string) {
-	release, ok, err := w.store.TryAdvisoryLock(ctx, workerAdvisoryLockKey)
+	release, ok, err := w.store.TryAdvisoryLock(ctx, lockKeyFor(name))
 	if err != nil {
 		log.Printf("worker %s: 取咨询锁失败,本轮跳过: %v", name, err)
 		return

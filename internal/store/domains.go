@@ -237,25 +237,43 @@ type DomainScanRow struct {
 // 与出网请求数完全由租户注册量决定。每一轮都必须有界。
 const DefaultDomainScanLimit = 500
 
-// ListDomainsForDNSCheck 取本轮到期需要复检的自有域名(pending/failed),带退避与 LIMIT。
+// ListDomainsForDNSCheck 取本轮到期需要复检的自有域名(pending/failed),带 LIMIT。
+// Overdue 表示"距建域名已超过 maxAge 仍未完成归属证明",该行会被转入 expired 终态。
 //
-// 退避用"距上次校验的时长"推算而不是记一个 attempts 字段:同一租户反复点
-// "重新校验"不该把退避清零,所以时钟取 dns_checked_at(校验发生的时间),
-// 而非 created_at。窗口从 interval 指数增长到 64×interval 为止,再往后就是
-// 每轮一次(此时它已经处在长尾,不会因为再多等一轮而损失什么)。
+// 两个时间基准不能混用,这是本函数最容易写错的地方:
+//
+//   - 复检节奏(选不选这一行)按 COALESCE(dns_checked_at, created_at) 算,
+//     即"距上次校验多久了"。每轮校验完都会把 dns_checked_at 刷新成 now,
+//     所以它天然就是一个每 interval 一次的固定节奏(对应文档里的"每 5 分钟重试一次")。
+//   - 超期判定(overdue)按 **verify_token_created_at**(当前这枚挑战签发于何时)
+//     算,不能用上面那个时钟,也不能用 created_at:
+//     dns_checked_at 每轮被重置,拿它算年龄会让 age 永远≈0 —— 域名因此永远
+//     达不到 expired 终态,72h 之后仍在队列里被无意义地反复校验、反复写库;
+//     而 created_at 是域名的创建时间,租户在 expired 之后手动重新校验、拿到
+//     新挑战时它不会变,下一轮(默认 5 分钟后)就会把刚复活的域名再打回终态,
+//     显式复活变成一句空话。verify_token_created_at 每次签发挑战都会重置,
+//     正好表达"当前这次尝试已经挂了多久"。
+//
+// 顺带说明:曾经这里写过一段
+// `age_s > $1 OR age_s >= LEAST(6, floor(age_s/$2))*$2` 的"指数退避"。
+// 它推不出真正的退避 —— age 既然每轮被重置,floor(age/interval) 就恒定在
+// 刚过一轮的量级,窗口永远长不大。真正的退避需要 attempts 计数字段(每次
+// 校验自增,窗口按 attempts 增长);在此之前宁可保持"固定节奏"这一条
+// 真实且可预期的语义,也不留一段看起来在做退避、实际没做的代码。
 func (s *Store) ListDomainsForDNSCheck(ctx context.Context, maxAge, interval time.Duration, limit int) ([]DomainScanRow, error) {
 	return s.scanDomains(ctx, `
 		SELECT id, fqdn, status, cert_status, verify_token, last_at,
-		       (age_s > $1) AS overdue
+		       (EXTRACT(EPOCH FROM (now() - COALESCE(verify_token_created_at, created_at))) > $1) AS overdue
 		FROM (
 			SELECT id, fqdn, status, cert_status, verify_token,
+			       created_at,
+			       verify_token_created_at,
 			       COALESCE(dns_checked_at, created_at) AS last_at,
 			       GREATEST(0, EXTRACT(EPOCH FROM (now() - COALESCE(dns_checked_at, created_at)))) AS age_s
 			FROM domains
 			WHERE origin = 'self' AND status IN ('pending','failed')
 		) c
-		WHERE age_s > $1
-		   OR age_s >= LEAST(6, GREATEST(0, floor(age_s / $2))) * $2
+		WHERE age_s >= $2
 		ORDER BY last_at
 		LIMIT $3`,
 		maxAge.Seconds(), interval.Seconds(), limit)
@@ -343,7 +361,7 @@ func (s *Store) GetDomainAuth(ctx context.Context, fqdn string) (*DomainAuth, er
 	var a DomainAuth
 	res := s.db.WithContext(ctx).Raw(
 		`SELECT d.status, d.origin, t.status AS tenant_status FROM domains d
-		 JOIN tenants t ON t.id = d.tenant_id WHERE d.fqdn = ?`, NormalizeFQDN(fqdn))
+		 JOIN tenants t ON t.id = d.tenant_id WHERE d.fqdn = ?`, NormalizeFQDN(fqdn)).Scan(&a)
 	if res.Error != nil {
 		return nil, res.Error
 	}

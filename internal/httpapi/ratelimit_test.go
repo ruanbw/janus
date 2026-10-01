@@ -115,7 +115,9 @@ func TestRateLimitIgnoresForgedXFFWhenNoTrustedProxy(t *testing.T) {
 	env := testutil.Setup(t)
 	rl := httpapi.RateLimitConfig{
 		RegisterLimit: 100000, RegisterWindow: time.Minute,
-		AuthLimit: 2, AuthWindow: time.Minute,
+		// 滚动窗口的语义是"任意连续 window 内最多 AuthLimit 次"(见 newRateLimiter),
+		// 所以 AuthLimit=3 恰好放行前三次、第四次 429。
+		AuthLimit: 3, AuthWindow: time.Minute,
 	}
 	srv := serveWithTrustedProxies(t, env, nil, rl)
 

@@ -64,6 +64,7 @@ p, tenant, /api/links/batch-purge, POST
 p, tenant, /api/links/*/landing, POST
 p, tenant, /api/links/*/visits, GET
 p, tenant, /api/links/*/stats, GET
+p, tenant, /api/visits/overview, GET
 p, tenant, /api/links/*/rules, GET
 p, tenant, /api/links/*/rules, PUT
 p, tenant, /api/rules, GET
