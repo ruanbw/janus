@@ -8,7 +8,7 @@ CLOAK 短链服务的后台管理界面:基于 Vue 3 + TypeScript + Vite + Tailw
 - Tailwind CSS 4(样式与设计令牌,支持深色模式)+ Reka UI(无头交互组件:Select/Dropdown/AlertDialog/Tooltip/Popover 等)
 - @lucide/vue(图标)、Pinia(状态)、Vue Router 4(路由)、Axios(请求)
 - d3-geo + topojson-client + world-atlas(总览页世界地图,懒加载,见下)
-- 自研轻量组件库 src/components/ui/:AppButton/AppForm/AppTable 等(全局注册,见 UI_KIT.md)
+- 双层组件库:src/components/ui/ 是 shadcn 风格原语层,src/components/app/ 是项目组件层(AppButton/AppForm/AppTable,全局注册),见 UI_KIT.md
 
 ## 本地开发
 

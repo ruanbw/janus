@@ -6,7 +6,7 @@
  * 自动化 UI 规范与一致性门禁检查脚本：
  * 1. legacy 类名引用检查（.btn, .panel*, .badge*, .tbl*, .switch, .kpi*, 等）
  * 2. legacy 令牌引用检查（var(--fg), var(--muted), var(--border), 等）
- * 3. 未定义 CSS 变量检查（提取所有 var(--*) 与 main.css 定义比对，支持白名单）
+ * 3. 未定义 CSS 变量检查（提取所有 var(--*) 与 src/styles/*.css 定义比对，支持白名单）
  * 4. 默认调色板泄漏检查（slate-*, cyan-*, amber-*, emerald-*，除白名单外）
  * 5. 任意字号类检查（text-[Npx]）
  * 6. 业务视图中裸 HTML 原语检查（<button, <input, <select, <table>）
@@ -14,6 +14,11 @@
  * 8. dist 产物中动效变体规则存在性检查
  * 9. 状态色对比度检查（:root 与 .dark 双主题，文字/填充/描边分级阈值）
  * 10. 硬编码纯白检查（bg-white / text-white / border-white，带 alpha 的合法）
+ * 11. 组件层与业务视图禁 dark: 类名补丁（components/ui + components/app + views）
+ * 12. 业务视图禁手搓模态遮罩（fixed inset-0）
+ * 13. 分层方向：components/ui/** 不得 import components/app
+ * 14. 分层方向：项目层（components/app + components/layout + layouts）不得直接 import reka-ui（有白名单）
+ * 15. 分层方向：components/ui/** 不得使用项目层令牌（--surface/--ink/--line/… 与对应工具类）
  */
 
 import fs from 'node:fs';
@@ -25,6 +30,8 @@ const __dirname = path.dirname(__filename);
 const webRoot = path.resolve(__dirname, '..');
 const srcDir = path.resolve(webRoot, 'src');
 const mainCssPath = path.resolve(srcDir, 'styles/main.css');
+const themeCssPath = path.resolve(srcDir, 'styles/theme.css');
+const stylesDir = path.resolve(srcDir, 'styles');
 
 let totalErrors = 0;
 
@@ -121,12 +128,13 @@ codeFiles.forEach((file) => {
   });
 });
 
-// 4. 未定义 CSS 变量检查（提取全部 var(--*) 并与 main.css 声明比对）
+// 4. 未定义 CSS 变量检查（提取全部 var(--*) 并与 src/styles/*.css 声明比对）
 console.log('4. 检查未定义的 CSS 变量引用...');
+// 令牌已搬到 theme.css，所以采集面是整个 styles 目录而不是单个 main.css
 const definedVars = new Set();
-if (fs.existsSync(mainCssPath)) {
-  const mainCssContent = fs.readFileSync(mainCssPath, 'utf8');
-  const varDeclMatches = mainCssContent.matchAll(/--([a-zA-Z0-9_-]+)\s*:/g);
+for (const cssFile of walkDir(stylesDir, (p) => p.endsWith('.css'))) {
+  const cssContent = fs.readFileSync(cssFile, 'utf8');
+  const varDeclMatches = cssContent.matchAll(/--([a-zA-Z0-9_-]+)\s*:/g);
   for (const match of varDeclMatches) {
     definedVars.add(`--${match[1]}`);
   }
@@ -160,7 +168,7 @@ codeFiles.forEach((file) => {
       if (definedVars.has(varName)) continue;
       if (allowedExactVars.has(varName)) continue;
       if (allowedVarPrefixes.some((p) => varName.startsWith(p))) continue;
-      reportError('UndefinedCSSVar', file, idx + 1, match.index + 1, `引用了未在 main.css 中定义的 CSS 变量: "${varName}"`);
+      reportError('UndefinedCSSVar', file, idx + 1, match.index + 1, `引用了未在 src/styles/*.css 中定义的 CSS 变量: "${varName}"`);
     }
   });
 });
@@ -390,12 +398,12 @@ function contrastRatio(fg, bg) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-if (fs.existsSync(mainCssPath)) {
-  const cssText = fs.readFileSync(mainCssPath, 'utf8');
+if (fs.existsSync(themeCssPath)) {
+  const cssText = fs.readFileSync(themeCssPath, 'utf8');
   const rootVars = readCssScopeVars(cssText, ':root');
   const darkVars = readCssScopeVars(cssText, '\\.dark');
   if (!rootVars || !darkVars) {
-    reportError('Contrast', mainCssPath, 1, 1, 'main.css 里找不到 :root 或 .dark 变量块，无法校验状态色对比度');
+    reportError('Contrast', themeCssPath, 1, 1, 'theme.css 里找不到 :root 或 .dark 变量块，无法校验状态色对比度');
   } else {
     const themes = [['浅色', [rootVars]], ['深色', [darkVars, rootVars]]];
     let failed = 0;
@@ -405,7 +413,7 @@ if (fs.existsSync(mainCssPath)) {
         const bg = resolveThemeToken(scopes, bgName);
         if (!fg || !bg) {
           failed += 1;
-          reportError('Contrast', mainCssPath, 1, 1, `${themeName}: ${fgName} / ${bgName} 未定义或不是可解析的颜色`);
+          reportError('Contrast', themeCssPath, 1, 1, `${themeName}: ${fgName} / ${bgName} 未定义或不是可解析的颜色`);
           continue;
         }
         const ratio = contrastRatio(fg, bg);
@@ -413,7 +421,7 @@ if (fs.existsSync(mainCssPath)) {
           failed += 1;
           reportError(
             'Contrast',
-            mainCssPath,
+            themeCssPath,
             1,
             1,
             `${themeName}: ${fgName} on ${bgName} 仅 ${ratio.toFixed(2)}:1（需 ≥ ${min}）—— ${note}`,
@@ -459,10 +467,19 @@ vueFiles.forEach((file) => {
   });
 });
 
-// 11. 组件库禁止 dark: 类名（强制要求主题差异由 main.css 令牌层接管）
-console.log('11. 检查 src/components/ui/ 下是否存在 dark: 类名补丁...');
-const uiFiles = walkDir(path.resolve(srcDir, 'components/ui'), (p) => p.endsWith('.vue'));
-uiFiles.forEach((file) => {
+// 11. 禁止 dark: 类名（强制要求主题差异由 theme.css 令牌层接管）
+// 扫描面：组件层两个目录 + 业务视图层。视图层曾残留 52 处 `text-brand-600 dark:text-brand-400`
+// 这类补丁，换成 nova 令牌后（--brand 自己随主题换值）它们全部多余，视图层一并纳入守卫。
+console.log('11. 检查组件层与视图层是否存在 dark: 类名补丁...');
+const componentLayerDirs = [
+  path.resolve(srcDir, 'components/ui'),
+  path.resolve(srcDir, 'components/app'),
+  path.resolve(srcDir, 'views'),
+];
+const componentLayerFiles = componentLayerDirs.flatMap((dir) =>
+  walkDir(dir, (p) => p.endsWith('.vue')),
+);
+componentLayerFiles.forEach((file) => {
   const content = fs.readFileSync(file, 'utf8');
   const lines = content.split('\n');
   lines.forEach((line, idx) => {
@@ -473,7 +490,7 @@ uiFiles.forEach((file) => {
         file,
         idx + 1,
         (match.index ?? 0) + 1,
-        `组件内部禁止使用 dark: 类名 ("${match[0]}")，所有主题差异必须在 main.css 的 :root / .dark 令牌层换值`,
+        `禁止使用 dark: 类名 ("${match[0]}")，所有主题差异必须在 theme.css 的 :root / .dark 令牌层换值`,
       );
     }
   });
@@ -492,6 +509,131 @@ businessViews.forEach((file) => {
         idx + 1,
         line.indexOf('fixed inset-0') + 1,
         '业务视图中禁止手搓 "fixed inset-0" 模态遮罩，请使用 AppModal / AppDialog 组件',
+      );
+    }
+  });
+});
+
+// 13. 分层方向：components/ui/** 是「可整目录覆盖升级」的 shadcn 下载件，
+//     不得反向依赖项目组件 app/——否则 shadcn add 时永远解不开冲突。
+console.log('13. 检查 components/ui/ 是否反向 import components/app...');
+const uiLayerFiles = walkDir(path.resolve(srcDir, 'components/ui'), (p) => p.endsWith('.vue'));
+// @/components/app 的别名写法 + ../app 的相对写法都算。
+const reverseImportRegex = /from\s+['"](?:@\/components\/app|\.\.\/app)(?:\/[^'"]*)?['"]/g;
+uiLayerFiles.forEach((file) => {
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  lines.forEach((line, idx) => {
+    const match = reverseImportRegex.exec(line);
+    reverseImportRegex.lastIndex = 0;
+    if (match) {
+      reportError(
+        'LayerDirection',
+        file,
+        idx + 1,
+        (match.index ?? 0) + 1,
+        `ui/ 是可整目录覆盖升级的下载件，不得 import 项目层组件："${match[0]}"`,
+      );
+    }
+  });
+});
+
+// 14. 分层方向：项目层必须经 ui/ 原语使用无头组件，不得直连 reka-ui。
+// 扫描面覆盖三处项目层目录：components/app（App* 组件）、components/layout（导航/主题切换）
+// 与 layouts（页面骨架）。ui/ 原语层自己当然要直连 reka-ui，故不在扫描面内。
+console.log('14. 检查项目层 (app + layout + layouts) 是否直接 import reka-ui...');
+const projectLayerDirs = [
+  path.resolve(srcDir, 'components/app'),
+  path.resolve(srcDir, 'components/layout'),
+  path.resolve(srcDir, 'layouts'),
+];
+const appLayerFiles = projectLayerDirs.flatMap((dir) => walkDir(dir, (p) => p.endsWith('.vue')));
+// 白名单：这两个组件内部要用无头件的 re-export（DialogTitle / SelectContent 等），
+// 见 .scratch/ui-layers/issues/03 的例外说明。
+const directRekaAllowList = ['AppSelect.vue', 'AppDialog.vue'];
+const rekaImportRegex = /from\s+['"]reka-ui['"]/g;
+appLayerFiles.forEach((file) => {
+  const relName = path.basename(file);
+  if (directRekaAllowList.includes(relName)) return;
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  lines.forEach((line, idx) => {
+    const match = rekaImportRegex.exec(line);
+    rekaImportRegex.lastIndex = 0;
+    if (match) {
+      reportError(
+        'DirectRekaImport',
+        file,
+        idx + 1,
+        (match.index ?? 0) + 1,
+        '项目层组件禁止直接 import reka-ui，请改由 components/ui/ 的原语包一层',
+      );
+    }
+  });
+});
+
+// 15. 分层方向：components/ui/** 只认 shadcn 语义层令牌，
+//     不得使用项目层令牌（--surface/--ink/--line/…）与其工具类。
+console.log('15. 检查 components/ui/ 是否使用项目层令牌...');
+// 写成前缀数组而不是逐个全名：--surface-muted / --line-strong 这类派生令牌同样要拦。
+const projectLayerVarPrefixes = [
+  'surface',
+  'ink',
+  'line',
+  'ok',
+  'warn',
+  'err',
+  'info',
+  'brand',
+  'sidebar',
+];
+const projectLayerVarRegex = new RegExp(
+  `var\\(\\s*--(?:${projectLayerVarPrefixes.join('|')})(?:-[a-z0-9]+)*\\s*[,\\)]`,
+);
+// 工具类：bg-surface / text-ink / border-line-strong / bg-brand-600 …
+// 前缀是 Tailwind 的颜色属性，后缀是项目层词元，两边都用数组拼，避免误伤英文单词。
+const tailwindColorPrefixes = [
+  'bg',
+  'text',
+  'border',
+  'ring',
+  'fill',
+  'stroke',
+  'outline',
+  'decoration',
+  'divide',
+  'from',
+  'via',
+  'to',
+  'placeholder',
+  'accent',
+  'caret',
+  'shadow',
+];
+const projectLayerClassRegex = new RegExp(
+  `(?<![\\w-])(?:${tailwindColorPrefixes.join('|')})-(?:${projectLayerVarPrefixes.join('|')})(?:-[a-z0-9]+)*(?:\\/\\d+)?(?![\\w-])`,
+  'g',
+);
+uiLayerFiles.forEach((file) => {
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  lines.forEach((line, idx) => {
+    const varMatch = projectLayerVarRegex.exec(line);
+    if (varMatch) {
+      reportError(
+        'ProjectLayerToken',
+        file,
+        idx + 1,
+        (varMatch.index ?? 0) + 1,
+        `ui/ 只允许使用 shadcn 语义层令牌，不得引用项目层令牌："${varMatch[0].trim()}"`,
+      );
+    }
+    projectLayerClassRegex.lastIndex = 0;
+    const classMatch = projectLayerClassRegex.exec(line);
+    if (classMatch) {
+      reportError(
+        'ProjectLayerToken',
+        file,
+        idx + 1,
+        (classMatch.index ?? 0) + 1,
+        `ui/ 只允许使用 shadcn 语义层工具类，不得引用项目层工具类："${classMatch[0]}"`,
       );
     }
   });

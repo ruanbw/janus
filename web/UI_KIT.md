@@ -1,7 +1,53 @@
-# CLOAK Web UI 组件库契约(2025 重构版)
+# CLOAK Web UI 组件库契约(双层 + nova 主题)
 
 技术栈:Vue 3.5 + TypeScript + Vite 6 + Tailwind CSS 4 + Reka UI(无头组件)+ @lucide/vue 图标。
 ant-design-vue 已移除,任何文件不得再 import 自 'ant-design-vue' 或使用 a-* 组件。
+
+## 两层组件库(最重要的一条规矩)
+
+```
+web/src/components/
+  ui/    ← shadcn 风格原语层。kebab-case 文件名(button.vue / input.vue / switch.vue …)，
+          相当于「shadcn 下载件」：可以整目录覆盖升级，改它只改外观与状态。
+  app/   ← 项目组件层。App* 前缀(AppButton / AppInput / AppTable …)，
+          承载本项目的契约：antd 兼容的 props、插槽、表单联动。全局注册只发生在这里。
+```
+
+方向是**单向**的，三条硬约束（门禁第 13/14/15 项守着）：
+
+| 约束 | 说明 |
+| --- | --- |
+| `ui/` 不得 import `app/` | 下载件不认得项目层，避免升级时被项目代码绑死 |
+| `app/` 不得直接 import `reka-ui` | 无头件必须先在 `ui/` 包一层外观，再由 `app/` 加契约。白名单只有 `AppSelect.vue`（select 内容区是无样式件）、`AppDialog.vue`（无头底座要 re-export `DialogTitle` 等） |
+| `ui/` 只用 shadcn 语义层令牌 | 不得出现 `--surface` `--ink` `--line` `--ok` `--brand` 等项目层令牌与对应工具类 |
+
+`components/layout/**` 与 `layouts/**`（侧栏、主题切换、页面骨架）同属项目层，同样走 `ui/`，受第 14 项约束。
+
+## App\* → ui/\* 映射（改外观时从哪下手）
+
+| app/ | ui/ |
+| --- | --- |
+| `AppButton` | `button` |
+| `AppInput` `AppTextarea` `AppInputNumber` | `input` `textarea` `button` |
+| `AppCheckbox` | `checkbox` `label` |
+| `AppSwitch` | `switch` |
+| `AppRadio` `AppRadioGroup` `AppRadioCard` | `radio-group` `card` |
+| `AppSelect` | `select`（触发器外观）+ reka 无样式的内容区 |
+| `AppTag` | `badge` |
+| `AppCard` + 5 个 `Card*` | `card` `card-header` `card-title` `card-description` `card-content` `card-footer` |
+| `AppAlert` | `alert` |
+| `AppDivider` | `separator` |
+| `AppModal` `AppDialog` | `dialog` 系列 |
+| `ConfirmHost` | `alert-dialog` 系列（Esc 不关 / 点遮罩不关是它的交互契约） |
+| `AppPopconfirm` | `popover` + `button` |
+| `AppTabs*` | `tabs` 系列 |
+| `AppTooltip` | `tooltip` 系列 |
+| `AppProgress` | `progress` |
+| `AppTable` | `table` 系列 + `button`（分页器） |
+| `ThemeSwitcher`（layout） | `dropdown-menu` 系列 + `button` |
+
+`AppEmpty` `AppResult` `AppSpace` `AppSpin` `AppUpload` `AppDescriptions*` `CopyText` `Toaster` `AppForm` `AppFormItem` `form.ts` `toast.ts` `confirm.ts` `types.ts` 是项目专属，不依赖原语层。
+
 
 ## 文件写入注意事项
 
@@ -10,43 +56,74 @@ ant-design-vue 已移除,任何文件不得再 import 自 'ant-design-vue' 或�
 - 用 bash heredoc 写文件时，bash 历史展开会对 ! 报错并挂起 heredoc：执行任何含 ! 的写入前，先在同会话跑一次 `set +H`（会话内持久；新会话需重跑）。
 - 用 bash heredoc 写文件时，内容里的反斜杠原样写（heredoc 不转义）；避免在内容中使用反引号与 ${（外层程序会转义，统一用字符串拼接）。
 
-## 设计令牌(已在 src/styles/main.css 定义,直接用工具类)
+## 设计令牌(全部定义在 src/styles/theme.css —— 改主题只改这一个文件)
 
-- 品牌色:brand-50..950(靛蓝紫,主色 brand-600 #4f46e5)
-- 点缀:accent-300..600(青)
-- 三层令牌(都定义在 src/styles/main.css 的 `:root` 与 `.dark` 两块,经 `@theme inline` 映射成工具类):
+`main.css` 只剩三块：`@import` 与 `@custom-variant`、全局基础(body / 滚动条 / `.app-field` 焦点环 / 表单错误态 / 页面过渡 / `.app-table`)、动效 `@utility`、世界地图填色。**任何令牌都不许写在 main.css。**
 
-  1. 项目层(页面骨架):surface(卡片 / 组件宿主底色)、surface-muted(页面底色)、surface-strong、ink / ink-soft / ink-faint、line / line-strong、ok / warn / err / info、sidebar-*
-  2. shadcn 语义层(组件状态):background / foreground / card / card-foreground / popover / popover-foreground / primary / primary-foreground / secondary / secondary-foreground / muted / muted-foreground / accent / accent-foreground / destructive / destructive-foreground / border / input / ring
+两条硬约定：
+
+- 令牌值一律 **hex 或 `rgb()`/`rgba()`**，不许用 `oklch()` / `color-mix()`：门禁要静态解析颜色算对比度，解析不了的写法等于没有门禁。
+- 令牌**变量名一个都不增删**（16 个 view 与门禁都依赖），只换取值；新增只允许成组加（下面这些）。
+
+### 字体
+
+- `--font-sans`：Inter Variable 优先（`@fontsource-variable/inter` 打进产物），CJK 走系统栈（PingFang SC / 微软雅黑）
+- `--font-mono`：等宽，短码、密钥、域名用 `.mono` 类
+- body 已开 `font-variant-numeric: tabular-nums`（后台表格数字对齐）与 Inter 的 `cv11`/`ss01`
+
+### 字号尺度（紧凑，11/12/13/14/16/20/24/32）
+
+| 工具类 | px | 行高 | 用途 |
+| --- | --- | --- | --- |
+| `text-2xs` | 11 | 1.45 | 微型标签、辅助状态元数据 |
+| `text-xs` | 12 | 1.5 | 次级说明、紧凑内容 |
+| `text-sm` | 13 | 1.5 | **正文、表单控件、表格默认字号** |
+| `text-base` | 14 | 1.55 | 卡片副标题、强调正文 |
+| `text-lg` | 16 | 1.5 | 区块小标题 |
+| `text-xl` | 20 | 1.4 | 页面主标题 |
+| `text-2xl` | 24 | 1.3 | 大标题 |
+| `text-3xl` | 32 | 1.2 | KPI 数值 |
+
+**严禁 `text-[Npx]` 任意像素值**（门禁第 6 项）。表格正文 13px 由 `main.css` 的 `.app-table` 单点定义。
+
+### 圆角 / 阴影 / 控件高度
+
+- 圆角：`rounded-md` 6px（控件：按钮/输入框/下拉）、`rounded-lg` 8px（卡片）、`rounded-xl` 10px（弹窗/浮层）、`rounded-2xl` 12px
+- 阴影：`shadow-2xs` `shadow-xs`(卡片) `shadow-sm` `shadow-md` `shadow-lg`(弹窗) `shadow-xl`，明暗各一套（`--elev-*` 随主题换值）
+- 控件高度：`h-control-sm`(28px) `h-control-md`(32px) `h-control-lg`(40px)，由 `--control-height-*` 映射；写尺寸时用它，不要新造 `h-[34px]`
+
+### 色板（三层，明暗各一套）
+
+- 品牌色:`--brand`（浅色 `#4f46e5` / 深色 `#818cf8`，工具类 `text-brand` `bg-brand/10` `border-brand/30`）。**nova 下靛蓝只用于焦点环、链接、brand 标签，不再当主色。**`--color-brand-50..950` 色阶仅供世界地图填色。
+- 点缀:`--color-accent-300..600`(青，认证页品牌栏在用)
+- 三层令牌(都定义在 `theme.css` 的 `:root` 与 `.dark` 两块,经 `@theme inline` 映射成工具类):
+
+  1. 项目层(页面骨架与业务视图消费):surface(卡片 / 组件宿主底色)、surface-muted(页面底色)、surface-strong、ink / ink-soft / ink-faint、line / line-strong、ok / warn / err / info、brand、sidebar-*
+  2. shadcn 语义层(**`ui/` 原语层只认这层**):background / foreground / card / card-foreground / popover / popover-foreground / primary / primary-foreground / secondary / secondary-foreground / muted / muted-foreground / accent / accent-foreground / destructive / destructive-foreground / border / input / ring
      - 命名与语义照 shadcn 官方,取值由本项目调色板定制。`--background` 指向 `--surface` 而**不是** `--surface-muted`:shadcn 的 --background 是「组件所处的那层底色」,本项目组件坐在卡片上
-     - 深色下 `--primary` 提到 brand-400 `#818cf8`、`--primary-foreground` 改深色 `#0b1020`;否则白字 / 白滑块压在 `#4f46e5` 上只有 ~2:1
+     - nova 的 primary 是「墨」不是颜色：浅色 `#18181b` / 深色 `#fafafa`，两者互为前景。层级靠**字重**拉开（500/600），不靠色相。开关开态、分页当前页全用它，所以它必须与 `--card` 有 ≥3:1 对比
   3. 控件状态层(shadcn 没有对应语义,项目补齐):control-bg(输入框控件底色)、control-track(关态轨道 / 复选与单选未选填充)、control-track-hover、control-thumb(关态滑块)、control-thumb-edge(滑块与控件未选发丝描边)
-- 用法:bg-surface、bg-surface-muted、text-ink、border-line、text-ok、bg-err/10 等
-- **组件状态色一律走 shadcn 语义层与控件状态层工具类**,禁止在 `components/ui/` 内部写 `dark:` 补丁类名,所有主题差异均由 `:root` 与 `.dark` 令牌自身换值保证：
+- 用法:bg-surface、bg-surface-muted、text-ink、border-line、text-ok、bg-err/10、text-brand 等
+- **组件状态色一律走 shadcn 语义层与控件状态层工具类,禁止在 `components/ui/` `components/app/` 与 `views/` 里写 `dark:` 补丁类名**（门禁第 11 项），所有主题差异均由 `:root` 与 `.dark` 令牌自身换值保证：
 
   | 场景 | 旧写法(打补丁) | 现在写法(纯令牌) |
   | --- | --- | --- |
-  | 开关轨道(关) | `bg-surface-muted` | `data-[state=unchecked]:bg-control-track`(+ `hover:` 变体) |
-  | 开关滑块 | `bg-white dark:bg-foreground` | `bg-control-thumb` + `data-[state=checked]:bg-primary-foreground` + `ring-control-thumb-edge` |
+  | 开关轨道(关) | `bg-surface-muted` | `data-[state=unchecked]:bg-input`(+ `hover:` 变体) |
+  | 开关滑块 | `bg-white dark:bg-foreground` | `data-[state=checked]:bg-primary-foreground` |
   | 复选 / 单选(未选) | `bg-transparent dark:bg-input/30` | `bg-control-track` + `border-control-thumb-edge`（实心填充式统一） |
   | 复选 / 单选(选中) | `bg-brand-600 dark:bg-brand-500` + `text-white` | `data-[state=checked]:bg-primary` + `text-primary-foreground` |
-  | 主按钮 / primary 标签 | `bg-brand-600 text-white dark:bg-brand-500` | `bg-primary text-primary-foreground` |
+  | 主按钮 / brand 标签 | `bg-brand-600 text-white dark:bg-brand-500` | 主按钮 `bg-primary text-primary-foreground`；brand 标签 `text-brand bg-brand/10 border-brand/30` |
   | destructive 按钮 / 标签 | `bg-err text-white` | `bg-destructive text-destructive-foreground` |
   | 输入框 / 选择器 / 文本域 | `bg-transparent dark:bg-input/30` + `border-input` | `bg-control-bg` + `border-input`（零 `dark:` 补丁） |
   | 表格表头 / 行 hover | `bg-surface-muted` | `bg-muted`(hover 同色) |
   | 分页当前页 | `bg-brand-600 text-white` | `bg-primary text-primary-foreground` |
   | 进度条轨道 | `bg-surface-strong` | `bg-control-track/60` |
+  | 视图里的靛蓝强调 | `text-brand-600 dark:text-brand-400` | `text-brand`（浅色深靛、深色浅靛由 `--brand` 换值） |
 
 - 描边分工:容器装饰描边用 `border-line`(卡片、弹窗);控件与可交互边界用 `border-input` / `border-border`(开关、复选、单选、输入框、按钮、表格控件)。别把卡片描边也升到 `--border`,否则每张卡片都是 1.5 对比的硬边框
 - 焦点环单一出处:组件只挂 `.app-field`,焦点环与错误态环由 main.css 的 `.app-field:focus-visible` 和 `[data-invalid='true'] .app-field` 提供。这两条是**未分层** CSS,优先级高于 `@layer utilities`,组件里再写 `focus-visible:ring-*` / `ring-offset-surface` 会被盖掉
 - 深色模式:html.dark 由主题 store 控制,不要手动切换
-- 字体:系统栈;等宽用 .mono 类;表格表头 app-table thead th 已加粗
-- 字体尺度:使用标准化尺度工具类，严禁使用 `text-[Npx]` 任意像素值：
-  - `text-2xs`: 11px (0.6875rem)，用于微型标签、辅助状态元数据
-  - `text-xs`: 12px (0.75rem)，用于次级说明文本、紧凑表格内容
-  - `text-sm`: 14px (0.875rem)，用于正文、表单控件默认字号
-  - `text-base`: 16px (1rem)，用于卡片副标题、强调正文
-  - `text-xl` (20px)、`text-2xl` (26px)、`text-3xl` (30px)，用于大标题与 KPI 数值
+- 等宽:用 `.mono` 类;表格表头 `app-table thead th` 已加粗
 - 进出场动效:采用 Tailwind CSS 4 原生 `@utility` 指令构建，无需外部依赖即可与 `data-[state=...]:` 变体无缝配合：
   - 进场/出场状态：`animate-in`、`animate-out`
   - 透明度：`fade-in-0`、`fade-in-50`、`fade-out-0`
@@ -64,10 +141,15 @@ ant-design-vue 已移除,任何文件不得再 import 自 'ant-design-vue' 或�
 6. 检查任意像素字号（`text-[Npx]`）；
 7. 检查业务 view 视图中裸 HTML 原语（`<button>`, `<input>`, `<select>`, `<table>`）；
 8. 检查生产构建产物中的动效变体规则生成;
-9. 状态色对比度:解析 main.css 的 `:root` 与 `.dark`,校验 13 对状态色(文字 ≥ 4.5、控件填充与焦点环 ≥ 3、细边界 ≥ 1.5),阈值在脚本顶部 `CONTRAST_MIN` 可调;
+9. 状态色对比度:解析 `src/styles/theme.css` 的 `:root` 与 `.dark`,校验 13 对状态色(文字 ≥ 4.5、控件填充与焦点环 ≥ 3、细边界 ≥ 1.5),阈值在脚本顶部 `CONTRAST_MIN` 可调;
 10. 硬编码纯白:`src/**/*.vue` 里禁止不带 alpha 的 `bg-white` / `text-white` / `border-white`(永远深色的面——侧栏、认证页品牌栏——在脚本白名单 `alwaysDarkAllowList` 里);
-11. 组件库禁止 dark: 变体:`src/components/ui/` 下禁止出现任何 `dark:*` 类名,所有主题差异必须在 `main.css` 的 `:root` / `.dark` 令牌层换值;
-12. 业务视图禁止手搓模态遮罩:业务视图禁止裸写 `fixed inset-0` 遮罩,统一使用 `AppModal` / `AppDialog`。
+11. 禁 dark: 变体:`src/components/ui/`、`src/components/app/`、`src/views/` 下禁止出现任何 `dark:*` 类名,所有主题差异必须在 `theme.css` 的 `:root` / `.dark` 令牌层换值;
+12. 业务视图禁止手搓模态遮罩:业务视图禁止裸写 `fixed inset-0` 遮罩,统一使用 `AppModal` / `AppDialog`;
+13. 分层方向:`src/components/ui/**` 不得 import `@/components/app`(下载件不反向依赖项目层);
+14. 分层方向:`src/components/app/**`、`src/components/layout/**`、`src/layouts/**` 不得直接 import `reka-ui`(白名单 `directRekaAllowList` = `AppSelect.vue` / `AppDialog.vue`,见 issue 03 的例外说明);
+15. 分层方向:`src/components/ui/**` 不得使用项目层令牌(`--surface` `--ink` `--line` `--ok` `--warn` `--err` `--info` `--brand` `--sidebar-*` 及对应工具类),只认 shadcn 语义层。
+
+第 4 项(未定义 CSS 变量)的定义面是 `src/styles/*.css` 全部文件,不是只有 main.css。
 
 改任何组件状态色之后,必须 `pnpm check:ui` 与 `pnpm build` 复验(第 8 项要读 dist 产物,所以先 build 再 check)。
 
@@ -108,8 +190,8 @@ ant-design-vue 已移除,任何文件不得再 import 自 'ant-design-vue' 或�
 ## 脚本 API(import)
 
 import { message } from '@/utils/toast';      // message.success/error/warning/info,与 antd 一致
-import { confirm } from '@/components/ui/confirm'; // confirm({ title, content?, okText?, cancelText?, danger?, onOk? })
-import type { FormRule, TableColumn, TablePaginationConfig } from '@/components/ui/types';
+import { confirm } from '@/components/app/confirm'; // confirm({ title, content?, okText?, cancelText?, danger?, onOk? })
+import type { FormRule, TableColumn, TablePaginationConfig } from '@/components/app/types';
 
 - Modal.confirm 换成 confirm(...)(同参数,onOk 支持 async)
 - antd 的 Rule 换成 FormRule(required/type:'email'/min/max/pattern/validator(rule,value)=>Promise)
@@ -146,7 +228,10 @@ import { Plus, Trash2, Pencil, ... } from '@lucide/vue'; — 大小用 :size="16
 
 ## 目录
 
-- 共享组件:src/components/ui/(禁止修改,除非契约变更)
-- 契约变更需同步本文件;本次变更见 .scratch/ui-style-unify/issues/04-ui-kit-contract-gaps.md(AppSwitch 新增、AppButton 的 to、AppTable 行级 API)
-- 页面:src/views/**(本次改造目标)
+- 原语层:src/components/ui/(shadcn 风格,可整目录覆盖升级;只用 shadcn 语义层令牌)
+- 项目组件层:src/components/app/(App* 全局注册;构建在 ui/ 之上;禁止直连 reka-ui)
+- 布局层:src/components/layout/、src/layouts/(同样走 ui/ 原语)
+- 令牌:src/styles/theme.css(唯一令牌出处);src/styles/main.css(基础层 + 动效 + 地图填色)
+- 页面:src/views/**(只用项目层令牌与 shadcn 语义层,禁 `dark:` 补丁)
 - 路由/store/api/types/utils 均不变
+- 契约变更需同步本文件;本次双层重构见 .scratch/ui-layers/(spec + 6 个 issue)与 docs/adr/0011-two-layer-component-library.md
