@@ -25,7 +25,7 @@ pnpm type-check # Vue 3 + TypeScript 全量类型检查
 ## 构建
 
 ```bash
-pnpm build      # 产物输出到 dist/,生产环境经 go:embed 内嵌进 Go 二进制
+pnpm build      # 产物输出到 dist/(不入库);生产镜像构建期自行执行 pnpm build
 ```
 
 ## 开发约定

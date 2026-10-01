@@ -1,190 +1,355 @@
-# CLOAK — 自托管多租户短链服务
+<div align="center">
 
-CLOAK 是一个自托管的多租户短链服务:租户管理自己的域名与短链,系统为每个已激活域名自动签发并续期 HTTPS 证书,并把「域名/短码」的访问重定向到目标 URL。
+# CLOAK
 
-- **单服务器部署**:Go 后端(Gin RESTful API + GORM ORM)+ nginx(前端静态服务)+ PostgreSQL + Caddy(on-demand TLS,Let's Encrypt 自动签发/续期)。
-- **多租户隔离**:租户之间的域名与短链完全隔离;部署者拥有平台管理员角色,可治理全平台。
-- **前后端分离**:前端独立构建为 nginx 镜像,后端镜像内无任何前端文件;两者独立构建、独立发版(ADR-0006)。改前端不需要重新打包后端。
+**自托管多租户短链服务** — Self-hosted multi-tenant short-link platform
 
-本文档覆盖:**开发环境测试**(第 4~7 节)与**生产部署**(第 8~10 节)的完整流程。更简洁的部署速览见 [`docs/deploy.md`](docs/deploy.md)。
+[![license](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
+[![go](https://img.shields.io/badge/Go-1.26-00ADD8?logo=go&logoColor=white)](go.mod)
+[![node](https://img.shields.io/badge/Node-%E2%89%A520.19-339933?logo=nodedotjs&logoColor=white)](web/package.json)
+[![pnpm](https://img.shields.io/badge/pnpm-10-F69220?logo=pnpm&logoColor=white)](web/package.json)
+[![postgres](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](docker-compose.yml)
+[![caddy](https://img.shields.io/badge/Caddy-2-2B6CB?logo=caddy&logoColor=white)](Caddyfile.prod)
+
+[中文](README.md) · [English](README.en.md)
+
+</div>
+
+---
+
+CLOAK 是一个自托管的**多租户短链服务**:租户注册后管理自己的域名与短链,系统为每个已激活域名**自动签发并续期 HTTPS 证书**,把 `域名/短码` 的访问重定向到目标 URL。除跳转外,还提供**落地页型短链**、**访问明细与地理统计**、**租户级访问处置规则引擎**与**自定义错误页**,以及给脚本用的 **Bearer JWT API**。
+
+- **单服务器部署** — Go 后端(Gin + GORM)+ Vue 3 SPA(nginx)+ PostgreSQL 16 + Caddy(on-demand TLS,Let's Encrypt 自动签发/续期),`docker compose up -d` 全部跑起来。
+- **多租户隔离** — 租户之间的域名、短链、规则、落地页完全隔离;部署者持有平台管理员角色,可治理全平台。
+- **前后端分离** — 前端独立构建为 nginx 镜像,后端镜像内无任何前端文件;改前端不必重打后端(ADR-0006)。
+- **开箱即用** — 邮箱注册即用,平台自动为每个租户发放 `<slug>.<平台域名>` 测试域名,无需任何证书与 DNS 手工操作。
+
+> 术语(租户、短链、短码、落地页、目标 URL、规则、裁决、访问、证书……)以 [`CONTEXT.md`](CONTEXT.md) 词汇表为准,本文只使用其中的规范叫法。
 
 ---
 
 ## 目录
 
-1. [功能特性](#1-功能特性)
-2. [技术架构](#2-技术架构)
-3. [仓库结构](#3-仓库结构)
-4. [环境要求](#4-环境要求)
-5. [快速开始(开发环境)](#5-快速开始开发环境)
-6. [开发环境测试](#6-开发环境测试)
-   - [6.1 后端自动化测试](#61-后端自动化测试)
-   - [6.2 前端类型检查与构建](#62-前端类型检查与构建)
-   - [6.3 端到端手动验证(浏览器)](#63-端到端手动验证浏览器)
-   - [6.4 端到端验证(curl)](#64-端到端验证curl)
-   - [6.5 测试数据与重置](#65-测试数据与重置)
-7. [开发 / 生产差异](#7-开发--生产差异)
-8. [生产部署](#8-生产部署)
-   - [8.1 前置条件](#81-前置条件)
-   - [8.2 DNS 配置](#82-dns-配置)
-   - [8.3 配置 .env](#83-配置-env)
-   - [8.4 修改 Caddyfile.prod](#84-修改-caddyfileprod)
-   - [8.5 准备前端产物(如需改动)](#85-准备前端产物如需改动)
-   - [8.6 启动部署](#86-启动部署)
-   - [8.7 首次启动行为](#87-首次启动行为)
-   - [8.8 上线验证清单](#88-上线验证清单)
-   - [8.9 SMTP 配置(邮件)](#89-smtp-配置邮件)
-   - [8.10 日常运维](#810-日常运维)
-   - [8.11 备份与恢复](#811-备份与恢复)
-   - [8.12 安全建议](#812-安全建议)
-   - [8.13 已知限制](#813-已知限制)
-9. [故障排查](#9-故障排查)
-10. [API 概览](#10-api-概览)
-11. [相关文档](#11-相关文档)
+- [1. 项目简介](#1-项目简介)
+- [2. 功能列表](#2-功能列表)
+- [3. 技术架构](#3-技术架构)
+- [4. 仓库结构](#4-仓库结构)
+- [5. 环境要求](#5-环境要求)
+- [6. 快速开始(开发环境)](#6-快速开始开发环境)
+- [7. 开发规范](#7-开发规范)
+- [8. 测试](#8-测试)
+- [9. 开发 / 生产差异](#9-开发--生产差异)
+- [10. 生产部署(速览)](#10-生产部署速览)
+- [11. 故障排查](#11-故障排查)
+- [12. API 概览](#12-api-概览)
+- [13. 参与贡献](#13-参与贡献)
+- [14. 许可证](#14-许可证)
+- [15. 相关文档](#15-相关文档)
 
 ---
 
-## 1. 功能特性
+## 1. 项目简介
 
-**注册与认证**
-- 邮箱注册(防垃圾注册:注册后需邮箱验证)、登录、记住我(30 天/24 小时)、登出、修改密码、忘记/重置密码。
-- 平台管理员(超管)由环境变量初始化,首次登录引导设置密码。
+### 1.1 它解决什么问题
 
-**域名管理**
-- 平台默认域名:每个租户自动获得 `<slug>.<平台域名>`,邮箱验证后自动激活,不计配额。
-- 自有域名:添加后自动做 DNS 激活校验(每 5 分钟重试,最长 72 小时),激活后自动签发 HTTPS 证书,到期自动续期;支持停用/恢复/删除。
-- 手动重新校验(`recheck`),证书签发状态可查。
+市面上的短链服务要么按点击收费,要么不给你自己的域名。CLOAK 的取舍很直接:**部署在自己服务器上,租户带自己的域名进来**。
 
-**短链管理**
-- 自定义短码或自动生成(固定 6 位),一条短链可关联多个域名,同一短码在不同域名下可指向不同目标。
-- 临时跳转(302)与永久跳转(301)可配;启停、逻辑删除(记录保留)、彻底删除。
-- 配额:按等级限制短链数与自有域名数,超限返回明确错误(含当前用量/上限)。
+| 需求 | CLOAK 的做法 |
+| --- | --- |
+| 短链要用自己的域名 | 自有域名加进来做 DNS 激活校验,证书由 Caddy on-demand TLS 自动签发与续期 |
+| 不想为每个租户手工配证书 | 平台域名配一条 `*.<平台域名>` 泛解析,每个租户自动获得 `<slug>.<平台域名>` |
+| 部署不能依赖外部服务 | 唯一外部依赖是 Let's Encrypt(签发/续期)与可选的 SMTP;数据库与证书都在本机 |
+| 要能对接脚本 / 第三方系统 | 会话 cookie 之外,另发 Bearer JWT(24h)给脚本用,免 CSRF |
+| 跳转流量要有明细可查 | 每次访问落一行:动作(跳转/落地页/点击)、成功失败与原因、IP、设备、国家、来源、时间 |
+| 需要按访客画像处置访问 | 租户级规则引擎:13 个访客字段 + 条件组合,裁决为放行/改写目标/404/限流 |
 
-**访问统计**
-- 记录每次访问的 User-Agent、来源页与时间,短链访问计数与访问列表。
+### 1.2 一次访问的处理链路
 
-**平台管理(超管)**
-- 查看全部租户、封禁/解封、调整等级、强删违规域名。
-
-**安全**
-- 会话 cookie(HTTP-only)+ CSRF 双提交 token;注册/登录/忘记密码限流;目标 URL 拒绝 CRLF 防 header 注入;Caddy 授权端点仅内网可达,未激活域名拒绝签发证书。
-- API 支持 Bearer JWT 认证(Casbin RBAC 按角色×路径×方法授权,见 10.API 概览「授权模型」)。
-
-> 术语(租户、短链、短码、目标 URL、域名、激活、访问、证书、后台等)以 [`CONTEXT.md`](CONTEXT.md) 词汇表为准。
-
----
-
-## 2. 技术架构
+`GET https://<域名>/<短码>` 的完整处理顺序(实现见 [`internal/httpapi/redirect.go`](internal/httpapi/redirect.go)):
 
 ```
-                        Internet
-                           │
-              ┌────────────┴─────────────┐
-              │  Caddy (80/443)          │
-              │  on-demand TLS           │  生产:Let's Encrypt
-              │  ask → 授权端点          │  开发:本地 CA (80/443)
-              └───────┬───────────┬──────┘
-                      │           │
-              平台域名/后台    *.<平台域名> 租户子域
-              (nginx + /api)  (短链跳转)
-                      │           │
-              ┌───────┴───────────┴──────┐
-              │  Caddy: TLS + 路径分流    │
-              └───────┬───────────┬──────┘
-                      │           │
-          ┌───────────▼──┐   ┌────▼─────────────────┐
-          │ nginx (web)  │   │  Go 后端 (backend)   │
-          │ /            │   │  /api/*  REST API    │
-          │ SPA + 静态资源│   │  /{code}  跳转路由   │
-          │              │   │  /internal/caddy/... │
-          │              │   │  后台 worker:        │
-          │              │   │   DNS 重试/证书探活   │
-          └──────────────┘   └────┬─────────────────┘
-                                  │
-                 ┌────────┴────────┐
-                 │  PostgreSQL 16  │
-                 └─────────────────┘
+请求到达
+  │
+  ├─ 1. Host → 定位 active 域名        ── 未命中 → 404(不记明细)
+  │
+  ├─ 2. 短码 → 定位短链 + 目标池       ── 未命中 → 404(不记明细)
+  │
+  ├─ 3. 短链可用性检查                ── 停用/已逻辑删除/无目标/落地页文件缺失
+  │      (规则不参与)                       → 404 + 记一行 outcome=failed 明细
+  │
+  ├─ 4. 规则求值(短链 rules_enabled 时)  规则快照按租户整份缓存在内存,零 DB 查询
+  │      priority 升序,首条命中即裁决      → pass 继续 / redirect 改写目标
+  │                                            / notfound 404 / throttle 429
+  │      一条都没命中 → 走原跳转流程
+  │
+  ├─ 5. 落地页型 → 302 到外部落地页,或 302 到 /<短码>/(平台托管的上传页)
+  │      跳转型   → 从目标池轮询选一个 → 302(默认)或 301(永久)
+  │
+  └─ 6. 落一行访问明细(action / outcome / IP / UA / 来源 / 语言 / 国家 / 命中规则)
 ```
 
-- **Go 后端**:`cmd/cloak` 启动 → 加载配置 → 连接 Postgres → 执行迁移 → 初始化超管 → 启动后台任务 → HTTP 服务。所有环境差异由环境变量承载(见 [spec 决策 #14](.scratch/cloak/spec.md))。
-- **Caddy**:TLS 终止与证书生命周期交给 Caddy on-demand TLS。收到陌生域名的首个 TLS 握手时,向应用内部授权端点(`/internal/caddy/authorize`)询问该域名是否已激活,是则自动签发并续期 Let's Encrypt 证书(ADR-0002)。
-- **前端**:Vue 3 + TypeScript + Vite + Ant Design Vue 的 SPA,独立构建为 nginx 镜像(ADR-0003、ADR-0006)。平台后台域名下由 nginx 提供静态资源与 history 路由回退,`/api` 由 Caddy 分流到 Go 后端。
+三条热路径上的硬约束(改动 `redirect.go` 时必须守住):
+
+1. **零 DB 查询** — 规则集合来自按租户缓存的内存快照;租户没有规则时连访客画像都不构造。
+2. **零写放大** — 规则命中不 UPDATE 任何计数表,只多写本次访问那一行明细("24h 命中"由列表接口读时聚合)。
+3. **fail-open** — 快照加载失败或求值 panic 一律按"未命中"继续;风控规则不该把线上短链打成 500。
 
 ---
 
-## 3. 仓库结构
+## 2. 功能列表
+
+### 2.1 租户与认证
+
+- **邮箱注册 + 邮箱验证**(防垃圾注册):注册后状态 `pending`,验证通过转 `active`,并自动激活其平台默认域名。
+- **登录 / 登出 / 记住我**:记住我 30 天,普通会话 24 小时;超管首次登录引导设置密码。
+- **修改密码 / 忘记密码 / 重置密码**:重置 token 1 小时有效。
+- **平台管理员(超管)**:由 `CLOAK_SUPERADMIN_EMAIL` 初始化,启动时幂等创建。
+- **两种认证方式**:后台会话 cookie(HTTP-only + CSRF 双提交 token);`POST /api/auth/token` 换 Bearer JWT 供脚本/CLI 使用(header 认证,免疫 CSRF)。
+- **等级(Tier)与配额**:等级决定短链数与自有域名数上限;平台默认域名不计入配额;超限返回明确错误(含当前用量 / 上限)。
+
+### 2.2 域名与证书
+
+- **平台默认域名**:每个租户自动获得 `<slug>.<平台域名>`,邮箱验证后自动激活,不计配额,可停用、不可删除。
+- **自有域名**:租户自行添加,需通过"DNS 指向本服务器"的激活校验;激活后由 Caddy 自动签发 Let's Encrypt 证书并自动续期。
+- **激活校验重试**:每 5 分钟重试一次,最长 72 小时;未通过置 `failed`;后台可手动「重新校验」。
+- **生命周期**:停用 / 恢复 / 删除(物理删除,删除前须先清空其上的短链关联)。
+- **证书状态可查**:后台可见签发状态。
+
+### 2.3 短链
+
+- **自定义短码**或自动生成(6 位);同一短码在不同域名下可指向不同目标,同一租户的多条短链可共用短码。
+- **多目标**:一条短链可配置多个目标 URL,访问时按**轮询(round-robin)**选择其一。
+- **跳转方式**:临时 302(默认)或永久 301,每条短链独立配置。
+- **两种类型**:**跳转型**(直接重定向到目标 URL)与**落地页型**(先到落地页,点击后到目标 URL),创建后类型固定。
+- **启停 / 删除**:默认逻辑删除(记录、关联与访问信息保留),另提供彻底删除(purge);前端支持批量逻辑删除与批量物理删除。
+- **规则总开关**:每条短链可单独关闭规则裁决,关闭后完全跳过规则求值。
+
+### 2.4 落地页型短链
+
+落地页来源二选一、可切换(ADR-0005):
+
+- **`url`** — 填写外部落地页地址,访问时 302 过去。
+- **`upload`** — 上传 zip(必须含 `index.html`),平台托管在 `短码/` 路径下;限制解压后总大小(默认 10MB)与文件数(默认 500),并有扩展名白名单。
+
+配套能力:
+
+- **每条短链一份 JS SDK**(`GET /<短码>/sdk.js`,内嵌该短链的绝对点击地址):落地页引入后,按钮点击自动绑定。
+- **点击回传端点** `GET /<短码>/click`:点击计数 +1,并落一行 `action=click` 的访问明细(带 IP、设备与来源),点击**不**计入访问次数。
+- 点击行为最终把访问者送到目标 URL。
+
+### 2.5 访问明细与统计
+
+- **访问明细**(ADR-0007):每次访问记录**动作**(跳转 / 落地页视图 / 点击)、**结果**(成功 / 失败 + 失败原因:短链已停用 / 已逻辑删除 / 没有可用目标 / 落地页文件缺失)、访问者 IP、User-Agent、来源页、语言、国家与时间。
+- **计数口径**:只有**成功**的跳转与落地页视图计入访问次数;点击与失败都不计入。
+- **可归属的失败不丢**:能归属到具体短链的失败会留痕;短码压根不存在的未命中访问不记。
+- **总览页**:KPI 卡片 + 访问趋势 / 设备 / 系统 / 浏览器 / 来源 / 国家分布 + **世界地图** choropleth(随包国界 + `d3-geo` 投影,懒加载,ADR-0010)。
+- **地理归属**:内置 ip2region 离线库(V4 + V6)解析访问者国家码,16 分片双代缓存(负结果也缓存,ADR-0009)。
+- **保留策略**:访问记录默认保留 90 天,后台任务定时清理(`CLOAK_VISIT_RETENTION` 可调)。
+- **单链明细页**:按短链查看访问明细,含动作、结果、命中规则等字段。
+
+### 2.6 规则引擎
+
+租户级的**访问处置规则**:一个条件集合 + 一个动作(ADR-0008)。
+
+- **13 个可求值访客字段**:`ip`(支持 CIDR)、`ipattr`(private / loopback / linklocal)、`country`、`asn`、`lang`、`ref`、`utm_source`、`ua`、`devtype`(bot / mobile / tablet / desktop)、`os`、`browser`、`path`、`domain`。
+- **操作符**:属于 / 不属于 / 等于 / 不等于 / 包含 / 不包含 / 大于 / 小于 / 正则(RE2,大小写敏感);`ip` 字段按 CIDR 网段或字面量匹配,数值比较遇到非数值恒不命中。v1 不做嵌套分组,条件之间由 `logic` 决定「全部满足」或「任一满足」。
+- **两种编辑方式**:`visual`(可视化条件树,默认)与 `expression`(Expr 表达式,给高级用户,`POST /api/rules/validate-expr` 校验语法)。
+- **动作(裁决)**:放行 `pass`(记录命中后继续原跳转流程)/ 改写目标 `redirect`(改写地址不参与短链目标池轮询)/ 返回 404 `notfound`(记 `outcome=failed`、`reason=rule_blocked`)/ 限流 `throttle`(返回 429,记 `reason=rule_throttled`);后两者不计入访问量。
+- **作用域**:**全局**对租户所有短链生效;**指定短链**只对被显式关联的短链生效——关联由规则侧声明,规则是这份关联的唯一写入口(短链侧看到的是同一份数据)。指定短链但零关联的规则永远不命中,界面显式标出该状态。
+- **裁决语义**:按 `priority` 升序求值,**首条命中即裁决**,不做多规则叠加;一条都没命中则按短链原有的目标选择流程跳转。裁决排在短链可用性之后。
+- **规则仿真**:`POST /api/rules/simulate` 用同源旁路回放求值,逐条回答"这个访客会命中哪条规则、凭什么",条件明细文案由后端出,避免前端复刻判定漂移。
+- **上限**:单租户 200 条规则;规则集合按租户整份缓存在内存(默认 TTL 1 分钟),**任何规则写入或关联变更都必须失效对应租户的快照**。
+
+### 2.7 自定义错误页
+
+- **租户全局**:可自定义 404 与 429 错误页 HTML。
+- **规则专属**:单条规则可指定自己的错误页与模式(`default` / `custom`)。
+- 决议优先级:规则专属 → 租户全局 → 系统内置默认页(自适应深色模式的静态页)。
+- 适用场景:未命中、规则 `notfound` 裁决、规则 `throttle` 裁决(429)。
+
+### 2.8 平台管理(超管)
+
+- 查看全部租户、租户详情、等级列表;
+- 封禁 / 解封账号,调整租户等级;
+- 移除违规域名。
+
+### 2.9 API 与安全
+
+- **Casbin RBAC**:两档角色(`tenant` / `superadmin`),按 (角色, HTTP 方法, 路径) 三元组判权,策略在内存装载不落盘;`superadmin` 一条 `*` 覆盖 `/api/*`。
+- **限流**:注册端点每 IP 每分钟 10 次;登录 / 验证 / 找回 / 重置每 IP 每分钟 20 次(`golang.org/x/time/rate` 令牌桶)。
+- **密码**:bcrypt;账号不存在时也做一次假比较,抹平时序差异。
+- **防 header 注入**:目标 URL 任意协议(开放重定向)但拒绝控制字符(CRLF)。
+- **授权端点**:`/internal/caddy/authorize` 仅内网可达,未激活域名拒绝签发证书——防止任意域名解析到本机就触发签发。
+- **统一错误响应**:`{ code, message, details }`,错误码稳定、消息面向人。
+
+### 2.10 平台化运维
+
+- **迁移**:启动时自动执行 `migrations/*.sql`(goose,幂等)。
+- **后台 worker**:DNS 重试、证书探活、访问记录清理、会话与邮箱 token 清理。
+- **可插拔邮件**:配置 SMTP 用真实发送;未配置时用控制台 mailer(邮件内容打印到后端日志),便于无外网环境开发。
+- **可插拔 geo 数据源**:按能力抽象(ADR-0009),当前落地的是内嵌 ip2region 离线库,`asn` / `is_datacenter` 无数据源时恒为空(规则里相应条件恒不命中,而不是"当成匹配")。
+
+---
+
+## 3. 技术架构
+
+### 3.1 请求拓扑
+
+```
+                            Internet
+                               │
+                  ┌────────────┴─────────────┐
+                  │  Caddy (80/443)          │
+                  │  on-demand TLS           │   生产:Let's Encrypt
+                  │  ask → 授权端点          │   开发:本地 CA
+                  └───────┬───────────┬──────┘
+                          │           │
+              平台裸域名(后台)      *.<平台域名> 租户子域 + 自有域名
+                          │           │
+                  ┌───────┴───────────┴──────┐
+                  │  Caddy: TLS + 路径分流    │
+                  └───────┬───────────┬──────┘
+                          │           │
+              ┌───────────▼──┐   ┌────▼─────────────────┐
+              │ nginx (web)  │   │  Go 后端 (backend)   │
+              │ /            │   │  /api/*   REST API   │
+              │ SPA + 静态资源│   │  /{code}  跳转路由    │
+              │              │   │  /{code}/… 落地页     │
+              │              │   │  /internal/caddy/…   │
+              │              │   │  后台 worker:        │
+              │              │   │   DNS 重试/证书探活/  │
+              │              │   │   记录与 token 清理    │
+              └──────────────┘   └────┬─────────────────┘
+                                        │
+                       ┌────────────────┴───────────────┐
+                       │  PostgreSQL 16                 │
+                       │  + CLOAK_LANDING_UPLOAD_DIR 持久卷│
+                       └────────────────────────────────┘
+```
+
+### 3.2 组件职责
+
+| 组件 | 职责 | 关键点 |
+| --- | --- | --- |
+| **Caddy** | TLS 终止与证书生命周期 | on-demand TLS:陌生域名首次握手时问应用 `/internal/caddy/authorize` 该域名是否已激活,是则签发 Let's Encrypt 证书并自动续期(ADR-0002);应用不直接操作 Caddy 配置 |
+| **Go 后端** | 业务逻辑 + REST API + 跳转热路径 | 启动顺序:加载配置 → 连接 Postgres → 执行迁移 → 初始化超管 → 启动后台 worker → 监听 HTTP |
+| **nginx(web 镜像)** | SPA 静态资源 + history 路由回退 | 独立于后端镜像,构建期自行 `pnpm build` |
+| **PostgreSQL** | 全部持久状态 | 唯一数据源;迁移文件随镜像发布 |
+| **前端 SPA** | 后台管理界面 | Vue 3 + TypeScript + Vite + Tailwind CSS 4 + Reka UI,自研 `App*` 组件库 |
+
+### 3.3 技术栈
+
+**后端**(Go 1.26)
+
+| 关注点 | 选型 |
+| --- | --- |
+| HTTP 框架 | `gin-gonic/gin` |
+| 授权 | `casbin/casbin` + `gin-contrib/authz`(策略内存装载) |
+| 数据访问 | `gorm.io/gorm` + `gorm.io/driver/postgres`(`pgx/v5` 驱动) |
+| 迁移 | `pressly/goose/v3` |
+| 规则表达式 | `expr-lang/expr` |
+| JWT | `golang-jwt/jwt/v5` |
+| 限流 | `golang.org/x/time/rate` |
+| 密码 | `golang.org/x/crypto/bcrypt` |
+| 邮件 | `wneessen/go-mail`(SMTP) |
+| 配置 | `caarlos0/env/v11` |
+| CIDR 前缀树 | `yl2chen/cidranger` |
+| GeoIP | `ip2region`(离线 xdb,V4 + V6,随二进制发布) |
+| 测试 | 标准库 `testing` + `stretchr/testify`;黑盒 HTTP 测试跑在 `httptest.Server` + 真实 Postgres 上 |
+
+**前端**(Vue 3.5 + TypeScript)
+
+| 关注点 | 选型 |
+| --- | --- |
+| 构建 | Vite 6 |
+| 样式 | Tailwind CSS 4(设计令牌 + 深色模式) |
+| 无头交互组件 | Reka UI(替代已移除的 ant-design-vue) |
+| 图标 | `@lucide/vue` |
+| 状态 / 路由 | Pinia / Vue Router 4 |
+| 请求 | Axios(统一封装 + CSRF 头 + `ApiError`) |
+| 校验 / 工具 | `async-validator` / `@vueuse/core` / `ipaddr.js` |
+| 图表与地图 | `d3-geo` + `topojson-client` + `world-atlas` + `i18n-iso-countries`(总览页懒加载) |
+
+---
+
+## 4. 仓库结构
 
 ```
 .
-├── cmd/cloak/                  # 后端入口
+├── cmd/cloak/                  # 后端入口(加载配置 → 连库 → 迁移 → worker → HTTP)
 ├── internal/
-│   ├── bootstrap/              # 部署期初始化(超管)
-│   ├── config/                 # 环境变量配置
-│   ├── db/                     # Postgres 连接 + 自研迁移器
-│   ├── domain/                 # DNS 校验、证书探活、短码生成、后台 worker
-│   ├── httpapi/                # HTTP 路由/处理器(+ 黑盒测试)
+│   ├── bootstrap/              # 部署期初始化(超管幂等创建)
+│   ├── config/                 # 环境变量配置(caarlos0/env)
+│   ├── db/                     # Postgres 连接 + goose 迁移
+│   ├── domain/                 # 域名激活校验、证书探活、后台 worker
+│   ├── geo/                    # IP 地理值(ip2region 离线库 + 分片缓存)
+│   ├── httpapi/                # HTTP 路由与处理器(黑盒测试所在)
+│   │   └── templates/          # 内置 404 / 429 自适应错误页
+│   ├── jwt/                    # JWT 签发与校验
 │   ├── mailer/                 # 可插拔邮件(SMTP / 控制台)
-│   ├── store/                  # 数据访问层
+│   ├── rbac/                   # Casbin 策略文本与授权中间件
+│   ├── rules/                  # 规则引擎:字段、条件求值、租户快照与仿真
+│   ├── store/                  # 数据访问层(租户 / 域名 / 短链 / 规则 / 访问)
 │   └── testutil/               # 测试基础设施(httptest + 真实 Postgres)
-├── migrations/                 # SQL 迁移(启动时自动执行)
-├── web/                        # 前端 SPA(见 web/README.md)
-│   ├── src/                    # Vue 源码
+├── migrations/                 # goose SQL 迁移(0001 ~ 0014,启动时自动执行)
+├── web/                        # 前端 SPA(见 web/README.md、web/UI_KIT.md)
+│   ├── src/
+│   │   ├── api/  types/  utils/ # 请求封装、类型、错误与工具
+│   │   ├── components/          # app/(业务)与 ui/(App* 无头组件封装)
+│   │   ├── layouts/  views/     # 后台骨架与各功能页
+│   │   └── styles/              # Tailwind 入口与三层设计令牌
+│   ├── scripts/check-ui-consistency.mjs  # UI 规范门禁
 │   └── dist/                   # 构建产物(不入库,镜像构建期生成)
 ├── docker/
-│   ├── Dockerfile              # 多阶段构建:backend(Go)与 web(nginx)两个独立目标
-│   └── nginx.conf              # 前端静态服务配置(SPA 回退 + 资源强缓存)
-├── docker-compose.yml          # 开发环境编排
-├── docker-compose.prod.yml     # 生产环境编排
-├── Caddyfile                   # 开发 Caddy 配置(本地 CA)
-├── Caddyfile.prod              # 生产 Caddy 配置(Let's Encrypt)
-├── .env.example                # 环境变量模板(复制为 .env)
+│   ├── Dockerfile              # 多阶段:backend(Go)与 web(nginx)两个独立目标
+│   └── nginx.conf              # SPA 回退 + 静态资源强缓存
+├── docker-compose.yml          # 开发编排(Postgres + Caddy)
+├── docker-compose.prod.yml     # 生产编排(Postgres + backend + web + caddy)
+├── Caddyfile / Caddyfile.prod  # 开发(本地 CA)/ 生产(Let's Encrypt)
+├── .env.example                # 环境变量模板
 ├── CONTEXT.md                  # 领域词汇表
+├── LICENSE                     # AGPL-3.0
 └── docs/
     ├── deploy.md               # 生产部署指南
-    ├── adr/                    # 架构决策记录
-    └── agents/                 # agent 协作约定
+    ├── adr/                    # 架构决策记录(0001 ~ 0010)
+    └── agents/                 # agent 协作约定(issue tracker、领域文档)
 ```
 
 ---
 
-## 4. 环境要求
+## 5. 环境要求
 
 | 工具 | 版本 | 用途 |
 | --- | --- | --- |
-| Docker Desktop(含 Compose v2) | 任意较新版本 | 基础设施:Postgres / Caddy |
-| Go | ≥ 1.26(见 `go.mod`) | 终端启动后端(`go run`)与自动化测试 |
-| Node.js | ≥ 20.19(见 `web/package.json` engines) | 前端开发/构建 |
-| pnpm | ≥ 9 | 前端依赖管理 |
-| Caddy 命令行(可选) | ≥ 2.11 | 开发环境信任本地 CA(`caddy trust`) |
+| Docker Desktop(含 Compose v2) | 较新版本 | 基础设施:Postgres / Caddy |
+| Go | ≥ 1.26(`go.mod`) | 终端启动后端与运行后端测试 |
+| Node.js | ≥ 20.19(`web/package.json` engines) | 前端开发与构建 |
+| pnpm | ≥ 9(仓库锁定 10.x) | 前端依赖管理 |
+| Caddy CLI(可选) | ≥ 2.x | 开发环境信任本地 CA(`caddy trust`) |
 
-> 开发环境后端用 `go run` 在终端启动、前端用 `pnpm dev` 启动,因此 `go` 与 Node/pnpm 都是必需;Docker 只承载 Postgres 与 Caddy。
+> 开发环境**基础设施进 Docker**(Postgres、Caddy),**后端与前端在终端跑**(`go run` + `pnpm dev`),改代码即时生效;生产则全部容器化。
 
 ---
 
-## 5. 快速开始(开发环境)
+## 6. 快速开始(开发环境)
 
-### 5.1 启动基础设施(Docker)
-
-开发环境的分工:**基础设施放 Docker**(Postgres、Caddy 反代),**Go 后端与前端在终端直接启动**,改代码即时调试(5.5 / 5.6)。
+### 6.1 启动基础设施
 
 ```bash
 docker compose up -d
 ```
 
-| 服务 | 容器内 | 宿主机映射 | 说明 |
+| 服务 | 容器内端口 | 宿主机映射 | 说明 |
 | --- | --- | --- | --- |
 | `postgres` | 5432 | `127.0.0.1:5432` | PostgreSQL 16,开发凭据 `cloak/cloak` |
-| `caddy` | 443 | `127.0.0.1:443` / `127.0.0.1:80` | HTTPS 入口,on-demand TLS + 本地 CA;反代到宿主机 `:8080` 的后端(`host.docker.internal`) |
+| `caddy` | 443 | `127.0.0.1:443`、`127.0.0.1:80` | HTTPS 入口,on-demand TLS + 本地 CA,反代宿主机 `:8080`(`host.docker.internal`) |
 
-> Caddy 映射宿主 **443**(https 无端口访问)与 **80**(Caddy 自动 308 跳 https)。
-> 无端口访问依赖 SwitchHosts 把 `*.cloak.test` 指向 127.0.0.1;后端在终端监听 **8080**(见 5.6)。
-> 注意:flow-filtering 项目的 openresty 容器绑定宿主 80/443/8080,开发时才启动它,与本服务错开。
+> Caddy 占用宿主 80/443;若本机另有服务(如 openresty)也绑定这两个端口,两者错开启动。
+> 无端口访问依赖 hosts 把 `*.cloak.test` 指向 `127.0.0.1`(见 6.2)。
 
-### 5.2 配置本地域名解析(SwitchHosts / `/etc/hosts`)
+### 6.2 本地域名解析
 
-开发环境支持两种访问入口:**localhost 直连**与**域名访问**(把域名指向本机)。域名解析用 SwitchHosts 等 hosts 管理工具或手动改 `/etc/hosts` 均可;Caddy 按 Host/SNI 路由、Vite 按 Host 放行,都需要把平台后台域名和你要测试的租户子域指向本机。
-
-**SwitchHosts**(推荐):新增一条规则并开启,内容与 `/etc/hosts` 相同:
+开发支持 **localhost 直连**与**域名访问**两种入口。域名访问需要把平台域名与测试租户子域指向本机,用 SwitchHosts 或 `/etc/hosts` 均可:
 
 ```text
 127.0.0.1 app.cloak.test
@@ -192,564 +357,364 @@ docker compose up -d
 127.0.0.1 bob.cloak.test
 ```
 
-**手动追加到 `/etc/hosts`**:
-
 ```bash
-sudo sh -c 'echo "127.0.0.1 app.cloak.test" >> /etc/hosts'
-# 每注册一个测试租户(如 slug=alice),把它的子域也加进去:
-sudo sh -c 'echo "127.0.0.1 alice.cloak.test bob.cloak.test" >> /etc/hosts'
+# 手动追加(每注册一个新租户就加一行;hosts 不支持通配符)
+sudo sh -c 'echo "127.0.0.1 alice.cloak.test" >> /etc/hosts'
 ```
 
-- `app.cloak.test` 承载后台(SPA + API),域名入口两种方式都可用:`http://app.cloak.test:5173`(Vite Dev Server,热更新)与 `https://app.cloak.test`(Caddy → Vite Dev Server,验证域名/TLS 形态,见 5.4)。
-- `<slug>.cloak.test` 是租户的**平台默认域名**,用于验证短链跳转。
-- 测试**自有域名**时,同样把它加进 hosts(如 `127.0.0.1 links.example.test`);`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 的 DNS 校验会读取 hosts,走真实代码路径(spec 决策 #14)。
+- `app.cloak.test` 承载后台;`<slug>.cloak.test` 是租户的平台默认域名,用于验证短链跳转。
+- 测试自有域名时同样加一行(如 `127.0.0.1 links.example.test`)。`CLOAK_SERVER_PUBLIC_IP=127.0.0.1` 时,Go 的 DNS 校验会读 hosts,走**真实代码路径**。
+- 不想改 hosts 时可用 `curl --resolve` 临时解析(见 8.3)。
+- Vite Dev Server 默认拒绝非 localhost 的 Host(防 DNS rebinding);项目已在 `vite.config.ts` 用 `server.allowedHosts` 放行 `.cloak.test`(由 `web/.env.development` 的 `VITE_PLATFORM_DOMAIN` 控制),换平台域名时同步修改。
 
-> hosts 不支持通配符,每个测试子域都要单独一行。也可以用 `curl --resolve`(见 6.4)临时解析,无需改 hosts。
-> Vite Dev Server 默认拒绝非 localhost 的 Host(防 DNS rebinding,返回 403);项目已在 `vite.config.ts` 用 `server.allowedHosts` 放行 `.cloak.test`(由 `web/.env.development` 的 `VITE_PLATFORM_DOMAIN` 控制),换平台域名时同步修改。
+### 6.3 信任 Caddy 本地 CA
 
-### 5.3 信任 Caddy 本地 CA
-
-开发环境证书由 Caddy 本地 CA 签发(浏览器默认不信任)。把根证书导出并加入系统信任:
+开发证书由 Caddy 本地 CA 签发,浏览器默认不信任:
 
 ```bash
 mkdir -p certs
 docker compose exec caddy cat /data/caddy/pki/authorities/local/root.crt > certs/caddy-root.pem
 sudo caddy trust --ca certs/caddy-root.pem
+# macOS 备选:
+# sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain certs/caddy-root.pem
 ```
 
-macOS 备选(钥匙串导入并信任):
+> `certs/` 已在 `.gitignore` 中;重建 Caddy 数据卷后需重新信任。
+
+### 6.4 启动后端
 
 ```bash
-sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain certs/caddy-root.pem
-```
-
-> `certs/` 已在 `.gitignore` 中,不会入库。重新创建 Caddy 数据卷后需重新信任。
-
-### 5.4 访问服务(双入口)
-
-开发环境提供 **localhost 直连**与**域名访问**(SwitchHosts)两套入口:
-
-| 入口 | 地址 | 说明 |
-| --- | --- | --- |
-| 前端/后台(localhost) | `http://localhost:5173` | Vite Dev Server,热更新;`/api` 代理到 8080 |
-| 前端/后台(域名) | `http://app.cloak.test:5173` | 同上,经 SwitchHosts 域名访问(需 5.2 hosts) |
-| 后台(域名 + HTTPS) | `https://app.cloak.test` | Caddy → Vite Dev Server,验证域名/TLS/证书形态;前端改动即时热更新,无需打包 |
-| 健康检查 | `https://app.cloak.test/healthz` | 期望 `{"status":"ok"}` |
-| 后端 API(直连) | `http://127.0.0.1:8080` | 绕过 Caddy/Vite,开发调试用 |
-
-### 5.5 前端本地开发(热更新)
-
-后端按 5.6 在终端跑着,前端用 Vite Dev Server(自带 `/api` 代理到 `http://localhost:8080`):
-
-```bash
-cd web
-pnpm install        # 首次
-pnpm dev            # http://localhost:5173,/api 代理到后端 8080
-```
-
-- 浏览器访问 `http://localhost:5173` 或域名入口 `http://app.cloak.test:5173`(见 5.2),`/api/*` 自动代理到 Go 后端,`Set-Cookie` 透传(会话/CSRF cookie 正常)。
-- 开发环境 `CLOAK_COOKIE_SECURE=false`,http 下 cookie 生效。
-- 修改后端代码后在启动后端的终端 `Ctrl+C` 停掉,再重新 `go run` 即可(见 5.6);前端代码由 Dev Server 自动热更新。
-- 修改前端源码后 Dev Server 自动热更新;发布前需重新构建 `web/dist`(见 8.5)。
-
-### 5.6 终端启动后端(推荐)
-
-后端直接在终端用 `go run` 启动,改代码后 `Ctrl+C` 重启即可,日志(含控制台 mailer 输出)直接显示在终端:
-
-```bash
-# 前提:Postgres 已启动(5.1);在仓库根目录执行
 CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak
 ```
 
-- `CLOAK_COOKIE_SECURE=false`:开发走 http(Vite Dev Server / 直连 8080),Secure cookie 不生效;
-- `CLOAK_ADDR=:8080`:与前端代理、Caddy 反代、生产 compose 保持一致;仅在 8080 被占用时用环境变量改端口,并同步修改 Vite 的 `VITE_PROXY_TARGET` 与 Caddy 反代地址;
-- 其余配置用代码默认值即可:数据库 `postgres://cloak:cloak@localhost:5432/cloak`、平台域名 `cloak.test`、公网 IP `127.0.0.1`、控制台 mailer(见 6.4);
-- 需要覆盖时用环境变量,例如 `CLOAK_SUPERADMIN_EMAIL=admin@example.com CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak`;
-- 完整变量见 [.env.example](.env.example) 与 `internal/config/config.go`。`go run` 不会自动读取 `.env`(那是 compose 的行为),需要覆盖时在命令行 export。
-
-启动后验证:
-
-```bash
-curl -s http://127.0.0.1:8080/healthz        # → {"status":"ok"}
-curl -sk https://app.cloak.test/healthz # 经 Caddy 走通全链路
-```
-
-### 5.7 环境变量
-
-开发环境默认值开箱即用,需要覆盖时从模板复制:
-
-```bash
-cp .env.example .env   # 可选;compose 会读取 .env 覆盖默认值
-```
-
-主要变量见下表(完整列表见 [.env.example](.env.example) 与 `internal/config/config.go`):
-
-| 变量 | 开发默认值 | 说明 |
-| --- | --- | --- |
-| `CLOAK_PLATFORM_DOMAIN` | `cloak.test` | 平台域名;租户默认域名 `<slug>.<平台域名>` |
-| `CLOAK_SERVER_PUBLIC_IP` | `127.0.0.1` | DNS 激活校验比对地址(开发:hosts 指向本机) |
-| `CLOAK_ADDR` | `:8080` | HTTP 监听地址(compose 内) |
-| `CLOAK_DATABASE_URL` | `postgres://cloak:cloak@localhost:5432/cloak?sslmode=disable` | Postgres 连接串 |
-| `CLOAK_COOKIE_SECURE` | `false` | 会话 cookie Secure 标记;开发 http 必须 false |
-| `CLOAK_SUPERADMIN_EMAIL` | 空 | 超管邮箱,启动时初始化(留空则无超管) |
-| `CLOAK_PUBLIC_BASE_URL` | `https://app.cloak.test` | 邮件验证/重置链接前缀 |
-| `CLOAK_SMTP_*` | 空 | 配置后走真实 SMTP,否则控制台 mailer(见 8.9) |
-| `CLOAK_SESSION_TTL` / `CLOAK_SESSION_TTL_SHORT` | `720h` / `24h` | 记住我 30 天 / 24 小时 |
-| `CLOAK_JWT_SECRET` | 空 | JWT 签名密钥(API Bearer 认证):生产必须配置强随机值;留空则每次启动随机生成,重启后已签发 token 失效 |
-| `CLOAK_JWT_TTL` | `24h` | JWT 访问 token 有效期(过期后需重新调用 POST /api/auth/token 获取) |
-| `CLOAK_VERIFY_TOKEN_TTL` / `CLOAK_RESET_TOKEN_TTL` | `24h` / `1h` | 验证/重置 token 有效期 |
-| `CLOAK_DNS_RETRY_INTERVAL` / `CLOAK_DNS_MAX_AGE` | `5m` / `72h` | DNS 重试间隔 / 最长重试时长 |
-| `CLOAK_VISIT_RETENTION` / `CLOAK_VISIT_CLEANUP_INTERVAL` | `2160h` / `24h` | 访问记录保留 / 清理间隔 |
-| `CLOAK_LANDING_UPLOAD_DIR` | `uploads` | 上传落地页(压缩包解压)存放目录,生产挂持久卷 |
-| `CLOAK_LANDING_MAX_ZIP_BYTES` | `10485760` | 落地页压缩包解压后总大小上限(字节) |
-| `CLOAK_LANDING_MAX_FILES` | `500` | 落地页压缩包文件数上限 |
-
-> ⚠️ `.env` 已在 `.gitignore` 中,不要提交(里面可能含真实 SMTP 凭据)。
-
----
-
-## 6. 开发环境测试
-
-### 6.1 后端自动化测试
-
-测试是「运行中的服务(httptest.Server)+ 真实 Postgres + 真实迁移」的黑盒 HTTP 测试(见 `internal/testutil/testutil.go`),不 mock 内部函数。**需要本地 Postgres 可用,且存在 `cloak_test` 测试库**;测试库不可用时用例自动跳过。
-
-```bash
-# 1. 确保 Postgres 已启动
-docker compose up -d postgres
-
-# 2. 首次创建测试库(与开发库 cloak 分离;之后可复用)
-docker compose exec postgres psql -U cloak -d cloak -c 'CREATE DATABASE cloak_test'
-
-# 3. 运行全部测试
-go test ./...
-
-# 常用变体
-go test ./internal/httpapi/ -count=1 -v     # 单包,禁用缓存 + 详细输出
-go test ./... -cover                        # 覆盖率
-CLOAK_TEST_DATABASE_URL='postgres://cloak:cloak@localhost:5432/other_test?sslmode=disable' go test ./...   # 指定测试库
-```
-
-- 每个测试 `Setup` 会连接测试库、执行迁移、`TRUNCATE` 业务表并重新插入免费档种子(`free`:短链 100 / 域名 10),测试互不干扰,可放心重复运行。
-- 若看到用例全部 SKIP,说明连不上测试库:执行上面第 2 步后重跑。
-
-### 6.2 前端类型检查与构建
-
-```bash
-cd web
-pnpm type-check     # vue-tsc --noEmit,类型检查
-pnpm build          # 产物输出到 web/dist(仅本地产物预览用,镜像构建期会自行重建)
-```
-
-- `web/dist` **不入库**(`.gitignore` 已覆盖)。生产镜像在构建期自行执行 `pnpm install && pnpm build`,因此改前端只需重建 `web` 镜像,无需提交产物、无需重打后端。
-- 开发时用 `pnpm dev`(5173)即可热更新看到效果,完全不需要 `pnpm build`。
-- 前端没有单元测试框架;质量保障靠 `pnpm type-check` + 构建 + 6.3/6.4 端到端验证。
-
-### 6.3 端到端手动验证(浏览器)
-
-按下列顺序在开发环境走通一遍(与生产上线清单同构):
-
-1. 打开 `https://app.cloak.test`,确认证书受信任、页面正常加载。
-2. 注册新租户(邮箱 + 密码 + slug,如 `alice`)。
-3. 查看验证链接:未配置 SMTP 时,验证邮件直接打印在启动后端的终端(见 6.4 第 2 步);点击链接完成邮箱验证。
-4. 登录后台:看到「域名」页包含平台默认域名 `alice.cloak.test`(状态 `active`)。
-5. 「短链」页新建短链:目标 URL 填 `https://example.com`,关联 `alice.cloak.test`,提交后得到短码。
-6. 浏览器访问 `https://alice.cloak.test/<短码>`(需 hosts 已加 `alice.cloak.test`),应 302 跳到目标地址;「统计」页能看到该短链访问数 +1。
-7. 尝试访问不存在的短码,应 404。
-8. (可选)添加自有域名:hosts 里加 `127.0.0.1 links.example.test`,后台添加后自动激活并签发证书;停用/恢复/删除流程各走一遍。
-9. (可选)设置 `CLOAK_SUPERADMIN_EMAIL`(如 `CLOAK_SUPERADMIN_EMAIL=admin@example.com CLOAK_COOKIE_SECURE=false CLOAK_ADDR=:8080 go run ./cmd/cloak`)重启后端,用该邮箱登录,首次登录引导设置密码,进入平台管理页查看租户列表。
-
-### 6.4 端到端验证(curl)
-
-以下命令已在开发环境实测通过。未配置 SMTP 时验证链接打印在启动后端的终端:
-
-```bash
-BASE=https://app.cloak.test
-
-# 1. 注册(邮箱、密码、slug)
-curl -sk -X POST "$BASE/api/auth/register" \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"alice@example.com","password":"password123","slug":"alice"}'
-# → 201,status=pending,返回 defaultDomain:"alice.cloak.test"
-
-# 2. 从启动后端的终端读取验证链接(控制台 mailer)
-# 终端启动后端默认不读取 .env 的 SMTP 配置,邮件直接打印在运行 go run 的终端:
-# 输出形如:
-#   [CLOAK mailer] 邮箱验证 alice@example.com
-#     token: <40+ 位 token>
-#     验证地址: https://app.cloak.test/verify-email?token=<token>
-
-# 3. 邮箱验证
-curl -sk -X POST "$BASE/api/auth/verify-email" \
-  -H 'Content-Type: application/json' \
-  -d '{"token":"<token>"}'
-# → {"status":"ok"},租户转 active
-
-# 4. 登录(保存 cookie)
-JAR=$(mktemp /tmp/cloak-cookies.XXXXXX)
-curl -sk -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/login" \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"alice@example.com","password":"password123","rememberMe":true}'
-# → 200;cookie 文件里应有 cloak_session 与 cloak_csrf
-
-# 4.1 API Bearer JWT(脚本/CLI 调用,免 cookie/CSRF):
-#     用同一账号调 POST /api/auth/token 换 accessToken,后续请求带 Authorization 头即可。
-TOKEN=$(curl -sk -X POST "$BASE/api/auth/token" \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"alice@example.com","password":"password123"}' \
-  | grep -o '"accessToken":"[^"]*"' | cut -d'"' -f4)
-curl -sk "$BASE/api/auth/me" -H "Authorization: Bearer $TOKEN"
-# → 200,返回当前租户信息
-# Bearer 写操作无需 X-CSRF-Token 头(header 认证免疫 CSRF):
-curl -sk -X POST "$BASE/api/domains" -H "Authorization: Bearer $TOKEN" \
-  -H 'Content-Type: application/json' -d '{"fqdn":"links.example.test"}'
-# → 201
-
-# 5. 写方法需要 CSRF 双提交 token(从 cookie 读取)
-CSRF=$(awk '$6=="cloak_csrf"{print $7}' "$JAR")
-curl -sk -c "$JAR" -b "$JAR" "$BASE/api/domains"
-# → 200 [{"id":1,"fqdn":"alice.cloak.test","origin":"platform","status":"active",...}]
-
-# 6. 在平台默认域名上创建短链(domainIds 用第 5 步返回的 id)
-curl -sk -c "$JAR" -b "$JAR" -X POST "$BASE/api/links" \
-  -H 'Content-Type: application/json' \
-  -H "X-CSRF-Token: $CSRF" \
-  -d '{"targetUrls":["https://example.com"],"domainIds":[1]}'
-# → 201,返回自动生成的短码(如 yomNzx)
-# 目标 URL 支持多个(数组),跳转命中后默认按轮询(round-robin)选择其一
-
-# 7. 跳转验证:不需要改 hosts,用 --resolve 把子域临时解析到本机
-curl -sk -o /dev/null -w '%{http_code} %{redirect_url}\n' \
-  --resolve alice.cloak.test:443:127.0.0.1 \
-  "https://alice.cloak.test/<短码>"
-# → 302 https://example.com/
-
-# 8. 未命中 → 404
-curl -sk -o /dev/null -w '%{http_code}\n' \
-  --resolve alice.cloak.test:443:127.0.0.1 \
-  "https://alice.cloak.test/not-exist"
-# → 404
-```
-
-### 6.5 测试数据与重置
-
-- 开发数据库与测试数据库分离(`cloak` / `cloak_test`);`go test` 只动 `cloak_test`。
-- 想彻底清空开发数据(包括全部容器与数据卷):
-
-```bash
-docker compose down -v
-docker compose up -d
-```
-
-> `-v` 会删除 `pgdata`、`caddy_data`、`caddy_config` 卷,所有租户、短链、证书缓存都会消失,之后需重新信任本地 CA(5.3)。
-
----
-
-## 7. 开发 / 生产差异
-
-| 维度 | 开发 | 生产 |
-| --- | --- | --- |
-| 编排 | 基础设施 Docker(`docker compose up -d`:postgres + caddy);后端/前端终端启动(`go run` + `pnpm dev`) | `docker compose -f docker-compose.prod.yml up -d`(全部容器化) |
-| 端口 | 后端 8080;Caddy 映射宿主 443/80 | 标准 80/443;后端不暴露公网 |
-| 域名解析 | `/etc/hosts` 把 `app.cloak.test` 与测试子域指向 `127.0.0.1`(`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 读 hosts 走真实代码路径) | 真实 DNS 泛解析 `*.<平台域名>` |
-| 证书 | Caddy 本地 CA(`tls internal` + `on_demand_tls`),`caddy trust` 信任根证书 | Let's Encrypt(ACME 自动签发/续期) |
-| 邮件 | 控制台假 mailer(验证/重置链接打印在后端日志) | 真实 SMTP(部署者提供凭据;mailer 可插拔) |
-| Cookie | `CLOAK_COOKIE_SECURE=false`(http) | `CLOAK_COOKIE_SECURE=true`(https,必须) |
-| 平台域名 | `cloak.test`(RFC 保留测试域) | 真实域名 |
-| 后台入口 | `app.cloak.test`(开发约定) | 裸平台域名(生产 Caddyfile 只配裸域名) |
-
----
-
-## 8. 生产部署
-
-### 8.1 前置条件
-
-- 一台公网服务器,开放 **80/443** 端口(80 用于 Let's Encrypt HTTP-01 验证,443 用于 HTTPS);
-- 一个域名(下称**平台域名**,例如 `example.com`),DNS 托管商支持 A/AAAA 记录;
-- 服务器可访问外网(拉镜像、访问 Let's Encrypt);
-- 安装 Docker Engine + Compose v2;
-- 建议在服务器上安装 `git`,从仓库直接部署(构建上下文需要仓库内容,含 `web/dist` 与 `migrations`)。
-
-### 8.2 DNS 配置
-
-部署前完成 DNS 配置并等待生效:
-
-| 记录 | 类型 | 值 | 用途 |
-| --- | --- | --- | --- |
-| `*.<平台域名>` | A / AAAA | 服务器公网 IP | 泛域名解析:所有租户的**平台默认域名**由此生效 |
-| `<平台域名>` | A / AAAA | 服务器公网 IP | 裸平台域名:承载后台(SPA + API) |
-| 租户自有域名 | A / AAAA | 服务器公网 IP | 由租户自行解析;系统校验其记录是否包含本服务器 IP |
+- `CLOAK_COOKIE_SECURE=false`:开发走 http,Secure cookie 不生效;
+- `CLOAK_ADDR=:8080`:与 Vite 代理、Caddy 反代、生产 compose 保持一致;改端口时需同步 Vite 的代理目标与 Caddy 反代地址;
+- 其余配置用代码默认值即可(Postgres `postgres://cloak:cloak@localhost:5432/cloak`、平台域名 `cloak.test`、公网 IP `127.0.0.1`、控制台 mailer);
+- 覆盖配置用环境变量,例如 `CLOAK_SUPERADMIN_EMAIL=admin@example.com go run ./cmd/cloak`;
+- `go run` **不会**自动读 `.env`(那是 compose 的行为),需要时在命令行 export;完整变量见 [.env.example](.env.example) 与 `internal/config/config.go`。
+- 未配置 SMTP 时,验证 / 重置邮件直接打印在这个终端(见 8.3 第 2 步)。
 
 验证:
 
 ```bash
-dig +short example.com
-dig +short test.example.com    # 随便一个子域
-# 都应返回服务器公网 IP
+curl -s http://127.0.0.1:8080/healthz          # → {"status":"ok"}
+curl -sk https://app.cloak.test/healthz         # 经 Caddy 走通全链路
 ```
 
-> 泛域名解析是平台默认域名的前提(spec 决策 #13)。自有域名不需要泛解析,由租户各自配置。
+改后端代码后 `Ctrl+C` 再 `go run` 即可;前端改动由 Dev Server 热更新。
 
-### 8.3 配置 .env
+### 6.5 启动前端
 
 ```bash
-cp .env.example .env
-vim .env
+cd web
+pnpm install     # 首次
+pnpm dev         # http://localhost:5173,/api 代理到 http://localhost:8080
 ```
 
-生产必填/建议项:
+浏览器打开 `http://localhost:5173`(或 `http://app.cloak.test:5173`)。开发环境 `CLOAK_COOKIE_SECURE=false`,http 下 cookie 正常生效。
 
-| 变量 | 必填 | 生产值示例 | 说明 |
-| --- | --- | --- | --- |
-| `CLOAK_PLATFORM_DOMAIN` | ✅ | `example.com` | 裸平台域名,租户默认域名 `<slug>.example.com` |
-| `CLOAK_SERVER_PUBLIC_IP` | ✅ | `1.2.3.4` | 服务器公网 IP,DNS 激活校验比对地址 |
-| `CLOAK_DB_PASSWORD` | ✅ | 强随机密码 | Postgres 密码(compose 用 `:?` 强制,缺失直接报错) |
-| `CLOAK_SUPERADMIN_EMAIL` | 建议 | `admin@example.com` | 超管邮箱,首次启动初始化(留空则无超管) |
-| `CLOAK_ACME_EMAIL` | 建议 | `admin@example.com` | Let's Encrypt 账户邮箱(到期提醒;需配合 Caddyfile.prod 取消注释 `email` 指令) |
-| `CLOAK_DB_USER` / `CLOAK_DB_NAME` | 可选 | 默认 `cloak` / `cloak` | 数据库用户/库名 |
-| `CLOAK_COOKIE_SECURE` | — | 生产 compose 强制 `true` | 无需在 .env 配置 |
-| `CLOAK_PUBLIC_BASE_URL` | — | 生产 compose 自动设为 `https://<平台域名>` | 无需配置 |
-| `CLOAK_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM` | 可选 | 见 8.9 | 真实邮件 |
+### 6.6 访问入口
 
-其余可选变量(token 有效期、DNS 重试、访问保留时长等)见 [.env.example](.env.example),默认值与代码一致。
-
-> ⚠️ `.env` 含数据库密码与 SMTP 凭据,务必保持不入库(仓库 `.gitignore` 已忽略)。生产服务器上设置文件权限:`chmod 600 .env`。
-
-### 8.4 修改 Caddyfile.prod
-
-Caddy 站点地址**不支持环境变量占位符**,`Caddyfile.prod` 把站点域名硬编码为 `example.com`。部署前把文件中的 `example.com` **全部**替换为你的平台域名(与 `CLOAK_PLATFORM_DOMAIN` 一致):
-
-```bash
-sed -i '' 's/example\.com/YOUR-DOMAIN/g' Caddyfile.prod   # macOS
-# 或 sed -i 's/example\.com/YOUR-DOMAIN/g' Caddyfile.prod # Linux
-grep -n "YOUR-DOMAIN" Caddyfile.prod                      # 确认替换
-```
-
-可选:取消注释 `email {env.ACME_EMAIL}` 指令以接收 Let's Encrypt 到期提醒(必须确保 `.env` 已设置 `CLOAK_ACME_EMAIL`,否则 Caddy 会因空邮箱启动失败)。
-
-> `Caddyfile.prod` 随仓库版本管理,请用你自己的域名提交这份修改,不要在生产服务器上只改不提交。
-
-### 8.5 前端构建说明(前后端分离)
-
-前端为独立镜像(ADR-0006),`docker/Dockerfile` 的 `web` 目标会在构建期自行执行 `pnpm install && pnpm build`,**无需任何手工准备步骤,也不需要提交 `web/dist`**。
-
-```bash
-# 首次/全部重建
-docker compose -f docker-compose.prod.yml build
-
-# 只改了前端 → 只重建前端镜像,后端镜像与后端二进制均不受影响
-docker compose -f docker-compose.prod.yml build web
-docker compose -f docker-compose.prod.yml up -d web
-
-# 只改了后端 → 只重建后端镜像
-docker compose -f docker-compose.prod.yml build backend
-docker compose -f docker-compose.prod.yml up -d backend
-```
-
-本地想预览构建产物可在 `web/` 下执行 `pnpm build`,产物输出到 `web/dist`(已被 `.gitignore` 忽略,不会被提交)。
-
-### 8.6 启动部署
-
-```bash
-# 校验 compose 配置(变量缺失/语法错误会在这里暴露)
-docker compose -f docker-compose.prod.yml config --quiet
-
-# 启动
-docker compose -f docker-compose.prod.yml up -d --build
-
-# 查看状态与日志
-docker compose -f docker-compose.prod.yml ps
-docker compose -f docker-compose.prod.yml logs -f backend caddy
-```
-
-首次启动会自动完成:连接 Postgres → 执行迁移(`migrations/`)→ 创建免费档种子 → 按 `CLOAK_SUPERADMIN_EMAIL` 初始化超管 → 启动后台 worker → 监听 8080(Caddy 反代)。
-
-证书是**按需签发**的:租户域名激活后,访问者首次访问时 Caddy 询问授权端点并签发 Let's Encrypt 证书,到期前自动续期(ADR-0002、ADR-0004)。无需手动执行 certbot 等操作。
-
-### 8.7 首次启动行为
-
-- **迁移**:`db.Migrate` 启动时自动执行 `migrations/*.sql`(自研迁移器,幂等,重复启动安全)。
-- **免费档种子**:`free` 等级(短链 100 / 域名 10),新租户默认免费档。
-- **超管初始化**:`CLOAK_SUPERADMIN_EMAIL` 指定的邮箱若不存在则创建超管租户(active、暂无密码),已存在则确保超管标记;超管首次登录时引导设置密码(`firstLoginSetup`)。重复启动幂等。
-- **后台任务**(`internal/domain/worker.go`):DNS 重试(每 5 分钟)、证书预签发探活、过期访问/会话/邮箱 token 清理(每 24 小时)。
-- **邮件**:配置了 SMTP 用真实发送;未配置时验证/重置链接打印到后端容器 stdout(可通过 `docker compose ... logs backend` 查看,仅用于排查)。
-
-### 8.8 上线验证清单
-
-按顺序在**生产环境**走通(与 [docs/deploy.md](docs/deploy.md) 一致):
-
-- [ ] `curl -k https://<平台域名>/healthz` 返回 `{"status":"ok"}`(首次可 `-k`,证书签发后应能去掉)
-- [ ] 浏览器访问 `https://<平台域名>` 打开后台,证书为 Let's Encrypt 签发(非本地 CA)
-- [ ] 注册新租户(提交 email/password/slug),收到验证邮件(需真实 SMTP,见 8.9;未配置时验证链接打印在后端日志)
-- [ ] 邮箱验证后租户转 `active`,`<slug>.<平台域名>` 默认域名可承载短链
-- [ ] 通过 `https://<slug>.<平台域名>/<短码>` 访问短链,返回 302/301 跳转,访问计数增长
-- [ ] 添加自有域名:解析指向本服务器后自动激活并签发证书;未指向时状态 `pending`、超时 `failed`
-- [ ] 超管登录后可见租户列表,可封禁/解封、调整等级、移除违规域名
-- [ ] 停用短链/域名后访问返回 404;配额超限时创建被拒并提示用量/上限
-- [ ] `docker compose -f docker-compose.prod.yml ps` 三个服务均 `healthy`/`running`
-
-### 8.9 SMTP 配置(邮件)
-
-mailer 为可插拔实现:未配置 SMTP 时使用控制台假 mailer(邮件内容打印到后端日志)。生产接入真实 SMTP 时,在 `.env` 配置:
-
-| 变量 | 说明 |
-| --- | --- |
-| `CLOAK_SMTP_HOST` | SMTP 服务器地址,如 `smtp.example.com` |
-| `CLOAK_SMTP_PORT` | 默认 `465`(隐式 TLS);`587` 必须支持 STARTTLS,否则报错(拒绝明文 AUTH) |
-| `CLOAK_SMTP_USERNAME` / `CLOAK_SMTP_PASSWORD` | 认证凭据;用户名留空则不发送 AUTH |
-| `CLOAK_SMTP_FROM` | 发件人地址;留空回退为 Username,两者都空则发送报错 |
-
-compose 会把上述变量转发给后端容器。修改 `.env` 后重建/重启后端使其生效:
-
-```bash
-docker compose -f docker-compose.prod.yml up -d backend
-```
-
-### 8.10 日常运维
-
-```bash
-# 查看状态
-docker compose -f docker-compose.prod.yml ps
-
-# 查看日志(后端 + Caddy)
-docker compose -f docker-compose.prod.yml logs -f backend
-docker compose -f docker-compose.prod.yml logs -f caddy
-
-# 健康检查(单次)
-curl -s https://<平台域名>/healthz
-
-# 发布新版本(拉代码 → 如前端有改动先构建 dist → 重建)
-git pull
-docker compose -f docker-compose.prod.yml up -d --build
-
-# 重启单个服务(如修改 .env 后)
-docker compose -f docker-compose.prod.yml up -d backend
-
-# 停止(数据卷保留)
-docker compose -f docker-compose.prod.yml down
-```
-
-**回滚**:CLOAK 镜像名固定、无版本 tag;回滚 = 切回旧代码再重建:
-
-```bash
-git checkout <上一个正常提交>
-docker compose -f docker-compose.prod.yml up -d --build
-```
-
-### 8.11 备份与恢复
-
-三个命名卷都需要纳入备份策略:
-
-| 卷 | 内容 | 重要程度 |
+| 入口 | 地址 | 说明 |
 | --- | --- | --- |
-| `pgdata` | Postgres 全部数据(租户/短链/访问) | ★★★ 必须 |
-| `caddy_data` | Let's Encrypt 证书、ACME 账户、本地 CA | ★★ 建议(丢失后证书会自动重新签发,但会触发 LE 签发额度) |
-| `caddy_config` | Caddy 自动保存的配置 | ★ 可选 |
+| 后台(localhost) | `http://localhost:5173` | Vite Dev Server,热更新 |
+| 后台(域名) | `http://app.cloak.test:5173` | 同上,经 hosts 域名访问 |
+| 后台(域名 + HTTPS) | `https://app.cloak.test` | Caddy → Vite,验证域名 / TLS / 证书形态 |
+| 健康检查 | `https://app.cloak.test/healthz` | `{"status":"ok"}` |
+| 后端直连 | `http://127.0.0.1:8080` | 绕过 Caddy / Vite,调试用 |
 
-**Postgres 逻辑备份**(推荐,可恢复性最好):
+### 6.7 环境变量
 
-```bash
-# 备份(默认用户/库名均为 cloak;若 .env 修改过 CLOAK_DB_USER / CLOAK_DB_NAME,把下方 cloak 换成实际值)
-docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U cloak cloak > cloak-backup-$(date +%Y%m%d-%H%M%S).sql
+开发默认值开箱即用;需要覆盖时 `cp .env.example .env` 后修改(compose 会读 `.env`,`go run` 不会)。
 
-# 恢复(目标为新部署/已清空库;注意先确保服务已停止写库)
-docker compose -f docker-compose.prod.yml exec -T postgres psql -U cloak -d cloak < cloak-backup-YYYYmmdd-HHMMSS.sql
-```
+| 变量 | 开发默认值 | 说明 |
+| --- | --- | --- |
+| `CLOAK_ADDR` | `:8080` | HTTP 监听地址 |
+| `CLOAK_PLATFORM_DOMAIN` | `cloak.test` | 平台裸域名;租户默认域名 `<slug>.<平台域名>` |
+| `CLOAK_SERVER_PUBLIC_IP` | `127.0.0.1` | DNS 激活校验比对的地址 |
+| `CLOAK_PUBLIC_BASE_URL` | `https://app.cloak.test` | 邮件里验证 / 重置链接的前缀 |
+| `CLOAK_DATABASE_URL` | `postgres://cloak:cloak@localhost:5432/cloak?sslmode=disable` | 后端直连 Postgres |
+| `CLOAK_TEST_DATABASE_URL` | `…/cloak_test…` | 测试库连接串(与开发库分离) |
+| `CLOAK_MIGRATIONS_DIR` | `migrations` | 迁移文件目录(生产容器内为 `/app/migrations`) |
+| `CLOAK_SUPERADMIN_EMAIL` | 空 | 超管邮箱,启动时初始化(留空则无超管) |
+| `CLOAK_COOKIE_SECURE` | `false` | 会话 cookie Secure 标记;开发 http 必须 false |
+| `CLOAK_SESSION_TTL` / `CLOAK_SESSION_TTL_SHORT` | `720h` / `24h` | 记住我 / 普通会话 |
+| `CLOAK_VERIFY_TOKEN_TTL` / `CLOAK_RESET_TOKEN_TTL` | `24h` / `1h` | 验证 / 重置 token 有效期 |
+| `CLOAK_JWT_SECRET` / `CLOAK_JWT_TTL` | 空 / `24h` | JWT 签名密钥与有效期;密钥留空则每次启动随机生成(重启后已签发 token 失效),生产必须配置 |
+| `CLOAK_DNS_RETRY_INTERVAL` / `CLOAK_DNS_MAX_AGE` | `5m` / `72h` | DNS 重试间隔 / 最长等待 |
+| `CLOAK_VISIT_RETENTION` / `CLOAK_VISIT_CLEANUP_INTERVAL` | `2160h` / `24h` | 访问记录保留 / 清理间隔 |
+| `CLOAK_LANDING_UPLOAD_DIR` | `uploads` | 上传落地页存放目录(生产挂持久卷) |
+| `CLOAK_LANDING_MAX_ZIP_BYTES` / `CLOAK_LANDING_MAX_FILES` | `10485760` / `500` | 落地页压缩包解压后总大小 / 文件数上限 |
+| `CLOAK_SMTP_HOST/PORT/USERNAME/PASSWORD/FROM` | 空 / `465` | 配置 HOST 才启用真实 SMTP,否则控制台 mailer |
+| `CLOAK_ACME_EMAIL` | 空 | Let's Encrypt 账户邮箱(仅生产,配合 Caddyfile.prod) |
+| `CLOAK_DB_USER` / `CLOAK_DB_PASSWORD` / `CLOAK_DB_NAME` | `cloak` ×3 | 给生产 compose 建库并拼连接串;生产必须改密码 |
 
-**数据卷快照备份**(可选,含证书):
-
-```bash
-# 卷名形如 <compose 项目名>_pgdata(项目名默认是部署目录名 cloak;改过 COMPOSE_PROJECT_NAME 请相应替换)
-docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
-  tar czf /backup/pgdata-$(date +%Y%m%d).tar.gz -C /data .
-```
-
-建议:每日定时 `pg_dump` + 定期快照(证书卷),并做一次恢复演练。
-
-### 8.12 安全建议
-
-- 服务器只开放 **80/443**;生产 compose 中后端不映射宿主机端口,不要手动暴露 8080。
-- `CLOAK_COOKIE_SECURE` 生产必须为 `true`(compose 已强制)。
-- `.env` 文件权限 `chmod 600`,不要提交、不要进镜像(`.dockerignore` 已排除)。
-- 使用强数据库密码与 SMTP 凭据。
-- 授权端点 `/internal/caddy/authorize` 仅内网可达(应用侧校验来源 IP),不要把它暴露到公网。
-- 平台管理员邮箱只给信任的人;超管首次登录务必设置强密码。
-- 及时更新镜像(base 镜像与依赖),关注 CVE。
-- 监控:对接你的告警系统检查 `/healthz`、容器健康状态与磁盘(证书/日志/数据库)。
-
-### 8.13 已知限制
-
-- **Let's Encrypt 额度**:平台默认域名按子域逐个签发,受每注册域名每周 50 张证书(含续期)限制,额度按平台域名聚合;接近上限时需迁移到泛域名证书方案(ADR-0004)。
-- **访问保留**:访问记录默认保留 90 天,后台定时清理(`CLOAK_VISIT_RETENTION` 可调)。
-- **授权端点**:仅内网可达,未激活域名拒绝签发——防止任意域名解析到本机即触发签发(spec 决策 #8)。
-- **前端产物**:生产镜像使用已提交的 `web/dist`,前端改动必须重新构建并提交后部署(见 8.5)。
+> ⚠️ `.env` 含数据库密码与 SMTP 凭据,已在 `.gitignore` 中,**不要提交**。
 
 ---
 
-## 9. 故障排查
+## 7. 开发规范
 
-### 开发环境
+### 7.1 提交前必须跑通
 
-| 症状 | 原因 / 处理 |
-| --- | --- |
-| 浏览器/curl 报证书不受信任 | 未信任本地 CA:执行 5.3;或把 `certs/caddy-root.pem` 导入钥匙串并信任 |
-| `curl: (60) SSL certificate problem` | 同上;临时排查可用 `-k` |
-| 域名访问 Vite 返回 403 | Vite 的 Host 校验未放行:确认 `web/.env.development` 的 `VITE_PLATFORM_DOMAIN` 与访问域名一致(默认已放行 `.cloak.test`,见 5.2 提示) |
-| Caddy 502 Bad Gateway | 后端没在终端启动:确认已执行 5.6 的 `go run` 且监听 8080(`curl -s http://127.0.0.1:8080/healthz`) |
-| 注册返回 409 | 邮箱/slug 已被占用(开发库有历史数据):换 slug,或 6.5 重置 |
-| 自有域名一直 `pending` | hosts 未加该域名/未指向 127.0.0.1;或未到 5 分钟重试周期,可在后台点「重新校验」 |
-| 域名 `failed` | 72 小时未通过校验;检查 hosts、`CLOAK_SERVER_PUBLIC_IP` |
-| 跳转 404 | 短码未创建/域名停用/短链停用;或访问的 Host 不是该租户的 active 域名 |
-| 邮件收不到、终端也没有 `[CLOAK mailer]` | 启动后端时 export 了 `CLOAK_SMTP_*`,走了真实 SMTP;不 export 即回到控制台 mailer(邮件打印在终端) |
-| 后端启动失败/连不上数据库 | 确认 Postgres 已启动(`docker compose up -d postgres`、`docker compose ps`);检查 5.6 的启动命令与 `CLOAK_DATABASE_URL` |
-| 修改 Go 代码不生效 | 在启动后端的终端 `Ctrl+C` 后重新 `go run`;开发环境后端不在 Docker 里(见 5.6) |
-| 修改前端不生效 | Vite Dev Server 用 5.5;若看的是 Caddy 上的旧页面,需 `pnpm build` 后重建镜像 |
-| 80/443 被占用 | 开发 compose 中 Caddy 占用 80/443;openresty(flow-filtering)也绑定 80/443,不要同时启动。后端 8080 若被占用,改 `CLOAK_ADDR` 并同步 Vite 代理与 Caddy 反代地址 |
+```bash
+# 后端:格式化 + 测试
+gofmt -l internal cmd            # 应无输出
+go vet ./...
+go test ./...                    # 需要 cloak_test 库(见 8.1)
 
-### 生产环境
+# 前端:类型 + UI 门禁 + 构建
+cd web
+pnpm type-check
+pnpm check:ui                    # 0 违规才通过
+pnpm build
+```
 
-| 症状 | 原因 / 处理 |
-| --- | --- |
-| `docker compose -f docker-compose.prod.yml up` 报 `CLOAK_XXX 必须设置` | `.env` 缺必填变量(compose `:?` 强制);对照 8.3 补全 |
-| Caddy 启动失败:`expanding email address ... is empty` | `Caddyfile.prod` 取消了 `email` 指令但 `CLOAK_ACME_EMAIL` 为空;设置变量或注释指令 |
-| 证书一直不签发 / `cert_status=failed` | 看 `docker compose logs caddy`;确认 DNS 已生效、80/443 可达、授权端点放行(租户已验证且未封禁) |
-| 平台默认域名无法访问 | 泛域名 `*.<平台域名>` 未配置或未生效;`dig` 验证 |
-| 自有域名一直 `pending` | 租户的 A/AAAA 未指向 `CLOAK_SERVER_PUBLIC_IP`;worker 每 5 分钟重试,后台可手动 recheck;超 72h 置 `failed` |
-| 访问者看到 404 | 域名/短链被停用或删除;或 Host 不匹配 active 域名 |
-| 收不到验证/重置邮件 | 检查 `.env` SMTP 配置、`docker compose logs backend`;未配置 SMTP 时链接打印在日志 |
-| 部署后页面还是旧的 | 前端改了但没重新 `pnpm build` 并提交 dist(见 8.5);重建镜像后再试 |
-| 磁盘空间不足 | 日志与镜像堆积:`docker system prune`(谨慎)、清理旧镜像;`pgdata` 只增,关注访问量 |
+### 7.2 后端约定
+
+- **分层**:`httpapi`(HTTP 与鉴权/校验/限流)→ `store`(数据访问与领域约束)→ Postgres;`rules`、`geo`、`domain`、`jwt`、`mailer` 是被复用的独立包。跳转热路径的代码在 `httpapi/redirect.go`,规则求值在 `rules` 包,两者通过窄接口解耦。
+- **注释写"为什么"**:本仓库的注释习惯是记录被否决的方案与不变式(参见 `internal/httpapi/redirect.go`、`internal/geo/geo.go` 顶部注释),而不是复述代码。改这段链路前先读注释。
+- **新增受保护路由必须同步 Casbin 策略**:在 `internal/rbac/rbac.go` 的 `policyText` 追加 `p, tenant, <path>, <METHOD>`;**漏了会被授权中间件 403 拒绝**,即使登录成功。注意 `keyMatch3` 下裸路径与 `/*` 是两条不同策略,需要成对列出。
+- **统一错误响应**:用 `respond.go` 的助手返回 `{ code, message, details }`;错误码稳定、消息面向人。
+- **不要在跳转热路径引入 DB 查询或计数表写入**(见 1.2 的三条硬约束)。
+- **不重造轮子**:网络、解析、限流、邮件、迁移、配置、CIDR 匹配一律用成熟库(见 3.3);新增依赖前先确认标准库或已有依赖不能解决。
+- **不要给 `geo` 填假值**:查不到就是空值,空值下规则条件恒不命中(ADR-0009)。
+
+### 7.3 数据库迁移
+
+- 迁移文件放在 `migrations/`,命名 `NNNN_snake_case.sql`,由 **goose** 执行;文件头写 `-- +goose Up` / `-- +goose Down`。
+- 只增不改:已发布的迁移**不修改**,新增一条向后兼容的迁移。
+- 启动时自动 `goose up`,幂等;新增迁移后同时更新 `internal/store` 的读写代码与相关测试。
+
+### 7.4 前端约定
+
+完整契约见 [`web/UI_KIT.md`](web/UI_KIT.md);门禁脚本 `web/scripts/check-ui-consistency.mjs` 会强制以下规则:
+
+- **三层设计令牌**:`main.css` 的 `:root` / `.dark` 定义项目层(surface / ink / line / ok-warn-err)、shadcn 语义层(background / primary / destructive / …)、控件状态层(control-bg / control-track / control-thumb)三层,再经 `@theme inline` 映射成 Tailwind 工具类。
+- **组件状态色一律走语义层**:`components/ui/` 内部**禁止**写 `dark:` 补丁类名,所有主题差异由令牌自身换值保证(例:开关轨道用 `data-[state=unchecked]:bg-control-track`,不是 `bg-surface-muted dark:bg-…`)。
+- **只用 `App*` 组件**:业务视图里不写裸 `<button>` / `<input>` / `<select>` / `<table>`,统一用 `components/ui/` 的封装(底层是 Reka UI 无头组件)。
+- **禁止重新引入 ant-design-vue**;禁止 legacy 类名与 legacy 令牌;禁止硬编码纯白 `bg-white` / `text-white`(带 alpha 的合法)。
+- **响应式一律用 Tailwind 断点工具类**,不在 JS 里判断视口宽度;需要按自身宽度换挡的用 CSS container query。
+- **深色模式**:`html.dark` 由 `stores/theme.ts` 控制并持久化到 localStorage。
+- 图标统一 `@lucide/vue`;总览页世界地图依赖必须动态 `import()`(仅该页加载)。
+
+### 7.5 加一个新功能的顺序
+
+1. 术语先对齐:新概念写进 [`CONTEXT.md`](CONTEXT.md)(含 `_Avoid_` 反例),有取舍的架构决策写 `docs/adr/NNNN-*.md`。
+2. 迁移 → `store` → `httpapi`(路由 + RBAC 策略 + 错误码)。
+3. 涉及判定逻辑(如规则求值)时,补黑盒测试:`internal/httpapi/*_test.go` 走 `testutil.Setup`。
+4. 前端:API 类型 → 页面 → 接进路由与导航。
+5. 更新本 README 的功能列表与 `docs/`。
 
 ---
 
-## 10. API 概览
+## 8. 测试
 
-完整契约见 [`.scratch/cloak/api-contract.md`](.scratch/cloak/api-contract.md)。要点:
+### 8.1 后端自动化测试
+
+后端测试是**黑盒 HTTP 测试**:`httptest.Server` + **真实 Postgres** + **真实迁移**,不 mock 内部函数(`internal/testutil/testutil.go`)。需要 `cloak_test` 测试库,不可用时用例自动跳过。
+
+```bash
+docker compose up -d postgres
+docker compose exec postgres psql -U cloak -d cloak -c 'CREATE DATABASE cloak_test'
+
+go test ./...                                   # 全部
+go test ./internal/httpapi/ -count=1 -v        # 单包 + 详细输出
+go test ./... -cover                            # 覆盖率
+CLOAK_TEST_DATABASE_URL='postgres://cloak:cloak@localhost:5432/other_test?sslmode=disable' go test ./...
+```
+
+每个测试的 `Setup` 会连接测试库、执行迁移、`TRUNCATE` 业务表并重新插入免费档种子(短链 100 / 域名 10),用例之间互不干扰,可重复运行。**看到全部 SKIP 就是连不上测试库**,先建库。
+
+### 8.2 前端质量门禁
+
+```bash
+cd web
+pnpm type-check   # vue-tsc --noEmit
+pnpm check:ui     # UI 规范门禁:legacy 类名/令牌、未定义 CSS 变量、调色板泄漏、
+                  # 任意字号、裸 HTML 原语、状态色对比度(双主题)、硬编码纯白
+pnpm build        # 产物到 web/dist(不入库,镜像构建期自行重建)
+```
+
+前端没有单元测试框架,质量靠类型检查 + 门禁脚本 + 端到端验证。
+
+### 8.3 端到端验证(curl)
+
+未配置 SMTP 时,验证链接打印在启动后端的终端。
+
+```bash
+BASE=https://app.cloak.test
+
+# 1. 注册 → 201,status=pending,返回 defaultDomain:"alice.cloak.test"
+curl -sk -X POST "$BASE/api/auth/register" -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"password123","slug":"alice"}'
+
+# 2. 从后端终端复制验证链接([CLOAK mailer] 段落)
+#    https://app.cloak.test/verify-email?token=<token>
+curl -sk -X POST "$BASE/api/auth/verify-email" -H 'Content-Type: application/json' \
+  -d '{"token":"<token>"}'                                # → {"status":"ok"}
+
+# 3. 登录并保存 cookie
+JAR=$(mktemp /tmp/cloak-cookies.XXXXXX)
+curl -sk -c "$JAR" -b "$JAR" -X POST "$BASE/api/auth/login" \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"password123","rememberMe":true}'
+
+# 4. 脚本用 Bearer JWT(免 cookie / CSRF)
+TOKEN=$(curl -sk -X POST "$BASE/api/auth/token" -H 'Content-Type: application/json' \
+  -d '{"email":"alice@example.com","password":"password123"}' \
+  | grep -o '"accessToken":"[^"]*"' | cut -d'"' -f4)
+curl -sk "$BASE/api/auth/me" -H "Authorization: Bearer $TOKEN"
+
+# 5. 读域名(Bearer);写操作需 CSRF 双提交 token
+curl -sk "$BASE/api/domains" -H "Authorization: Bearer $TOKEN"
+CSRF=$(awk '$6=="cloak_csrf"{print $7}' "$JAR")
+curl -sk -c "$JAR" -b "$JAR" "$BASE/api/domains"
+
+# 6. 建短链(多目标按轮询)
+curl -sk -c "$JAR" -b "$JAR" -X POST "$BASE/api/links" \
+  -H 'Content-Type: application/json' -H "X-CSRF-Token: $CSRF" \
+  -d '{"targetUrls":["https://example.com","https://example.org"],"domainIds":[1]}'
+
+# 7. 跳转:用 --resolve 临时解析子域,不用改 hosts
+curl -sk -o /dev/null -w '%{http_code} %{redirect_url}\n' \
+  --resolve alice.cloak.test:443:127.0.0.1 "https://alice.cloak.test/<短码>"
+# → 302 https://example.com/ 或 https://example.org/(轮询)
+
+# 8. 未命中 → 404
+curl -sk -o /dev/null -w '%{http_code}\n' \
+  --resolve alice.cloak.test:443:127.0.0.1 "https://alice.cloak.test/not-exist"
+```
+
+浏览器端到端验证顺序(与生产上线清单同构):打开 `https://app.cloak.test` → 注册 → 验证 → 登录看到默认域名 `active` → 建短链 → 访问短码看 302 与统计 +1 → 访问不存在短码得 404 → (可选)加自有域名并走停用/恢复/删除 → (可选)用超管邮箱登录看平台管理。
+
+### 8.4 测试数据与重置
+
+- 开发库 `cloak` 与测试库 `cloak_test` 分离,`go test` 只动 `cloak_test`。
+- 彻底清空开发数据(含数据卷,证书缓存与本地 CA 会一起没,之后需重新信任):
+
+```bash
+docker compose down -v && docker compose up -d
+```
+
+---
+
+## 9. 开发 / 生产差异
+
+| 维度 | 开发 | 生产 |
+| --- | --- | --- |
+| 编排 | 基础设施 Docker(Postgres + Caddy);后端/前端终端跑(`go run` + `pnpm dev`) | `docker compose -f docker-compose.prod.yml up -d`(全部容器化) |
+| 端口 | 后端 8080;Caddy 映射宿主 443/80 | 标准 80/443;后端不映射宿主机端口 |
+| 域名解析 | hosts 把 `app.cloak.test` 与测试子域指向 `127.0.0.1`(`CLOAK_SERVER_PUBLIC_IP=127.0.0.1`,Go 读 hosts 走真实路径) | 真实 DNS 泛解析 `*.<平台域名>` |
+| 证书 | Caddy 本地 CA(`tls internal` + on-demand),`caddy trust` 信任根证书 | Let's Encrypt(ACME 自动签发 / 续期) |
+| 邮件 | 控制台 mailer(链接打印在后端日志) | 真实 SMTP(部署者提供凭据) |
+| Cookie | `CLOAK_COOKIE_SECURE=false`(http) | 强制 `true`(https) |
+| 平台域名 | `cloak.test`(RFC 保留测试域) | 真实域名 |
+| 前端产物 | Vite Dev Server(5173) | nginx 镜像内的静态产物(构建期生成,不入库) |
+| 落地页目录 | `uploads/` 本地目录 | 持久卷 `uploads` |
+
+---
+
+## 10. 生产部署(速览)
+
+完整步骤见 **[`docs/deploy.md`](docs/deploy.md)**。最小流程:
+
+```bash
+# 1. DNS:平台裸域名 A/AAAA + 泛解析 *.<平台域名> 指向服务器公网 IP
+dig +short example.com && dig +short any.example.com
+
+# 2. 配置环境变量
+cp .env.example .env && chmod 600 .env
+#    必填:CLOAK_PLATFORM_DOMAIN、CLOAK_SERVER_PUBLIC_IP、CLOAK_DB_PASSWORD
+#    建议:CLOAK_SUPERADMIN_EMAIL、CLOAK_ACME_EMAIL、JWT 密钥(见 6.7)
+
+# 3. Caddyfile.prod 的站点地址不支持环境变量,替换成你的平台域名
+sed -i '' 's/example\.com/YOUR-DOMAIN/g' Caddyfile.prod   # macOS
+sed -i 's/example\.com/YOUR-DOMAIN/g' Caddyfile.prod      # Linux
+
+# 4. 启动
+docker compose -f docker-compose.prod.yml config --quiet
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml ps
+```
+
+**首次启动自动完成**:连库 → goose 迁移 → 插入免费档种子 → 按 `CLOAK_SUPERADMIN_EMAIL` 幂等初始化超管 → 启动后台 worker → 监听 8080。证书是**按需签发**的:租户域名激活后,首次访问时 Caddy 询问授权端点并签发 Let's Encrypt 证书,到期前自动续期。
+
+**发布与回滚**:改前端只重建 `web` 镜像,改后端只重建 `backend` 镜像(前后端分离,互不牵连);镜像无版本 tag,回滚 = `git checkout <上一个正常提交>` 后重新 `up -d --build`。
+
+**备份**:`pgdata` 必须备份(租户/短链/访问/规则全在里面);`caddy_data` 建议备份(丢失会触发 Let's Encrypt 重新签发额度);`uploads` 落地页目录需挂持久卷并单独备份。
+
+**上线检查**:`/healthz` 返回 ok、后台证书为 Let's Encrypt 签发、注册能收到验证邮件、`<slug>.<平台域名>` 短链可跳转且计数增长、自有域名 pending → active 正常、超管可治理。
+
+### 已知限制
+
+- **Let's Encrypt 额度**:平台默认域名按子域逐个签发,受"每注册域名每周 50 张证书(含续期)"限制,额度按平台域名聚合(ADR-0004);接近上限需另择方案。
+- **访问记录保留 90 天**,后台任务清理,可用 `CLOAK_VISIT_RETENTION` 调整。
+- **geo 为离线库**:`asn` / `is_datacenter` 无数据源,依赖它们的规则条件恒不命中(设计如此,不猜值);`internal/geo/data/` 的 xdb 需要手动更新才能识别新 IP 段。
+- **授权端点仅内网可达**:未激活域名拒绝签发证书;不要暴露到公网。
+- **规则上限**:单租户 200 条;规则快照有 1 分钟 TTL,写入时会主动失效(漏失效会让刚保存的规则短暂不生效且无报错)。
+
+---
+
+## 11. 故障排查
+
+**开发环境**
+
+| 症状 | 原因 / 处理 |
+| --- | --- |
+| 证书不受信任 / `curl: (60)` | 未信任本地 CA:执行 6.3;临时排查用 `curl -k` |
+| 域名访问 Vite 403 | Vite Host 校验未放行:确认 `web/.env.development` 的 `VITE_PLATFORM_DOMAIN` 与访问域名一致 |
+| Caddy 502 | 后端没起:确认 6.4 的 `go run` 在跑且监听 8080(`curl -s http://127.0.0.1:8080/healthz`) |
+| 注册返回 409 | 邮箱或 slug 被占用(开发库有历史数据):换 slug,或 8.4 重置 |
+| 自有域名一直 `pending` | hosts 未加该域名 / 未指向 127.0.0.1;或未到 5 分钟重试周期,可在后台点「重新校验」 |
+| 域名 `failed` | 72 小时内未通过校验:检查 hosts 与 `CLOAK_SERVER_PUBLIC_IP` |
+| 跳转 404 | 短码不存在 / 域名停用 / 短链停用;或访问的 Host 不是该租户的 active 域名 |
+| 收不到邮件,终端也没有 `[CLOAK mailer]` | 启动后端时 export 了 `CLOAK_SMTP_*`,走了真实 SMTP;不 export 即回落到控制台 mailer |
+| 改 Go 代码不生效 | 开发后端不在 Docker 里:`Ctrl+C` 后重新 `go run` |
+| 改前端不生效 | 用 6.5 的 Dev Server;若看的是镜像里的旧页面,需 `pnpm build` 后重建 `web` 镜像 |
+| 测试全部 SKIP | `cloak_test` 库不存在:按 8.1 第 2 步创建 |
+| 80/443 被占用 | 开发 compose 的 Caddy 占用 80/443,与其他绑定这两个端口的服务错开;后端 8080 被占则改 `CLOAK_ADDR` 并同步代理配置 |
+| `pnpm check:ui` 报状态色对比度 | 改令牌值时没同时看 `:root` 与 `.dark` 两块;详见 `web/UI_KIT.md` |
+
+**生产环境**
+
+| 症状 | 原因 / 处理 |
+| --- | --- |
+| compose 报 `CLOAK_XXX 必须设置` | `.env` 缺必填变量(compose `:?` 强制):对照 10 与 6.7 补全 |
+| Caddy 启动失败 `expanding email address ... is empty` | `CLOAK_ACME_EMAIL` 为空但 `Caddyfile.prod` 启用了 `email` 指令:设置变量或注释指令 |
+| 证书不签发 / `cert_status=failed` | 看 `docker compose logs caddy`;确认 DNS 生效、80/443 可达、授权端点放行 |
+| 平台默认域名无法访问 | 泛解析 `*.<平台域名>` 未配置或未生效:`dig` 验证 |
+| 访问者看到 404 | 域名/短链被停用或删除;或规则 `notfound` 裁决命中;或 Host 不匹配 active 域名 |
+| 访问者看到 429 | 规则 `throttle` 裁决命中:去规则列表看优先级与条件 |
+| 收不到验证/重置邮件 | 检查 `.env` SMTP 配置与 `docker compose logs backend` |
+| 部署后页面还是旧的 | 改了前端但没重建 `web` 镜像:`docker compose -f docker-compose.prod.yml up -d --build web` |
+| 磁盘不足 | 镜像与日志堆积:`docker system prune`(谨慎);关注 `pgdata` 与访问量 |
+
+---
+
+## 12. API 概览
 
 **认证方式**
 
-- 后台 API:会话 cookie `cloak_session`(HTTP-only / Secure / SameSite=Lax);写方法需在请求头附 `X-CSRF-Token`(值来自 `cloak_csrf` cookie,双提交 token)。
-- API 认证(脚本/CLI):`POST /api/auth/token` 签发 `accessToken`,后续请求带 `Authorization: Bearer <accessToken>`(header 认证免疫 CSRF)。
-- 跳转路径:`GET /{code}`,由 Host 决定域名,无需鉴权。
-- 内部端点:`GET /internal/caddy/authorize?domain=<fqdn>`,仅内网可达。
+- 后台:会话 cookie `cloak_session`(HTTP-only / Secure / SameSite=Lax);写方法需带 `X-CSRF-Token`(值取自 `cloak_csrf` cookie,双提交)。
+- 脚本:`POST /api/auth/token` 换 `accessToken`,之后带 `Authorization: Bearer <token>`(header 认证免疫 CSRF)。
+- 跳转:`GET /{code}`,由 Host 决定域名,无需鉴权。
+- 内部:`GET /internal/caddy/authorize?domain=<fqdn>`,仅内网可达。
 
 **主要端点**
 
 | 分组 | 端点 |
 | --- | --- |
-| 认证 | `POST /api/auth/register`、`verify-email`、`login`、`token`(API Bearer JWT 签发)、`logout`、`GET /api/auth/me`、`POST /api/auth/change-password`、`forgot-password`、`reset-password` |
-| 域名 | `GET/POST /api/domains`、`GET /api/domains/{id}`、`POST /api/domains/{id}/recheck`、`PATCH /api/domains/{id}`、`DELETE /api/domains/{id}` |
-| 短链 | `GET/POST /api/links`、`GET/PATCH/DELETE /api/links/{id}`、`POST /api/links/{id}/purge`、`POST /api/links/{id}/landing`、`GET /api/links/{id}/visits`、`GET /api/links/{id}/stats` |
-| 规则 | `GET/POST /api/rules`、`GET /api/rules/options`、`GET/PATCH/DELETE /api/rules/{id}`、`GET/PUT /api/links/{id}/rules`(规则是租户级资源,单租户上限 200 条;按优先级升序求值、首条命中即裁决) |
-| 租户设置 | `GET/PATCH /api/me` |
-| 平台管理 | `GET /api/admin/tenants`、`GET /api/admin/tiers`、`GET/PATCH /api/admin/tenants/{id}`、`DELETE /api/admin/domains/{id}` |
-| 跳转 | `GET /{code}`(公开) |
+| 认证 | `POST /api/auth/register`、`verify-email`、`login`、`token`、`logout`、`change-password`、`forgot-password`、`reset-password`;`GET /api/auth/me` |
+| 域名 | `GET/POST /api/domains`;`GET/PATCH/DELETE /api/domains/{id}`;`POST /api/domains/{id}/recheck` |
+| 短链 | `GET/POST /api/links`;`GET/PATCH/DELETE /api/links/{id}`;`POST /api/links/{id}/purge`;`POST /api/links/batch-delete`;`POST /api/links/batch-purge`;`POST /api/links/{id}/landing`;`GET /api/links/{id}/visits`;`GET /api/links/{id}/stats`;`GET/PUT /api/links/{id}/rules` |
+| 规则 | `GET/POST /api/rules`;`GET /api/rules/options`;`GET/PATCH/DELETE /api/rules/{id}`;`POST /api/rules/simulate`;`POST /api/rules/validate-expr` |
+| 租户设置 | `GET/PATCH /api/me`;`GET/PATCH /api/me/error-pages`;`GET /api/config` |
+| 平台管理 | `GET /api/admin/tenants`、`/api/admin/tenants/{id}`、`/api/admin/tiers`;`PATCH /api/admin/tenants/{id}`;`DELETE /api/admin/domains/{id}` |
+| 跳转(公开) | `GET /{code}`;落地页型另有 `GET /{code}/`、`/{code}/click`、`/{code}/sdk.js`、`/{code}/<静态文件>` |
+| 运维 | `GET /healthz` |
 
-**授权模型(RBAC)**
-
-- 角色两档:`tenant`(普通租户,按显式路由矩阵放行)/ `superadmin`(平台超管,`/api/*` 全通)。
-- Casbin 策略在 `internal/rbac/rbac.go` 的 `policyText`(内存装载,不落盘);按 (角色, HTTP 方法, 路径) 三元组判权。
-- **新增受保护路由必须同步在 `policyText` 中追加对应策略**,否则即使登录也会被授权中间件 403 拒绝。
+**授权模型**:Casbin,角色 `tenant` / `superadmin`,按 (角色, 方法, 路径) 判权;策略在 `internal/rbac/rbac.go` 的 `policyText` 内存装载。**新增受保护路由必须同步追加策略**,否则登录后仍会被 403。
 
 **统一错误响应**
 
@@ -759,14 +724,60 @@ docker run --rm -v cloak_pgdata:/data -v "$(pwd)":/backup alpine \
 
 ---
 
-## 11. 相关文档
+## 13. 参与贡献
+
+**开发准备**:按 [6. 快速开始](#6-快速开始开发环境)把开发环境跑起来,并确认 8.1 的测试库已创建。
+
+**提交前检查清单**
+
+```bash
+gofmt -l internal cmd      # 无输出
+go vet ./...
+go test ./...
+cd web && pnpm type-check && pnpm check:ui && pnpm build
+```
+
+**代码风格**
+
+- Go:`gofmt`;注释解释"为什么"与不变式,不写复述代码的注释;新依赖前先确认标准库/已有依赖不能解决(仓库已明确不自造轮子:迁移、限流、邮件、配置、CIDR 匹配、表达式引擎都用成熟库)。
+- Vue:三层令牌 + `App*` 组件(见 7.4);不引入 ant-design-vue;不在 `components/ui/` 写 `dark:` 补丁;不写裸 HTML 原语;响应式只用 Tailwind 断点或 container query。
+- 数据库:迁移只增不改,已发布迁移不修改。
+
+**Issue 与规格**:票据与规格以 markdown 形式放在 `.scratch/<feature-slug>/`(见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md));领域词汇变更改 [`CONTEXT.md`](CONTEXT.md)(见 [`docs/agents/domain.md`](docs/agents/domain.md));架构取舍写 `docs/adr/NNNN-*.md`,格式参照现有 ADR(背景 → 权衡 → 后果)。**不显然的决策要有 ADR,不要只写在提交信息里。**
+
+---
+
+## 14. 许可证
+
+CLOAK 采用 **GNU Affero General Public License v3.0(AGPL-3.0)**,许可证全文见 [`LICENSE`](LICENSE)。
+
+```
+Copyright (C) 2026 ruanbw and CLOAK contributors
+SPDX-License-Identifier: AGPL-3.0-only
+```
+
+要点:
+
+- 你可以自由使用、修改、再分发与集成,包括闭源商用(保留版权与许可证声明,提供源码的方式见 AGPL §4~6)。
+- **AGPL 与 GPL 的关键差异**:通过网络向用户提供本程序的功能(即把它部署成 SaaS / 在线服务)时,必须向这些用户提供**对应源码**。自托管多租户服务尤其要注意:对外提供 CLOAK 的在线跳转/管理服务,需要开放修改后的源码。
+- 无任何担保,作者不对使用后果负责(见 AGPL §15~17)。
+- 商业授权 / 闭源分发需求请单独联系作者。
+
+**第三方组件**:本项目使用若干第三方开源组件(Go 生态:gin、GORM、casbin、goose、go-mail 等;前端:Vue、Tailwind CSS、Reka UI、d3-geo、topojson-client、world-atlas 等),它们各自保留其许可证;其中 `world-atlas` 为 ISC 许可(允许再分发),随包发布时其许可声明需一并保留。
+
+---
+
+## 15. 相关文档
 
 | 文档 | 内容 |
 | --- | --- |
-| [`CONTEXT.md`](CONTEXT.md) | 领域词汇表(租户/短链/域名/激活等术语定义) |
-| [`docs/deploy.md`](docs/deploy.md) | 生产部署精简指南与上线检查清单 |
-| [`web/README.md`](web/README.md) | 前端技术栈、页面清单、认证/请求约定 |
-| [`.scratch/cloak/api-contract.md`](.scratch/cloak/api-contract.md) | API 完整契约 |
-| [`.scratch/cloak/spec.md`](.scratch/cloak/spec.md) | 需求规格、决策、测试决策 |
-| [`docs/adr/`](docs/adr/) | 架构决策记录(Go 后端、Caddy on-demand TLS、Vben Admin UI、默认域名证书方案) |
-| `.scratch/cloak/issues/` | 逐功能票据(01~15),含实现与验证记录 |
+| [`CONTEXT.md`](CONTEXT.md) | **领域词汇表** — 租户/短链/短码/落地页/规则/裁决/访问等术语的规范定义 |
+| [`docs/deploy.md`](docs/deploy.md) | 生产部署指南与上线检查清单 |
+| [`web/README.md`](web/README.md) | 前端技术栈、页面清单、认证与请求约定 |
+| [`web/UI_KIT.md`](web/UI_KIT.md) | 前端组件契约与三层设计令牌规范 |
+| [`docs/adr/`](docs/adr/) | 架构决策记录(Go 后端、on-demand TLS、前后端分离、落地页 SDK、访问明细、规则裁决、GeoIP、世界地图) |
+| [`docs/agents/`](docs/agents/) | agent 协作约定(issue tracker、领域文档) |
+| [`.scratch/cloak/`](.scratch/cloak/) | 需求规格、API 完整契约、逐功能票据 |
+| [`.env.example`](.env.example) | 环境变量模板(带逐项说明) |
+
+**一句话总结**:CLOAK 是一台"接上 DNS 就能用"的短链服务 —— 租户带域名进来,证书与统计与规则都自带。
