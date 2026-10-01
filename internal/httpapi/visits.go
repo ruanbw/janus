@@ -1,7 +1,11 @@
 package httpapi
 
-// 访问明细写入助手:从请求补齐 IP / User-Agent / 来源页 / 语言,写入 visits 行。
+// 访问明细的写入助手与只读聚合端点。
+//
+// 写入:从请求补齐 IP / User-Agent / 来源页 / 语言,写入 visits 行。
 // 统计写入永远不阻断跳转(见 recordVisit),否则数据库抖动会把短链变成 500。
+//
+// 读:GET /api/visits/overview —— 总览页的一次性聚合端点(见 handleVisitsOverview)。
 
 import (
 	"net/http"
@@ -12,6 +16,42 @@ import (
 	"cloak/internal/geo"
 	"cloak/internal/store"
 )
+
+// overviewResp GET /api/visits/overview 的响应体。
+//
+// 形状与 store.OverviewStats 一致,中间没有二次加工:handler 只做"取会话租户 →
+// 调 store → 写 JSON",口径判断全部留在 SQL 里,避免出现"前端算一遍、后端再算一遍"
+// 的两套实现。
+type overviewResp = store.OverviewStats
+
+// handleVisitsOverview GET /api/visits/overview — 总览页的全量聚合。
+//
+// 为什么不用"前端拉明细自己数"(这是本端点存在的原因,也是它与 handleListVisits
+// 的分工):
+//
+//  1. 口径必然漂移。link.visits 由服务端按 action IN ('redirect','landing_view')
+//     AND outcome='success' 过滤。前端那份等价实现历史上漏过一次条件(不传 action),
+//     于是落地页型短链的同一次访问在五张分布图里各被计两次 —— 同屏 KPI 用的是
+//     link.visits(服务端已正确过滤),两套数字必然对不上,且没有任何测试会发现。
+//  2. 抽样当全量。原实现取"访问量最高的 10 条短链 × 最近 50 条明细";点击量大的
+//     落地页,最近 50 行可能全是 click,分布图等于只统计了点击者。
+//  3. 覆盖不全。总量累加 listLinks(1,100)(后端 pageSize 硬上限 100),
+//     超过 100 条短链的租户看到的是偏小的总数,热门排行也只是这 100 条里的前 5。
+//
+// 代价是几条覆盖索引上的聚合扫描(见迁移 0019 的部分索引),换来的是分布图与 KPI
+// 同源同口径,以及超过 100 条短链的租户也能看到真实总量。
+func (a *API) handleVisitsOverview(c *gin.Context) {
+	t, _, ok := a.requireSession(c)
+	if !ok {
+		return
+	}
+	stats, err := a.store.OverviewStatsForTenant(c.Request.Context(), t.ID)
+	if err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
+	}
+	writeJSON(c, http.StatusOK, overviewResp(*stats))
+}
 
 // visitGeoKey 请求级地理值的缓存键(gin.Context,生命周期就是一个请求)。
 const visitGeoKey = "visit_geo"

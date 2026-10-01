@@ -190,6 +190,10 @@ func TestCacheLoaderFailureFailsOpen(t *testing.T) {
 }
 
 // 并发 Get 只触发一次加载(惊群保护),且求值与整体替换并发安全。
+//
+// 注意:与 Invalidate 并发时,正在加载的那次调用**会**拿到空快照 ——
+// 它手里的数据是失效之前提交的,写回去就是"刚保存的规则整个 TTL 不生效"。
+// 丢弃并按未命中继续(fail-open)是刻意的,见 Cache.load 的注释。
 func TestCacheConcurrentGet(t *testing.T) {
 	var calls atomic.Int64
 	loader := func(_ context.Context, _ int64) ([]store.Rule, error) {
@@ -210,16 +214,21 @@ func TestCacheConcurrentGet(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
 				snap := c.Get(ctx, 1)
-				if len(snap.Rules) != 20 {
-					t.Errorf("规则数 = %d", len(snap.Rules))
-					return
-				}
 				// 与"规则变更"并发:Invalidate + 重新加载
 				if j%7 == 0 {
 					c.Invalidate(1)
 				}
-				if _, ok := snap.Evaluate(Fact{UA: "bot"}, 1); !ok {
-					t.Errorf("应命中")
+				// 拿到手的快照要么是完整的 20 条,要么是空(撞上了失效),
+				// 不该出现"半份"。
+				switch len(snap.Rules) {
+				case 20:
+					if _, ok := snap.Evaluate(Fact{UA: "bot"}, 1); !ok {
+						t.Errorf("完整快照应命中")
+						return
+					}
+				case 0:
+				default:
+					t.Errorf("规则数 = %d,只该是 20 或 0", len(snap.Rules))
 					return
 				}
 			}
@@ -228,6 +237,11 @@ func TestCacheConcurrentGet(t *testing.T) {
 	wg.Wait()
 	if calls.Load() == 0 {
 		t.Fatal("从未加载")
+	}
+	// 风暴过去之后,缓存必须收敛到一份完整快照(没有被丢弃的结果永久卡住)
+	final := c.Get(ctx, 1)
+	if len(final.Rules) != 20 {
+		t.Fatalf("风暴后缓存未收敛:规则数 = %d", len(final.Rules))
 	}
 }
 

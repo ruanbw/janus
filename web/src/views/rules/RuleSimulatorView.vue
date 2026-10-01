@@ -156,8 +156,13 @@ async function runSimulation() {
         // 后端求值期异常会被兜住并 fail-open(线上不 500),但模拟器要把它显示出来,
         // 否则用户会把「出错了」误读成「没命中」。
         message.warning(`后端求值有异常,结果可能不完整：${res.error}`);
+      } else {
+        // 只在**没有**异常时才报成功。
+        // 此前无论 res.error 是否为空都会弹 success,与上面那条 warning 互相打架:
+        // 同一次操作同时出现「有异常」和「求值完成」两条提示,用户无法判断该信哪条,
+        // 而 fail-open 的语义恰恰是「这次结果不可信」。
+        message.success('规则链模拟求值完成');
       }
-      message.success('规则链模拟求值完成');
   } catch (error) {
     message.error(error instanceof Error ? error.message : '模拟求值失败，请稍后重试');
   } finally {

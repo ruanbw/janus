@@ -53,6 +53,29 @@ var ErrForeignLink = errors.New("link not owned by tenant")
 // ErrForeignRule 对称于 ErrForeignLink:传入的规则 id 不属于该租户(或不存在)。
 var ErrForeignRule = errors.New("rule not owned by tenant")
 
+// RuleLimitError 表示该租户的规则条数已达 MaxRulesPerTenant。
+//
+// 它由 CreateRule 在**持有租户行锁**的事务内返回,因此"已达上限"这个判断与
+// 随后的插入是原子的,不存在并发绕过(旧实现是先 Count 再 Create,两者都在
+// 事务外,计数停在 199 时可以并发写出远超上限的规则 —— 而规则集合整租户
+// 常驻内存供热路径求值,超上限直接变成内存与求值成本问题)。
+//
+// Count/Limit 供调用方展示当前用量与上限,与 QuotaError 的 Usage 同构。
+type RuleLimitError struct {
+	Count int
+	Limit int
+}
+
+func (e *RuleLimitError) Error() string {
+	return fmt.Sprintf("rule limit exceeded: %d/%d", e.Count, e.Limit)
+}
+
+// IsRuleLimitExceeded 判断错误是否为规则条数超限(API 层映射成 403 用)。
+func IsRuleLimitExceeded(err error) bool {
+	var e *RuleLimitError
+	return errors.As(err, &e)
+}
+
 // ConditionLeafNode 一条叶子条件(如 country in ['US','CA'])。
 // 值只接受字面量:CIDR 列表、逗号分隔枚举、正则等(spec D6 名单库暂缓,条件值不支持名单引用)。
 type ConditionLeafNode struct {
@@ -466,9 +489,46 @@ func replaceRuleLinks(tx *gorm.DB, tenantID, ruleID int64, linkIDs []int64) erro
 	return nil
 }
 
+// WithRuleCountCheckInTx 在一个事务里完成「锁租户行 → 数规则 → 判上限 → 执行写入」。
+//
+// 为什么需要它(与 quota.go 的 WithQuotaInTx 同构,但刻意不复用):
+//  1. 规则条数上限 MaxRulesPerTenant 是**写死的产品上限**,不是 tier 配额 ——
+//     它不进 Usage、不进套餐页、不参与 admin 改档。把它塞进 QuotaKind 等于
+//     给"可配置的东西"凭空加一个不可配置的兄弟,后面每次动配额都要重新判断
+//     它算不算 kind。
+//  2. quota.go 归另一个代理所有,本波不改它。
+//
+// 锁的粒度:SELECT ... FOR UPDATE 锁住 tenants 行,把同一租户的所有规则创建
+// 串行化;后到的请求必须等前一个事务提交,然后在锁内重新数一遍(此时已经含前一笔)。
+// 不同租户之间互不阻塞。
+//
+// fn 必须使用传入的 tx 写入,用 s.db 会跑在事务外,锁就白加了。
+func (s *Store) WithRuleCountCheckInTx(ctx context.Context, tenantID int64, fn func(tx *gorm.DB) error) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// FOR UPDATE:同租户串行,跨租户并行。租户不存在时 First 报错(→ 404)。
+		var locked Tenant
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", tenantID).
+			First(&locked).Error; err != nil {
+			return err
+		}
+		var n int64
+		if err := tx.Model(&Rule{}).Where("tenant_id = ?", tenantID).Count(&n).Error; err != nil {
+			return err
+		}
+		if int(n) >= MaxRulesPerTenant {
+			return &RuleLimitError{Count: int(n), Limit: MaxRulesPerTenant}
+		}
+		return fn(tx)
+	})
+}
+
 // CreateRule 创建规则;r.LinkIDs 非空时在同事务内建立关联。
 // tenantID 以参数为准(不从入参对象上读),空 scope/logic 归一为 DDL 里的默认值。
 // 唯一约束冲突(同租户重名)返回唯一约束错误(整个创建回滚,由 IsUniqueViolation 判定)。
+//
+// 规则条数上限(MaxRulesPerTenant)在**事务内、持租户行锁**判定,见
+// WithRuleCountCheckInTx:超限返回 *RuleLimitError,不写任何数据。
 func (s *Store) CreateRule(ctx context.Context, tenantID int64, r Rule) (*Rule, error) {
 	if r.Conditions.IsZero() {
 		r.Conditions = Conditions()
@@ -487,7 +547,7 @@ func (s *Store) CreateRule(ctx context.Context, tenantID int64, r Rule) (*Rule, 
 		r.RuleType = RuleTypeVisual
 	}
 	r.TenantID = tenantID
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := s.WithRuleCountCheckInTx(ctx, tenantID, func(tx *gorm.DB) error {
 		if err := tx.Create(&r).Error; err != nil {
 			return err
 		}

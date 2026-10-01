@@ -22,8 +22,17 @@ func superadminClient(t *testing.T, env *testutil.Env) *testClient {
 		t.Fatalf("bootstrap superadmin: %v", err)
 	}
 	c := newClient(env)
-	// 无密码首登:允许登录并带 firstLoginSetup 标记
+	// 无密码首登**不再免密**:必须先拿到发到超管邮箱的一次性 setup token。
+	// 这里先试"只带任意密码" —— 必须被拒(否则知道超管邮箱就等于拿到整个平台),
+	// 同时该次失败会触发一枚 setup token 补发。
 	resp := c.post("/api/auth/login", map[string]string{"email": "admin@cloak.test", "password": "whatever"})
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+
+	// 凭 setup token 才能登录成功,响应带 firstLoginSetup 标记
+	resp = c.post("/api/auth/login", map[string]string{
+		"email": "admin@cloak.test", "password": "whatever", "setupToken": env.LastToken(t),
+	})
 	assertStatus(t, resp, http.StatusOK)
 	tenant := decodeBody[store.Tenant](t, resp)
 	if !tenant.FirstLoginSetup {

@@ -146,7 +146,7 @@
           <div class="flex items-center gap-2">
             <Eye :size="16" class="text-primary" />
             <span class="text-sm font-semibold text-ink">访客拦截页面沙箱预览 ({{ previewTitle }})</span>
-            <span class="text-xs text-ink-faint">已开启 sandbox 安全隔离</span>
+            <span class="text-xs text-ink-faint">线上会执行脚本（已隔离来源）</span>
           </div>
           <AppButton
             size="icon"
@@ -159,9 +159,22 @@
         </div>
       </template>
       <div class="flex-1 p-3 bg-line/20 h-full">
+        <!--
+          sandbox 必须与线上的 CSP 对齐，否则预览会骗人。
+
+          线上（internal/httpapi/redirect.go 的 visitorErrorCSP）是
+          `sandbox allow-scripts allow-forms`：脚本**会跑**，但页面处于不透明来源，
+          读不到本站 cookie / localStorage。
+
+          这里此前写的是 `allow-same-origin`，恰好禁掉了 allow-scripts ——
+          于是 UI 预览里脚本不执行、真机上却执行。预览与真实行为的差异本身
+          就是误导：租户会以为自己的统计脚本/表单"坏了"，而去改本来没问题的 HTML。
+          所以改成与线上同一组开关，并去掉 allow-same-origin（同理：给了它
+          等于把预览 iframe 的来源提升到本站，租户脚本就能读到后台会话）。
+        -->
         <iframe
           :srcdoc="previewContent"
-          sandbox="allow-same-origin"
+          sandbox="allow-scripts allow-forms"
           class="h-full w-full rounded border border-line bg-background shadow-xs"
         />
       </div>

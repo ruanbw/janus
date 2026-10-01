@@ -122,15 +122,30 @@ func TestAuthzTenantForbiddenAdmin(t *testing.T) {
 }
 
 // TestAuthzSuperadminBearer ⑤ 超管走 token 端点签发 Bearer → 访问
-// GET /api/admin/tenants → 200(超管无密码,FirstLoginSetup=true,任意密码可签发)。
+// GET /api/admin/tenants → 200。
+//
+// 超管无密码时**不再凭任意密码签发 token**:必须先证明能读到超管邮箱
+// (一次性 setup token)。否则"知道超管邮箱"就等于拿到整个平台。
 func TestAuthzSuperadminBearer(t *testing.T) {
 	env := testutil.Setup(t)
 	if err := bootstrap.Superadmin(context.Background(), env.Store, "admin@cloak.test"); err != nil {
 		t.Fatalf("bootstrap superadmin: %v", err)
 	}
-	tok := tokenFromLogin(t, env, "admin@cloak.test", "whatever")
+	// 任意密码 → 401(认证旁路已封);该次失败会触发一枚 setup token 补发
+	resp := postToken(t, env, "admin@cloak.test", "whatever")
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
 
-	resp := bearerReq(t, env, http.MethodGet, "/api/admin/tenants", nil, tok)
+	resp = newClient(env).post("/api/auth/token", map[string]string{
+		"email": "admin@cloak.test", "password": "whatever", "setupToken": env.LastToken(t),
+	})
+	assertStatus(t, resp, http.StatusOK)
+	tok := decodeBody[tokenResp](t, resp).AccessToken
+	if tok == "" {
+		t.Fatal("accessToken empty")
+	}
+
+	resp = bearerReq(t, env, http.MethodGet, "/api/admin/tenants", nil, tok)
 	assertStatus(t, resp, http.StatusOK)
 	tenants := decodeBody[[]*store.Tenant](t, resp)
 	if len(tenants) < 1 {

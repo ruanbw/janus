@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/netip"
 	"runtime/debug"
 	"time"
 
@@ -45,12 +46,20 @@ type API struct {
 	mailer       mailer.Mailer
 	cfg          config.Config
 	dns          *domain.DNSChecker
-	registerRate *rateLimiter   // POST /api/auth/register
-	authRate     *rateLimiter   // login/verify-email/forgot/reset
-	rbacEnforcer *rbac.Enforcer // Casbin RBAC 授权(enforcer 线程安全,authorize 中间件使用)
-	jwtMgr       *jwt.Manager   // Bearer JWT 校验(authenticate 中间件使用)
-	ruleCache    *rules.Cache   // 规则快照(跳转热路径求值;nil 时求值恒为"无规则")
-	geo          geo.Lookup     // IP → 国家码(跳转热路径在构造 Fact 之前查,ADR 0009)
+	registerRate *rateLimiter // POST /api/auth/register
+	authRate     *rateLimiter // login/verify-email/forgot/reset
+	// setupRate 限制「首次设置密码 setup token」的补发速度(按租户邮箱分桶),
+	// 防止任何知道超管邮箱的人把它当邮件炸弹:冷却窗口内最多一封。
+	setupRate *rateLimiter
+	// resendVerifyRate 限制 /api/auth/resend-verification 的发信速度(按邮箱分桶)。
+	resendVerifyRate *rateLimiter
+	// trustedProxyNets 是运维显式声明的可信代理网段(CLOAK_TRUSTED_PROXY_CIDRS)。
+	// 为空 = 不采信任何来源的 X-Forwarded-For(限流只认 TCP 对端)。
+	trustedProxyNets []netip.Prefix
+	rbacEnforcer     *rbac.Enforcer // Casbin RBAC 授权(enforcer 线程安全,authorize 中间件使用)
+	jwtMgr           *jwt.Manager   // Bearer JWT 校验(authenticate 中间件使用)
+	ruleCache        *rules.Cache   // 规则快照(跳转热路径求值;nil 时求值恒为"无规则")
+	geo              geo.Lookup     // IP → 国家码(跳转热路径在构造 Fact 之前查,ADR 0009)
 }
 
 // New 构建 Gin 引擎:全局中间件(panic 恢复+访问日志、后台域名 SPA 分流)+ 全部路由。
@@ -96,6 +105,15 @@ func New(d Deps) http.Handler {
 		}
 	}
 
+	// 可信代理网段:配置写错时 fail-closed(等价于"不采信任何 XFF"),
+	// 而不是 fail-open。正常路径上 cfg.Validate() 已经在启动前拒绝过非法值,
+	// 这里只是防止 New() 被测试/嵌入方直接调用时静默降级成"全都信"。
+	trustedProxyNets, err := d.Cfg.TrustedProxyNets()
+	if err != nil {
+		log.Printf("CLOAK_TRUSTED_PROXY_CIDRS 解析失败(%v),已按「不采信任何 X-Forwarded-For」处理", err)
+		trustedProxyNets = nil
+	}
+
 	a := &API{
 		store:        d.Store,
 		mailer:       d.Mailer,
@@ -103,10 +121,14 @@ func New(d Deps) http.Handler {
 		dns:          &domain.DNSChecker{ExpectedIP: d.Cfg.ServerPublicIP},
 		registerRate: newRateLimiter(rl.RegisterLimit, rl.RegisterWindow),
 		authRate:     newRateLimiter(rl.AuthLimit, rl.AuthWindow),
-		rbacEnforcer: rb,
-		jwtMgr:       jwtMgr,
-		ruleCache:    ruleCache,
-		geo:          geoLookup,
+		// 每 15 分钟最多一封:够运维在丢失邮件后自助补发,又挡得住邮件轰炸。
+		setupRate:        newRateLimiter(1, 15*time.Minute),
+		resendVerifyRate: newRateLimiter(1, 5*time.Minute),
+		trustedProxyNets: trustedProxyNets,
+		rbacEnforcer:     rb,
+		jwtMgr:           jwtMgr,
+		ruleCache:        ruleCache,
+		geo:              geoLookup,
 	}
 
 	gin.SetMode(gin.ReleaseMode)
@@ -127,6 +149,7 @@ func New(d Deps) http.Handler {
 	// 认证:注册/邮箱验证/登录/API Bearer JWT 签发/忘记密码/重置密码
 	r.POST("/api/auth/register", a.handleRegister)
 	r.POST("/api/auth/verify-email", a.handleVerifyEmail)
+	r.POST("/api/auth/resend-verification", a.handleResendVerification) // 注册发信失败后的自助恢复入口
 	r.POST("/api/auth/login", a.handleLogin)
 	r.POST("/api/auth/token", a.handleToken) // API Bearer JWT 签发(公开,走 authRate 限流)
 	r.POST("/api/auth/forgot-password", a.handleForgotPassword)

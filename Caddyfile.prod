@@ -15,7 +15,20 @@
 
 	# on-demand TLS:收到陌生域名的首个 TLS 握手时询问授权端点
 	on_demand_tls {
-		ask http://backend:8080/internal/caddy/authorize
+		# 共享密钥随每次询问一起送,由环境变量注入(不写死在文件里):
+		#   {$CADDY_ASK_TOKEN} 由 Caddyfile 适配器在 adapt 时展开成字面值,
+		#   所以 CADDY_ASK_TOKEN 必须是 caddy 容器环境里的变量
+		#   (docker-compose.prod.yml 的 caddy 服务需要转发它,见 docs/deploy.md)。
+		# 后端做常量时间比对,缺失/错误一律拒绝(fail-closed)。
+		# 没有它,授权端点只剩"对端是内网"这一层判断 —— 运维给 backend 加了
+		# ports: 映射、或前面再套一层反代(来源是内网 IP)时判定恒真,
+		# 一个无认证 GET 就公网可调:能枚举哪些租户域名处于 active,并引导
+		# Caddy 为它们签发证书。
+		#
+		# 为什么走查询参数而不是请求头:Caddy 2.11 的 Caddyfile 不支持给 ask 请求
+		# 加自定义头(ask <url> { header ... } 报 unrecognized parameter '{')。
+		# 后端同时接受 X-Cloak-Caddy-Token 头,Caddy 支持时可直接切换过去。
+		ask http://backend:8080/internal/caddy/authorize?token={$CADDY_ASK_TOKEN}
 	}
 }
 
@@ -68,6 +81,30 @@ app.example.com {
 		on_demand
 	}
 	# 同 console:授权端点不暴露给公网(整站反代会让它从任意租户子域可达)
+	handle /internal/* {
+		respond 404
+	}
+	handle {
+		import backend_proxy
+	}
+}
+
+# ---------- catch-all:租户自有域名 ----------
+#
+# 为什么必须存在:上面的站点块只匹配 example.com / app.example.com / *.example.com,
+# 而授权端点放行的是**任意** active 自有域名(含 short.customer.com 这类与平台
+# 完全无关的域名)。on_demand_tls.ask 只回答"该不该签",不回答"有没有路由" ——
+# 没有匹配的站点块时 Caddy 根本不服务那个主机名。于是 README 与部署文档承诺的
+# "自有域名 → 激活 → 自动签发证书 → 短链跳转"在生产实际不可用。
+#
+# 写法要点:
+#   - 地址写 `:443`:不带 host 限制的站点块才覆盖所有未匹配的主机名;
+#   - tls { on_demand }:这一块自己也要声明,否则没有 TLS automation policy;
+#   - /internal/* 一律 404:整站反代会让授权端点从任意租户域名可达。
+:443 {
+	tls {
+		on_demand
+	}
 	handle /internal/* {
 		respond 404
 	}

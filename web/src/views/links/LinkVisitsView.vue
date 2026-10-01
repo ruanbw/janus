@@ -510,6 +510,24 @@
                     <span class="mono text-2xs font-semibold text-ink-soft">规则回放 · 按当前规则集</span>
                     <span class="text-xs text-ink-soft">规则若被改动过，回放可能与历史裁决不同</span>
                   </div>
+                  <!--
+                    这段回放是**前端近似实现**，不是服务端裁决。
+
+                    /rules/simulator 已经切到后端求值（internal/rules 那一份实现），
+                    但本处仍用 web/src/views/rules/ruleSim.ts 的 evalCondition 在
+                    浏览器里重算。它自己承认的近似：IPv6 仅支持字面量、RE2 与 JS
+                    正则行为有差异、CIDR 为近似匹配，且 duplicated 被硬编码为恒 false。
+                    所以它**可能与真实裁决不同** —— 上面的「真实裁决」才是服务端
+                    记下的事实（visit.ruleId / ruleAction），回放只是解释性参考。
+                    长期修法是把回放也切到后端（见 .scratch/hardening-stats-gates/13）。
+                  -->
+                  <div class="mb-2 flex items-start gap-1.5 rounded border border-line bg-surface-muted/60 px-2 py-1.5">
+                    <Info :size="13" class="mt-0.5 shrink-0 text-ink-faint" />
+                    <span class="text-2xs leading-relaxed text-ink-faint">
+                      以下链路为<strong class="font-medium text-ink-soft">前端近似推演，仅供参考</strong>：
+                      正则、CIDR 与 IP 条件为简化实现，可能与线上裁决不同。以「真实裁决」一栏为准。
+                    </span>
+                  </div>
 
                   <div v-if="traceStateOf(selectedRow.visit.id)?.loading" class="flex items-center gap-2 py-3">
                     <RefreshCw class="animate-spin text-brand" :size="14" />
@@ -605,7 +623,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ArrowLeft, Copy, FlaskConical, MousePointerClick, RefreshCw, Search, X } from '@lucide/vue';
+import { ArrowLeft, Copy, FlaskConical, Info, MousePointerClick, RefreshCw, Search, X } from '@lucide/vue';
 
 import { getLink } from '@/api/links';
 import { listVisits } from '@/api/visits';

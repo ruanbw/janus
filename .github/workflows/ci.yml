@@ -1,0 +1,107 @@
+# CLOAK CI —— 把 README 7.1 / 13 的"提交前必须跑通"清单变成机器强制执行。
+#
+# 为什么必须有:此前 .github/ 不存在,gofmt / go vet / go test / pnpm type-check /
+# pnpm check:ui 全都只写在 README 里,靠人记得手动跑;而 docker/Dockerfile 的
+# 前端构建阶段只跑 pnpm build —— 违规前端能直接进生产镜像。
+#
+# 两条硬性顺序约束(改这个文件时别把它们拆开):
+#   1. 前端 build 必须在 check:ui 之前:第 8 项要读 dist/assets 里的编译产物,
+#      dist 不存在时它会计入违规并以非零码退出。
+#   2. 后端 job 必须起 Postgres:internal/httpapi 与 internal/store 是黑盒测试,
+#      跑在真实库上。库连不上时 testutil 会 t.Skip —— 那样 CI 会"全绿"，
+#      等于什么都没验。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 后端 (gofmt / vet / test)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: cloak
+          POSTGRES_PASSWORD: cloak
+          POSTGRES_DB: cloak
+        ports:
+          - 5432:5432
+        # 等 Postgres 真正可接受连接再开跑,否则 migrate 会连不上。
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CLOAK_TEST_DATABASE_URL: postgres://cloak:cloak@localhost:5432/cloak_test?sslmode=disable
+      GOCACHE: ${{ github.workspace }}/.gocache
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      # 测试库与开发库分离(与 docker-compose 的约定一致):先建库再跑测试。
+      - name: 创建测试库
+        run: |
+          docker exec "${{ job.services.postgres.id }}" \
+            psql -U cloak -d cloak -c 'CREATE DATABASE cloak_test'
+
+      - name: gofmt
+        run: |
+          # -l 只列出未格式化的文件;有任何输出就失败。
+          unformatted="$(gofmt -l internal cmd)"
+          if [ -n "$unformatted" ]; then
+            echo "以下文件未通过 gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./... -count=1
+
+  web:
+    name: 前端 (type-check / build / check:ui)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: type-check
+        run: pnpm type-check
+
+      # build 必须在 check:ui 之前 —— 见文件头第 1 条约束。
+      - name: build
+        run: pnpm build
+
+      - name: check:ui
+        run: pnpm check:ui

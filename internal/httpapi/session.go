@@ -77,7 +77,11 @@ func (a *API) setSessionCookies(c *gin.Context, token, csrf string, ttl time.Dur
 
 func (a *API) clearSessionCookies(c *gin.Context) {
 	http.SetCookie(c.Writer, &http.Cookie{Name: sessionCookieName, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.cfg.CookieSecure, MaxAge: -1})
-	http.SetCookie(c.Writer, &http.Cookie{Name: csrfCookieName, Value: "", Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.cfg.CookieSecure, MaxAge: -1})
+	// csrf cookie 刻意**不**设 HttpOnly:前端要读它做双提交校验,
+	// 与 setSessionCookies 保持一致。(HttpOnly 不参与删除时的 cookie 匹配,
+	// 所以两种写法都能删掉;但这处不一致会让将来"修正"的人以为 csrf 该设 HttpOnly,
+	// 从而真的把双提交校验打死。)
+	http.SetCookie(c.Writer, &http.Cookie{Name: csrfCookieName, Value: "", Path: "/", SameSite: http.SameSiteLaxMode, Secure: a.cfg.CookieSecure, MaxAge: -1})
 }
 
 // authenticate 认证中间件,两种认证方式归一为同一组 context 值:
@@ -107,6 +111,15 @@ func (a *API) authenticate() gin.HandlerFunc {
 			t, err := a.store.GetTenantByID(c.Request.Context(), tenantID)
 			// 租户不存在(已删除)或已封禁 → 一律 401
 			if err != nil || t.Status == "banned" {
+				writeErr(c, http.StatusUnauthorized, errUnauth, "not authenticated")
+				c.Abort()
+				return
+			}
+			// token_version 吊销:签发时快照的版本必须仍等于库里的当前值。
+			// 改密/重置密码自增该值 → 别人手里的旧 accessToken 立刻失效,不必等 TTL。
+			// (没有 tv 声明的历史 token 解析为 0,与库中 ≥1 恒不相等 → 一并作废。)
+			cur, err := a.store.TenantTokenVersion(c.Request.Context(), tenantID)
+			if err != nil || cur != claims.TokenVersion {
 				writeErr(c, http.StatusUnauthorized, errUnauth, "not authenticated")
 				c.Abort()
 				return

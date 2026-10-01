@@ -177,7 +177,16 @@ func (a *API) handleAdminDeleteDomain(c *gin.Context) {
 		return
 	}
 	purged, err := a.store.DetachDomain(c.Request.Context(), id)
-	if err != nil {
+	switch {
+	case errors.Is(err, store.ErrPlatformDomain):
+		// 平台默认域名与租户端点一致地不可删除:它由注册流程创建,没有任何重建入口,
+		// 删掉之后该租户既没有默认域名,也没有接口能拿回来。
+		writeErr(c, http.StatusBadRequest, errValidation, "平台默认域名不可删除")
+		return
+	case errors.Is(err, store.ErrNotFound):
+		writeErr(c, http.StatusNotFound, errNotFound, "domain not found")
+		return
+	case err != nil:
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}

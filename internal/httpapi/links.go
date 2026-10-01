@@ -8,8 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"strconv"
 
 	"cloak/internal/domain"
@@ -29,17 +33,72 @@ func validTargetURL(s string) bool {
 	return true
 }
 
-// validTargetURLs 校验目标 URL 列表:至少 1 个,逐项沿用 validTargetURL 规则。
-func validTargetURLs(urls []string) error {
+// dedupeTargetURLs 按首次出现顺序去重(保持轮询顺序稳定)。
+//
+// 为什么必须去重:link_targets 的唯一约束是 (link_id, position),不是 url,
+// 所以 ["a","a","b"] 会原样存成三行,轮询时 a 拿到 2/3 的流量。
+// 用户几乎不可能**想要**这个分布(真想要就该写两条不同的出口),而"配重了"
+// 是手滑就能犯的错 —— 静默加权比直接报错更危险,因为它完全不可见。
+func dedupeTargetURLs(urls []string) []string {
+	out := make([]string, 0, len(urls))
+	seen := make(map[string]struct{}, len(urls))
+	for _, u := range urls {
+		if _, dup := seen[u]; dup {
+			continue
+		}
+		seen[u] = struct{}{}
+		out = append(out, u)
+	}
+	return out
+}
+
+// validTargetURLs 校验目标 URL 列表:至少 1 个、数量 ≤ max,逐项沿用 validTargetURL 规则。
+// 返回去重后的列表(调用方必须用返回值落库)。
+//
+// max 来自 cfg.MaxTargetURLs:没有它,一次请求就能提交几十万条目标,
+// 换算到库里就是几十万次 INSERT(体积侧由 maxCreateLinkBodyBytes 兜住)。
+func validTargetURLs(urls []string, max int) ([]string, error) {
 	if len(urls) == 0 {
-		return errors.New("targetUrls 至少需要一个目标 URL")
+		return nil, errors.New("targetUrls 至少需要一个目标 URL")
+	}
+	urls = dedupeTargetURLs(urls)
+	if max > 0 && len(urls) > max {
+		return nil, fmt.Errorf("目标 URL 最多 %d 个(去重后 %d 个)", max, len(urls))
 	}
 	for _, u := range urls {
 		if !validTargetURL(u) {
-			return errors.New("目标 URL 非法(不能为空、超长或包含控制字符)")
+			return nil, errors.New("目标 URL 非法(不能为空、超长或包含控制字符)")
 		}
 	}
-	return nil
+	return urls, nil
+}
+
+// maxTargetURLs 本次可接受的目标 URL 数量上限。
+// 配置缺失/非正时回落到兜底值而不是"不限制":0 会被读成"没有上限",
+// 那等于把"一次请求能写多少行"的决定权交还给调用方。
+func (a *API) maxTargetURLs() int {
+	if a.cfg.MaxTargetURLs > 0 {
+		return a.cfg.MaxTargetURLs
+	}
+	return 50
+}
+
+// maxCreateLinkBodyBytes 创建端点的请求体上限。
+//
+// 按「最多 max 个目标 × 单个 URL 上限 4096 + JSON 转义开销」推算,再加一批余量给
+// domainIds / code 等其余字段。只加数量校验不加体积校验是不够的:十万条 5 字节的
+// URL 数量上完全合规,体积上照样能把请求体撑到几百 MB。
+func (a *API) maxCreateLinkBodyBytes() int64 {
+	const (
+		perURLBudget = 4096 + 32 // URL 上限 + 引号/逗号/转义余量
+		fieldBudget  = 64 << 10  // code/domainIds/落地页字段等其余部分
+		cap          = 8 << 20   // 配置被调得很大时的硬顶,避免算出几百 MB 的上限
+	)
+	n := int64(a.maxTargetURLs())*perURLBudget + fieldBudget
+	if n > cap {
+		return cap
+	}
+	return n
 }
 
 // RedirectStatus 跳转方式(契约枚举:"301" | "302")。
@@ -100,6 +159,19 @@ func normalizeLandingFields(linkType, landingSource, landingURL string) (string,
 	return linkType, landingSource, landingURL, nil
 }
 
+// normalizeRedirectStatus 归一落库的跳转方式:落地页型一律 302。
+//
+// 背景:landing 型的正常访问走硬编码 302,只有规则裁决命中 action=redirect 时才会
+// 走 redirectToTarget,而那里读的是 link.RedirectStatus。"301 跳转型 → 落地页型"
+// 的切换里前端不发 redirectStatus,UpdateLink 对 nil 字段保留原值,301 就留在库里
+// (store/links.go 的 effectiveRedirectStatus 在写入侧再兜一次,双保险)。
+func normalizeRedirectStatus(redirectStatus store.RedirectStatus, linkType string) store.RedirectStatus {
+	if linkType == store.LinkTypeLanding {
+		return store.RedirectStatus302
+	}
+	return redirectStatus
+}
+
 func (a *API) handleCreateLink(c *gin.Context) {
 	t, sess, ok := a.requireSession(c)
 	if !ok {
@@ -108,9 +180,10 @@ func (a *API) handleCreateLink(c *gin.Context) {
 	if !a.requireCSRF(c, sess) {
 		return
 	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, a.maxCreateLinkBodyBytes())
 	var req createLinkReq
 	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
+		writeErr(c, http.StatusBadRequest, errValidation, createLinkBodyErrMsg(err))
 		return
 	}
 	link, err := a.createLink(c, t, req)
@@ -121,9 +194,33 @@ func (a *API) handleCreateLink(c *gin.Context) {
 	writeJSON(c, http.StatusCreated, a.withLandingUploaded(link))
 }
 
+// createLinkBodyErrMsg 请求体解析失败的对外文案(体积超限与语法错误分开说)。
+func createLinkBodyErrMsg(err error) string {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		return "请求体过大:目标 URL 过多或单个过长"
+	}
+	return "invalid JSON body"
+}
+
+// autoCodeAttempts 自动生成短码时的撞码重试次数。
+const autoCodeAttempts = 10
+
+// createLinkParams 一次创建所需的全部已校验参数(校验与落库分离,便于重试复用)。
+type createLinkParams struct {
+	code           string // 空串 = 自动生成
+	targetURLs     []string
+	redirectStatus store.RedirectStatus
+	linkType       string
+	landingSource  string
+	landingURL     string
+	domainIDs      []int64
+}
+
 // createLink 供后台短链创建共用。
 func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*store.Link, error) {
-	if err := validTargetURLs(req.TargetURLs); err != nil {
+	targetURLs, err := validTargetURLs(req.TargetURLs, a.maxTargetURLs())
+	if err != nil {
 		return nil, apiErr{http.StatusBadRequest, errValidation, err.Error(), nil}
 	}
 	redirectStatus := store.RedirectStatus302
@@ -137,6 +234,14 @@ func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*s
 	if err != nil {
 		return nil, apiErr{http.StatusBadRequest, errValidation, err.Error(), nil}
 	}
+	// 落地页 + upload 来源但还没托管文件 → 400。
+	// 创建流程是「建链 → 再上传」两次独立请求:先建链再上传,中间失败就留下一条
+	// source=upload 却无文件的短链,此后每次访问都记一行 landing_missing,永远 404。
+	// 新建的短链不可能已有托管文件,所以这一条在创建时必然成立(见 issue 04)。
+	if linkType == store.LinkTypeLanding && landingSource == store.LandingSourceUpload {
+		return nil, apiErr{http.StatusBadRequest, errValidation,
+			"落地页型短链(upload 来源)必须先上传落地页压缩包", nil}
+	}
 	if len(req.DomainIDs) == 0 {
 		return nil, apiErr{http.StatusBadRequest, errValidation, "至少关联一个域名", nil}
 	}
@@ -145,23 +250,22 @@ func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*s
 	if err != nil {
 		return nil, err
 	}
-	// 短链配额:按"尚未物理删除"计数
-	usage, err := a.store.Usage(c.Request.Context(), t.ID)
-	if err != nil {
-		return nil, apiErr{http.StatusInternalServerError, errInternal, "internal error", nil}
+	params := createLinkParams{
+		code: req.Code, targetURLs: targetURLs,
+		redirectStatus: normalizeRedirectStatus(redirectStatus, linkType),
+		linkType:       linkType, landingSource: landingSource, landingURL: landingURL,
+		domainIDs: domainIDs,
 	}
-	if usage.Links >= usage.MaxLinks {
-		return nil, apiErr{http.StatusForbidden, errLinkQuota,
-			"短链数量已达上限", map[string]any{"usage": usage}}
-	}
-
-	if req.Code != "" {
+	if params.code != "" {
 		if !domain.IsValidCode(req.Code) {
 			return nil, apiErr{http.StatusBadRequest, errValidation,
 				"短码非法(字符集不含 0/O/1/l/I,长度 1-64)", nil}
 		}
-		link, err := a.store.CreateLink(c.Request.Context(), t.ID, req.Code, req.TargetURLs, redirectStatus, linkType, landingSource, landingURL, domainIDs)
+		link, err := a.createLinkWithQuota(c, t.ID, params, params.code)
 		if err != nil {
+			if qerr := quotaAPIError(err); qerr != nil {
+				return nil, qerr
+			}
 			if store.IsUniqueViolation(err) {
 				return nil, apiErr{http.StatusConflict, errConflict, "同一域名下短码已存在", nil}
 			}
@@ -169,12 +273,21 @@ func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*s
 		}
 		return link, nil
 	}
-	// 自动生成短码:随机生成直到无冲突(生成失败重试 10 次)
-	for i := 0; i < 10; i++ {
+	// 自动生成短码:随机生成直到无冲突。
+	//
+	// 重试必须包在 WithQuotaInTx **外面**:唯一约束冲突会中止当前事务,事务回滚后
+	// 租户行锁随之释放。放在事务内重试等于在一个已经失败的事务里继续写,
+	// 第二轮起每条语句都会撞 "current transaction is aborted"。
+	// 所以每轮都是一次全新的 WithQuotaInTx:重新开事务 → 重新锁租户行 → 重新判配额。
+	for i := 0; i < autoCodeAttempts; i++ {
 		code := domain.GenerateCode(domain.AutoCodeLength)
-		link, err := a.store.CreateLink(c.Request.Context(), t.ID, code, req.TargetURLs, redirectStatus, linkType, landingSource, landingURL, domainIDs)
+		link, err := a.createLinkWithQuota(c, t.ID, params, code)
 		if err == nil {
 			return link, nil
+		}
+		// 配额错误不是"撞码",立刻返回:重试只会再撞一次同样的上限
+		if qerr := quotaAPIError(err); qerr != nil {
+			return nil, qerr
 		}
 		if store.IsUniqueViolation(err) {
 			continue
@@ -182,6 +295,45 @@ func (a *API) createLink(c *gin.Context, t *store.Tenant, req createLinkReq) (*s
 		return nil, err
 	}
 	return nil, apiErr{http.StatusInternalServerError, errInternal, "生成短码失败,请重试", nil}
+}
+
+// createLinkWithQuota 在「锁租户行 → 读配额 → 判上限 → 插入」的单事务里创建短链。
+//
+// 为什么不能是「Usage() 读一次 + CreateLink() 插一次」:两者不在同一事务、没有锁,
+// 是典型 TOCTOU。free 档 100 条时,并发 20 个 POST /api/links 可以在计数停在 99 的
+// 窗口里全部通过检查,写出 119 条。现在 SELECT ... FOR UPDATE 把同一租户的消费串行化,
+// 后到的请求必须等前一个事务提交,然后在锁内重新读到已含前一笔结果的计数。
+// 跨租户互不阻塞。
+//
+// 返回值里的 Link 在事务**提交后**再读(fillLinkMeta 要看到已提交的关联行);
+// 所以 linkID 由闭包捕获,而不是在事务内就把整条 Link 装配好。
+func (a *API) createLinkWithQuota(c *gin.Context, tenantID int64, p createLinkParams, code string) (*store.Link, error) {
+	ctx := c.Request.Context()
+	var linkID int64
+	err := a.store.WithQuotaInTx(ctx, tenantID, store.QuotaLinks, func(tx *gorm.DB) error {
+		id, err := a.store.CreateLinkInTx(ctx, tx, tenantID, code, p.targetURLs, p.redirectStatus,
+			p.linkType, p.landingSource, p.landingURL, p.domainIDs)
+		if err != nil {
+			return err
+		}
+		linkID = id
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return a.store.GetLinkByID(ctx, tenantID, linkID)
+}
+
+// quotaAPIError 把 store 的配额错误翻成对外响应(403 + E_LINK_LIMIT + details.usage),
+// 非配额错误返回 nil。details 的形状与原先手工读 Usage() 时完全一致,前端不变。
+func quotaAPIError(err error) error {
+	var qe *store.QuotaError
+	if errors.As(err, &qe) && qe.Kind == store.QuotaLinks {
+		return apiErr{http.StatusForbidden, errLinkQuota,
+			"短链数量已达上限", map[string]any{"usage": qe.Usage}}
+	}
+	return nil
 }
 
 // validateLinkDomains 校验域名归属与激活状态,返回去重后的 domainID 列表。
@@ -230,7 +382,21 @@ func (a *API) handleListLinks(c *gin.Context) {
 		return
 	}
 	page, pageSize := pageParams(c)
-	items, total, err := a.store.ListLinksByTenant(c.Request.Context(), t.ID, page, pageSize)
+	// includeDeleted(默认 false)打开回收站视图:列出已逻辑删除的短链。
+	// 省略该参数时行为与从前完全一致,既有客户端不受影响。
+	includeDeleted, err := parseBoolQuery(c, "includeDeleted")
+	if err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
+		return
+	}
+	ctx := c.Request.Context()
+	var items []*store.Link
+	var total int
+	if includeDeleted {
+		items, total, err = a.store.ListDeletedLinksByTenant(ctx, t.ID, page, pageSize)
+	} else {
+		items, total, err = a.store.ListLinksByTenant(ctx, t.ID, page, pageSize)
+	}
 	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
@@ -242,6 +408,21 @@ func (a *API) handleListLinks(c *gin.Context) {
 		a.withLandingUploaded(l)
 	}
 	writeJSON(c, http.StatusOK, map[string]any{"items": items, "total": total})
+}
+
+// parseBoolQuery 解析布尔查询参数。参数缺省时返回 def;显式写了非法值时 400,
+// 而不是悄悄当成 false —— "?includeDeleted=yes" 被当成"没开回收站"会让人以为
+// 列表坏了而去找别的 bug。
+func parseBoolQuery(c *gin.Context, name string) (bool, error) {
+	raw := c.Request.URL.Query().Get(name)
+	if raw == "" {
+		return false, nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s 必须为 true 或 false", name)
+	}
+	return v, nil
 }
 
 func (a *API) handleGetLink(c *gin.Context) {
@@ -271,6 +452,11 @@ type patchLinkReq struct {
 	LandingURL     *string         `json:"landingUrl"`
 	Status         *string         `json:"status"`
 	RulesEnabled   *bool           `json:"rulesEnabled"`
+	// DeletedAt 是三态字段:未提供(指针 nil)/ 显式 null(指针非 nil、内容为 "null")。
+	// 显式 null 的语义是「还原这条逻辑删除的短链」—— PATCH 改资源字段,
+	// 把 deleted_at 写回 NULL 就是撤销删除,与 POST /links/{id}/restore 等价。
+	// 没有单独开一条路由是因为新增路由要动 internal/httpapi/server.go(他人文件)。
+	DeletedAt *json.RawMessage `json:"deletedAt"`
 }
 
 func (a *API) handlePatchLink(c *gin.Context) {
@@ -289,6 +475,10 @@ func (a *API) handlePatchLink(c *gin.Context) {
 	var req patchLinkReq
 	if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
 		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
+		return
+	}
+	if req.DeletedAt != nil {
+		a.restoreLink(c, t, id, req)
 		return
 	}
 	// 落地页字段组合校验(16):按当前值叠加请求值算出有效组合
@@ -312,22 +502,34 @@ func (a *API) handlePatchLink(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, nerr.Error())
 		return
 	}
+	// 切到 upload 来源时必须已有托管文件,否则这条短链会永久 404
+	// (每次访问记一行 landing_missing),见 issue 04。
+	if linkType == store.LinkTypeLanding && landingSource == store.LandingSourceUpload &&
+		!a.landingUploaded(id) {
+		writeErr(c, http.StatusBadRequest, errValidation,
+			"落地页型短链(upload 来源)必须先上传落地页压缩包")
+		return
+	}
 	upd := store.LinkUpdate{LinkType: &linkType, LandingSource: &landingSource, LandingURL: &landingURL}
 	if req.TargetURLs != nil {
-		if err := validTargetURLs(*req.TargetURLs); err != nil {
+		targets, err := validTargetURLs(*req.TargetURLs, a.maxTargetURLs())
+		if err != nil {
 			writeErr(c, http.StatusBadRequest, errValidation, err.Error())
 			return
 		}
-		upd.TargetURLs = req.TargetURLs
+		upd.TargetURLs = &targets
 	}
+	// 跳转方式:请求没带就沿用当前值,但落地页型一律归一为 302(见 normalizeRedirectStatus)
+	effectiveStatus := cur.RedirectStatus
 	if req.RedirectStatus != nil {
 		if *req.RedirectStatus != "301" && *req.RedirectStatus != "302" {
 			writeErr(c, http.StatusBadRequest, errValidation, "redirectStatus 必须为 301 或 302")
 			return
 		}
-		v := store.RedirectStatus(*req.RedirectStatus)
-		upd.RedirectStatus = &v
+		effectiveStatus = store.RedirectStatus(*req.RedirectStatus)
 	}
+	normalized := normalizeRedirectStatus(effectiveStatus, linkType)
+	upd.RedirectStatus = &normalized
 	if req.Status != nil {
 		if *req.Status != "enabled" && *req.Status != "disabled" {
 			writeErr(c, http.StatusBadRequest, errValidation, "status 必须为 enabled 或 disabled")
@@ -362,6 +564,32 @@ func (a *API) handlePatchLink(c *gin.Context) {
 	// 切到 redirect 型或 url 来源时删除已上传落地页文件(16)
 	if link.LinkType == store.LinkTypeRedirect || link.LandingSource == store.LandingSourceURL {
 		a.removeLandingFiles(id)
+	}
+	writeJSON(c, http.StatusOK, a.withLandingUploaded(link))
+}
+
+// restoreLink 还原逻辑删除的短链(由 PATCH {"deletedAt": null} 触发)。
+//
+// 短码是否还能拿回来由数据库回答:还原会把 link_domains.link_deleted 翻回 false,
+// 若该 (domain_id, code) 已被另一条存活短链占用,部分唯一索引直接报 23505 → 409。
+// 落地页文件在软删期间一直保留,所以还原后落地页原样可用,不需要重新上传。
+func (a *API) restoreLink(c *gin.Context, t *store.Tenant, id int64, req patchLinkReq) {
+	if strings.TrimSpace(string(*req.DeletedAt)) != "null" {
+		writeErr(c, http.StatusBadRequest, errValidation, "deletedAt 只支持显式 null(还原逻辑删除的短链)")
+		return
+	}
+	if err := a.store.RestoreLink(c.Request.Context(), t.ID, id); err != nil {
+		if store.IsUniqueViolation(err) {
+			writeErr(c, http.StatusConflict, errConflict, "短码已被占用,无法还原该短链")
+			return
+		}
+		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
+		return
+	}
+	link, err := a.store.GetLinkByID(c.Request.Context(), t.ID, id)
+	if err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
 	}
 	writeJSON(c, http.StatusOK, a.withLandingUploaded(link))
 }
@@ -498,6 +726,77 @@ func (a *API) handleBatchPurgeLinks(c *gin.Context) {
 }
 
 // ---------- 访问列表与统计(07) ----------
+
+// ---------- 公开跳转/点击路径的按 IP 限流(issue 07) ----------
+
+// 公开跳转与点击端点没有任何认证,限流器此前只挂在注册/登录那几个认证端点上,
+// 于是「对已知短码循环 GET /{code}」是完全免费且不受限的:每次调用都会
+//  1. 强制跑一次 ip2region 地理解析(CPU),
+//  2. 往 visits 插入一整行明细(DB 写放大 + 表膨胀)。
+//
+// ADR-0005 接受的是「点击数可能虚增」,并没有同意"用一个短码把 visits 表撑爆"。
+const (
+	// visitorPerMinute 每个 IP 每分钟允许的公开路径请求数。
+	visitorPerMinute = 240
+	// visitorWindow 计数窗口。配合 ratelimit.go 的滚动窗口实现,语义是
+	// 「任意连续 60 秒内同一 IP 最多 240 次」—— 首次涌入 240 次不会被拒,
+	// 但刷量脚本拿不到比正常访客更多的额度。
+	visitorWindow = time.Minute
+)
+
+// visitorLimiters 按 *API 实例持有访客限流器。
+//
+// 为什么挂在 map 上而不是 API 结构体字段:API 结构体与限流器字段都在
+// internal/httpapi/server.go(本次不可改动的文件)里。新增一个字段会让本文件
+// 与那个文件产生耦合,任何并行修改都会撞车;包级 map 则是自包含的。
+// key 是 *API(每进程只有一个生产实例,测试里每个 env 一个),value 是限流器本身,
+// 状态天然按实例隔离 —— 这点很重要:测试之间若共用一个桶,先跑的用例会把桶打空,
+// 后面无关的用例莫名其妙收到 429。
+var visitorLimiters sync.Map // *API -> *rateLimiter
+
+// visitorLimiter 返回本实例的访客限流器(惰性创建,进程内复用)。
+func (a *API) visitorLimiter() *rateLimiter {
+	if v, ok := visitorLimiters.Load(a); ok {
+		return v.(*rateLimiter)
+	}
+	v, _ := visitorLimiters.LoadOrStore(a, newRateLimiter(visitorPerMinute, visitorWindow))
+	return v.(*rateLimiter)
+}
+
+// allowVisitor 公开跳转/点击路径的按 IP 令牌桶准入判断。
+//
+// 阈值取舍(240 次/分钟 ≈ 4 次/秒,突发 240):
+//
+//	· 下限不能再低。运营商 CGNAT、公司出口、校园网都把大量互不相识的人聚合成
+//	  一个源 IP;一个热门落地页在同一出口后面可能有几十上百人在点。把阈值压到
+//	  个位数/分钟,会把正常访客误伤成 429 —— 那是比刷量严重得多的生产事故。
+//	· 上限不能再高。限流的目的是给"写 visits + 跑地理解析"这条链路封顶:
+//	  4 次/秒 意味着单个源 IP 每分钟最多给 visits 添 240 行、给 CPU 添 240 次解析,
+//	  相对无节制刷量(可达数万次/秒)是 3 个数量级以上的削减,足以让"脚本刷量"
+//	  失去意义(它拿不到比正常用户更多的额度)。
+//	· 换句话说:正常用户感知不到,脚本刷不动,这就是这组数字的目标。
+func (a *API) allowVisitor(c *gin.Context) bool {
+	return a.visitorLimiter().Allow(clientIP(c.Request))
+}
+
+// visitorGuard 是 allowVisitor 的中间件形态,供公开跳转路由挂载:
+//
+//	r.GET("/:code", a.visitorGuard(), a.handleRedirect)
+//
+// `/{code}` 的 handler(handleRedirect)与路由表分别在 internal/httpapi/redirect.go
+// 与 internal/httpapi/server.go —— 都是本次不可改动的他人文件,所以这里只把
+// 中间件备好,接线由持有那两个文件的人补上。语义与 handleLandingClick 里内联的那份一致。
+func (a *API) visitorGuard() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !a.allowVisitor(c) {
+			// tenantID 传 0:取租户自定义 429 页要查一次库,而那正是限流要省掉的成本。
+			a.renderVisitorError(c, http.StatusTooManyRequests, 0, nil)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
 
 func (a *API) handleListVisits(c *gin.Context) {
 	t, _, ok := a.requireSession(c)

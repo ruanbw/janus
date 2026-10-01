@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Link struct {
@@ -22,9 +23,11 @@ type Link struct {
 	Status         string         `json:"status"`
 	RulesEnabled   bool           `json:"rulesEnabled" gorm:"column:rules_enabled"`
 	Clicks         int64          `json:"clicks" gorm:"column:clicks"`
-	DeletedAt      *time.Time     `json:"-" gorm:"column:deleted_at"`
-	Domains        []string       `json:"domains" gorm:"-"`
-	Visits         int64          `json:"visits" gorm:"-"`
+	// DeletedAt 对外可见:回收站列表要靠它区分「已删除」,且前端在 PATCH 无关字段时
+	// 也需要知道这条记录处于已删除态(不可编辑)。omitempty 让未删除的记录不带该字段。
+	DeletedAt *time.Time `json:"deletedAt,omitempty" gorm:"column:deleted_at"`
+	Domains   []string   `json:"domains" gorm:"-"`
+	Visits    int64      `json:"visits" gorm:"-"`
 	// RuleCount / RuleNames 是"适用规则"的投影(全局规则 + 显式关联的规则),查询后填充。
 	// 关联只存在规则一侧(spec D1),这里是按短链反查同一份数据,不存在第二份规则列表。
 	RuleCount int64    `json:"ruleCount" gorm:"-"`
@@ -57,12 +60,23 @@ const (
 	LandingSourceUpload = "upload"
 )
 
-// LinkDomain 短链-域名关联(唯一约束 (domain_id, code))。
+// LinkDomain 短链-域名关联。
+//
+// 「同一域名下短码不重复」这条不变式由 migrations/0017 的**部分唯一索引**
+// link_domains_live_code_uniq 保证:`UNIQUE (domain_id, code) WHERE NOT link_deleted`。
+// link_deleted 是 links.deleted_at 的 denormalize 副本,由数据库触发器维护
+// (见 0017 迁移头注释),因此软删短链不再占用短码,而还原时会重新占用。
+//
+// 字段带 `->` = 只读:写入永远交给数据库触发器派生,GORM 不参与赋值,
+// 也就不会出现「应用层忘了同步」这种让索引与 links 脱节的情况。
 type LinkDomain struct {
 	ID       int64 `gorm:"primaryKey"`
 	LinkID   int64 `gorm:"column:link_id"`
 	DomainID int64 `gorm:"column:domain_id"`
 	Code     string
+	// LinkDeleted 带 `->` = 只读:写入永远交给数据库触发器派生,GORM 不参与赋值,
+	// 也就不会出现「应用层忘了同步」这种让索引与 links 脱节的情况。
+	LinkDeleted bool `gorm:"column:link_deleted;->"`
 }
 
 // LinkTarget 短链目标 URL(position 从 0 开始,按 position 升序;(link_id, position) 唯一)。
@@ -248,30 +262,62 @@ func (s *Store) linkTargetURLs(ctx context.Context, linkID int64) ([]string, err
 	return out, err
 }
 
-// CreateLink 创建短链并关联域名。
-// 任一 (domain_id, code) 与既有关联冲突时返回唯一约束错误(整个创建回滚)。
+// effectiveRedirectStatus 返回落库用的跳转方式:落地页型一律 302。
+//
+// 为什么在 store 侧再归一一次(而不是只在 handler 的 normalizeLandingFields 里):
+// 规则裁决命中 `action=redirect` 时走 redirectToTarget,它读的是 link.RedirectStatus。
+// 若「301 跳转型 → 落地页型」的切换把 301 留在库里(前端切类型时不发 redirectStatus),
+// 那条规则改写路径就会对落地页型短链发出 301。redirect.go 属另一个代理,
+// 所以把不变式钉在**写入侧**:任何让 link_type=landing 落库的路径都写 302。
+func effectiveRedirectStatus(redirectStatus RedirectStatus, linkType string) RedirectStatus {
+	if linkType == LinkTypeLanding {
+		return RedirectStatus302
+	}
+	return redirectStatus
+}
+
+// CreateLinkInTx 在**给定事务**内插入短链、目标 URL 与域名关联,返回短链 id。
+//
+// 与 CreateLink 的区别只在事务边界:本函数不自己开事务,必须由调用方传入 tx。
+// 存在的理由是配额:handleCreateLink 需要在 WithQuotaInTx 持有的租户行锁内插入,
+// 用 s.db 写会跑在事务外,锁就白加了(见 store/quota.go 的注释)。
+//
+// 任一 (domain_id, code) 与**存活**短链冲突时返回唯一约束错误,由调用方决定重试。
+// 注意:唯一约束冲突会中止整个事务,所以撞码重试必须包在本函数**外面**。
+func (s *Store) CreateLinkInTx(ctx context.Context, tx *gorm.DB, tenantID int64, code string, targetURLs []string, redirectStatus RedirectStatus, linkType, landingSource, landingURL string, domainIDs []int64) (int64, error) {
+	link := Link{TenantID: tenantID, Code: code,
+		RedirectStatus: effectiveRedirectStatus(redirectStatus, linkType),
+		LinkType:       linkType, LandingSource: landingSource, LandingURL: landingURL,
+		Status: "enabled", RulesEnabled: true}
+	if err := tx.WithContext(ctx).Create(&link).Error; err != nil {
+		return 0, err
+	}
+	for i, u := range targetURLs {
+		lt := LinkTarget{LinkID: link.ID, URL: u, Position: i}
+		if err := tx.WithContext(ctx).Create(&lt).Error; err != nil {
+			return 0, err
+		}
+	}
+	for _, dID := range domainIDs {
+		ld := LinkDomain{LinkID: link.ID, DomainID: dID, Code: code}
+		if err := tx.WithContext(ctx).Create(&ld).Error; err != nil {
+			return 0, err
+		}
+	}
+	return link.ID, nil
+}
+
+// CreateLink 创建短链并关联域名(自开事务)。
+// 任一 (domain_id, code) 与存活短链冲突时返回唯一约束错误(整个创建回滚)。
 func (s *Store) CreateLink(ctx context.Context, tenantID int64, code string, targetURLs []string, redirectStatus RedirectStatus, linkType, landingSource, landingURL string, domainIDs []int64) (*Link, error) {
 	var linkID int64
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		link := Link{TenantID: tenantID, Code: code, RedirectStatus: redirectStatus,
-			LinkType: linkType, LandingSource: landingSource, LandingURL: landingURL, Status: "enabled",
-			RulesEnabled: true}
-		if err := tx.Create(&link).Error; err != nil {
+		id, err := s.CreateLinkInTx(ctx, tx, tenantID, code, targetURLs, redirectStatus,
+			linkType, landingSource, landingURL, domainIDs)
+		if err != nil {
 			return err
 		}
-		linkID = link.ID
-		for i, u := range targetURLs {
-			lt := LinkTarget{LinkID: linkID, URL: u, Position: i}
-			if err := tx.Create(&lt).Error; err != nil {
-				return err
-			}
-		}
-		for _, dID := range domainIDs {
-			ld := LinkDomain{LinkID: linkID, DomainID: dID, Code: code}
-			if err := tx.Create(&ld).Error; err != nil {
-				return err
-			}
-		}
+		linkID = id
 		return nil
 	})
 	if err != nil {
@@ -298,14 +344,33 @@ func (s *Store) GetLinkByID(ctx context.Context, tenantID, id int64) (*Link, err
 
 // ListLinksByTenant 分页列出租户短链(不含逻辑删除),按创建时间倒序。
 func (s *Store) ListLinksByTenant(ctx context.Context, tenantID int64, page, pageSize int) ([]*Link, int, error) {
+	return s.listLinks(ctx, tenantID, page, pageSize, false)
+}
+
+// ListDeletedLinksByTenant 分页列出租户**已逻辑删除**的短链(回收站视图),
+// 按删除时间倒序(最近删的排前面,与用户"刚刚清掉的那批"的预期一致)。
+//
+// 与 ListLinksByTenant 是互斥的两个视图而不是"加个开关把两边混在一起":
+// 回收站是另一个 UI 语境(只有还原/彻底删除两个动作、没有状态开关与规则列),
+// 混在一页里会让分页 total 与页面上真正可操作的对象对不上。
+func (s *Store) ListDeletedLinksByTenant(ctx context.Context, tenantID int64, page, pageSize int) ([]*Link, int, error) {
+	return s.listLinks(ctx, tenantID, page, pageSize, true)
+}
+
+// listLinks 列表查询的共同实现;deletedOnly=false 取存活短链,true 取回收站。
+func (s *Store) listLinks(ctx context.Context, tenantID int64, page, pageSize int, deletedOnly bool) ([]*Link, int, error) {
+	scope := func(db *gorm.DB) *gorm.DB {
+		if deletedOnly {
+			return db.Where("tenant_id = ? AND deleted_at IS NOT NULL", tenantID)
+		}
+		return db.Where("tenant_id = ? AND deleted_at IS NULL", tenantID)
+	}
 	var total int64
-	if err := s.db.WithContext(ctx).Model(&Link{}).
-		Where("tenant_id = ? AND deleted_at IS NULL", tenantID).Count(&total).Error; err != nil {
+	if err := scope(s.db.WithContext(ctx).Model(&Link{})).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var out []*Link
-	if err := s.db.WithContext(ctx).
-		Where("tenant_id = ? AND deleted_at IS NULL", tenantID).Order("id DESC").
+	if err := scope(s.db.WithContext(ctx)).Order("id DESC").
 		Limit(pageSize).Offset((page - 1) * pageSize).Find(&out).Error; err != nil {
 		return nil, 0, err
 	}
@@ -328,13 +393,44 @@ type LinkUpdate struct {
 	DomainIDs *[]int64
 }
 
-// UpdateLink 更新短链(租户隔离)。domainIDs 替换时若与既有关联冲突返回唯一约束错误。
-func (s *Store) UpdateLink(ctx context.Context, tenantID, id int64, upd LinkUpdate) (*Link, error) {
-	cur, err := s.GetLinkByID(ctx, tenantID, id)
-	if err != nil {
+// GetLinkByIDAnyStatus 按 id 查询短链(租户隔离;**含**逻辑删除)。
+// 回收站里的"还原 / 彻底删除"都作用在已删除记录上,不能再用 GetLinkByID。
+func (s *Store) GetLinkByIDAnyStatus(ctx context.Context, tenantID, id int64) (*Link, error) {
+	var l Link
+	if err := s.db.WithContext(ctx).
+		Where("id = ? AND tenant_id = ?", id, tenantID).First(&l).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
 		return nil, err
 	}
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := s.fillLinkMeta(ctx, &l); err != nil {
+		return nil, err
+	}
+	return &l, nil
+}
+
+// UpdateLink 更新短链(租户隔离)。domainIDs 替换时若与存活短链冲突返回唯一约束错误。
+//
+// 读当前值在**事务内**做:原先在事务外先读一遍,两个并发 PATCH 会各自拿到同一份
+// 旧快照,后提交的那个用自己的旧值覆盖掉前一个的改动(link_type/status/redirect_status
+// 这几个字段尤其明显)。放进同一个事务后,后到的 UPDATE 会阻塞在前一个的写锁上,
+// 读到的一定是最新值。
+func (s *Store) UpdateLink(ctx context.Context, tenantID, id int64, upd LinkUpdate) (*Link, error) {
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var cur Link
+		// FOR UPDATE:不只是"把读挪进事务",还要让这条读**阻塞**在并发写上。
+		// Postgres 默认 READ COMMITTED 下,不加锁的普通 SELECT 不会等前一个
+		// 事务提交,后到的 PATCH 会读到旧快照并用自己的旧值覆盖掉前一个的改动;
+		// 加锁后它先等前一笔提交完,再读到**已含前一笔结果**的值,才谈得上不丢更新。
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
+			First(&cur).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return err
+		}
 		redirectStatus, status := cur.RedirectStatus, cur.Status
 		linkType, landingSource, landingURL := cur.LinkType, cur.LandingSource, cur.LandingURL
 		rulesEnabled := cur.RulesEnabled
@@ -356,6 +452,8 @@ func (s *Store) UpdateLink(ctx context.Context, tenantID, id int64, upd LinkUpda
 		if upd.LandingURL != nil {
 			landingURL = *upd.LandingURL
 		}
+		// 落地页型一律 302(写入侧钉死,见 effectiveRedirectStatus 的注释)
+		redirectStatus = effectiveRedirectStatus(redirectStatus, linkType)
 		if err := tx.Model(&Link{}).Where("id = ? AND tenant_id = ?", id, tenantID).
 			Updates(map[string]any{"redirect_status": redirectStatus, "status": status,
 				"link_type": linkType, "landing_source": landingSource, "landing_url": landingURL,
@@ -394,6 +492,9 @@ func (s *Store) UpdateLink(ctx context.Context, tenantID, id int64, upd LinkUpda
 }
 
 // SoftDeleteLink 逻辑删除(deleted_at 置位,记录保留)。
+//
+// 副作用(由 migrations/0017 的触发器承担,应用层不写):link_domains.link_deleted
+// 随之置真,该短码在存活的关联行上不再占用 —— 软删后同域名可重建同短码。
 func (s *Store) SoftDeleteLink(ctx context.Context, tenantID, id int64) error {
 	res := s.db.WithContext(ctx).Model(&Link{}).
 		Where("id = ? AND tenant_id = ? AND deleted_at IS NULL", id, tenantID).
@@ -405,6 +506,57 @@ func (s *Store) SoftDeleteLink(ctx context.Context, tenantID, id int64) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// RestoreLink 还原逻辑删除的短链(deleted_at 置 NULL,记录与关联原样恢复)。
+//
+// 短码是否还能拿回来由数据库回答:触发器把 link_domains.link_deleted 翻回 false,
+// 若该 (domain_id, code) 已被另一条存活短链占用,部分唯一索引直接报 23505,
+// 调用方据此回 409。应用层不预先"查一下有没有被占"——那是 TOCTOU,
+// 判定与写入必须在同一个不变式里。
+//
+// 语义:只还原**已逻辑删除**的短链;传入存活或不存在的 id 一律 ErrNotFound(幂等)。
+func (s *Store) RestoreLink(ctx context.Context, tenantID, id int64) error {
+	res := s.db.WithContext(ctx).Model(&Link{}).
+		Where("id = ? AND tenant_id = ? AND deleted_at IS NOT NULL", id, tenantID).
+		Update("deleted_at", nil)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// RestoreLinks 批量还原(语义同 RestoreLink)。
+// 逐条执行而非一条 UPDATE:还原可能因短码被占用而对某条失败,而批量端点需要
+// 区分"哪些真的还原了"(返回给前端刷新列表),不能让一条失败拖垮整批。
+// 返回实际还原条数。
+func (s *Store) RestoreLinks(ctx context.Context, tenantID int64, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	// 先取本租户真实命中且处于已删除态的 id(与 DetachDomain 同范式)
+	var restoreable []int64
+	if err := s.db.WithContext(ctx).Model(&Link{}).
+		Where("tenant_id = ? AND id IN ? AND deleted_at IS NOT NULL", tenantID, ids).
+		Pluck("id", &restoreable).Error; err != nil {
+		return 0, err
+	}
+	var n int64
+	for _, id := range restoreable {
+		// 短码被占用会返回唯一约束错误,跳过继续(逐条独立事务语义:
+		// 单条失败不影响其它条目)
+		if err := s.RestoreLink(ctx, tenantID, id); err != nil {
+			if IsUniqueViolation(err) {
+				continue
+			}
+			return n, err
+		}
+		n++
+	}
+	return n, nil
 }
 
 // PurgeLink 物理删除短链(连同关联与访问记录)。
@@ -596,6 +748,19 @@ func (s *Store) LookupLinkForVisit(ctx context.Context, domainID int64, code str
 }
 
 // PickTarget 轮询选一个目标 URL(rr_index 自增);无目标返回 ErrNotFound。
+//
+// 单目标直接返回、不碰 DB。绝大多数短链只有一个出口,此时轮询是恒等映射
+// (targets[0]),而那条 `UPDATE links SET rr_index = rr_index + 1` 的代价却是实的:
+//
+//	· 每次跳转都在**同一条 links 行**上抢行锁,一条热门短链的全部并发跳转在这个
+//	  行锁上排队,而它们本来互不相干(结果只取决于 rr_index,锁保护不了任何不变量);
+//	· 行版本无限膨胀,每次跳转一个新版本,autovacuum 压力与表膨胀都来自这行。
+//
+// 省掉它对单目标短链是纯赚,且不改变任何可观测行为(rr_index 对单目标没有意义)。
+//
+// 多目标仍保留原来的**单语句** `UPDATE ... RETURNING`:轮询指针必须原子自增,
+// 读-改-写(read rr_index → 算 → 写回)会让并发下同一个目标被重复选中。
+// 导出签名保持不变(redirect.go / landing.go 都按它选目标)。
 func (s *Store) PickTarget(ctx context.Context, linkID int64) (string, error) {
 	targets, err := s.linkTargetURLs(ctx, linkID)
 	if err != nil {
@@ -603,6 +768,9 @@ func (s *Store) PickTarget(ctx context.Context, linkID int64) (string, error) {
 	}
 	if len(targets) == 0 {
 		return "", ErrNotFound
+	}
+	if len(targets) == 1 {
+		return targets[0], nil
 	}
 	var cur int64
 	if err := s.db.WithContext(ctx).Raw(

@@ -13,6 +13,17 @@ import type {
 export interface LinkListQuery {
   page?: number;
   pageSize?: number;
+  /** 回收站视图:列出已逻辑删除的短链。默认 false(只看存活短链)。 */
+  includeDeleted?: boolean;
+}
+
+/**
+ * 回收站里的短链。逻辑删除时间由后端在 list?includeDeleted=true 时回传,
+ * 放在这里而不动 types/api.ts 的 Link —— 存活短链不带这个字段,它是回收站语境独有的。
+ */
+export interface DeletedLink extends Link {
+  /** 逻辑删除时间(ISO 串);回收站列表里的短链恒非空 */
+  deletedAt?: string;
 }
 
 /**
@@ -52,6 +63,23 @@ export async function listLinks(
       : queryOrPage;
   const result = await get<PageResult<Link>>('/links', { ...query });
   return { ...result, items: result.items.map(normalizeLink) };
+}
+
+/**
+ * 回收站列表:只含已逻辑删除的短链(与正常列表互斥,不是一个"全都返回"的开关)。
+ * 短链被软删后短码与配额都不再对外可见,这里就是找回它们的唯一入口 ——
+ * 没有它,软删出去的短码会被永久锁死、落地页文件也会一直占着磁盘。
+ */
+export async function listDeletedLinks(
+  page: number,
+  pageSize?: number,
+): Promise<PageResult<DeletedLink>> {
+  const result = await get<PageResult<DeletedLink>>('/links', {
+    page,
+    pageSize,
+    includeDeleted: true,
+  });
+  return { ...result, items: result.items.map(normalizeLink) as DeletedLink[] };
 }
 
 /** 创建短链(code 省略则自动生成;403 配额超限;409 同域名同短码) */
@@ -99,6 +127,15 @@ export function uploadLanding(id: number, file: File): Promise<Link> {
 /** 逻辑删除(记录与访问信息保留) */
 export function deleteLink(id: number): Promise<void> {
   return del<void>('/links/' + id);
+}
+
+/**
+ * 还原逻辑删除的短链。走 PATCH {"deletedAt": null}:PATCH 改资源字段,
+ * 把 deleted_at 写回 NULL 就是撤销删除。
+ * 若短码已被另一条存活短链占用,后端返回 409(短码不可复用)。
+ */
+export function restoreLink(id: number): Promise<Link> {
+  return patch<Link>('/links/' + id, { deletedAt: null }).then(normalizeLink);
 }
 
 /** 批量逻辑删除:ids 非空且 ≤200;跨租户/已删除/不存在的 id 静默跳过,返回实际删除条数 */

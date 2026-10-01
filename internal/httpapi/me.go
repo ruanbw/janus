@@ -90,7 +90,10 @@ func (a *API) handlePatchErrorPages(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	a.invalidateRules(t.ID)
+	// 只失效错误页快照,**不动规则快照**:两者是不同的数据。
+	// 原先这里调 invalidateRules,名字既不描述它做的事,也让"改错误页会
+	// 失效规则快照"这个假因果看起来像是刻意设计。
+	a.invalidateErrorPages(t.ID)
 	writeJSON(c, http.StatusOK, errorPagesResp{
 		Custom404HTML: p404,
 		Custom429HTML: p429,

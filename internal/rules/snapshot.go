@@ -43,13 +43,84 @@ type Loader func(ctx context.Context, tenantID int64) ([]store.Rule, error)
 
 // Cache 租户 → 快照 的缓存。整份快照原子替换,读侧无锁遍历。
 type Cache struct {
-	mu     sync.RWMutex
-	items  map[int64]*Snapshot
+	mu sync.RWMutex
+	// items 是"每个租户的缓存状态":快照 + 版本号(gen)。
+	// 快照可能为 nil(加载中、或加载失败)——那种情况下这条记录只承载版本号。
+	items map[int64]*cacheEntry
+	// loads 按租户分片的惊群保护:同一租户的并发请求只触发一次加载,
+	// 不同租户互不阻塞(见 tenantLocks 的注释)。
+	loads  *tenantLocks
 	loader Loader
-	// loadMu 串行化加载:缓存失效瞬间的并发请求只触发一次加载,避免惊群
-	loadMu sync.Mutex
 	ttl    time.Duration
 	log    *slog.Logger
+}
+
+// cacheEntry 一个租户的缓存状态。
+//
+// gen 是这个租户的"失效代数":Invalidate 每调用一次就自增,Get 在**加载开始时**
+// 记下当时的 gen,写回前再比对一次。不一致就丢弃本次加载结果 ——
+// 见 Cache.Get 里"丢失效竞态"那段注释。
+type cacheEntry struct {
+	snap *Snapshot
+	gen  uint64
+}
+
+// tenantLocks 按租户分片的加载锁:每租户一把,互不阻塞,且会在没人用时回收。
+//
+// 为什么不用一把全局锁:重建一份快照是一次 DB 往返 + 最多 200 条规则的预编译
+// (含 regexp.Compile)。一把全局锁意味着**一个租户的慢查询会阻塞所有其他租户**的
+// 跳转求值 —— 自托管多租户下这是直接的跨租户串行瓶颈。
+//
+// 为什么不用 golang.org/x/sync/singleflight:它在 go.mod 里只是 indirect,
+// 提为直接依赖要动 go.mod/go.sum(本波明确要求避免);而且 singleflight 的
+// 结果合并语义正好和"失效版本号"打架 —— 它会把 B 的在途结果复用给 A,
+// 而 A 拿到的正是我们要防的那份过期数据。自己写一把按租户的锁反而更直白。
+//
+// 回收:refs 归零(既没有持有者也没有等待者)时把这条从表里摘掉,
+// 免得长期运行按租户数无界增长。
+type tenantLocks struct {
+	mu    sync.Mutex
+	locks map[int64]*tenantLock
+}
+
+type tenantLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lock 锁住某个租户,返回解锁函数(必须调用)。
+func (t *tenantLocks) lock(tenantID int64) func() {
+	t.mu.Lock()
+	if t.locks == nil {
+		t.locks = make(map[int64]*tenantLock)
+	}
+	l := t.locks[tenantID]
+	if l == nil {
+		l = &tenantLock{}
+		t.locks[tenantID] = l
+	}
+	// refs 在表锁内自增:等锁的 goroutine 也持有一份引用,
+	// 于是持有者解锁时表里这条一定还在,不会出现"有人等着一把已被摘掉的锁"。
+	l.refs++
+	t.mu.Unlock()
+
+	l.mu.Lock()
+	return func() {
+		l.mu.Unlock()
+		t.mu.Lock()
+		l.refs--
+		if l.refs == 0 {
+			delete(t.locks, tenantID)
+		}
+		t.mu.Unlock()
+	}
+}
+
+// size 当前持有的租户锁数(测试与观测用)。
+func (t *tenantLocks) size() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.locks)
 }
 
 // Option Cache 构造选项。
@@ -72,7 +143,8 @@ func WithTTL(d time.Duration) Option {
 // NewCache 构造规则快照缓存。loader 为空时 Get 恒返回空快照(等价于"没有规则")。
 func NewCache(loader Loader, opts ...Option) *Cache {
 	c := &Cache{
-		items:  make(map[int64]*Snapshot),
+		items:  make(map[int64]*cacheEntry),
+		loads:  &tenantLocks{locks: make(map[int64]*tenantLock)},
 		loader: loader,
 		ttl:    DefaultSnapshotTTL,
 		log:    slog.Default(),
@@ -129,30 +201,93 @@ func (c *Cache) Get(ctx context.Context, tenantID int64) *Snapshot {
 	if c == nil || c.loader == nil {
 		return &Snapshot{BuiltAt: time.Now(), log: slog.Default()}
 	}
-	c.mu.RLock()
-	snap := c.items[tenantID]
-	c.mu.RUnlock()
-	if snap != nil && !c.stale(snap) {
+	if snap := c.cached(tenantID); snap != nil {
 		return snap
 	}
-	// 慢路径:同一时刻只放一次加载进来(惊群保护),拿到锁后复查一次缓存
-	c.loadMu.Lock()
-	defer c.loadMu.Unlock()
+	// 慢路径整体兜住 panic:README 承诺"快照加载失败一律按未命中继续",
+	// 而这一段原来只覆盖 loader **返回 error**;loader **panic**(比如某个
+	// 第三方 VisitorContext 实现有问题、或者将来 loader 里加了会炸的代码)
+	// 会一路冒到全局 recover 变成 500。与 Evaluate 的 recover 对称。
+	snap := &Snapshot{}
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				c.log.Error("加载租户规则 panic,按无规则放行(fail-open)",
+					"tenant", tenantID, "panic", rec, "stack", string(debug.Stack()))
+				snap = &Snapshot{BuiltAt: time.Now(), log: c.log}
+			}
+		}()
+		snap = c.load(ctx, tenantID)
+	}()
+	return snap
+}
+
+// cached 读缓存:有且未过期才算命中。
+func (c *Cache) cached(tenantID int64) *Snapshot {
 	c.mu.RLock()
-	snap = c.items[tenantID]
+	e := c.items[tenantID]
+	var snap *Snapshot
+	if e != nil {
+		// 必须在锁内把指针取出来。锁外再读 e.snap 就成了与 Invalidate
+		// (e.snap = nil)的并发读写 —— 这正是 go test -race 会抓的那一类。
+		snap = e.snap
+	}
 	c.mu.RUnlock()
-	if snap != nil && !c.stale(snap) {
+	// 锁外只碰 snap 自己:快照构造完就不再改(整体原子替换),
+	// 拿到旧指针的读者可以安全地用完它。
+	if snap == nil || c.stale(snap) {
+		return nil
+	}
+	return snap
+}
+
+// load 慢路径:按租户加锁 → 复查缓存 → 读库 → 预编译 → 写回。
+//
+// 这里有两道独立的锁,各管一件事:
+//   - loads 的租户锁:惊群保护(同租户只加载一次)且跨租户并行;
+//   - items 的 gen 版本号:防"加载途中发生的失效被这次加载覆盖掉"。
+//
+// 两者不能互相替代 —— 租户锁不参与 Invalidate,光有它拦不住下面的丢失效竞态。
+func (c *Cache) load(ctx context.Context, tenantID int64) *Snapshot {
+	unlock := c.loads.lock(tenantID)
+	defer unlock()
+
+	if snap := c.cached(tenantID); snap != nil {
 		return snap
 	}
+
+	// 在**碰数据库之前**就把这条租户的记录建好并记下当前代数。
+	// 这一步是丢失效竞态能被看见的前提:记录先存在,后面到达的 Invalidate
+	// 才找得到它、才谈得上自增代数;否则 Invalidate 落在一个还不存在的 key 上,
+	// 自增了也没人读。
+	c.mu.Lock()
+	e := c.items[tenantID]
+	if e == nil {
+		e = &cacheEntry{}
+		c.items[tenantID] = e
+	}
+	startGen := e.gen
+	c.mu.Unlock()
+
 	rules, err := c.loader(ctx, tenantID)
 	if err != nil {
 		c.log.Error("加载租户规则失败,按无规则放行(fail-open)", "tenant", tenantID, "err", err)
 		return &Snapshot{BuiltAt: time.Now(), log: c.log}
 	}
-	snap = NewSnapshot(rules, c.log)
+	snap := NewSnapshot(rules, c.log)
+
+	// 写回前比对代数:加载期间发生过 Invalidate,说明我们手上这份是旧的
+	// (它读的是失效之前提交的库状态)。写回去等于让刚保存的规则在整个 TTL 内
+	// 完全不生效,而且没有任何报错 —— ADR-0008 把这条列为不可接受。
+	// 这里丢弃本次结果:本次调用按未命中继续(fail-open),下一次 Get 会重新加载。
 	c.mu.Lock()
-	c.items[tenantID] = snap
-	c.mu.Unlock()
+	defer c.mu.Unlock()
+	if e.gen != startGen {
+		c.log.Warn("租户规则在加载期间变更,丢弃本次快照结果(按未命中继续)",
+			"tenant", tenantID)
+		return &Snapshot{BuiltAt: time.Now(), log: c.log}
+	}
+	e.snap = snap
 	return snap
 }
 
@@ -167,7 +302,13 @@ func (c *Cache) Invalidate(tenantID int64) {
 		return
 	}
 	c.mu.Lock()
-	delete(c.items, tenantID)
+	if e := c.items[tenantID]; e != nil {
+		// 记录留着(代数留着),只丢快照:正在加载的 goroutine 靠这个代数
+		// 发现自己手里的结果是旧的。key 本身不删,否则代数会一起丢,
+		// 正在加载的 goroutine 就看不出发生过失效了。
+		e.snap = nil
+		e.gen++
+	}
 	c.mu.Unlock()
 }
 
@@ -177,7 +318,11 @@ func (c *Cache) InvalidateAll() {
 		return
 	}
 	c.mu.Lock()
-	c.items = make(map[int64]*Snapshot)
+	// 每个租户的代数都要自增:正在加载的 goroutine 也要看出"全局失效过"。
+	for _, e := range c.items {
+		e.snap = nil
+		e.gen++
+	}
 	c.mu.Unlock()
 }
 
@@ -188,7 +333,13 @@ func (c *Cache) Len() int {
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return len(c.items)
+	n := 0
+	for _, e := range c.items {
+		if e.snap != nil {
+			n++
+		}
+	}
+	return n
 }
 
 // Evaluate 按求值顺序返回首个命中的裁决(spec D4:首命中即裁决,不做多规则叠加,

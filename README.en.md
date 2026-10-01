@@ -122,7 +122,7 @@ Three hard constraints on this hot path (you must preserve them when editing `re
 - **Custom short code** or auto-generated (6 chars). The same code on different domains may point to different targets, and one tenant may reuse a code across several links.
 - **Multiple targets**: a link can hold several target URLs, and each visit picks one **round-robin**.
 - **Redirect mode**: temporary 302 (default) or permanent 301, configured per link.
-- **Two types**: **redirect** (straight to the target URL) and **landing** (via a landing page, then a click reaches the target URL). The type is fixed at creation.
+- **Two types**: **redirect** (redirects straight to the target URL) and **landing** (goes to the landing page first, target URL after the click). The type is chosen at creation time but remains **editable afterwards** (`PATCH /api/links/:id` with `linkType`; the link edit form exposes it). A change takes effect immediately.
 - **Enable / disable / delete**: soft delete by default (row, associations and visit data are retained), plus a permanent purge; the console supports batch soft delete and batch purge.
 - **Per-link rule switch**: any link can opt out of rule evaluation entirely.
 
@@ -144,7 +144,9 @@ Alongside it:
 - **Visit detail** (ADR-0007): each visit records the **action** (redirect / landing view / click), the **outcome** (success / failure plus reason: link disabled / soft-deleted / no usable target / landing files missing), the visitor's IP, User-Agent, referrer, language, country and timestamp.
 - **Counting rule**: only **successful** redirects and landing views count as visits; clicks and failures never do.
 - **Attributable failures are never lost**: failures traceable to a specific link are recorded; a miss on a nonexistent code is not.
-- **Overview page**: KPI cards + traffic trends / device / OS / browser / referrer / country breakdowns + a **world map** choropleth (bundled country borders + `d3-geo` projection, lazily loaded, ADR-0010).
+- **Overview page**: KPI cards + top-link ranking / device / OS / browser / referrer / country breakdowns + a **world map** choropleth (bundled country borders + `d3-geo` projection, lazily loaded, ADR-0010).
+- **Overview stats come from a dedicated aggregation endpoint**, `GET /api/visits/overview`: full-tenant counters and per-dimension distributions in one SQL round trip (real `GROUP BY`, no sampling). The frontend no longer pulls visit rows and counts them itself — that inevitably drifts from the KPI definitions, treats "the latest 50 rows" as the whole, and covers only the first 100 links of the link list. The UA dimension returns **raw UA strings plus counts**; device/OS/browser labels are translated by the existing `ua-parser-js` so there is no second UA parser in Go.
+- **CTR definition**: numerator and denominator come from the same SQL and the same retention window in the `visits` table; the denominator is **landing views only** (a redirect link can never produce a click, so including it would systematically depress CTR). The numerator is no longer the permanent `links.clicks` counter — it never decays while the denominator is trimmed by the 90-day cleanup, which made CTR drift monotonically upward past 100%.
 - **Geographic attribution**: a bundled ip2region offline database (V4 + V6) resolves the visitor's country code, behind a 16-shard two-generation cache that also caches negative results (ADR-0009).
 - **Retention**: visit rows are kept 90 days by default and pruned by a background worker (`CLOAK_VISIT_RETENTION`).
 - **Per-link detail view**: visit rows for a single link, including action, outcome and matched rule.
@@ -153,7 +155,7 @@ Alongside it:
 
 Tenant-scoped **access disposition rules**: one condition set plus one action (ADR-0008).
 
-- **13 evaluable visitor fields**: `ip` (CIDR supported), `ipattr` (private / loopback / linklocal), `country`, `asn`, `lang`, `ref`, `utm_source`, `ua`, `devtype` (bot / mobile / tablet / desktop), `os`, `browser`, `path`, `domain`.
+- **13 evaluable visitor fields**: `ip` (CIDR supported), `ipattr` (private / loopback / linklocal), `country`, `asn`, `lang`, `ref`, `utm`, `ua`, `devtype` (bot / mobile / tablet / desktop), `os`, `browser`, `path`, `domain`.
 - **Operators**: in / not in / equals / not equals / contains / not contains / greater than / less than / regex (RE2, case-sensitive). The `ip` field matches CIDR ranges or literals, and numeric comparisons never match a non-numeric value. No nested groups in v1; `logic` decides "all must match" vs. "any may match".
 - **Two authoring modes**: `visual` (condition tree, default) and `expression` (Expr language for advanced users, syntax checked by `POST /api/rules/validate-expr`).
 - **Actions (verdicts)**: pass `pass` (records the hit, then continues the original flow) / rewrite target `redirect` (the rewritten URL does not join the link's target round-robin) / return 404 `notfound` (records `outcome=failed`, `reason=rule_blocked`) / throttle `throttle` (returns 429, records `reason=rule_throttled`); the last two do not count as visits.
@@ -167,7 +169,9 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
 - **Tenant-wide**: custom HTML for 404 and 429 pages.
 - **Per rule**: a single rule can carry its own error page and mode (`default` / `custom`).
 - Resolution order: rule-specific → tenant-wide → built-in default page (a static, theme-aware page).
-- Applies to: misses, rule `notfound` verdicts and rule `throttle` verdicts (429).
+- Applies to: misses, disabled / soft-deleted links, missing targets, missing landing files, rule `notfound` verdicts (404) and rule `throttle` verdicts (429).
+- **Cached per tenant**: error pages use the same shape as the rule snapshot (lazy load + atomic swap + TTL backstop + explicit invalidation on edit). The miss path — the one easiest to trigger — no longer re-reads two 512KB `TEXT` columns on every request (see hard constraint #1 in 1.2).
+- **Response headers**: error pages carry `Content-Security-Policy: sandbox allow-scripts allow-forms` (scripts run, but in an opaque origin that cannot read this site's session) and `X-Content-Type-Options: nosniff`; both 404 and 429 send `Cache-Control: no-store`, and 429 also sends `Retry-After: 60`. The admin preview iframe uses the same sandbox flags as production.
 
 ### 2.8 Platform administration (super admin)
 
@@ -468,9 +472,15 @@ go test ./...                    # needs the cloak_test database (see 8.1)
 # Frontend: types + UI gate + build
 cd web
 pnpm type-check
-pnpm check:ui                    # passes only with zero violations
-pnpm build
+pnpm build                        # must come first
+pnpm check:ui                     # passes only with zero violations (check 8 reads dist/; a
+                                 # missing dist is now an error, not a silent skip)
 ```
+
+> `pnpm build` must run **before** `pnpm check:ui`: check 8 verifies that the animation
+> variants were actually emitted into `dist/assets`, and a missing `dist` now fails the
+> gate instead of being skipped. This order is enforced by `.github/workflows/ci.yml`
+> and by `docker/Dockerfile`.
 
 ### 7.2 Backend conventions
 
@@ -533,10 +543,10 @@ Each test's `Setup` connects to the test database, applies migrations, `TRUNCATE
 ```bash
 cd web
 pnpm type-check   # vue-tsc --noEmit
+pnpm build        # emit dist first — check 8 reads it
 pnpm check:ui     # UI gate: legacy classes/tokens, undefined CSS variables, palette leaks,
                   # arbitrary font sizes, bare HTML primitives, state-color contrast in
                   # both themes, hard-coded pure white
-pnpm build        # output to web/dist (not committed; the image rebuilds it)
 ```
 
 The frontend has no unit-test framework; quality comes from type checking, the gate script and end-to-end verification.

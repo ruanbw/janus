@@ -16,10 +16,16 @@ import (
 // Issuer 固定签发者标识:解析时强制匹配,防止跨服务/跨环境 token 混用。
 const Issuer = "cloak"
 
-// Claims JWT 载荷:业务角色(tenant/superadmin)+ 标准注册声明。
+// Claims JWT 载荷:业务角色(tenant/superadmin)+ 租户 token_version + 标准注册声明。
 // Sub 为租户 ID(十进制字符串);Issuer 固定 "cloak";ID(jti)为每次签发随机生成。
+//
+// TokenVersion 是**吊销开关**:签发时快照租户当前的 token_version,认证时与库里的
+// 当前值比对,不一致即 401。改密/重置密码/封禁都会自增该值 → 此前签发的 token
+// 立即作废,不必等 TTL 到期。没有它,jti 虽然每次唯一却从无人查过,改密后旧
+// accessToken 在 TTL(默认 24h)内一直有效。
 type Claims struct {
-	Role string `json:"role"`
+	Role         string `json:"role"`
+	TokenVersion int64  `json:"tv"`
 	jwt.RegisteredClaims
 }
 
@@ -34,11 +40,13 @@ func NewManager(secret string, ttl time.Duration) *Manager {
 	return &Manager{secret: []byte(secret), ttl: ttl}
 }
 
-// Issue 为租户签发 HS256 JWT;jti 使用 crypto/rand 随机生成(参考 session.go newToken 的写法)。
-func (m *Manager) Issue(tenantID int64, role string) (string, error) {
+// Issue 为租户签发 HS256 JWT,并把签发时刻的 token_version 写进载荷。
+// jti 使用 crypto/rand 随机生成(参考 session.go newToken 的写法)。
+func (m *Manager) Issue(tenantID int64, role string, tokenVersion int64) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		Role: role,
+		Role:         role,
+		TokenVersion: tokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    Issuer,
 			Subject:   strconv.FormatInt(tenantID, 10),
