@@ -16,9 +16,17 @@ require (
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.9.1 // indirect
+	github.com/caarlos0/env/v11 v11.4.1 // indirect
 	github.com/casbin/govaluate v1.10.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/mfridman/interpolate v0.0.2 // indirect
+	github.com/pressly/goose/v3 v3.28.0 // indirect
+	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
+	github.com/wneessen/go-mail v0.8.1 // indirect
+	github.com/yl2chen/cidranger v1.0.2 // indirect
+	go.uber.org/multierr v1.11.0 // indirect
+	golang.org/x/time v0.16.0 // indirect
 )
 
 require (
