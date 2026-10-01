@@ -41,98 +41,98 @@ Wrap third-party libraries cleanly behind existing project domain interfaces and
 
 ### Task 1: Add Go module dependencies
 
-- [ ] **Step 1.1: Run `go get` for all 5 mature third-party libraries**
+- [x] **Step 1.1: Run `go get` for all 5 mature third-party libraries**
   - Run `go get github.com/yl2chen/cidranger`
   - Run `go get golang.org/x/time/rate`
   - Run `go get github.com/wneessen/go-mail`
   - Run `go get github.com/caarlos0/env/v11`
   - Run `go get github.com/pressly/goose/v3`
-- [ ] **Step 1.2: Run `go mod tidy` and verify build**
+- [x] **Step 1.2: Run `go mod tidy` and verify build**
   - Run `go mod tidy`
   - Verify `go.mod` and `go.sum` are updated cleanly.
-- [ ] **Step 1.3: Commit changes**
+- [x] **Step 1.3: Commit changes**
   - Commit message: `build(deps): add cidranger, x/time/rate, go-mail, env, and goose`
 
 ---
 
 ### Task 2: Replace custom Radix Tree with `cidranger` in `internal/rules`
 
-- [ ] **Step 2.1: Implement `IPRanger` in `internal/rules/radix.go` using `cidranger`**
+- [x] **Step 2.1: Implement `IPRanger` in `internal/rules/radix.go` using `cidranger`**
   - Use `cidranger.NewPCTrieRanger()` to construct compressed path trie.
   - Insert prefixes converted from `netip.Prefix` to `*net.IPNet`.
   - Provide `Contains(addr netip.Addr) bool` by querying `ranger.Contains(net.IP(addr.AsSlice()))`.
   - Remove all manual node allocation, bit slicing, and handcrafted binary search code.
-- [ ] **Step 2.2: Update `internal/rules/eval.go` to use `*IPRanger`**
+- [x] **Step 2.2: Update `internal/rules/eval.go` to use `*IPRanger`**
   - Update `CompiledCondition.radix` to `*IPRanger`.
   - Update `compileCondition` to construct `*IPRanger`.
-- [ ] **Step 2.3: Verify with unit tests and benchmark tests**
+- [x] **Step 2.3: Verify with unit tests and benchmark tests**
   - Run `go test -v ./internal/rules/...`
   - Ensure zero regressions on IPv4/IPv6 tests in `radix_test.go` and `eval_test.go`.
-- [ ] **Step 2.4: Commit changes**
+- [x] **Step 2.4: Commit changes**
   - Commit message: `refactor(rules): replace custom radix tree with cidranger`
 
 ---
 
 ### Task 3: Replace custom rate limiter with `golang.org/x/time/rate` in `internal/httpapi`
 
-- [ ] **Step 3.1: Refactor `internal/httpapi/ratelimit.go` using `x/time/rate`**
+- [x] **Step 3.1: Refactor `internal/httpapi/ratelimit.go` using `x/time/rate`**
   - Create token-bucket limiter mapping per IP with `rate.NewLimiter(rate.Limit(limit/window.Seconds()), limit)`.
   - Support automatic LRU/cleanup for stale visitor buckets to avoid memory leaks.
   - Retain `RateLimiter` interface and middleware factory `rateLimitMiddleware`.
-- [ ] **Step 3.2: Verify rate limiting tests**
+- [x] **Step 3.2: Verify rate limiting tests**
   - Run `go test -v ./internal/httpapi/ -run "TestRegisterRateLimit|TestAuthRateLimitSharedAcrossLoginAndForgot"`
-- [ ] **Step 3.3: Commit changes**
+- [x] **Step 3.3: Commit changes**
   - Commit message: `refactor(httpapi): replace custom rate limiter with x/time/rate token bucket`
 
 ---
 
 ### Task 4: Replace custom SMTP client with `github.com/wneessen/go-mail` in `internal/mailer`
 
-- [ ] **Step 4.1: Refactor `internal/mailer/smtp.go` using `go-mail`**
+- [x] **Step 4.1: Refactor `internal/mailer/smtp.go` using `go-mail`**
   - Initialize client using `mail.NewClient` with timeout, port, SSL / STARTTLS configuration.
   - Build message using `mail.NewMsg()` with standard headers and UTF-8 body.
   - Eliminate manual TCP socket connection, SMTP greeting/EHLO handshake parsing, and manual MIME headers.
-- [ ] **Step 4.2: Add unit tests in `internal/mailer/smtp_test.go`**
+- [x] **Step 4.2: Add unit tests in `internal/mailer/smtp_test.go`**
   - Verify client options setup, message creation, and error handling.
   - Run `go test -v ./internal/mailer/...`
-- [ ] **Step 4.3: Commit changes**
+- [x] **Step 4.3: Commit changes**
   - Commit message: `refactor(mailer): replace manual SMTP protocol client with go-mail`
 
 ---
 
 ### Task 5: Replace manual config parsing with `github.com/caarlos0/env/v11` in `internal/config`
 
-- [ ] **Step 5.1: Add `env` tags to `Config` struct in `internal/config/config.go`**
+- [x] **Step 5.1: Add `env` tags to `Config` struct in `internal/config/config.go`**
   - Annotate all fields with `env:"CLOAK_..."` and `envDefault:"..."`.
   - Use `env.Parse(&cfg)` in `Load()`.
   - Remove redundant `getenv`, `getbool`, `getint`, `getdur` helper functions.
-- [ ] **Step 5.2: Verify config tests**
+- [x] **Step 5.2: Verify config tests**
   - Add/update `internal/config/config_test.go` covering defaults, overrides, and duration/boolean parsing.
   - Run `go test -v ./internal/config/...`
-- [ ] **Step 5.3: Commit changes**
+- [x] **Step 5.3: Commit changes**
   - Commit message: `refactor(config): replace manual env parsing with caarlos0/env`
 
 ---
 
 ### Task 6: Replace custom migration runner with `github.com/pressly/goose/v3` in `internal/db`
 
-- [ ] **Step 6.1: Refactor `internal/db/migrate.go` using `goose/v3`**
+- [x] **Step 6.1: Refactor `internal/db/migrate.go` using `goose/v3`**
   - Use `stdlib.OpenDBFromPool(pool)` from `pgx/v5/stdlib`.
   - Set dialect to postgres: `goose.SetDialect("postgres")`.
   - Sync legacy `schema_migrations` records to `goose_db_version` if needed for smooth upgrade.
   - Execute `goose.Up(db, dir)`.
-- [ ] **Step 6.2: Verify database migration tests**
+- [x] **Step 6.2: Verify database migration tests**
   - Run `go test -v ./internal/db/...`
-- [ ] **Step 6.3: Commit changes**
+- [x] **Step 6.3: Commit changes**
   - Commit message: `refactor(db): replace custom migration runner with goose`
 
 ---
 
 ### Task 7: Full Integration & Regression Testing
 
-- [ ] **Step 7.1: Run full test suite across entire repository**
+- [x] **Step 7.1: Run full test suite across entire repository**
   - Run `go test -race ./...`
   - Verify all packages pass cleanly.
-- [ ] **Step 7.2: Code quality check and git review**
+- [x] **Step 7.2: Code quality check and git review**
   - Review `git diff` to ensure zero custom wheels remain.
   - Update issue status in `.scratch/backend-third-party-libs/issues/`.
