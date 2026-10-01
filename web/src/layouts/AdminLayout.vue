@@ -160,7 +160,7 @@
         <!-- 错误边界只包住页面本身:页面抛错时顶栏与侧边栏仍可用,能直接切走 -->
         <ErrorBoundary v-slot="{ attempt }" :reset-key="route.fullPath">
           <router-view v-slot="{ Component }">
-            <transition name="page" mode="out-in">
+            <transition name="page" mode="out-in" @leave="onPageLeave">
               <component :is="Component" :key="route.fullPath + '_' + attempt" />
             </transition>
           </router-view>
@@ -173,7 +173,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ChevronDown, LogOut, Menu, PanelLeftClose, PanelLeftOpen, User, X } from '@lucide/vue';
 import {
@@ -205,6 +205,48 @@ const COLLAPSE_STORAGE_KEY = 'cloak:sidebar-collapsed';
 
 const auth = useAuthStore();
 const route = useRoute();
+
+// 页面过渡在后台标签页里会卡死,这里接管 leave 收尾。
+//
+// 根因:浏览器冻结隐藏标签页的动画帧。Vue 的 Transition 在 onLeave 里先
+// nextFrame()(双层 requestAnimationFrame),再在**该回调内部**调 whenTransitionEnds
+// 收尾 —— 隐藏标签页里 rAF 一个都不跑,旧页面就永久停在 page-leave-active。
+// mode="out-in" 要等它走完才挂载新页面,于是「标题已切、内容还是上一页」的
+// 白屏,刷新才恢复。自动化与截图工具同样会踩(它们一般不激活标签页)。
+//
+// 两条走不通的路(都实测过):
+//   - :duration 压到 0:whenTransitionEnds 认显式 duration,但它整个位于
+//     nextFrame 回调里,rAF 不跑就到不了那里,依旧卡在 page-leave-active;
+//   - :css="false":旧元素被移除后新元素不挂载,<main> 直接变空(kids:0)。
+//
+// 所以接管 @leave 自己收尾。三个约束:
+//   1. 声明 @leave 即等于 hasExplicitCallback,done 必须自己调,否则过渡永不结束;
+//   2. 必须走 setTimeout(异步),不能同步调 —— mode="out-in" 在 leave 开始时把
+//      state.isLeaving 置真并渲染 emptyPlaceholder,要等 afterLeave 把它置回假才
+//      instance.update() 挂载新页面,同步 done 会重入同一次更新,新组件被判成
+//      「仍在 leaving」而丢弃(实测 kids:0);
+//   3. 可见时也要调 done,只是等满 CSS 动画,行为与改动前一致。
+const tabHidden = ref(false);
+const syncVisibility = (): void => {
+  tabHidden.value = document.hidden;
+};
+
+// 与 main.css 的 .page-leave-active(0.18s)对齐。
+const PAGE_TRANSITION_MS = 180;
+
+function onPageLeave(_el: Element, done: () => void): void {
+  window.setTimeout(done, tabHidden.value ? 0 : PAGE_TRANSITION_MS);
+}
+
+onMounted(() => {
+  syncVisibility();
+  document.addEventListener('visibilitychange', syncVisibility);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', syncVisibility);
+});
+
 const router = useRouter();
 
 const collapsed = ref(readCollapsed());
