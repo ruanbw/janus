@@ -131,3 +131,60 @@ export function conditionSummary(rule: Rule): string {
   if (!rule.conditions || rule.conditions.length === 0) return '—';
   return rule.conditions.map(describeCondition).join(' · ');
 }
+
+/** 设备类型预设选项（与后端 internal/rules/fields.go 保持严格一致） */
+export const DEVTYPE_OPTIONS = [
+  { value: 'bot', label: '爬虫 / Bot (bot)' },
+  { value: 'mobile', label: '手机 (mobile)' },
+  { value: 'tablet', label: '平板 (tablet)' },
+  { value: 'desktop', label: '桌面端 / PC (desktop)' },
+];
+
+/** 操作系统预设选项（后端识别的 5 大系统及其他） */
+export const OS_OPTIONS = [
+  { value: 'iOS', label: 'iOS' },
+  { value: 'Android', label: 'Android' },
+  { value: 'Windows', label: 'Windows' },
+  { value: 'macOS', label: 'macOS' },
+  { value: 'Linux', label: 'Linux' },
+  { value: '其他', label: '其他操作系统' },
+];
+
+/** 浏览器预设选项（后端识别的 4 大浏览器及其他） */
+export const BROWSER_OPTIONS = [
+  { value: 'Chrome', label: 'Chrome' },
+  { value: 'Safari', label: 'Safari' },
+  { value: 'Firefox', label: 'Firefox' },
+  { value: 'Edge', label: 'Edge' },
+  { value: '其他', label: '其他浏览器' },
+];
+
+/** IP 属性预设选项（后端仅识别三种私有/局域属性，非此类为空） */
+export const IPATTR_OPTIONS = [
+  { value: 'private', label: '私网 / 局域网 (private)' },
+  { value: 'loopback', label: '回环地址 (loopback)' },
+  { value: 'linklocal', label: '链路本地 (linklocal)' },
+];
+
+/** 常用 Accept-Language 选项（后端按首标签小写化比较） */
+export const LANG_OPTIONS = [
+  { value: 'zh-cn', label: '中文（简体）zh-cn' },
+  { value: 'zh-tw', label: '中文（繁体）zh-tw' },
+  { value: 'zh-hk', label: '中文（香港）zh-hk' },
+  { value: 'zh', label: '中文通用 zh' },
+  { value: 'en-us', label: '英语（美国）en-us' },
+  { value: 'en-gb', label: '英语（英国）en-gb' },
+  { value: 'en', label: '英语通用 en' },
+  { value: 'ja', label: '日语 ja / ja-jp' },
+  { value: 'ko', label: '韩语 ko / ko-kr' },
+  { value: 'es', label: '西班牙语 es' },
+  { value: 'pt-br', label: '葡萄牙语（巴西）pt-br' },
+  { value: 'pt', label: '葡萄牙语 pt' },
+  { value: 'de', label: '德语 de' },
+  { value: 'fr', label: '法语 fr' },
+  { value: 'ru', label: '俄语 ru' },
+  { value: 'vi', label: '越南语 vi' },
+  { value: 'th', label: '泰语 th' },
+  { value: 'id', label: '印尼语 id' },
+  { value: 'ar', label: '阿拉伯语 ar' },
+];

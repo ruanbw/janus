@@ -23,6 +23,7 @@ import {
   X,
 } from '@lucide/vue';
 
+import { listDomains } from '@/api/domains';
 import { listLinks } from '@/api/links';
 import { createRule, deleteRule, getRule, updateRule, type RuleCreatePayload } from '@/api/rules';
 import PageHeader from '@/components/PageHeader.vue';
@@ -33,9 +34,14 @@ import type { Rule, RuleCondition, RuleOperator, RulePageMode, RuleScope } from 
 import { message } from '@/utils/toast';
 import {
   ACTION_OPTIONS,
+  BROWSER_OPTIONS,
+  DEVTYPE_OPTIONS,
   FIELD_OPTIONS,
+  IPATTR_OPTIONS,
+  LANG_OPTIONS,
   LOGIC_OPTIONS,
   OPERATOR_OPTIONS,
+  OS_OPTIONS,
   actionLabel,
   actionTagColor,
   fieldOption,
@@ -107,6 +113,24 @@ const rules: Record<string, FormRule[]> = {
     },
   ],
 };
+
+// ---- 租户域名列表（用于 domain 字段下拉候选） ----
+const domainCatalog = ref<{ id: number; fqdn: string }[]>([]);
+const domainOptions = computed(() =>
+  domainCatalog.value.map((d) => ({
+    value: d.fqdn,
+    label: d.fqdn,
+  })),
+);
+
+async function loadDomainCatalog() {
+  try {
+    const list = await listDomains();
+    domainCatalog.value = (list || []).map((d) => ({ id: d.id, fqdn: d.fqdn }));
+  } catch {
+    // 域名拉取失败静默处理，用户仍可手动输入
+  }
+}
 
 // ---- 短链目录（作用域选择器） ----
 const linkCatalog = ref<{ id: number; code: string; domains: string[] }[]>([]);
@@ -292,12 +316,19 @@ function removeCondition(key: string) {
   if (form.conditions.length === 0) form.conditions.push(newCondition());
 }
 
-function conditionHint(field: string): string {
+function conditionHint(cond: EditableCondition): string {
+  const field = cond.field;
   const opt = fieldOption(field);
   if (!opt) return '';
   if (opt.pending) return '该字段的数据源尚未接入，现在保存也会恒不命中';
-  // country 走下拉，不再让用户对着一个输入框手敲两位国家码
-  if (field === 'country') return '从下拉里选国家 / 地区，可多选 · 查不到国家的 IP 恒不命中';
+  if (cond.operator === 'regex') return '正则匹配语法支持 RE2，大小写敏感；忽略大小写可用 (?i)';
+  if (field === 'country') return '从下拉里选国家 / 地区，支持搜索 · 查不到国家的 IP 恒不命中';
+  if (field === 'devtype') return '从下拉里选设备类型：爬虫 (bot)、手机 (mobile)、平板 (tablet)、桌面端 (desktop)';
+  if (field === 'os') return '从下拉里选操作系统：iOS / Android / Windows / macOS / Linux / 其他';
+  if (field === 'browser') return '从下拉里选浏览器：Chrome / Safari / Firefox / Edge / 其他';
+  if (field === 'ipattr') return '从下拉里选 IP 属性：私网 (private)、回环 (loopback)、链路本地 (linklocal)';
+  if (field === 'domain') return '从下拉里选本租户承载域名，也可手动输入';
+  if (field === 'lang') return '从常用语言标签里选择，或按标准标签 (如 zh-cn, en-us) 手填';
   return `取值示例：${opt.placeholder}${opt.hint ? ` · ${opt.hint}` : ''}`;
 }
 
@@ -307,16 +338,85 @@ function conditionHint(field: string): string {
  * 存法不变，是为了序列化 / 校验 / 摘要三处逻辑不用分叉。
  */
 const countryOptions = COUNTRY_OPTIONS.map((c) => ({ value: c.value, label: c.label }));
+const devTypeOptions = DEVTYPE_OPTIONS;
+const osOptions = OS_OPTIONS;
+const browserOptions = BROWSER_OPTIONS;
+const ipAttrOptions = IPATTR_OPTIONS;
+const langOptions = LANG_OPTIONS;
 
-function countryValuesOf(cond: EditableCondition): string[] {
-  return cond.raw
-    .split(/[\n,;]+/)
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
+/**
+ * 判断条件是否支持下拉候选选择：
+ * 当运算符为正则（regex）、大于（gt）、小于（lt）时，恒回退为文本框手动输入。
+ */
+function isSelectField(cond: EditableCondition): boolean {
+  if (cond.operator === 'regex' || cond.operator === 'gt' || cond.operator === 'lt') {
+    return false;
+  }
+  return [
+    'country',
+    'devtype',
+    'os',
+    'browser',
+    'ipattr',
+    'domain',
+    'lang',
+  ].includes(cond.field);
 }
 
-function setCountryValues(cond: EditableCondition, values: unknown): void {
-  cond.raw = (Array.isArray(values) ? (values as string[]) : []).join(', ');
+/** 判断该字段当前运算符下是否为多选 */
+function isMultipleOperator(cond: EditableCondition): boolean {
+  // eq, neq 为单值精确比较；其余属于/不属于（in, not_in 等）支持多选
+  return cond.operator !== 'eq' && cond.operator !== 'neq';
+}
+
+/** 获取字段对应的候选项列表 */
+function getFieldCandidateOptions(cond: EditableCondition): { value: string; label: string }[] {
+  switch (cond.field) {
+    case 'country':
+      return countryOptions;
+    case 'devtype':
+      return devTypeOptions;
+    case 'os':
+      return osOptions;
+    case 'browser':
+      return browserOptions;
+    case 'ipattr':
+      return ipAttrOptions;
+    case 'domain':
+      return domainOptions.value;
+    case 'lang':
+      return langOptions;
+    default:
+      return [];
+  }
+}
+
+/** 多选模式下的选项值数组解析 */
+function selectValuesOf(cond: EditableCondition): string[] {
+  const parts = cond.raw
+    .split(/[\n,;]+/).map((s) => s.trim())
+    .filter(Boolean);
+  if (cond.field === 'country') {
+    return parts.map((s) => s.toUpperCase());
+  }
+  return parts;
+}
+
+/** 多选模式下的选中值回填 */
+function setSelectValues(cond: EditableCondition, values: unknown): void {
+  const arr = Array.isArray(values) ? (values as string[]) : [];
+  cond.raw = arr.join(', ');
+}
+
+/** 单选模式下的选中值回填 */
+function setSingleSelectValue(cond: EditableCondition, value: unknown): void {
+  cond.raw = typeof value === 'string' ? value.trim() : (value ? String(value) : '');
+}
+
+/** 单选模式下的绑定值获取 */
+function singleSelectValueOf(cond: EditableCondition): string | undefined {
+  const v = cond.raw.trim();
+  return v || undefined;
 }
 
 /** 表单态取值 → 后端契约：按换行/逗号/分号切分，丢弃空项 */
@@ -512,7 +612,7 @@ async function init() {
   } else {
     resetForm();
   }
-  await loadLinkCatalog();
+  await Promise.all([loadLinkCatalog(), loadDomainCatalog()]);
   if (form.linkIds.length > 0) {
     await ensureLinksLoaded(form.linkIds);
   }
@@ -697,16 +797,29 @@ onMounted(init);
                   </div>
 
                   <div class="mt-3">
+                    <!-- 下拉多选：支持枚举且非单值运算符（in / not_in 等） -->
                     <AppSelect
-                      v-if="cond.field === 'country'"
-                      :model-value="countryValuesOf(cond)"
-                      :options="countryOptions"
+                      v-if="isSelectField(cond) && isMultipleOperator(cond)"
+                      :model-value="selectValuesOf(cond)"
+                      :options="getFieldCandidateOptions(cond)"
                       multiple
                       show-search
+                      allow-clear
                       :max-tag-count="6"
-                      placeholder="选择国家 / 地区，可多选"
-                      @update:model-value="(v: unknown) => setCountryValues(cond, v)"
+                      :placeholder="'选择' + (fieldOption(cond.field)?.label || '选项') + '，支持多选与搜索'"
+                      @update:model-value="(v: unknown) => setSelectValues(cond, v)"
                     />
+                    <!-- 下拉单选：支持枚举且为单值运算符（eq / neq） -->
+                    <AppSelect
+                      v-else-if="isSelectField(cond) && !isMultipleOperator(cond)"
+                      :model-value="singleSelectValueOf(cond)"
+                      :options="getFieldCandidateOptions(cond)"
+                      show-search
+                      allow-clear
+                      :placeholder="'选择' + (fieldOption(cond.field)?.label || '选项')"
+                      @update:model-value="(v: unknown) => setSingleSelectValue(cond, v)"
+                    />
+                    <!-- 自由文本输入：ip / path / ua / ref / utm 或 正则/大于/小于等高级匹配 -->
                     <AppInput
                       v-else
                       :model-value="cond.raw"
@@ -715,7 +828,7 @@ onMounted(init);
                     />
                   </div>
 
-                  <p class="mt-2 text-xs text-ink-faint">{{ conditionHint(cond.field) }}</p>
+                  <p class="mt-2 text-xs text-ink-faint">{{ conditionHint(cond) }}</p>
                 </div>
 
                 <AppButton @click="addCondition">
