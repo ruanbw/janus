@@ -913,7 +913,7 @@ func (a *API) handleSimulateRules(c *gin.Context) {
 		writeAPIError(c, err)
 		return
 	}
-	ip, err := simClientIP(c, req.IP)
+	ip, err := a.simClientIP(c, req.IP)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -1027,10 +1027,11 @@ func (t simTarget) request(ua, lang, referrer string) *http.Request {
 }
 
 // simClientIP 校验访客 IP;为空时取当前请求来源 IP(诊断页多半在本机打开)。
-func simClientIP(c *gin.Context, raw string) (string, error) {
+// 是 (*API) 的方法:来源 IP 的解析口径要跟真实跳转链路一致(clientIPForVisitor)。
+func (a *API) simClientIP(c *gin.Context, raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		if ip, err := netip.ParseAddr(clientIP(c.Request)); err == nil {
+		if ip, err := netip.ParseAddr(a.clientIPForVisitor(c.Request)); err == nil {
 			return ip.String(), nil
 		}
 		return "127.0.0.1", nil

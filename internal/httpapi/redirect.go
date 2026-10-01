@@ -368,7 +368,7 @@ func (a *API) ruleDecision(c *gin.Context, link *store.Link) rules.Decision {
 	if g.Country != "" || g.ASN != "" {
 		req = req.WithContext(rules.WithGeo(req.Context(), g.Country, g.ASN))
 	}
-	vCtx := rules.AcquireVisitorContext(req, g.Country, g.ASN).WithIP(clientIP(req))
+	vCtx := rules.AcquireVisitorContext(req, g.Country, g.ASN).WithIP(a.clientIPForVisitor(req))
 	defer rules.ReleaseVisitorContext(vCtx)
 
 	dec, matched := snap.Evaluate(vCtx, link.ID)

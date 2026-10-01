@@ -28,6 +28,10 @@ type Link struct {
 	DeletedAt *time.Time `json:"deletedAt,omitempty" gorm:"column:deleted_at"`
 	Domains   []string   `json:"domains" gorm:"-"`
 	Visits    int64      `json:"visits" gorm:"-"`
+	// ClickVisits 与 Visits 同源同期的点击计数(visits 表 action='click' 且成功)。
+	// 与 Clicks(links.clicks 永久计数器)分开:后者不受保留期清理影响,拿它当 CTR
+	// 分子会在清理后虚高(见 overviewTotals 的注释)。列表页 CTR 用本字段。
+	ClickVisits int64 `json:"clickVisits" gorm:"-"`
 	// RuleCount / RuleNames 是"适用规则"的投影(全局规则 + 显式关联的规则),查询后填充。
 	// 关联只存在规则一侧(spec D1),这里是按短链反查同一份数据,不存在第二份规则列表。
 	RuleCount int64    `json:"ruleCount" gorm:"-"`
@@ -108,6 +112,11 @@ func (s *Store) fillLinkMeta(ctx context.Context, l *Link) error {
 		return err
 	}
 	l.Visits = n
+	c, err := s.CountClicksByLink(ctx, l.ID)
+	if err != nil {
+		return err
+	}
+	l.ClickVisits = c
 	return s.fillLinkRuleMeta(ctx, []*Link{l})
 }
 
@@ -158,26 +167,35 @@ func (s *Store) fillLinksMeta(ctx context.Context, links []*Link) error {
 
 	type visitRow struct {
 		LinkID int64 `gorm:"column:link_id"`
-		Count  int64 `gorm:"column:count"`
+		Visits int64 `gorm:"column:visits"`
+		Clicks int64 `gorm:"column:clicks"`
 	}
 	var visitRows []visitRow
-	// 访问量口径必须与 CountVisitsByLink 完全一致:排除 click 行与失败行
+	// 访问量与点击量同源同期(同一张表、同一个 outcome 作用域),与 CountVisitsByLink /
+	// CountClicksByLink 逐条查询的口径一致。动作集合写成 SQL 字面量而不是拼接
+	// Go 变量,理由同 visits.go 的 overviewVisitActions:展开成常量才不可能被将来
+	// 误改成可注入的形式。
 	if err := s.db.WithContext(ctx).Table("visits").
-		Select("link_id, count(*) AS count").
-		Where("link_id IN ? AND action IN ? AND outcome = ?", ids, visitCountActions, VisitOutcomeSuccess).
+		Select("link_id, "+
+			"count(*) FILTER (WHERE action IN ('redirect','landing_view')) AS visits, "+
+			"count(*) FILTER (WHERE action = 'click') AS clicks").
+		Where("link_id IN ? AND outcome = ?", ids, VisitOutcomeSuccess).
 		Group("link_id").
 		Scan(&visitRows).Error; err != nil {
 		return err
 	}
 	visitMap := make(map[int64]int64, len(visitRows))
+	clickMap := make(map[int64]int64, len(visitRows))
 	for _, row := range visitRows {
-		visitMap[row.LinkID] = row.Count
+		visitMap[row.LinkID] = row.Visits
+		clickMap[row.LinkID] = row.Clicks
 	}
 
 	for _, l := range links {
 		l.Domains = domainMap[l.ID]
 		l.TargetURLs = targetMap[l.ID]
 		l.Visits = visitMap[l.ID]
+		l.ClickVisits = clickMap[l.ID]
 	}
 	if err := s.fillLinkRuleMeta(ctx, links); err != nil {
 		return err

@@ -271,11 +271,11 @@
             <span
               class="metric-part metric-clicks"
               :class="{ 'is-empty': toLink(record).linkType !== 'landing' }"
-              :title="toLink(record).linkType === 'landing' ? '落地页点击次数' : '非落地页型短链无点击统计'"
+              :title="toLink(record).linkType === 'landing' ? '落地页点击次数(保留期内,与访问量同源同期)' : '非落地页型短链无点击统计'"
             >
               {{
                 toLink(record).linkType === 'landing'
-                  ? (toLink(record).clicks || 0).toLocaleString()
+                  ? (toLink(record).clickVisits || 0).toLocaleString()
                   : '—'
               }}
             </span>
@@ -922,8 +922,10 @@ function linkUrls(link: Link): string[] {
 function getLinkCtr(link: Link): string {
   if (link.linkType !== 'landing') return '—';
   if (!link.visits || link.visits === 0) return '—';
-  if (!link.clicks || link.clicks === 0) return '0.00%';
-  return `${((link.clicks / link.visits) * 100).toFixed(2)}%`;
+  // 分子取 clickVisits(visits 表口径)而不是 clicks(links.clicks 永久计数器):
+  // 分母 visits 受保留期清理,用永久计数器做分子会在清理后虚高到 100% 以上。
+  if (!link.clickVisits || link.clickVisits === 0) return '0.00%';
+  return `${((link.clickVisits / link.visits) * 100).toFixed(2)}%`;
 }
 
 async function copyText(text: string) {
@@ -1068,7 +1070,7 @@ function exportCsv() {
     l.redirectStatus || '302',
     (l.targetUrls || []).join('; '),
     l.visits || 0,
-    l.linkType === 'landing' ? l.clicks || 0 : 0,
+    l.linkType === 'landing' ? l.clickVisits || 0 : 0,
     getLinkCtr(l),
     l.status === 'enabled' ? '启用' : '停用',
     formatDateTime(l.createdAt),

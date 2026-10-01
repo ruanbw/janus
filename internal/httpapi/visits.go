@@ -68,7 +68,7 @@ func (a *API) visitGeo(c *gin.Context) geo.Info {
 			return info
 		}
 	}
-	info := a.geo.Lookup(clientIP(c.Request))
+	info := a.geo.Lookup(a.clientIPForVisitor(c.Request))
 	c.Set(visitGeoKey, info)
 	return info
 }
@@ -84,7 +84,7 @@ const maxLangLen = 64
 // 与数据库默认值一样,反而像是"查到了但没值"。真要支持这两个值时,得先在
 // store.VisitRecord 里加字段并在这里一并填。
 func (a *API) recordVisit(c *gin.Context, rec store.VisitRecord) {
-	rec.IP = clientIP(c.Request)
+	rec.IP = a.clientIPForVisitor(c.Request)
 	rec.UserAgent = c.Request.UserAgent()
 	rec.Referer = c.Request.Referer()
 	rec.Lang = clientLang(c.Request)

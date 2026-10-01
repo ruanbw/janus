@@ -146,8 +146,8 @@ func remoteHostOnly(remote string) string {
 // ⚠️ 「对端是私网就可信」是推断,不是事实:README 6.4 允许后端 :8080 裸跑,此时局域网内
 // 任何主机都能直连并自带 XFF 换限流桶。所以认证端点的限流**不再**走这里,改用
 // (*API).trustedClientIP(显式可信代理网段,配置为空则永不采信)。
-// 保留本函数是因为 visits/rules/redirect 仍共用它,而那三个文件不在本次改动的
-// 所有权范围内 —— 把它们也切到 trustedClientIP 是同一件事的后续项。
+// 访客侧(跳转/统计/规则)走 (*API).clientIPForVisitor:配置了可信代理网段时同样
+// 切到 trustedClientIP,未配置时才回落到本函数(见其注释里"不能 fail-closed"的理由)。
 func forwardedClientIP(r *http.Request) string {
 	peer := net.ParseIP(remoteHostOnly(r.RemoteAddr))
 	if peer == nil || (!peer.IsLoopback() && !peer.IsPrivate()) {
@@ -168,12 +168,32 @@ func lastForwardedIP(r *http.Request) string {
 }
 
 // clientIP 解析请求来源 IP:内网反代场景取可信的 X-Forwarded-For 最右段,
-// 否则取 RemoteAddr。认证端点限流请用 (*API).trustedClientIP(见其注释)。
+// 否则取 RemoteAddr。新代码请优先用 (*API).clientIPForVisitor / (*API).trustedClientIP
+// (见其注释)。
 func clientIP(r *http.Request) string {
 	if ip := forwardedClientIP(r); ip != "" {
 		return ip
 	}
 	return remoteHostOnly(r.RemoteAddr)
+}
+
+// clientIPForVisitor 是访客侧(跳转限流、访问明细 IP、地理值、规则 ip/country 条件)
+// 使用的来源 IP。
+//
+// 与认证端点不同,这些路径**不能无条件 fail-closed**:若运维没配
+// CLOAK_TRUSTED_PROXY_CIDRS,trustedClientIP 会把所有访客都归到反代那一个源 IP 上,
+// 于是 240 次/分的访客限流变成"全站共享 240 次/分",正常站点会被自己人打成 429。
+// 所以这里的取舍是:
+//   - 运维显式声明了可信代理网段 → 用 trustedClientIP(只采信可信对端的 XFF,
+//     与认证端点同一口径,伪造 XFF 无处可用);
+//   - 未声明 → 保持既有的"对端是私网即采信"行为。文档化的 Caddy 部署会用
+//     `header_up X-Forwarded-For {remote_host}` 覆盖该头,伪造值到不了后端;
+//     直接暴露 :8080 的部署仍可能被伪造,这一点 README 6.4 与 .env.example 都已说明。
+func (a *API) clientIPForVisitor(r *http.Request) string {
+	if len(a.trustedProxyNets) > 0 {
+		return a.trustedClientIP(r)
+	}
+	return clientIP(r)
 }
 
 // trustedClientIP 是**认证端点限流**使用的来源 IP:只有 TCP 对端落在运维显式声明的

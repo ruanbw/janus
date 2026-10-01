@@ -159,6 +159,22 @@ func (s *Store) CountVisitsByLink(ctx context.Context, linkID int64) (int64, err
 	return n, nil
 }
 
+// CountClicksByLink 点击数(visits 表口径:成功的 click 行)。
+//
+// 与 CountVisitsByLink **同源同期**:两者都只数 visits 表当前持有的行(同一个保留期
+// 窗口),唯一差别是 action 过滤。列表页的 CTR 分子必须用这个值,而不是 links.clicks
+// 那个永久计数器 —— 后者不受保留期清理影响,90 天后分母被清、分子不动,CTR 会虚高
+// 到 100% 以上(与 OverviewStatsForTenant 同一口径)。
+func (s *Store) CountClicksByLink(ctx context.Context, linkID int64) (int64, error) {
+	var n int64
+	if err := s.db.WithContext(ctx).Model(&Visit{}).
+		Where("link_id = ? AND action = ? AND outcome = ?", linkID, VisitActionClick, VisitOutcomeSuccess).
+		Count(&n).Error; err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // ListVisitsByLink 分页访问列表(按时间倒序)。
 // action 非空时按该动作过滤,取值不在枚举内返回 ErrInvalidAction(由上层映射 400)。
 func (s *Store) ListVisitsByLink(ctx context.Context, linkID int64, action string, page, pageSize int) ([]*Visit, int, error) {
@@ -392,7 +408,7 @@ func (s *Store) overviewTotals(ctx context.Context, tenantID int64) (*OverviewTo
 		         WHERE v.action = 'click' AND v.outcome = 'success'
 		       ) AS clicks
 		`+overviewScopeFrom+`
-		 WHERE v.outcome = 'success'`, tenantID).Scan(&t).Error; err != nil {
+		 AND v.outcome = 'success'`, tenantID).Scan(&t).Error; err != nil {
 		return nil, err
 	}
 	// 短链存量:与 /api/links 同口径(不含逻辑删除),供「共 N 条短链」一类文案使用。

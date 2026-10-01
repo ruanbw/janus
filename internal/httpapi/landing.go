@@ -49,8 +49,19 @@ func (a *API) handleLandingFallback(c *gin.Context) {
 	case "click":
 		a.handleLandingClick(c, code)
 	case "sdk.js":
+		// sdk.js 与静态文件走独立的(更宽松的)资源限流:每个请求都要查一次库
+		// (静态文件还要读盘),不封顶就是无界放大;复用 240 的访客额度又会把
+		// 资源多一点的正常落地页误伤成 429。click 分支自带 allowVisitor,不能重复计。
+		if !a.allowLandingAsset(c) {
+			a.renderVisitorError(c, http.StatusTooManyRequests, 0, nil)
+			return
+		}
 		a.handleLandingSDK(c, code)
 	default:
+		if !a.allowLandingAsset(c) {
+			a.renderVisitorError(c, http.StatusTooManyRequests, 0, nil)
+			return
+		}
 		a.handleLandingFile(c, code, rest)
 	}
 }

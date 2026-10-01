@@ -93,9 +93,12 @@ func (a *API) handleRegister(c *gin.Context) {
 		writeErrDetails(c, http.StatusBadRequest, errValidation, passwordLenMsg, map[string]string{"field": "password"})
 		return
 	}
-	// 平台保留域名(app.<平台域名> 承载后台)不得被租户默认域名占用
-	if slug+"."+a.cfg.PlatformDomain == a.cfg.PlatformDomain ||
-		slug+"."+a.cfg.PlatformDomain == "app."+a.cfg.PlatformDomain {
+	// 平台保留子域不得被租户默认域名占用:app.<平台域名> 承载后台站点。
+	//
+	// 原实现写成 `slug+"."+platform == platform || ... == "app."+platform`,
+	// 第一个条件在 slug 非空时恒假(IsValidSlug 已保证非空),是死代码;
+	// 整段实际只挡住了 slug == "app"。这里改成显式判断,别再让死条件伪装成闸门。
+	if slug == "app" {
 		writeErrDetails(c, http.StatusBadRequest, errValidation, "slug 与平台保留域名冲突", map[string]string{"field": "slug"})
 		return
 	}

@@ -796,7 +796,38 @@ func (a *API) visitorLimiter() *rateLimiter {
 //	  失去意义(它拿不到比正常用户更多的额度)。
 //	· 换句话说:正常用户感知不到,脚本刷不动,这就是这组数字的目标。
 func (a *API) allowVisitor(c *gin.Context) bool {
-	return a.visitorLimiter().Allow(clientIP(c.Request))
+	return a.visitorLimiter().Allow(a.clientIPForVisitor(c.Request))
+}
+
+// ---------- 落地页静态资源 / SDK 的按 IP 限流 ----------
+
+// landingAssetPerMinute 落地页二级路径(sdk.js 与静态文件)每个 IP 每分钟的上限。
+//
+// 为什么单列一个更宽松的限流器,而不是复用 visitorPerMinute(240):
+// 一次落地页浏览 = 1 次 /{code} + 1 次 /{code}/ + N 次静态资源。资源多一点的
+// 落地页(N 到几十)会让 240 的额度被单次浏览就吃掉相当一部分,同一出口
+// (CGNAT/公司网)下的正常访客互相挤兑立刻吃 429。
+//
+// 但它的目的与访客限流一样:这些路径没有任何认证,而每个请求都要做一次
+// "域名 + 短码"的 DB 查询(静态文件还要读盘)。没有上限时,单个 IP 可以把
+// 查询/读盘放大到无界。1200/分 ≈ 20 次/秒:足够一个含 500 个资源的落地页
+// 在一分钟内被加载两次(极端但合法),又给这条链路封了顶。
+const landingAssetPerMinute = 1200
+
+// landingAssetLimiters 与 visitorLimiters 同构:按 *API 实例隔离,避免测试之间互相打空桶。
+var landingAssetLimiters sync.Map // *API -> *rateLimiter
+
+func (a *API) landingAssetLimiter() *rateLimiter {
+	if v, ok := landingAssetLimiters.Load(a); ok {
+		return v.(*rateLimiter)
+	}
+	v, _ := landingAssetLimiters.LoadOrStore(a, newRateLimiter(landingAssetPerMinute, visitorWindow))
+	return v.(*rateLimiter)
+}
+
+// allowLandingAsset 落地页 sdk.js / 静态文件的准入判断。
+func (a *API) allowLandingAsset(c *gin.Context) bool {
+	return a.landingAssetLimiter().Allow(a.clientIPForVisitor(c.Request))
 }
 
 // visitorGuard 是 allowVisitor 的中间件形态,供公开跳转路由挂载:

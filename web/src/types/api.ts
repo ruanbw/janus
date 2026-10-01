@@ -244,6 +244,12 @@ export interface Link {
   visits: number;
   /** 点击数(仅 landing 型增长,redirect 型恒 0) */
   clicks: number;
+  /**
+   * 与 visits 同源同期的点击计数(visits 表口径,受保留期约束)。
+   * 与 clicks(links.clicks 永久计数器)不同:CTR 的分子必须用本字段,
+   * 否则保留期清理后 clicks 不衰减、visits 衰减,CTR 会虚高到 100% 以上。
+   */
+  clickVisits: number;
   /** landing+upload 来源且已成功上传 zip 时为 true */
   landingUploaded: boolean;
   /** 适用的规则条数(全局规则 + 显式关联的规则) */

@@ -42,6 +42,7 @@ function normalizeLink(link: Link): Link {
     landingSource: link.landingSource || 'url',
     landingUrl: link.landingUrl || '',
     clicks: typeof link.clicks === 'number' ? link.clicks : 0,
+    clickVisits: typeof link.clickVisits === 'number' ? link.clickVisits : 0,
     landingUploaded: link.landingUploaded === true,
     ruleCount: typeof link.ruleCount === 'number' ? link.ruleCount : 0,
     ruleNames: Array.isArray(link.ruleNames) ? link.ruleNames : [],
