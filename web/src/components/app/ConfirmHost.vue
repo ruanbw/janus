@@ -26,24 +26,23 @@
           </div>
         </div>
         <div class="mt-6 flex justify-end gap-2.5">
-          <!-- 按钮用自己的 AppButton 外观,故用 ui/dialog-close 承载关闭语义
-               (reka 的 AlertDialogAction / AlertDialogCancel 内部就是 DialogClose)。
-               不走 ui/alert-dialog-action / -cancel:那两个原语自带按钮外观,
-               会与 AppButton 的 variants 撞车。焦点仍落在取消按钮上——
-               reka 未注册 cancelElement 时 FocusScope 会聚焦容器内首个可聚焦元素。 -->
-          <DialogClose as-child>
-            <AppButton>{{ state?.cancelText ?? '取消' }}</AppButton>
-          </DialogClose>
-          <DialogClose as-child>
-            <AppButton
-              type="primary"
-              :danger="state?.danger ?? false"
-              :loading="busy"
-              @click="onOk"
-            >
-              {{ state?.okText ?? '确定' }}
-            </AppButton>
-          </DialogClose>
+          <!-- 按钮用自己的 AppButton 外观,不走 ui/alert-dialog-action / -cancel
+               (那两个原语自带按钮外观,会与 AppButton 的 variants 撞车)。
+
+               也不套 ui/dialog-close as-child:AppButton 的根是 UiButton(渲染 <button>),
+               没有把 asChild 透传下去,外层的 as-child 会被吞掉 ——
+               表现为「点确认按钮完全没反应」,onOk 永不执行,所有破坏性操作变成空操作。
+               开关本就由 confirmState 驱动(AlertDialog 的 :open),直接点按钮调
+               closeConfirm 即可,不需要 DialogClose 这层。 -->
+          <AppButton @click="onCancel">{{ state?.cancelText ?? '取消' }}</AppButton>
+          <AppButton
+            type="primary"
+            :danger="state?.danger ?? false"
+            :loading="busy"
+            @click="onOk"
+          >
+            {{ state?.okText ?? '确定' }}
+          </AppButton>
         </div>
       </AlertDialogContent>
     </AlertDialogPortal>
@@ -60,7 +59,6 @@ import AlertDialogOverlay from '@/components/ui/alert-dialog-overlay.vue';
 import AlertDialogContent from '@/components/ui/alert-dialog-content.vue';
 import AlertDialogTitle from '@/components/ui/alert-dialog-title.vue';
 import AlertDialogDescription from '@/components/ui/alert-dialog-description.vue';
-import DialogClose from '@/components/ui/dialog-close.vue';
 
 import AppButton from './AppButton.vue';
 import { closeConfirm, confirmState } from './confirm';
@@ -72,6 +70,10 @@ function onOpenChange(open: boolean): void {
   if (open === false) {
     closeConfirm(false);
   }
+}
+
+function onCancel(): void {
+  closeConfirm(false);
 }
 
 async function onOk(): Promise<void> {
