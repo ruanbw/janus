@@ -46,29 +46,71 @@
   --color-accent-600: #0891b2;
 }
 
-/* 明暗主题 CSS 变量 */
+/* ============ 明暗主题 CSS 变量 ============
+   分三层:
+   1) 项目层(--surface / --ink / --line …):页面骨架与业务视图直接消费。
+   2) shadcn 语义层(--background / --primary / --input / --muted …):
+      UI 组件的状态(开/关、选中/未选中、hover、focus)全部走这层,命名与语义
+      与 shadcn 官方一致,取值由本项目调色板定制。
+   3) 控件状态层(--control-track / --control-thumb …):shadcn 没有对应语义,
+      为 Switch 轨道与滑块补齐。
+   三层在明暗两套主题下都必须满足 scripts/check-ui-consistency.mjs 第 9 项的
+   对比度门禁,改色时请连同对比度一起复验。 */
+
 :root {
   --radius: 0.5rem;
-  --ring: #6366f1;
   --ring-offset: #ffffff;
-  --surface: #ffffff;
-  --surface-muted: #f4f6fb;
-  --surface-strong: #e9edf6;
+
+  /* ---- 项目层:页面骨架 ---- */
+  --surface: #ffffff; /* 卡片 / 组件宿主底色 */
+  --surface-muted: #f4f6fb; /* 页面底色 */
+  --surface-strong: #e9edf6; /* 强调填充(图标底、标签、次级按钮) */
   --ink: #0f172a;
   --ink-soft: #475569;
   --ink-faint: #94a3b8;
-  --line: #e5e8f2;
+  --line: #e5e8f2; /* 容器装饰性描边 */
   --line-strong: #d4d9e8;
   --ok: #16a34a;
   --warn: #d97706;
   --err: #dc2626;
   --info: #0284c7;
   --sidebar-bg: #0c0f17;
+
+  /* ---- shadcn 语义层:组件状态 ---- */
+  /* 映射说明:本项目页面底色是 --surface-muted、卡片底色是 --surface,
+     而 shadcn 的 --background 语义是「组件所处的那层底色」,故指向 --surface。 */
+  --background: var(--surface);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: #4f46e5; /* brand-600 */
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface-strong);
+  --secondary-foreground: var(--ink);
+  --muted: #eaeef7; /* 表头 / 悬浮行 / 选中行底 */
+  --muted-foreground: var(--ink-soft);
+  --accent: var(--surface-strong); /* 菜单项 hover */
+  --accent-foreground: var(--ink);
+  --destructive: var(--err);
+  --destructive-foreground: #ffffff;
+  --border: #ccd3e6; /* 控件描边:必须与 --card 可辨 */
+  --input: #ccd3e6; /* 输入框描边 */
+  --ring: #6366f1; /* brand-500 */
+
+  /* ---- 控件状态层 ---- */
+  --control-track: #c6cee4; /* 关态轨道、复选/单选未选填充 */
+  --control-track-hover: #bcc5dd;
+  --control-thumb: var(--surface); /* 关态滑块 */
+  /* 亮色下 thumb 与卡片同色(对比 1.00),发丝描边是它唯一的轮廓 */
+  --control-thumb-edge: rgba(2, 6, 23, 0.22);
 }
 
 .dark {
-  --ring: #6366f1;
   --ring-offset: #10141d;
+
+  /* ---- 项目层:页面骨架 ---- */
   --surface: #10141d;
   --surface-muted: #151b28;
   --surface-strong: #1c2333;
@@ -85,6 +127,34 @@
   --sidebar-bg-deep: #04060a;
   --sidebar-ink: rgba(203, 213, 225, 0.62);
   --sidebar-ink-active: #ffffff;
+
+  /* ---- shadcn 语义层:组件状态 ---- */
+  --background: var(--surface);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: #171d2b; /* 浮层比卡片亮一档,做出高度差 */
+  --popover-foreground: var(--ink);
+  /* 深色下主色提亮到 brand-400 并改深色前景:
+     否则白字/白滑块压在 #4f46e5 上只有 ~2:1 */
+  --primary: #818cf8;
+  --primary-foreground: #0b1020;
+  --secondary: var(--surface-strong);
+  --secondary-foreground: var(--ink);
+  --muted: #1c2333;
+  --muted-foreground: var(--ink-soft);
+  --accent: var(--line);
+  --accent-foreground: var(--ink);
+  --destructive: var(--err);
+  --destructive-foreground: #2a0d0d;
+  --border: #3a4459;
+  --input: #3a4459;
+  --ring: #818cf8;
+
+  --control-track: #404b66;
+  --control-track-hover: #4a5673;
+  --control-thumb: var(--ink);
+  --control-thumb-edge: rgba(2, 6, 23, 0.45);
   color-scheme: dark;
 }
 
@@ -119,6 +189,30 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   --color-ring: var(--ring);
+  /* shadcn 语义层 → 工具类(bg-primary / text-primary-foreground / border-input …) */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-control-track: var(--control-track);
+  --color-control-track-hover: var(--control-track-hover);
+  --color-control-thumb: var(--control-thumb);
+  --color-control-thumb-edge: var(--control-thumb-edge);
+  /* 项目层 */
   --color-surface: var(--surface);
   --color-surface-muted: var(--surface-muted);
   --color-surface-strong: var(--surface-strong);
@@ -181,10 +275,12 @@ body {
   background: transparent;
 }
 
-/* 表单控件统一焦点环 */
+/* 表单控件统一焦点环:等价于 shadcn 的 border-ring + ring-[3px] ring-ring/50,
+   收在 main.css 做单一出处——组件只挂 .app-field,不再各自写 ring 工具类。 */
 .app-field:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--color-brand-500);
+  border-color: var(--ring);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 45%, transparent);
 }
 
 .ring-offset-surface {
@@ -251,7 +347,9 @@ body {
 
 [data-invalid='true'] .app-field:focus,
 [data-invalid='true'] .app-field:focus-visible {
-  outline-color: var(--err);
+  outline: none;
+  border-color: var(--err);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 40%, transparent);
 }
 
 /* 页面切换过渡 */

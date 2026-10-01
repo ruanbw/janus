@@ -41,26 +41,26 @@ export type ButtonType = 'primary' | 'default' | 'text' | 'dashed' | 'ghost';
 export type ButtonSize = 'default' | 'small' | 'middle' | 'large' | 'sm' | 'lg' | 'icon';
 
 export const buttonVariants = cva(
-  'app-btn inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-all active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ring-offset-surface disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
+  'app-btn inline-flex select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-all active:scale-[0.99] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0',
   {
     variants: {
       variant: {
         default:
-          'bg-brand-600 text-white shadow-xs hover:bg-brand-500 dark:bg-brand-500 dark:hover:bg-brand-400',
+          'bg-primary text-primary-foreground shadow-xs hover:bg-primary/90',
         primary:
-          'bg-brand-600 text-white shadow-xs hover:bg-brand-500 dark:bg-brand-500 dark:hover:bg-brand-400',
+          'bg-primary text-primary-foreground shadow-xs hover:bg-primary/90',
         destructive:
-          'border border-transparent bg-err text-white shadow-xs hover:bg-err/90 focus-visible:ring-err',
+          'border border-transparent bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90',
         outline:
-          'border border-line bg-surface text-ink shadow-xs hover:border-brand-400 hover:bg-surface-muted hover:text-ink dark:bg-surface-strong/60 dark:hover:bg-surface-strong',
+          'border border-input bg-background text-foreground shadow-xs hover:bg-accent hover:text-accent-foreground',
         secondary:
-          'bg-surface-strong text-ink shadow-xs hover:bg-surface-strong/80',
+          'bg-secondary text-secondary-foreground shadow-xs hover:bg-secondary/80',
         ghost:
-          'text-ink-soft hover:bg-surface-strong hover:text-ink dark:hover:bg-surface-strong/80',
+          'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
         link:
-          'text-brand-600 underline-offset-4 hover:underline dark:text-brand-400',
+          'text-primary underline-offset-4 hover:underline',
         dashed:
-          'border border-dashed border-line-strong bg-transparent text-ink-soft hover:border-brand-400 hover:text-brand-600',
+          'border border-dashed border-input bg-transparent text-muted-foreground hover:border-primary hover:text-primary',
       },
       size: {
         default: 'h-9 px-4 py-2 text-sm',

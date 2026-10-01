@@ -97,8 +97,10 @@ vueFiles.forEach((file) => {
 
 // 3. 检查 legacy 变量引用
 console.log('3. 检查 Tech-Utility 遗产变量 (var(--fg), var(--muted), etc.) 残留...');
+// 注意:--muted / --accent / --border 已从黑名单移除——它们现在是 shadcn 语义层的正式令牌
+// (--muted 表头/悬浮行底、--accent 菜单 hover、--border 控件描边),不再是 Tech-Utility 遗产。
 const legacyTokens = [
-  '--fg', '--muted', '--border', '--accent', '--fg-soft', '--accent-soft',
+  '--fg', '--fg-soft', '--accent-soft',
   '--danger-soft', '--warn-soft', '--line-soft', '--r', '--rl',
   '--fs-micro', '--fs-meta', '--fs-h1', '--fs-h2', '--fs-h3', '--fs-body', '--side-w', '--bg'
 ];

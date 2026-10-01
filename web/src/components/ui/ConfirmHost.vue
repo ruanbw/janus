@@ -10,7 +10,7 @@
         <div class="flex items-start gap-3.5">
           <span
             class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
-            :class="state?.danger ? 'bg-err/12 text-err' : 'bg-brand-500/12 text-brand-600 dark:text-brand-400'"
+            :class="state?.danger ? 'bg-err/12 text-err' : 'bg-primary/12 text-primary'"
           >
             <TriangleAlert v-if="state?.danger" :size="19" />
             <ShieldQuestion v-else :size="19" />

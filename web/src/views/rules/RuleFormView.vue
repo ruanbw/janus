@@ -896,7 +896,7 @@ onMounted(init);
             <iframe
               :srcdoc="form.customHtml"
               sandbox="allow-same-origin"
-              class="h-full w-full rounded border border-line bg-white shadow-xs"
+              class="h-full w-full rounded border border-line bg-background shadow-xs"
             />
           </div>
         </div>

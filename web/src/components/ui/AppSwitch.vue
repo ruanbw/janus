@@ -16,7 +16,7 @@ import { cva } from 'class-variance-authority';
 export type SwitchSize = 'sm' | 'default';
 
 export const switchVariants = cva(
-  'app-switch relative inline-flex shrink-0 items-center rounded-full border border-line-strong bg-surface-muted p-[2px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-brand-600 data-[state=checked]:bg-brand-600 dark:data-[state=checked]:border-brand-500 dark:data-[state=checked]:bg-brand-500',
+  'app-switch peer relative inline-flex shrink-0 items-center rounded-full border border-transparent p-[2px] shadow-xs transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-control-track hover:data-[state=unchecked]:bg-control-track-hover',
   {
     variants: {
       size: {
@@ -31,12 +31,14 @@ export const switchVariants = cva(
 );
 
 export const switchThumbVariants = cva(
-  'pointer-events-none block rounded-full bg-white shadow-xs transition-transform duration-150 ease-out',
+  // 关态 thumb 与卡片同色(亮色),只有发丝描边能看出轮廓;
+  // 开态用 --primary-foreground,避免深色主题下白块压在浅主色上看不见。
+  'pointer-events-none block rounded-full bg-control-thumb shadow-xs ring-1 ring-inset ring-control-thumb-edge transition-transform duration-150 ease-out data-[state=checked]:bg-primary-foreground dark:data-[state=unchecked]:bg-foreground',
   {
     variants: {
       size: {
-        default: 'size-[13px] data-[state=checked]:translate-x-[15px]',
-        sm: 'size-[11px] data-[state=checked]:translate-x-[13px]',
+        default: 'size-[13px] translate-x-0 data-[state=checked]:translate-x-[15px]',
+        sm: 'size-[11px] translate-x-0 data-[state=checked]:translate-x-[13px]',
       },
     },
     defaultVariants: {

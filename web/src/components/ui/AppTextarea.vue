@@ -55,9 +55,9 @@ const currentLength = computed(() => String(props.modelValue ?? '').length);
 
 const textareaClasses = computed(() => {
   return cn(
-    'app-field flex min-h-[80px] w-full resize-y rounded-md border border-line bg-surface/50 px-3 py-2 text-sm shadow-xs transition-colors placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50 dark:bg-surface-strong/30',
+    'app-field flex min-h-[80px] w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs transition-[color,background-color,border-color,box-shadow] placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30',
     props.showCount && 'pb-7',
-    isInvalid.value && 'border-err focus-visible:ring-err focus-visible:border-err',
+    isInvalid.value && 'border-err',
     props.class,
   );
 });

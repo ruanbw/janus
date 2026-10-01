@@ -1,12 +1,12 @@
 <template>
   <div v-if="$slots.default" class="relative">
     <div v-if="spinning" class="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-surface/60 backdrop-blur-[1px]">
-      <Loader2 :size="spinSize" class="animate-spin text-brand-600 dark:text-brand-400" />
+      <Loader2 :size="spinSize" class="animate-spin text-primary" />
     </div>
     <div :class="spinning ? 'pointer-events-none opacity-60' : ''"><slot /></div>
   </div>
   <div v-else class="flex flex-col items-center gap-3 py-8">
-    <Loader2 :size="spinSize" class="animate-spin text-brand-600 dark:text-brand-400" />
+    <Loader2 :size="spinSize" class="animate-spin text-primary" />
   </div>
 </template>
 

@@ -3,7 +3,7 @@
     <ProgressRoot
       v-model="clamped"
       :max="100"
-      class="relative flex-1 overflow-hidden rounded-full bg-surface-strong"
+      class="relative flex-1 overflow-hidden rounded-full bg-control-track/60"
       :style="{ height: strokeWidth + 'px' }"
     >
       <ProgressIndicator
@@ -43,8 +43,8 @@ const clamped = computed(() => Math.max(0, Math.min(100, props.percent)));
 const barClasses = computed(() => {
   if (props.status === 'exception') return 'bg-err';
   if (props.status === 'success') return 'bg-ok';
-  if (props.status === 'active') return 'progress-active bg-brand-600 dark:bg-brand-500';
-  return 'bg-brand-600 dark:bg-brand-500';
+  if (props.status === 'active') return 'progress-active bg-primary';
+  return 'bg-primary';
 });
 </script>
 
@@ -62,6 +62,20 @@ const barClasses = computed(() => {
   );
   background-size: 1rem 1rem;
   animation: progress-stripes 1s linear infinite;
+}
+
+/* 深色主题下 --primary 变浅,白纹叠上去看不见,换深色斜纹 */
+:global(.dark) .progress-active {
+  background-image: linear-gradient(
+    45deg,
+    rgba(2, 6, 23, 0.2) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(2, 6, 23, 0.2) 50%,
+    rgba(2, 6, 23, 0.2) 75%,
+    transparent 75%,
+    transparent
+  );
 }
 
 @keyframes progress-stripes {

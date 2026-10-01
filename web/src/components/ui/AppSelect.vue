@@ -14,7 +14,7 @@
       <div v-if="multiple" class="flex min-w-0 flex-1 flex-wrap items-center gap-1">
         <template v-for="tag in visibleTags" :key="String(tag.value)">
           <span
-            class="inline-flex max-w-[160px] items-center gap-1 truncate rounded-sm border border-line bg-surface px-1.5 py-0.5 text-xs font-medium text-ink shadow-2xs dark:bg-surface-strong"
+            class="inline-flex max-w-[160px] items-center gap-1 truncate rounded-sm border border-input bg-background px-1.5 py-0.5 text-xs font-medium text-foreground shadow-2xs"
           >
             <span class="truncate">{{ tag.label }}</span>
             <button
@@ -58,7 +58,7 @@
       <SelectContent
         :side-offset="4"
         position="popper"
-        class="z-50 min-w-[var(--reka-select-trigger-width)] max-h-72 overflow-hidden rounded-md border border-line bg-surface p-1 text-ink shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2"
+        class="z-50 min-w-[var(--reka-select-trigger-width)] max-h-72 overflow-hidden rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2"
         @open-auto-focus="onOpenAutoFocus"
       >
         <div v-if="showSearch" class="mb-1 flex items-center border-b border-line px-2.5 py-1.5">
@@ -87,11 +87,11 @@
             :key="String(opt.value)"
             :value="opt.value"
             :disabled="opt.disabled"
-            class="relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-xs outline-none transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-surface-strong data-[highlighted]:text-ink"
+            class="relative flex w-full cursor-pointer select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-xs outline-none transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-50 data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground"
           >
             <span class="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
               <SelectItemIndicator>
-                <Check :size="14" class="text-brand-600 dark:text-brand-400" />
+                <Check :size="14" class="text-primary" />
               </SelectItemIndicator>
             </span>
             <SelectItemText>{{ opt.label }}</SelectItemText>
@@ -180,9 +180,9 @@ const triggerClasses = computed(() => {
   const isLg = props.size === 'large' || props.size === 'lg';
 
   return cn(
-    'app-field flex w-full items-center justify-between gap-2 rounded-md border border-line bg-surface/50 px-3 text-sm shadow-xs transition-colors placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50 dark:bg-surface-strong/30',
+    'app-field flex w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs transition-[color,background-color,border-color,box-shadow] placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30',
     isSm ? 'min-h-8 py-1 text-xs' : isLg ? 'min-h-10 py-2 text-base' : 'min-h-9 py-1.5',
-    isInvalid.value && 'border-err focus-visible:ring-err focus-visible:border-err',
+    isInvalid.value && 'border-err',
     props.class,
   );
 });

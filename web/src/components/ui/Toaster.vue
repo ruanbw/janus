@@ -4,7 +4,7 @@
       <div
         v-for="t in toasts"
         :key="t.id"
-        class="pointer-events-auto flex w-full items-start gap-3 rounded-xl border bg-surface/95 p-3.5 shadow-lg backdrop-blur-md transition-all dark:bg-surface-strong/95"
+        class="pointer-events-auto flex w-full items-start gap-3 rounded-xl border bg-card/95 p-3.5 shadow-lg backdrop-blur-md transition-all"
         :class="toastClasses(t.type)"
       >
         <span class="mt-0.5 shrink-0" :class="iconColorClass(t.type)">

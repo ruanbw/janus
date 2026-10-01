@@ -127,11 +127,11 @@ const inputClasses = computed(() => {
   }
 
   return cn(
-    'app-field flex w-full rounded-md border border-line bg-surface/50 text-ink shadow-xs transition-colors placeholder:text-ink-faint focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 ring-offset-surface disabled:cursor-not-allowed disabled:opacity-50 dark:bg-surface-strong/30',
+    'app-field flex w-full rounded-md border border-input bg-transparent text-foreground shadow-xs transition-[color,background-color,border-color,box-shadow] placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 dark:bg-input/30',
     isSm ? 'h-8 px-2.5 text-xs' : isLg ? 'h-10 px-3.5 text-base' : 'h-9 px-3 py-1 text-sm',
     slots.prefix && 'pl-9',
     rightPadding,
-    isInvalid.value && 'border-err focus-visible:ring-err focus-visible:border-err',
+    isInvalid.value && 'border-err',
     props.class,
   );
 });

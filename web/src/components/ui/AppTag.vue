@@ -26,17 +26,17 @@ export type TagColor =
   | 'geekblue';
 
 export const badgeVariants = cva(
-  'inline-flex select-none items-center gap-1.5 rounded-md border px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2',
+  'inline-flex select-none items-center gap-1.5 rounded-md border px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
   {
     variants: {
       variant: {
         default:
-          'border-transparent bg-brand-600 text-white shadow-2xs hover:bg-brand-500 dark:bg-brand-500 dark:hover:bg-brand-400',
+          'border-transparent bg-primary text-primary-foreground shadow-2xs hover:bg-primary/90',
         secondary:
-          'border-transparent bg-surface-strong text-ink hover:bg-surface-strong/80',
+          'border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80',
         destructive:
-          'border-transparent bg-err text-white shadow-2xs hover:bg-err/90',
-        outline: 'border-line text-ink bg-transparent',
+          'border-transparent bg-destructive text-destructive-foreground shadow-2xs hover:bg-destructive/90',
+        outline: 'border-input text-foreground bg-transparent',
       },
     },
     defaultVariants: {

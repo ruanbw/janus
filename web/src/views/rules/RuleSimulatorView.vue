@@ -121,7 +121,7 @@ const ruleOptions = computed(() =>
 
 function stepToneClass(status: TraceStep['status']): string {
   if (status === 'block') return 'border-err/40 bg-err/10';
-  if (status === 'hit') return 'border-brand-500/40 bg-brand-500/10';
+  if (status === 'hit') return 'border-primary/50 bg-primary/10';
   if (status === 'disabled') return 'border-line bg-surface-muted opacity-70';
   return 'border-line bg-surface';
 }
@@ -131,7 +131,7 @@ function verdictToneClass(): string {
   if (!verdict.value.matched) return 'border-line bg-surface-muted';
   return verdict.value.blocking
     ? 'border-err/40 bg-err/10'
-    : 'border-brand-500/40 bg-brand-500/10';
+    : 'border-primary/50 bg-primary/10';
 }
 
 async function runSimulation() {
@@ -491,7 +491,7 @@ onMounted(async () => {
             <iframe
               :srcdoc="previewModalHtml"
               sandbox="allow-same-origin"
-              class="h-full w-full rounded border border-line bg-white shadow-xs"
+              class="h-full w-full rounded border border-line bg-background shadow-xs"
             />
           </div>
         </div>

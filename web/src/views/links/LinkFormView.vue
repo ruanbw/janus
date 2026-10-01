@@ -156,7 +156,7 @@
                       class="relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 text-center transition-all"
                       :class="
                         isDragging
-                          ? 'border-brand-500 bg-brand-50/30 dark:bg-brand-500/10'
+                          ? 'border-primary bg-primary/10'
                           : 'border-line-strong hover:border-brand-400 bg-surface/40 hover:bg-surface'
                       "
                       @dragover.prevent="isDragging = true"

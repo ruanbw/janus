@@ -5,7 +5,7 @@
     @click="handleCopy"
   >
     <span class="min-w-0 truncate"><slot /></span>
-    <span class="shrink-0 text-ink-faint transition-colors group-hover:text-brand-600">
+    <span class="shrink-0 text-ink-faint transition-colors group-hover:text-primary">
       <Check v-if="copied" :size="13" class="text-ok" />
       <Copy v-else :size="13" />
     </span>

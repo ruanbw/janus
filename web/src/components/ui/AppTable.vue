@@ -11,7 +11,7 @@
               <th
                 v-for="(col, colIndex) in columns"
                 :key="col.key"
-                class="whitespace-nowrap border-b border-line bg-surface-muted px-4 py-2.5 font-semibold text-ink-soft"
+                class="whitespace-nowrap border-b border-line bg-muted px-4 py-2.5 font-semibold text-muted-foreground"
                 :class="[
                   col.align === 'center' ? 'text-center' : col.align === 'right' ? 'text-right' : 'text-left',
                 ]"
@@ -25,7 +25,7 @@
             <tr
               v-for="(record, rowIndex) in dataSource"
               :key="String(record[rowKey] ?? rowIndex)"
-              class="group transition-colors hover:bg-surface-muted"
+              class="group transition-colors hover:bg-muted"
               :class="[rowClickable ? 'cursor-pointer' : '', rowClass?.(record, rowIndex)]"
               v-bind="rowProps?.(record, rowIndex) ?? {}"
               :tabindex="rowClickable ? 0 : undefined"
@@ -61,7 +61,7 @@
 
       <!-- 加载遮罩 -->
       <div v-if="loading" class="absolute inset-0 z-10 flex items-center justify-center bg-surface/55 backdrop-blur-[1px]">
-        <Loader2 :size="26" class="animate-spin text-brand-600 dark:text-brand-400" />
+        <Loader2 :size="26" class="animate-spin text-primary" />
       </div>
     </div>
 
@@ -74,14 +74,14 @@
       <div class="flex items-center gap-1.5">
         <select
           :value="pageSize"
-          class="h-7 rounded-md border border-line bg-surface px-1.5 text-xs text-ink-soft focus:border-brand-500 focus:outline-none"
+          class="h-7 rounded-md border border-input bg-background px-1.5 text-xs text-muted-foreground outline-none focus:border-ring"
           @change="onPageSizeChange"
         >
           <option v-for="size in pageSizeOptions" :key="size" :value="size">{{ size }} 条/页</option>
         </select>
         <button
           type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-md border border-line text-ink-soft transition-colors hover:border-brand-400 hover:text-brand-600 disabled:opacity-40 disabled:hover:border-line disabled:hover:text-ink-soft"
+          class="flex h-7 w-7 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-40 disabled:hover:border-input disabled:hover:text-muted-foreground"
           :disabled="currentPage <= 1"
           @click="goPage(currentPage - 1)"
         >
@@ -93,7 +93,7 @@
             v-else
             type="button"
             class="flex h-7 min-w-7 items-center justify-center rounded-md border px-1.5 text-xs transition-colors"
-            :class="p === currentPage ? 'border-brand-600 bg-brand-600 text-white' : 'border-line text-ink-soft hover:border-brand-400 hover:text-brand-600'"
+            :class="p === currentPage ? 'border-primary bg-primary text-primary-foreground' : 'border-input text-muted-foreground hover:border-primary hover:text-primary'"
             @click="goPage(p)"
           >
             {{ p }}
@@ -101,7 +101,7 @@
         </template>
         <button
           type="button"
-          class="flex h-7 w-7 items-center justify-center rounded-md border border-line text-ink-soft transition-colors hover:border-brand-400 hover:text-brand-600 disabled:opacity-40 disabled:hover:border-line disabled:hover:text-ink-soft"
+          class="flex h-7 w-7 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-40 disabled:hover:border-input disabled:hover:text-muted-foreground"
           :disabled="currentPage >= totalPages"
           @click="goPage(currentPage + 1)"
         >

@@ -434,7 +434,7 @@
                       <AppButton
                         size="sm"
                         variant="ghost"
-                        class="h-5 px-1.5 text-2xs text-ink-soft hover:text-brand-600"
+                        class="h-5 px-1.5 text-2xs text-ink-soft hover:text-primary"
                         aria-label="复制完整 User-Agent"
                         @click.stop="copyUa(selectedRow)"
                       >

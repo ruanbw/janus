@@ -1,6 +1,6 @@
 <template>
   <div class="flex flex-col items-center gap-3 py-10 text-center">
-    <span class="flex h-12 w-12 items-center justify-center rounded-full bg-surface-strong text-ink-faint">
+    <span class="flex size-12 items-center justify-center rounded-full bg-secondary text-muted-foreground">
       <Inbox :size="22" />
     </span>
     <p class="text-xs text-ink-faint">{{ description }}</p>
