@@ -12,3 +12,5 @@ docs/plans/
 docs/superpowers/
 plans/
 specs/
+.worktrees/
+.swarmforge/
