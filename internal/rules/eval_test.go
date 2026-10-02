@@ -973,7 +973,7 @@ func TestExtendedOperators(t *testing.T) {
 			t.Fatalf("非法字段的 not_in_cidr 规则该整条丢弃,剩 %d 条", len(snap.Rules))
 		}
 		if !strings.Contains(buf.String(), "not_in_cidr 运算符仅支持 ip 字段") {
-						t.Fatalf("缺少丢弃日志: %s", buf.String())
+			t.Fatalf("缺少丢弃日志: %s", buf.String())
 		}
 	})
 
