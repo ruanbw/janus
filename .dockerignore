@@ -15,8 +15,6 @@
 certs
 docs
 *.md
-AGENTS.md
-CLAUDE.md
 
 # 编排与 Caddy 配置:运行期由 compose 挂载,无需进镜像
 docker-compose.yml
