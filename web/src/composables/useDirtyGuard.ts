@@ -1,6 +1,6 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
-import { confirm } from '@/components/app/confirm';
+import { confirmAsync } from '@/components/app/confirm';
 
 export interface UseDirtyGuardOptions {
   isDirty: () => boolean;
@@ -30,18 +30,18 @@ export function useDirtyGuard(options: UseDirtyGuardOptions) {
       return;
     }
 
-    confirm({
+    void confirmAsync({
       title,
       content: message,
       okText: '确认离开',
       cancelText: '继续编辑',
-      variant: 'destructive',
-      onOk: () => {
+      danger: true,
+    }).then((ok) => {
+      if (ok) {
         next();
-      },
-      onCancel: () => {
+      } else {
         next(false);
-      },
+      }
     });
   });
 
