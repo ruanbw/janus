@@ -4,9 +4,9 @@
  * 然后决定是改、停还是删。编辑与模拟都不在这里发生：
  * 编辑是表单操作，走 /rules/new 与 /rules/:id/edit；模拟走 /rules/simulator。
  */
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import { FlaskConical, Link2, Pencil, Plus, RefreshCw, Search, Trash2 } from '@lucide/vue';
+import { Filter, FlaskConical, Link2, Pencil, Plus, RefreshCw, Search, Trash2, X } from '@lucide/vue';
 
 import { deleteRule, listRules, updateRule } from '@/api/rules';
 import PageHeader from '@/components/PageHeader.vue';
@@ -61,6 +61,14 @@ const filteredRules = computed(() => {
 const hasFilter = computed(
   () => actionFilter.value !== 'all' || statusFilter.value !== 'all' || keyword.value.trim() !== '',
 );
+
+// 过滤变动时自动重置回第 1 页
+watch([actionFilter, statusFilter, keyword], () => {
+  if (page.value !== 1) {
+    page.value = 1;
+    loadRules();
+  }
+});
 
 const pagination = computed<TablePaginationConfig>(() => ({
   current: page.value,
@@ -194,7 +202,26 @@ onMounted(loadRules);
       </AppInput>
       <AppSelect v-model="actionFilter" :options="ACTION_FILTERS" />
       <AppSelect v-model="statusFilter" :options="STATUS_FILTERS" />
-      <AppButton v-if="hasFilter" @click="resetFilters">清空过滤</AppButton>
+      <AppButton v-if="hasFilter" @click="resetFilters">
+        <template #icon><X :size="14" /></template>
+        清空过滤
+      </AppButton>
+    </div>
+
+    <!-- 过滤提示条：提示当前展示匹配结果及分页上下文 -->
+    <div
+      v-if="hasFilter"
+      class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface-strong/50 px-3.5 py-2 text-xs text-ink-soft"
+    >
+      <div class="flex items-center gap-2">
+        <Filter :size="13" class="text-brand" />
+        <span>
+          当前页筛选出 <strong class="font-mono text-ink">{{ filteredRules.length }}</strong> 条规则（本页共 {{ rules.length }} 条，租户总计 {{ total }} 条）
+        </span>
+      </div>
+      <AppButton size="small" type="text" class="h-auto p-0 text-brand hover:text-brand/80" @click="resetFilters">
+        显示全部
+      </AppButton>
     </div>
 
     <AppTable
@@ -206,6 +233,26 @@ onMounted(loadRules);
       row-key="id"
       @change="onTableChange"
     >
+      <template #empty>
+        <AppEmpty
+          :description="
+            total === 0
+              ? '暂无规则记录，点击新建规则开始配置访客路由裁决'
+              : hasFilter
+                ? '当前筛选条件下未找到匹配的规则'
+                : '暂无规则数据'
+          "
+        />
+        <div class="mt-4 flex justify-center gap-3">
+          <AppButton v-if="total === 0" type="primary" size="small" @click="openCreate">
+            <template #icon><Plus :size="14" /></template>
+            新建第一条规则
+          </AppButton>
+          <AppButton v-else-if="hasFilter" size="small" @click="resetFilters">
+            重置筛选条件
+          </AppButton>
+        </div>
+      </template>
       <template #cell="{ column, record }">
         <template v-if="column.key === 'id'">
           <span class="mono text-xs text-ink-faint">#{{ record.id }}</span>

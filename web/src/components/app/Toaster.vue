@@ -2,7 +2,7 @@
   <div class="pointer-events-none fixed top-4 left-1/2 z-[100] flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4">
     <TransitionGroup name="toast">
       <div
-        v-for="t in toasts"
+        v-for="t in visibleToasts"
         :key="t.id"
         class="pointer-events-auto flex w-full items-start gap-3 rounded-xl border bg-card/95 p-3.5 shadow-lg backdrop-blur-md transition-all"
         :class="toastClasses(t.type)"
@@ -25,10 +25,15 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue';
 import { CheckCircle2, Info, TriangleAlert, X, XCircle } from '@lucide/vue';
 
 import { dismiss, toasts } from './toast';
 import type { ToastType } from './toast';
+
+/** 最多同时展示 3 条，避免大批量报错时撑爆屏幕遮挡导航栏 */
+const MAX_VISIBLE_TOASTS = 3;
+const visibleToasts = computed(() => toasts.slice(-MAX_VISIBLE_TOASTS));
 
 function toastClasses(type: ToastType): string {
   switch (type) {

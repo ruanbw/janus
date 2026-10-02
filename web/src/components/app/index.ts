@@ -27,6 +27,7 @@ import AppRadioGroup from './AppRadioGroup.vue';
 import AppRadioCard from './AppRadioCard.vue';
 import AppResult from './AppResult.vue';
 import AppSelect from './AppSelect.vue';
+import AppSkeleton from './AppSkeleton.vue';
 import AppSpace from './AppSpace.vue';
 import AppSpin from './AppSpin.vue';
 import AppSwitch from './AppSwitch.vue';
@@ -68,6 +69,7 @@ const components: Record<string, Component> = {
   AppRadioCard,
   AppResult,
   AppSelect,
+  AppSkeleton,
   AppSpace,
   AppSpin,
   AppSwitch,
@@ -117,6 +119,7 @@ export { default as AppRadioGroup } from './AppRadioGroup.vue';
 export { default as AppRadioCard } from './AppRadioCard.vue';
 export { default as AppResult } from './AppResult.vue';
 export { default as AppSelect } from './AppSelect.vue';
+export { default as AppSkeleton } from './AppSkeleton.vue';
 export { default as AppSpace } from './AppSpace.vue';
 export { default as AppSpin } from './AppSpin.vue';
 export { default as AppSwitch, switchVariants, switchThumbVariants } from './AppSwitch.vue';

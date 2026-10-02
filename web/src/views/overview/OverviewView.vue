@@ -1,7 +1,34 @@
 <template>
   <div class="space-y-5" data-od-id="overview-view">
-    <!-- KPI 卡片网格 (真实数据驱动：3列自适应、高度统一) -->
-    <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
+    <!-- 初次加载骨架屏过渡 (优化 CLS 与交互跳动) -->
+    <template v-if="loading && !overview">
+      <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
+        <AppCard v-for="i in 6" :key="'kpi-skel-' + i" class="flex flex-col justify-between min-h-[118px] p-4">
+          <div class="space-y-2">
+            <AppSkeleton width="60px" height="12px" />
+            <AppSkeleton width="110px" height="28px" />
+          </div>
+          <AppSkeleton width="140px" height="14px" />
+        </AppCard>
+      </section>
+      <AppCard class="p-6">
+        <div class="flex items-center justify-between pb-4 border-b border-line">
+          <div class="space-y-1.5">
+            <AppSkeleton width="140px" height="18px" />
+            <AppSkeleton width="220px" height="14px" />
+          </div>
+          <AppSkeleton width="80px" height="28px" />
+        </div>
+        <div class="pt-6">
+          <AppSkeleton variant="rect" height="260px" />
+        </div>
+      </AppCard>
+    </template>
+
+    <!-- 正常数据内容 -->
+    <template v-else>
+      <!-- KPI 卡片网格 (真实数据驱动：3列自适应、高度统一) -->
+      <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
       <AppCard
         v-for="kpi in kpiList"
         :key="kpi.label"
@@ -332,6 +359,7 @@
     <AppAlert type="info" show-icon title="合规提示">
       斗篷的本质是「对不同访问者返回不同内容」。用于绕过平台审核或对审核员定向展示白标内容，可能违反 TikTok / Meta / Google 的广告政策并导致账户封禁。本系统按「流量准入控制 + 品牌合规」的正向用途设计：拦截爬虫与无效流量、地域与语言适配、转化归因。落地生产前请确认业务场景合规性。
     </AppAlert>
+    </template>
   </div>
 </template>
 
@@ -344,6 +372,7 @@ import { fetchOverviewStats } from '@/api/visits';
 import AppAlert from '@/components/app/AppAlert.vue';
 import AppButton from '@/components/app/AppButton.vue';
 import AppCard from '@/components/app/AppCard.vue';
+import AppSkeleton from '@/components/app/AppSkeleton.vue';
 import AppTag from '@/components/app/AppTag.vue';
 import AppTooltip from '@/components/app/AppTooltip.vue';
 import { ApiError } from '@/types/api';

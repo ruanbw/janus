@@ -28,6 +28,7 @@ import { listLinks } from '@/api/links';
 import { createRule, deleteRule, getRule, updateRule, type RuleCreatePayload } from '@/api/rules';
 import PageHeader from '@/components/PageHeader.vue';
 import { confirm } from '@/components/app/confirm';
+import { useDirtyGuard } from '@/composables/useDirtyGuard';
 import type { FormRule } from '@/components/app/types';
 import { COUNTRY_OPTIONS } from '@/constants/countries';
 import type { Rule, RuleCondition, RuleOperator, RulePageMode, RuleScope } from '@/types/api';
@@ -82,6 +83,18 @@ const form = reactive({
   customHtml: '',
   linkIds: [] as number[],
   conditions: [] as EditableCondition[],
+});
+
+// 表单脏检查与离开拦截
+const initialFormJson = ref('');
+const isFormDirty = () => {
+  if (!initialFormJson.value) return false;
+  return JSON.stringify(form) !== initialFormJson.value;
+};
+const { markClean } = useDirtyGuard({
+  isDirty: isFormDirty,
+  title: '放弃未保存的规则修改？',
+  message: '当前填写的规则尚未保存，离开此页面将丢失修改。',
 });
 
 const validRuleId = computed(() => {
@@ -224,6 +237,7 @@ function resetForm() {
   form.customHtml = '';
   form.linkIds = [];
   form.conditions = [newCondition()];
+  initialFormJson.value = JSON.stringify(form);
 }
 
 const fieldOptions = computed(() =>
@@ -280,6 +294,7 @@ function applyRule(rule: Rule) {
     operator: c.operator,
     raw: (c.values || []).join(', '),
   }));
+  initialFormJson.value = JSON.stringify(form);
 }
 
 const summaryChips = computed(() =>
@@ -477,6 +492,7 @@ function handleDelete() {
     onOk: async () => {
       try {
         await deleteRule(id);
+        markClean();
         message.success('规则已删除');
         router.push({ name: 'rules' });
       } catch (error) {
@@ -491,9 +507,11 @@ async function doSave(payload: RuleCreatePayload, linkIds: number[]) {
   try {
     if (isEdit.value && validRuleId.value !== undefined) {
       await updateRule(validRuleId.value, payload);
+      markClean();
       message.success(`规则「${payload.name}」已保存并生效`);
     } else {
       await createRule(payload);
+      markClean();
       message.success(`规则「${payload.name}」已创建并生效`);
     }
     goBack();

@@ -73,6 +73,7 @@
          两条 transition 的时长与缓动也刻意一致,否则侧边栏边缘与内容区边缘
          会在动画中途分叉。 -->
     <div
+      :aria-hidden="drawerOpen ? 'true' : undefined"
       class="flex min-h-screen flex-col transition-[padding] duration-200 ease-out motion-reduce:transition-none md:pl-[var(--sidebar-w)]"
     >
       <header

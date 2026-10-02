@@ -618,6 +618,7 @@ import {
   SHORT_CODE_PATTERN,
 } from '@/constants/dict';
 import { ApiError, getQuotaUsage } from '@/types/api';
+import { useDirtyGuard } from '@/composables/useDirtyGuard';
 import type {
   Domain,
   LandingSource,
@@ -677,6 +678,18 @@ const form = reactive<{
   landingUrl: '',
   landingUploaded: false,
   status: 'enabled',
+});
+
+// 表单脏检查与离开拦截
+const initialFormJson = ref('');
+const isFormDirty = () => {
+  if (!initialFormJson.value) return false;
+  return JSON.stringify(form) !== initialFormJson.value || landingFile.value !== null;
+};
+const { markClean } = useDirtyGuard({
+  isDirty: isFormDirty,
+  title: '放弃未保存的短链修改？',
+  message: '当前填写的短链配置尚未保存，离开此页面将丢失修改。',
 });
 
 /** 域名状态备注(非激活域名置灰) */
@@ -855,6 +868,7 @@ function applyLink(data: Link) {
   form.landingUploaded = data.landingUploaded === true;
   form.status = data.status;
   form.domainIds = domains.value.filter((d) => fqdnSet.has(d.fqdn)).map((d) => d.id);
+  initialFormJson.value = JSON.stringify(form);
 }
 
 /** 创建模式的默认值 */
@@ -869,6 +883,7 @@ function applyDefaults() {
   form.status = 'enabled';
   // 默认选中所有已激活域名
   form.domainIds = domains.value.filter((d) => d.status === 'active').map((d) => d.id);
+  initialFormJson.value = JSON.stringify(form);
 }
 
 async function loadDomains() {
@@ -1144,8 +1159,10 @@ async function onSubmit() {
         }
         await updateLink(created.id, { linkType: 'landing', landingSource: 'upload' });
       }
+      markClean();
       message.success('短链已创建');
     }
+    markClean();
     router.push({ name: 'links' });
   } catch (error) {
     if (error instanceof ApiError) {
