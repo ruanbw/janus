@@ -924,6 +924,59 @@ func TestExtendedOperators(t *testing.T) {
 		}
 	})
 
+	t.Run("not_in_cidr IP白名单网段与单点匹配(白名单外命中阻断/白名单内放行)", func(t *testing.T) {
+		// Given: 规则配置为 IP not_in_cidr 白名单网段与单点 IP，命中时执行 pass/阻断判定
+		r := store.Rule{
+			ID: 301, Enabled: true, Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll, Action: store.RuleActionNotfound,
+			Conditions: store.Conditions(store.RuleCondition{
+				Field:    FieldIP,
+				Operator: OpNotInCIDR,
+				Values:   []string{"10.0.0.0/8", "192.168.1.0/24", "203.0.113.5", "2001:db8::/32"},
+			}),
+		}
+		snap := NewSnapshot([]store.Rule{r}, discardLog)
+
+		// When & Then: 白名单内的 IP 不应命中规则(not_in_cidr 为 false)，白名单外的 IP 应该命中规则(not_in_cidr 为 true)
+		cases := []struct {
+			name string
+			ip   string
+			want bool // 是否命中规则
+		}{
+			{"白名单内 10/8 子网 IP 不命中", "10.5.6.7", false},
+			{"白名单内 192.168.1/24 子网 IP 不命中", "192.168.1.200", false},
+			{"白名单内 203.0.113.5 单点 IP 不命中", "203.0.113.5", false},
+			{"白名单内 2001:db8::/32 v6 IP 不命中", "2001:db8::99", false},
+			{"白名单外 192.168.2.1 命中拦截", "192.168.2.1", true},
+			{"白名单外 203.0.113.6 命中拦截", "203.0.113.6", true},
+			{"白名单外 2001:db9::1 命中拦截", "2001:db9::1", true},
+			{"白名单外 公网 IP 8.8.8.8 命中拦截", "8.8.8.8", true},
+			{"空 IP 画像恒不命中(避免无 IP 请求被误拦)", "", false},
+		}
+		for _, tc := range cases {
+			fact := Fact{IP: tc.ip, Domain: "s.test"}
+			_, got := snap.Evaluate(&fact, 1)
+			if got != tc.want {
+				t.Fatalf("case %s (ip %q): got %v, want %v", tc.name, tc.ip, got, tc.want)
+			}
+		}
+	})
+
+	t.Run("not_in_cidr 非 ip 字段在加载期丢弃", func(t *testing.T) {
+		var buf bytes.Buffer
+		lg := slog.New(slog.NewTextHandler(&buf, nil))
+		r := store.Rule{
+			ID: 302, Enabled: true, Scope: store.RuleScopeGlobal, Logic: store.RuleLogicAll, Action: store.RuleActionPass,
+			Conditions: store.Conditions(store.RuleCondition{Field: FieldPath, Operator: OpNotInCIDR, Values: []string{"10.0.0.0/8"}}),
+		}
+		snap := NewSnapshot([]store.Rule{r}, lg)
+		if len(snap.Rules) != 0 {
+			t.Fatalf("非法字段的 not_in_cidr 规则该整条丢弃,剩 %d 条", len(snap.Rules))
+		}
+		if !strings.Contains(buf.String(), "not_in_cidr 运算符仅支持 ip 字段") {
+						t.Fatalf("缺少丢弃日志: %s", buf.String())
+		}
+	})
+
 	t.Run("in_cidr 非 ip 字段在加载期丢弃", func(t *testing.T) {
 		var buf bytes.Buffer
 		lg := slog.New(slog.NewTextHandler(&buf, nil))
@@ -947,6 +1000,7 @@ func TestExtendedOperators(t *testing.T) {
 				store.RuleCondition{Field: FieldPath, Operator: OpStartsWith, Values: []string{"/api"}},
 				store.RuleCondition{Field: FieldPath, Operator: OpEndsWith, Values: []string{".json"}},
 				store.RuleCondition{Field: FieldIP, Operator: OpInCIDR, Values: []string{"10.0.0.0/8"}},
+				store.RuleCondition{Field: FieldIP, Operator: OpNotInCIDR, Values: []string{"172.16.0.0/12"}},
 			),
 		}
 		snap := NewSnapshot([]store.Rule{r}, discardLog)
@@ -956,10 +1010,10 @@ func TestExtendedOperators(t *testing.T) {
 			t.Fatalf("仿真应该命中: %+v", res.Verdict)
 		}
 		step := res.Steps[0]
-		if len(step.Conditions) != 3 {
-			t.Fatalf("条件留痕数 = %d, want 3", len(step.Conditions))
+		if len(step.Conditions) != 4 {
+			t.Fatalf("条件留痕数 = %d, want 4", len(step.Conditions))
 		}
-		wantPhrases := []string{"以 /api 开头", "以 .json 结尾", "在网段 10.0.0.0/8 内"}
+		wantPhrases := []string{"以 /api 开头", "以 .json 结尾", "在网段 10.0.0.0/8 内", "不在网段 172.16.0.0/12 内"}
 		for i, p := range wantPhrases {
 			if !strings.Contains(step.Conditions[i].Description, p) {
 				t.Errorf("条件 %d 描述 %q 未包含 %q", i, step.Conditions[i].Description, p)

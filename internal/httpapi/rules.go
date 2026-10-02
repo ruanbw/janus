@@ -341,6 +341,9 @@ func validateConditionLeaf(cond store.RuleCondition, path string) error {
 	if !rules.ValidOperator(cond.Operator) {
 		return ruleErr("%s.operator 不合法:%s", path, cond.Operator)
 	}
+	if (cond.Operator == rules.OpInCIDR || cond.Operator == rules.OpNotInCIDR) && cond.Field != rules.FieldIP {
+		return ruleErr("%s.operator:%s 仅支持 ip 字段", path, cond.Operator)
+	}
 	return nil
 }
 

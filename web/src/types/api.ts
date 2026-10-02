@@ -85,6 +85,7 @@ export type RuleOperator =
   | 'lt'
   | 'regex'
   | 'in_cidr'
+  | 'not_in_cidr'
   | 'duplicated';
 
 /** 单条条件:values 为复数形式(逗号 / 换行分隔录入) */

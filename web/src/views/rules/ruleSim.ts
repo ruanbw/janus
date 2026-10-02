@@ -472,6 +472,10 @@ export function evalCondition(cond: RuleCondition, facts: VisitorFacts): TraceFa
       hit = values.some((v) => ipInCidr(actual, v));
       if (note === '' && !hit) note = '（前端 CIDR 匹配为近似实现,IPv6 网段以服务端为准）';
       break;
+    case 'not_in_cidr':
+      hit = actual !== '' && !values.some((v) => ipInCidr(actual, v));
+      if (note === '' && hit) note = '（前端 CIDR 匹配为近似实现,IPv6 网段以服务端为准）';
+      break;
     default:
       hit = false;
       // 前端不认识的运算符不能静默当成“不成立”——那会让用户以为规则没生效

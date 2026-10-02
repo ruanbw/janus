@@ -66,6 +66,7 @@ export const OPERATOR_OPTIONS: { value: RuleOperator; label: string; hint: strin
   { value: 'lt', label: '小于', hint: '按数值比较,非数值恒不命中' },
   { value: 'regex', label: '正则匹配', hint: '后端为 RE2 语法且大小写敏感（需忽略大小写请在表达式里写 (?i)）；复杂表达式的前端预览结果可能与线上略有差异' },
   { value: 'in_cidr', label: '落在 IP 网段', hint: '访客 IP 落在任一 CIDR 网段内（仅 ip 字段可用）' },
+  { value: 'not_in_cidr', label: '不在 IP 网段（白名单）', hint: '访客 IP 未落在任一 CIDR 网段内（仅 ip 字段可用，用于白名单拦截）' },
 ];
 
 /** 命中动作:收敛为四项(spec D4 裁决顺序) */

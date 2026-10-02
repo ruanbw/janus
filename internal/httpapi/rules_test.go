@@ -1370,3 +1370,77 @@ func TestCreateAndSimulateExprRule(t *testing.T) {
 		t.Fatalf("仿真不应命中 Expr 规则, got: %+v", gotMiss.Verdict)
 	}
 }
+
+// TestRuleIPWhitelistNotInCIDR 验证基于 not_in_cidr 运算符实现短链/访客 IP 白名单的完整闭环。
+// Given: 规则配置为 IP not_in_cidr 白名单 CIDR/IP，未在白名单的访客被阻断 404，白名单访客放行。
+// When & Then: HTTP API 创建规则、仿真验证、以及非法字段/运算符拦截契约。
+func TestRuleIPWhitelistNotInCIDR(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "wcode", "targetUrls": []string{"https://origin.example.com/"}, "domainIds": []int64{lid},
+	})
+
+	// 1. 创建 IP 白名单拦截规则: 当 IP 不在白名单网段 (10.0.0.0/8, 192.168.1.0/24, 203.0.113.10) 时返回 404
+	rule := createRule(t, c, map[string]any{
+		"name":     "短链访客IP白名单",
+		"scope":    "links",
+		"linkIds":  []int64{link.ID},
+		"action":   "notfound",
+		"priority": 1,
+		"conditions": []map[string]any{
+			{
+				"field":    "ip",
+				"operator": "not_in_cidr",
+				"values":   []string{"10.0.0.0/8", "192.168.1.0/24", "203.0.113.10"},
+			},
+		},
+	})
+	if rule.ID == 0 {
+		t.Fatalf("创建 IP 白名单规则失败")
+	}
+
+	// 2. 仿真测试: 白名单外的 IP (203.0.113.99) 访问时，命中白名单拦截规则 (notfound 404)
+	gotBlocked := simulate(t, c, map[string]any{
+		"url": "https://localhost/" + link.Code,
+		"ip":  "203.0.113.99",
+	})
+	if !gotBlocked.Verdict.Matched || gotBlocked.Verdict.RuleID != rule.ID || gotBlocked.Verdict.Action != "notfound" {
+		t.Fatalf("白名单外 IP 期望被规则拦截, got verdict: %+v", gotBlocked.Verdict)
+	}
+
+	// 3. 仿真测试: 白名单内的 IP (203.0.113.10 单点, 10.1.2.3 子网) 访问时，未命中拦截规则并放行
+	gotAllowedSingle := simulate(t, c, map[string]any{
+		"url": "https://localhost/" + link.Code,
+		"ip":  "203.0.113.10",
+	})
+	if gotAllowedSingle.Verdict.Matched {
+		t.Fatalf("白名单内单点 IP 不应被拦截, got verdict: %+v", gotAllowedSingle.Verdict)
+	}
+
+	gotAllowedCIDR := simulate(t, c, map[string]any{
+		"url": "https://localhost/" + link.Code,
+		"ip":  "10.1.2.3",
+	})
+	if gotAllowedCIDR.Verdict.Matched {
+		t.Fatalf("白名单内网段 IP 不应被拦截, got verdict: %+v", gotAllowedCIDR.Verdict)
+	}
+
+	// 4. API 契约校验: not_in_cidr 运算符仅允许用于 ip 字段，其它字段必须报 400
+	resp := c.post("/api/rules", map[string]any{
+		"name":     "非法字段 not_in_cidr",
+		"scope":    "global",
+		"action":   "pass",
+		"priority": 10,
+		"conditions": []map[string]any{
+			{
+				"field":    "path",
+				"operator": "not_in_cidr",
+				"values":   []string{"10.0.0.0/8"},
+			},
+		},
+	})
+	assertStatus(t, resp, http.StatusBadRequest)
+}

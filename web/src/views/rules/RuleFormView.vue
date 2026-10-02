@@ -236,7 +236,7 @@ const fieldOptions = computed(() =>
 );
 // 运算符按字段过滤：in_cidr 后端只允许 ip 字段（eval.go 会 drop 其它字段的 in_cidr，
 // 条件被丢弃 = 规则被静默收紧），ip 之外不出现在下拉里。
-const IP_ONLY_OPERATORS: RuleOperator[] = ['in_cidr'];
+const IP_ONLY_OPERATORS: RuleOperator[] = ['in_cidr', 'not_in_cidr'];
 const operatorOptions = (field: string) =>
   OPERATOR_OPTIONS.filter((o) => !IP_ONLY_OPERATORS.includes(o.value) || field === 'ip').map((o) => ({
     value: o.value as string,

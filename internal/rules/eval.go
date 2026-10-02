@@ -28,6 +28,7 @@ const (
 	OpStartsWith  = "starts_with"  // 字段值以任一 values 开头(前缀匹配,忽略大小写)
 	OpEndsWith    = "ends_with"    // 字段值以任一 values 结尾(后缀匹配,忽略大小写)
 	OpInCIDR      = "in_cidr"      // 访客 IP 落在任一 values CIDR 网段内
+	OpNotInCIDR   = "not_in_cidr"  // 访客 IP 未落在任一 values CIDR 网段内
 	OpGT          = "gt"           // 数值大于 values[0]
 	OpLT          = "lt"           // 数值小于 values[0]
 	OpRegex       = "regex"        // 字段值匹配任一 values(加载期已编译)
@@ -38,7 +39,7 @@ const (
 func ValidOperator(op string) bool {
 	switch op {
 	case OpIn, OpNotIn, OpEq, OpNeq, OpContains, OpNotContains,
-		OpStartsWith, OpEndsWith, OpInCIDR,
+		OpStartsWith, OpEndsWith, OpInCIDR, OpNotInCIDR,
 		OpGT, OpLT, OpRegex, OpDuplicated:
 		return true
 	}
@@ -308,7 +309,7 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 	// 其余运算符(ip contains / ip regex 等)对 ip 按普通字符串处理。
 	if cond.Field == FieldIP {
 		switch cond.Operator {
-		case OpIn, OpEq, OpNeq, OpNotIn, OpInCIDR:
+		case OpIn, OpEq, OpNeq, OpNotIn, OpInCIDR, OpNotInCIDR:
 			var prefixes []netip.Prefix
 			for _, v := range values {
 				if p, err := netip.ParsePrefix(v); err == nil {
@@ -327,8 +328,8 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 			return c, true
 		}
 	}
-	if cond.Operator == OpInCIDR {
-		return drop("in_cidr 运算符仅支持 ip 字段")
+	if cond.Operator == OpInCIDR || cond.Operator == OpNotInCIDR {
+		return drop(cond.Operator + " 运算符仅支持 ip 字段")
 	}
 	switch cond.Operator {
 	case OpGT, OpLT:
@@ -384,7 +385,7 @@ func (c *compiledCond) match(ctx VisitorContext) bool {
 		return false
 	}
 	switch c.op {
-	case OpIn, OpEq, OpNeq, OpNotIn, OpInCIDR:
+	case OpIn, OpEq, OpNeq, OpNotIn, OpInCIDR, OpNotInCIDR:
 		return c.matchSet(ctx, raw)
 	case OpStartsWith:
 		return c.matchStartsWith(raw)

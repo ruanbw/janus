@@ -676,6 +676,8 @@ func comparePhrase(op string, expected []string) string {
 		return "以 " + values + " 结尾"
 	case OpInCIDR:
 		return "在网段 " + values + " 内"
+	case OpNotInCIDR:
+		return "不在网段 " + values + " 内"
 	case OpGT:
 		return "大于 " + values
 	case OpLT:
