@@ -114,7 +114,7 @@
         (ensure-in-file! gitignore ".worktrees/")))))
 
 (defn ensure-runtime-git-excludes! [ctx]
-  (let [exclude-file (fs/path (sh-out "git" "-C" (str (:working-dir ctx)) "rev-parse" "--git-path" "info/exclude"))]
+  (let [exclude-file (fs/absolutize (fs/path (sh-out "git" "-C" (str (:working-dir ctx)) "rev-parse" "--git-path" "info/exclude")))]
     (fs/create-dirs (fs/parent exclude-file))
     (ensure-in-file! exclude-file ".swarmforge/")
     (ensure-in-file! exclude-file ".worktrees/")))

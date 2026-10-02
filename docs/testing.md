@@ -31,6 +31,48 @@ go test ./... -count=1
 
 默认注入高阈值限流;测限流本身用 `SetupWithRateLimit`。
 
+### 共享测试库的竞态(必须用下面的门禁脚本)
+
+所有 DB 测试连同一个 `janus_test` 库,各包 Setup 都会 `TRUNCATE` 业务表。
+`db.LockTestDB` 的 advisory lock 只能跨包互斥,**挡不住上一个包遗留的后台 goroutine
+继续写库**,因此 `go test ./...` 无论并行还是 `-p 1` 都会非确定性失败
+(deadlock / duplicate key / not found),而且并行时因锁竞争更慢(实测 700s+ 且抖动)。
+
+`scripts/quality.sh` 为**每个包创建独立测试库**,跑完即删,门禁才可复现:
+
+```bash
+./scripts/quality.sh tests              # 每包独立库跑测试 + 合并覆盖率 (~170s)
+./scripts/quality.sh crap               # CRAP 复杂度/覆盖率门禁
+./scripts/quality.sh mutate <file.go>   # 指定文件变异测试
+./scripts/quality.sh changed            # 对 HEAD 以来变更的 .go 做变异测试
+./scripts/quality.sh all                 # tests + crap + changed
+```
+
+需要 `createdb`/`dropdb`(Homebrew `libpq`,keg-only)与 CREATEDB 权限的维护库连接串
+(`JANUS_ADMIN_DATABASE_URL`,默认 `postgres://janus:janus@localhost:5432/postgres`)。
+
+#### 当前 CRAP 基线(2026-10-03,阈值 CRAP_MAX=12)
+
+CRAP = 圈复杂度 × 未覆盖率,分数越高越危险。当前最需要处理的:
+
+| 函数 | 包 | CC | 覆盖 | CRAP |
+| --- | --- | --- | --- | --- |
+| `parseDNSAnswer` | domain | 20 | 0% | 420 |
+| `Store.UpdateLink` | store | 19 | 0% | 380 |
+| `superadminSlug` | bootstrap | 15 | 0% | 240 |
+| `IsValidSlug` | domain | 11 | 0% | 132 |
+| `Worker.verifyAndActivate` | domain | 11 | 0% | 132 |
+
+`bootstrap` 与 `cmd/janus` 目前 0 测试覆盖,是最大盲区。
+
+#### 变异测试说明
+
+`mutate4go` 会把 manifest 以footer 形式写进被测源文件(用于增量只跑变更函数),
+因此跑完该文件的 git diff 会包含 manifest 段落,属于预期行为。
+`Survived`(变异后测试仍通过)= 测试没测到该行为,必须补测试;
+`Uncovered` 中像 `jwt.go` 的 `crypto/rand` panic 分支属于**不可达、也不该被 kill**,
+可以保留。
+
 ---
 
 ## 第 2 层:端到端 API 脚本 `scripts/e2e.sh`
@@ -121,9 +163,11 @@ $BH evaluate --page-name janus --code "document.body.innerText.slice(0,200)"
 改动后至少跑:
 
 ```bash
-go build ./... && go test ./... -count=1   # 第 1 层
-./scripts/e2e.sh                          # 第 2 层
-cd web && npx vue-tsc --noEmit -p tsconfig.json   # 前端类型
+./scripts/quality.sh tests                            # 第 1 层(每包独立测试库)
+./scripts/quality.sh crap                             # 复杂度/覆盖率门禁
+./scripts/quality.sh changed                          # 变更文件的变异测试
+./scripts/e2e.sh                                      # 第 2 层
+cd web && npx vue-tsc --noEmit -p tsconfig.json       # 前端类型
 ```
 
 改动前端交互时,额外按第 3 层手测受影响的页面。
