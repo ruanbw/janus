@@ -24,7 +24,15 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-PG_CONTAINER="${PG_CONTAINER:-janus-postgres-1}"
+if [ -z "${PG_CONTAINER:-}" ]; then
+  if docker ps --format "{{.Names}}" | grep -q "^janus-postgres-1$"; then
+    PG_CONTAINER="janus-postgres-1"
+  elif docker ps --format "{{.Names}}" | grep -q "^cloak-postgres-1$"; then
+    PG_CONTAINER="cloak-postgres-1"
+  else
+    PG_CONTAINER="janus-postgres-1"
+  fi
+fi
 E2E_DB="${E2E_DB:-janus_e2e}"
 PORT="${E2E_PORT:-18080}"
 PLATFORM_DOMAIN="${E2E_PLATFORM_DOMAIN:-e2e.janus.test}"
@@ -810,9 +818,8 @@ print("False" if v in (False, None, "false") else "got:"+repr(v))' "$TMPBODY")"
   check "租户被封禁后其 JWT 立即失效 -> 401" "401" "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $JWT2" "$BASE/api/me")"
   sac -o /dev/null -X PATCH "$BASE/api/admin/tenants/$TID" -H "X-CSRF-Token: $SAC" \
       -H 'Content-Type: application/json' -d '{"status":"active"}'
-  # 实测:解封后这枚 JWT 直接复活(200)。封禁只改了 tenants.status,
-  # 没走 IncrementTokenVersion —— 见结论里的设计疑点。
-  check "解封后旧 JWT 复活(封禁未吊销 JWT,设计疑点)" "200" "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $JWT2" "$BASE/api/me")"
+  # 封禁已原子自增 token_version:解封后此前的旧 JWT 不得复活(仍为 401)
+  check "解封后旧 JWT 依然失效 -> 401" "401" "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $JWT2" "$BASE/api/me")"
   r=$(sac -o /dev/null -w '%{http_code}' -X PATCH "$BASE/api/admin/tenants/$T2" \
       -H "X-CSRF-Token: $SAC" -H 'Content-Type: application/json' -d '{"status":"bogus"}')
   check "非法 status -> 400" "400" "$r"

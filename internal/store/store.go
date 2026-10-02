@@ -205,7 +205,11 @@ func (s *Store) GetTenantErrorPages(ctx context.Context, tenantID int64) (page40
 func (s *Store) UpdateTenantAdmin(ctx context.Context, id int64, status *string, tierID *int64) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if status != nil {
-			if err := tx.Model(&Tenant{}).Where("id = ?", id).Update("status", *status).Error; err != nil {
+			updates := map[string]any{"status": *status}
+			if *status == "banned" {
+				updates["token_version"] = gorm.Expr("token_version + 1")
+			}
+			if err := tx.Model(&Tenant{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 				return err
 			}
 		}

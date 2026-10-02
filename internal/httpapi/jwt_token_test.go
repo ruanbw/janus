@@ -155,3 +155,38 @@ func TestJWTRejectedAfterTenantBanned(t *testing.T) {
 	assertStatus(t, resp, http.StatusUnauthorized)
 	_ = resp.Body.Close()
 }
+
+// TestJWTNeverRevivesAfterUnban 租户被封禁后，即使后续被解封，此前签发的旧 JWT 也严禁复活。
+// 契约：封禁操作必须原子自增 token_version 彻底吊销历史凭证。
+func TestJWTNeverRevivesAfterUnban(t *testing.T) {
+	env := testutil.Setup(t)
+	admin := superadminClient(t, env)
+	alice := loggedInTenant(t, env, "alice")
+	tok := tokenFromLogin(t, env, "alice@example.com", "password123")
+
+	resp := bearerReq(t, env, http.MethodGet, "/api/auth/me", nil, tok)
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	aliceID := strconv.FormatInt(tenantIDOf(t, alice), 10)
+
+	// 1. 封禁租户
+	resp = admin.patch("/api/admin/tenants/"+aliceID, map[string]any{"status": "banned"})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	// 封禁期间访问：401
+	resp = bearerReq(t, env, http.MethodGet, "/api/auth/me", nil, tok)
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+
+	// 2. 解封租户
+	resp = admin.patch("/api/admin/tenants/"+aliceID, map[string]any{"status": "active"})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	// 契约核心断言：解封后，在手旧 JWT 依然不得复活（必须仍为 401）
+	resp = bearerReq(t, env, http.MethodGet, "/api/auth/me", nil, tok)
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+}
