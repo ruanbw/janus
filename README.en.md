@@ -297,7 +297,7 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
 │   ├── rules/                  # Rule engine: fields, condition evaluation, tenant snapshot, simulation
 │   ├── store/                  # Data access (tenants / domains / links / rules / visits)
 │   └── testutil/               # Test infrastructure (httptest + real Postgres)
-├── migrations/                 # goose SQL migrations (0001–0014, applied on boot)
+├── migrations/                 # Database initialization SQL (applied on boot)
 ├── web/                        # Frontend SPA (see web/README.md and web/UI_KIT.md)
 │   ├── src/
 │   │   ├── api/  types/  utils/ # Request layer, types, errors and helpers

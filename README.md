@@ -296,7 +296,7 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 │   ├── rules/                  # 规则引擎:字段、条件求值、租户快照与仿真
 │   ├── store/                  # 数据访问层(租户 / 域名 / 短链 / 规则 / 访问)
 │   └── testutil/               # 测试基础设施(httptest + 真实 Postgres)
-├── migrations/                 # goose SQL 迁移(0001 ~ 0014,启动时自动执行)
+├── migrations/                 # 数据库初始化 SQL (启动时自动执行)
 ├── web/                        # 前端 SPA(见 web/README.md、web/UI_KIT.md)
 │   ├── src/
 │   │   ├── api/  types/  utils/ # 请求封装、类型、错误与工具
