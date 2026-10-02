@@ -4,7 +4,10 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/netip"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -141,6 +144,31 @@ func (c Config) Validate() error {
 	}
 	if _, err := c.TrustedProxyNets(); err != nil {
 		return fmt.Errorf("JANUS_TRUSTED_PROXY_CIDRS: %w", err)
+	}
+	switch c.GeoProvider {
+	case "", "local", "ipinfo", "ipqualityscore", "ipapi":
+	default:
+		return fmt.Errorf("JANUS_GEO_PROVIDER 只支持 local/ipinfo/ipqualityscore/ipapi,当前为 %q(拼错会静默回退到 local)", c.GeoProvider)
+	}
+	if c.SMTPPort < 1 || c.SMTPPort > 65535 {
+		return fmt.Errorf("JANUS_SMTP_PORT 必须是 1-65535,当前为 %d", c.SMTPPort)
+	}
+	if c.PublicBaseURL != "" {
+		if u, err := url.Parse(c.PublicBaseURL); err != nil || u.Scheme == "" || u.Host == "" {
+			return fmt.Errorf("JANUS_PUBLIC_BASE_URL 不是合法 URL: %q", c.PublicBaseURL)
+		}
+	}
+	if c.ServerPublicIP != "" && net.ParseIP(c.ServerPublicIP) == nil {
+		return fmt.Errorf("JANUS_SERVER_PUBLIC_IP 不是合法 IP: %q", c.ServerPublicIP)
+	}
+	if c.JWTSecret == "" {
+		// 为空时 httpapi 会退回每次重启随机的临时密钥(已签发 token 全部失效),
+		// 生产环境必须显式配置——这里大声告警,不再静默。
+		fmt.Fprintln(os.Stderr, "WARN: JANUS_JWT_SECRET 未配置,将使用每次重启随机的临时密钥,生产环境必须配置")
+	}
+	if c.SMTPHost == "" {
+		// 控制台 mailer 会把 token 打印到日志,生产环境不可用。
+		fmt.Fprintln(os.Stderr, "WARN: 未配置 JANUS_SMTP_HOST,使用 ConsoleMailer,验证/重置链接会打印到后端日志,仅适合开发环境")
 	}
 	return nil
 }

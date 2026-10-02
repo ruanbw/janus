@@ -62,9 +62,7 @@ func (xdbLookup) Lookup(ip string) Info {
 	// 内网/回环/链路本地直接返回:这些地址的地理结果没有意义,连查都不查。
 	// (ip2region 对它们会返回 Reserved|...|0,落到下面同样会变成空值,
 	//  这里短路只是为了不让开发环境的每一次本地访问都白跑一次二分查找。)
-	if parsed.IsLoopback() || parsed.IsPrivate() ||
-		parsed.IsLinkLocalUnicast() || parsed.IsLinkLocalMulticast() ||
-		parsed.IsUnspecified() {
+	if isNonPublicIP(parsed) {
 		return Info{}
 	}
 	version, err := xdb.VersionFromIP(ip)
@@ -83,6 +81,7 @@ func (xdbLookup) Lookup(ip string) Info {
 	if err != nil {
 		return Info{}
 	}
+	defer searcher.Close()
 	region, err := searcher.Search(ip)
 	if err != nil {
 		return Info{}

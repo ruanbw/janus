@@ -20,8 +20,16 @@ func Superadmin(ctx context.Context, st *store.Store, email string) error {
 	}
 	t, err := st.GetTenantByEmail(ctx, email)
 	if err == nil {
+		// 已存在:标志位与状态都要确保就绪——进程可能死在 CreateTenant 与
+		// SetTenantStatus 之间,此时租户存在但 status=pending,重启应把它修复,
+		// 而不是因 IsSuperAdmin 已是 true 就当作「已是超管」直接返回。
 		if !t.IsSuperAdmin {
-			return st.SetTenantSuperAdmin(ctx, t.ID)
+			if err := st.SetTenantSuperAdmin(ctx, t.ID); err != nil {
+				return err
+			}
+		}
+		if t.Status != "active" {
+			return st.SetTenantStatus(ctx, t.ID, "active")
 		}
 		return nil
 	}
@@ -30,20 +38,31 @@ func Superadmin(ctx context.Context, st *store.Store, email string) error {
 	}
 	// 生成唯一 slug(超管专用,带随机后缀降低冲突概率)
 	slug := superadminSlug(email)
+	created := false
 	for i := 0; i < 5; i++ {
 		suffix := domain.GenerateCode(4)
 		_, err = st.CreateTenant(ctx, email, "", slug+"-"+suffix, true)
 		if err == nil {
+			created = true
 			break
 		}
 		if !store.IsUniqueViolation(err) {
 			return err
 		}
+		// 可能是 slug 冲突,也可能是另一个副本抢先建好了同邮箱租户:
+		// 先按邮箱查一遍,查到就走「已存在」分支,不再把邮箱唯一冲突
+		// 当成 slug 冲突重试(重试 5 次全是邮箱冲突,最终误以为失败)。
+		if _, gerr := st.GetTenantByEmail(ctx, email); gerr == nil {
+			break
+		}
 	}
-	if err != nil {
-		return err
+	if err != nil && !created {
+		if _, gerr := st.GetTenantByEmail(ctx, email); gerr != nil {
+			return err
+		}
 	}
-	// 超管无平台默认域名需求;直接置 active(可登录引导设置密码)
+	// 超管无平台默认域名需求;直接置 active(可登录引导设置密码)。
+	// 即使是另一个副本创建的,这一步也必须做,保证 status=active 收敛。
 	nt, err := st.GetTenantByEmail(ctx, email)
 	if err != nil {
 		return err

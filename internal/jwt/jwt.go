@@ -79,6 +79,9 @@ func (m *Manager) Parse(tokenString string) (*Claims, error) {
 	if !token.Valid {
 		return nil, errors.New("invalid token")
 	}
+	if claims.Subject == "" || claims.Role == "" {
+		return nil, errors.New("token missing subject or role")
+	}
 	return claims, nil
 }
 

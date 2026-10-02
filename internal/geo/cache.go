@@ -2,6 +2,7 @@ package geo
 
 import (
 	"hash/maphash"
+	"net"
 	"sync"
 )
 
@@ -64,6 +65,11 @@ func Cached(inner Lookup, entries int) Lookup {
 func (c *cached) Lookup(ip string) Info {
 	if ip == "" {
 		return Info{}
+	}
+	// 归一化:同一地址的不同写法(IPv6 大小写/前导零、IPv4-mapped 等)
+	// 必须落到同一个缓存槽,否则每种写法各占一条、外部查询翻倍。
+	if p := net.ParseIP(ip); p != nil {
+		ip = p.String()
 	}
 	sh := &c.shards[maphash.String(cacheSeed, ip)&(cacheShards-1)]
 	if v, ok, gen := sh.get(ip); ok {

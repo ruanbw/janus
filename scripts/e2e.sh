@@ -27,8 +27,6 @@ done
 if [ -z "${PG_CONTAINER:-}" ]; then
   if docker ps --format "{{.Names}}" | grep -q "^janus-postgres-1$"; then
     PG_CONTAINER="janus-postgres-1"
-  elif docker ps --format "{{.Names}}" | grep -q "^cloak-postgres-1$"; then
-    PG_CONTAINER="cloak-postgres-1"
   else
     PG_CONTAINER="janus-postgres-1"
   fi
@@ -49,7 +47,7 @@ check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1" "$2" "$3"; fi; }
 
 psql_q() { docker exec "$PG_CONTAINER" psql -U janus -d "$1" -qtAc "$2" 2>/dev/null | tr -d '\r'; }
 
-py() { if [ -n "${PYDBG:-}" ]; then python3 -c "$1" x "${@:2}"; else python3 -c "$1" x "${@:2}" 2>/dev/null; fi; }
+py() { if [ -n "${PYDBG:-}" ]; then python3 -c "$1" x "${@:2}"; else python3 -c "$1" x "${@:2}" 2>/dev/null; fi; }  # PYDBG 时不吞 stderr,便于调试
 
 # ───────────────────────── 自建环境 ─────────────────────────
 if [ -z "$BASE" ]; then
@@ -401,14 +399,16 @@ check "访问明细 -> 200" "200" "$STATUS"
 check "  action=redirect" "redirect" "$(echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin)["items"][0]["action"])')"
 check "  outcome=success" "success" "$(echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin)["items"][0]["outcome"])')"
 check "  记录了域名" "$DFQDN" "$(echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin)["items"][0]["domain"])')"
-check "  记录了目标 URL" "https://example.com/target" "$(echo "$BODY" | py 'import sys.json;print(json.load(sys.stdin)["items"][0]["targetUrl"])' 2>/dev/null || echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin)["items"][0].get("targetUrl",""))')"
+check "  记录了目标 URL" "https://example.com/target" "$(echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin)["items"][0].get("targetUrl",""))')"
 req GET "/api/links/$GID/visits?action=bogus"; check "非法 action 过滤 -> 400" "400" "$STATUS"
 req GET "/api/links/$GID/visits?outcome=bogus"; check "非法 outcome 过滤 -> 400" "400" "$STATUS"
 req GET "/api/links/$GID/visits?outcome=success"
 check "按 outcome 过滤可用" "0" "$(echo "$BODY" | py 'import sys,json;print(sum(1 for i in json.load(sys.stdin)["items"] if i["outcome"]=="failed"))')"
 
+V_BEFORE=$(psql_q "$E2E_DB" "SELECT count(*) FROM visits")
 check "未命中(不存在的短码) -> 404" "404" "$(raw GET "/nosuchcode${SUF}" -H "Host: $DFQDN")"
-check "未命中不记访问明细" "0" "$(psql_q "$E2E_DB" "SELECT count(*) FROM visits WHERE code_missing_marker IS NULL" 2>/dev/null || echo 0)"
+V_AFTER=$(psql_q "$E2E_DB" "SELECT count(*) FROM visits")
+check "未命中不记访问明细" "$V_BEFORE" "$V_AFTER"
 
 # 目标轮询
 req PATCH "/api/links/$GID" '{"targetUrls":["https://a.example.com/1","https://b.example.com/2","https://c.example.com/3"]}'
@@ -539,6 +539,15 @@ check "  rulesEnabled=false" "False" "$(echo "$BODY" | py 'import sys,json
 v=json.load(sys.stdin)["rulesEnabled"]
 print("False" if v in (False,"false") else "got:"+repr(v))')"
 check "  库里也已落盘 false" "f" "$(psql_q "$E2E_DB" "SELECT rules_enabled FROM links WHERE id=$GID")"
+# 开关关着时规则不参与裁决(短路在可用性之后、求值之前):造一条必中的规则验证它被跳过。
+req POST /api/rules '{"name":"r-switch-'"$SUF"'","scope":"global","logic":"all","action":"notfound","priority":1,"conditions":[{"field":"ua","operator":"contains","values":["E2ESwitch"]}]}'
+check "  创建 notfound 规则(开关关闭期间) -> 201" "201" "$STATUS"
+SWID=$(echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin)["id"])')
+check "  开关关闭时规则被跳过 -> 302" "302" "$(raw GET "/$GCODE" -H "Host: $DFQDN" -A 'E2ESwitch/1.0')"
+req PATCH "/api/links/$GID" '{"rulesEnabled":true}'
+check "重开短链规则开关 -> 200" "200" "$STATUS"
+check "  开关打开后规则恢复生效 -> 404" "404" "$(raw GET "/$GCODE" -H "Host: $DFQDN" -A 'E2ESwitch/1.0')"
+req DELETE "/api/rules/$SWID" >/dev/null
 
 # ───────────────────────── 7. 总览 ─────────────────────────
 sect "7. 总览聚合"
@@ -551,7 +560,7 @@ check "  topLinks 是数组" "True" "$(echo "$BODY" | py 'import sys,json;print(
 
 # CTR 口径:clickVisits 与 visits 同源同期
 req GET /api/links?page=1
-check "短链带 clickVisits 字段" "True" "$(echo "$BODY" | py 'import sys,json;print("clickVisits" in json.load(sys.stdin)["items"][0])' 2>/dev/null || echo True)"
+check "短链带 clickVisits 字段" "True" "$(echo "$BODY" | py 'import sys,json;print("clickVisits" in json.load(sys.stdin)["items"][0])')"
 
 # ───────────────────────── 8. 落地页 ─────────────────────────
 sect "8. 落地页型短链"
@@ -628,6 +637,13 @@ check "  404 定制页已持久化" "True" "$(echo "$BODY" | py "import sys,json
 P429='<html><body><h1>Janus 429 定制页</h1></body></html>'
 req PATCH /api/me/error-pages "{\"custom429Html\":\"$P429\"}"
 check "写 429 定制页 -> 200" "200" "$STATUS"
+req POST /api/rules '{"name":"r-throttle429-'"$SUF"'","scope":"global","logic":"all","action":"throttle","priority":9,"conditions":[{"field":"ua","operator":"contains","values":["E2EThrottle429"]}]}'
+check "创建 throttle 规则(验 429 定制页) -> 201" "201" "$STATUS"
+TRID2=$(echo "$BODY" | py 'import sys,json;print(json.load(sys.stdin)["id"])')
+check "  throttle 裁决 -> 429" "429" "$(raw GET "/$GCODE" -H "Host: $DFQDN" -A 'E2EThrottle429/1.0')"
+B429=$(curl -sS -H "Host: $DFQDN" -A 'E2EThrottle429/1.0' "$BASE/$GCODE")
+echo "$B429" | grep -q "Janus 429 定制页" && ok "throttle 返回自定义 429 页" || bad "throttle 自定义 429 页" "含定制文案" "$(echo "$B429" | head -c 100)"
+req DELETE "/api/rules/$TRID2" >/dev/null
 B404=$(curl -sS -H "Host: $DFQDN" "$BASE/nosuch${SUF}")
 echo "$B404" | grep -q "Janus 404 定制页" && ok "未命中返回自定义 404 页" || bad "未命中自定义 404 页" "含定制文案" "$(echo "$B404" | head -c 100)"
 req PATCH /api/me/error-pages '{"custom404Html":""}'
@@ -707,7 +723,7 @@ check "Bearer token 访问 /api/me -> 200" "200" "$(curl -sS -o /dev/null -w '%{
 JWCODE="jw$(gen 5 w)"
 JW=$(curl -sS -X POST -H "Authorization: Bearer $JWT" -H 'Content-Type: application/json' "$BASE/api/links" -d "{\"code\":\"$JWCODE\",\"targetUrls\":[\"https://example.com/jwt\"],\"domainIds\":[$DID]}")
 JWID=$(echo "$JW" | py 'import sys,json;print(json.load(sys.stdin)["id"])')
-check "Bearer token 写操作(创建短链) -> 201" "201" "$(echo "$JW" | py 'import sys,json;print("id" in json.load(sys.stdin))' | sed 's/True/201/;s/False/400/')"
+check "Bearer token 写操作(创建短链) -> 201" "True" "$(echo "$JW" | py 'import sys,json;print("id" in json.load(sys.stdin))')"
 check "伪造 token -> 401" "401" "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer forged.token.value" "$BASE/api/me")"
 check "空 Bearer -> 401" "401" "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer " "$BASE/api/me")"
 check "JWT 也能访问跳转路径" "302" "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $JWT" -H "Host: $DFQDN" "$BASE/$JWCODE")"

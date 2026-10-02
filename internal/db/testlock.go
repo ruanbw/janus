@@ -15,7 +15,7 @@ import (
 )
 
 // TestLockKey 测试库互斥锁键(各包必须用同一个值)。
-const TestLockKey int64 = 0x434C4F41 // "CLOA"
+const TestLockKey int64 = 0x4A414E55 // "JANU"
 
 // TestLockWait 等待其它包让出测试库的最长时间;超时视为环境异常而不是测试失败。
 const TestLockWait = 3 * time.Minute

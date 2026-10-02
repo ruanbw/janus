@@ -229,6 +229,9 @@ type DomainScanRow struct {
 	LastAt time.Time `json:"lastAt" gorm:"column:last_at"`
 	// Overdue 是否已超过最长等待:应转入终态,不再重试。
 	Overdue bool `json:"overdue" gorm:"column:overdue"`
+	// VerifyTokenCreatedAt 当前挑战签发时间;挑战过期判定要用它,
+	// 不能用 LastAt(每轮复检都刷新,时间会被重置,判不出真实挑战年龄)。
+	VerifyTokenCreatedAt *time.Time `json:"verifyTokenCreatedAt,omitempty" gorm:"column:verify_token_created_at"`
 }
 
 // DefaultDomainScanLimit 单轮扫描的行数上限。
@@ -263,6 +266,7 @@ const DefaultDomainScanLimit = 500
 func (s *Store) ListDomainsForDNSCheck(ctx context.Context, maxAge, interval time.Duration, limit int) ([]DomainScanRow, error) {
 	return s.scanDomains(ctx, `
 		SELECT id, fqdn, status, cert_status, verify_token, last_at,
+		       verify_token_created_at,
 		       (EXTRACT(EPOCH FROM (now() - COALESCE(verify_token_created_at, created_at))) > $1) AS overdue
 		FROM (
 			SELECT id, fqdn, status, cert_status, verify_token,

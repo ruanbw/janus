@@ -38,7 +38,7 @@ go test ./... -count=1
 自包含:自建数据库 → 编译二进制 → 起独立实例 → 跑完即清理。**不碰开发数据。**
 
 ```bash
-./scripts/e2e.sh            # 全量(257 断言)
+./scripts/e2e.sh            # 全量(约 265 断言,以脚本实际 check/ok/bad 计)
 ./scripts/e2e.sh --keep     # 保留数据库与日志,便于排查
 ./scripts/e2e.sh --base URL # 测已运行的服务(需自备数据)
 ```

@@ -96,7 +96,13 @@ func setup(t *testing.T, rc *httpapi.RateLimitConfig, geoLookup geo.Lookup) *Env
 
 	pool, err := db.Connect(ctx, TestDatabaseURL)
 	if err != nil {
-		t.Skipf("test database not available (%v); run: docker compose up -d postgres && docker exec -i janus-postgres-1 psql -U janus -d janus -c 'CREATE DATABASE janus_test'", err)
+		if os.Getenv("JANUS_TEST_DB_REQUIRED") == "1" {
+			t.Fatalf("test database not available: %v", err)
+		}
+		t.Skipf("test database not available (%v); set JANUS_TEST_DB_REQUIRED=1 to fail instead of skip", err)
+	}
+	if !strings.Contains(TestDatabaseURL, "_test") {
+		t.Fatalf("refusing to run tests against non-test database: %s", TestDatabaseURL)
 	}
 	t.Cleanup(pool.Close)
 	// 独占测试库到本包测试结束:各包都连同一个库并 TRUNCATE 业务表,
@@ -234,7 +240,7 @@ func (e *Env) StartWorker(t *testing.T) {
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
-			t.Log("worker 未在 10s 内退出(通常卡在出网调用上)")
+			t.Errorf("worker 未在 10s 内退出(通常卡在出网调用上)")
 		}
 	})
 }

@@ -5,6 +5,7 @@ package mailer
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 )
 
@@ -39,14 +40,17 @@ func NewMailer(cfg Config, w io.Writer) Mailer {
 }
 
 func verifyURL(baseURL, token string) string {
-	return fmt.Sprintf("%s/verify-email?token=%s", baseURL, token)
+	return fmt.Sprintf("%s/verify-email?token=%s", baseURL, url.QueryEscape(token))
 }
 
 func resetURL(baseURL, token string) string {
-	return fmt.Sprintf("%s/reset-password?token=%s", baseURL, token)
+	return fmt.Sprintf("%s/reset-password?token=%s", baseURL, url.QueryEscape(token))
 }
 
 // ConsoleMailer 把邮件输出到指定 writer(开发环境用,无需真实 SMTP)。
+// 注意:它会打印完整的验证/重置 URL(含 token)——这是开发时取 token 的唯一方式,
+// 但也意味着任何能读到后端日志的人都能接管账号。禁止在生产环境使用;
+// 生产必须配置 SMTP(见 config.Validate 的告警)。
 type ConsoleMailer struct {
 	w       io.Writer
 	baseURL string

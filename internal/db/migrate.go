@@ -23,6 +23,21 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, dir string) error {
 		return fmt.Errorf("goose set dialect: %w", err)
 	}
 
+	// 并发多副本同时启动时,两个进程可能同时执行 DDL 与 goose_db_version 写入。
+	// 用 advisory lock 串行化迁移;锁挂在一条专用连接上(会话级锁),
+	// 迁移期间这条连接不释放,其它副本在这里阻塞等到锁释放后再跑幂等迁移。
+	lockConn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire migration connection: %w", err)
+	}
+	defer func() { _ = lockConn.Close() }()
+	if _, err := lockConn.ExecContext(ctx, `SELECT pg_advisory_lock(hashtext('janus-migrate'))`); err != nil {
+		return fmt.Errorf("acquire migration lock: %w", err)
+	}
+	defer func() {
+		_, _ = lockConn.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(hashtext('janus-migrate'))`)
+	}()
+
 	// 平滑兼容历史迁移记录：
 	// Janus 早期使用自研 schema_migrations 表（存储 0001_init.sql 等文件名）。
 	// goose 默认使用 goose_db_version 表（版本号为 int64，如 1, 2, 3）。
@@ -46,7 +61,9 @@ func syncLegacyMigrations(ctx context.Context, db *sql.DB, dir string) error {
 		SELECT FROM information_schema.tables 
 		WHERE table_schema = 'public' AND table_name = 'schema_migrations'
 	)`
-	if err := db.QueryRowContext(ctx, queryTable).Scan(&exists); err != nil || !exists {
+	if err := db.QueryRowContext(ctx, queryTable).Scan(&exists); err != nil {
+		return fmt.Errorf("check legacy schema_migrations: %w", err)
+	} else if !exists {
 		return nil
 	}
 
@@ -65,7 +82,7 @@ func syncLegacyMigrations(ctx context.Context, db *sql.DB, dir string) error {
 
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return nil
+		return fmt.Errorf("read migrations dir: %w", err)
 	}
 	var sqlFiles []string
 	for _, e := range entries {
@@ -78,7 +95,10 @@ func syncLegacyMigrations(ctx context.Context, db *sql.DB, dir string) error {
 	for _, filename := range sqlFiles {
 		var applied bool
 		err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = $1)`, filename).Scan(&applied)
-		if err != nil || !applied {
+		if err != nil {
+			return fmt.Errorf("check legacy version %s: %w", filename, err)
+		}
+		if !applied {
 			continue
 		}
 
@@ -89,12 +109,16 @@ func syncLegacyMigrations(ctx context.Context, db *sql.DB, dir string) error {
 
 		// 检查 goose_db_version 中是否已经记录
 		var recorded bool
-		_ = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id = $1)`, v).Scan(&recorded)
+		if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id = $1)`, v).Scan(&recorded); err != nil {
+			return fmt.Errorf("check goose version %d: %w", v, err)
+		}
 		if !recorded {
-			_, _ = db.ExecContext(ctx, `
+			if _, err := db.ExecContext(ctx, `
 				INSERT INTO goose_db_version (version_id, is_applied, tstamp)
 				VALUES ($1, true, now())
-			`, v)
+			`, v); err != nil {
+				return fmt.Errorf("record legacy version %d: %w", v, err)
+			}
 		}
 	}
 

@@ -79,7 +79,7 @@ func (a *API) handleRegister(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
-	email := strings.ToLower(strings.TrimSpace(req.Email))
+	email := domain.NormalizeEmail(req.Email)
 	slug := strings.TrimSpace(req.Slug)
 	if !validEmail(email) {
 		writeErr(c, http.StatusBadRequest, errValidation, "邮箱格式非法")
@@ -193,7 +193,7 @@ func (a *API) handleResendVerification(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
-	email := strings.ToLower(strings.TrimSpace(req.Email))
+	email := domain.NormalizeEmail(req.Email)
 	tenant, err := a.store.GetTenantByEmail(c.Request.Context(), email)
 	if err == nil && tenant.Status == "pending" {
 		// 同一邮箱 5 分钟最多一封:挡掉"拿已知邮箱轰炸"的滥用。
@@ -377,7 +377,7 @@ func (a *API) handleLogin(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
-	email := strings.ToLower(strings.TrimSpace(req.Email))
+	email := domain.NormalizeEmail(req.Email)
 	tenant, ok := a.verifyCredentials(c, email, req.Password, req.SetupToken)
 	if !ok {
 		return
@@ -487,7 +487,7 @@ func (a *API) handleForgotPassword(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
-	email := strings.ToLower(strings.TrimSpace(req.Email))
+	email := domain.NormalizeEmail(req.Email)
 	if tenant, err := a.store.GetTenantByEmail(c.Request.Context(), email); err == nil {
 		// 等时化:账号存在与否都执行一次 bcrypt 比较,避免存在性被时序区分
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(email))
@@ -568,7 +568,7 @@ func (a *API) handleToken(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "invalid JSON body")
 		return
 	}
-	email := strings.ToLower(strings.TrimSpace(req.Email))
+	email := domain.NormalizeEmail(req.Email)
 	tenant, ok := a.verifyCredentials(c, email, req.Password, req.SetupToken)
 	if !ok {
 		return

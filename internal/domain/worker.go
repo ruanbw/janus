@@ -90,7 +90,8 @@ func ValidateIntervals(cfg config.Config) error {
 func (w *Worker) Run(ctx context.Context) {
 	// 间隔非法就不启动对应循环,而不是让 time.NewTicker panic 把整个进程带走。
 	if err := ValidateIntervals(w.cfg); err != nil {
-		log.Fatalf("worker 配置非法,拒绝启动: %v", err)
+		log.Printf("worker 配置非法,拒绝启动: %v", err)
+		return
 	}
 	// 这三个循环都会出网(DNS 查询 / HTTPS 探活),加咨询锁做副本间抢占:
 	// 多副本时每轮只由一个副本执行,其余跳过。
@@ -247,6 +248,12 @@ func (w *Worker) verifyAndActivate(ctx context.Context, d store.DomainScanRow) {
 // challengeExpired 挑战是否已超过最长等待(与 DNSMaxAge 同一条时钟,配置上就是
 // "租户最多等多久")。
 func challengeExpired(d store.DomainScanRow, maxAge time.Duration) bool {
+	// 挑战签发时间才是它是否过期的判据:LastAt 每轮复检都会被刷新,
+	// 用它判挑战年龄永远判不过期(于是永不重新签发、也与 overdue 终态
+	// 判定脱节)。没有记录时退回 LastAt 兜底。
+	if d.VerifyTokenCreatedAt != nil {
+		return time.Since(*d.VerifyTokenCreatedAt) > maxAge
+	}
 	if maxAge <= 0 {
 		return false
 	}

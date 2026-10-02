@@ -461,15 +461,6 @@ func (f Fact) WithIP(ip string) Fact {
 	return f
 }
 
-// parsedIP 取访客 IP 的解析结果(解析一次即缓存)。
-// Fact 由调用方手工构造时 netIP 为空,按需解析。
-func (f *Fact) parsedIP() net.IP {
-	if f.netIP == nil {
-		f.netIP = net.ParseIP(f.IP)
-	}
-	return f.netIP
-}
-
 // FromRequest 从请求抽出访客画像。
 // 纯内存:只读头、URL 与 RemoteAddr,不做任何 IO。
 func FromRequest(r *http.Request) Fact {
@@ -615,16 +606,6 @@ func uaFacts(ua string) (dev, osName, browser string) {
 	return devTypeOf(lower), osOf(lower), browserOf(lower)
 }
 
-// devType 由 UA 判定设备类型。判为爬虫优先于其他类型:
-// 爬虫常伪装成桌面 UA,但租户的风控意图是先把它摘出去。
-// UA 为空时返回空(不猜):把"没有 UA"直接判成爬虫会让所有 API 客户端被误伤。
-func devType(ua string) string {
-	if ua == "" {
-		return ""
-	}
-	return devTypeOf(strings.ToLower(ua))
-}
-
 func devTypeOf(lower string) string {
 	if containsAny(lower, botTokens) {
 		return DevTypeBot
@@ -647,15 +628,6 @@ var (
 	osMac     = []string{"mac os x", "macintosh", "macos"}
 	osLinux   = []string{"linux", "x11"}
 )
-
-// osName 由 UA 判定操作系统。UA 为空返回空;不认识的操作系统归"其他"
-// (不是"未知"——未知必须恒不命中,才能让"空值恒不命中"这条不变式保持干净)。
-func osName(ua string) string {
-	if ua == "" {
-		return ""
-	}
-	return osOf(strings.ToLower(ua))
-}
 
 func osOf(lower string) string {
 	switch {
@@ -687,14 +659,6 @@ var (
 		"samsungbrowser", "ucbrowser", "quark/", "miuibrowser", "heytapbrowser", "electron"}
 )
 
-// browserName 由 UA 判定浏览器(Chrome / Safari / Firefox / Edge / 其他)。
-func browserName(ua string) string {
-	if ua == "" {
-		return ""
-	}
-	return browserOf(strings.ToLower(ua))
-}
-
 func browserOf(lower string) string {
 	if containsAny(lower, edgeTokens) {
 		return "Edge"
@@ -710,8 +674,6 @@ func browserOf(lower string) string {
 	}
 	return "其他"
 }
-
-func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func containsAny(s string, subs []string) bool {
 	for _, sub := range subs {

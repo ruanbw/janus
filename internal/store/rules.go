@@ -716,14 +716,22 @@ func (s *Store) UpdateRule(ctx context.Context, tenantID, id int64, upd RuleUpda
 	if upd.Scope != nil {
 		newScope = *upd.Scope
 	}
-	// scope 切到 global 时强制清空关联(见 RuleUpdate 注释的取舍说明)
-	scopeToGlobal := newScope == RuleScopeGlobal && cur.Scope != RuleScopeGlobal
-	linkIDs := upd.LinkIDs
-	if scopeToGlobal {
-		empty := []int64{}
-		linkIDs = &empty
-	}
+	// scope 切到 global 时强制清空关联(见 RuleUpdate 注释的取舍说明);
+	// scopeToGlobal 的判定延迟到事务内锁定行之后做(见下)。
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 在锁内重读现值:scope→global 的清关联判定不能依赖事务外的旧快照,
+		// 否则与并发的 add-links 交错时,global 规则上会残留 rule_links。
+		var locked Rule
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND tenant_id = ?", id, tenantID).First(&locked).Error; err != nil {
+			return err
+		}
+		scopeToGlobal := newScope == RuleScopeGlobal && locked.Scope != RuleScopeGlobal
+		linkIDs := upd.LinkIDs
+		if scopeToGlobal {
+			empty := []int64{}
+			linkIDs = &empty
+		}
 		if len(fields) > 0 {
 			if err := tx.Model(&Rule{}).Where("id = ? AND tenant_id = ?", id, tenantID).
 				Updates(fields).Error; err != nil {

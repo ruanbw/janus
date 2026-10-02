@@ -32,6 +32,7 @@ type fallbackLookup struct {
 	mu              sync.RWMutex
 	consecFailures  int
 	circuitOpenTill time.Time
+	probing         bool
 }
 
 // NewFallbackLookup 构建优先查询外部 SaaS、失败或超时平滑回退到本地库的复合 Lookup。
@@ -62,10 +63,24 @@ func NewFallbackLookup(cfg FallbackConfig) Lookup {
 	}
 }
 
-func (f *fallbackLookup) isCircuitOpen() bool {
-	f.mu.RLock()
-	defer f.mu.RUnlock()
-	return time.Now().Before(f.circuitOpenTill)
+// tryPrimary 判断本次是否应请求 primary。
+// 熔断开启时一律拒绝;熔断冷却到期后放行正好一个探测请求(半开状态),
+// 防止冷却结束的一瞬间所有在途并发一起冲向已故障的 primary,
+// 第一次失败就又立刻全开(全员去接 3s 超时)。
+func (f *fallbackLookup) tryPrimary() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if time.Now().Before(f.circuitOpenTill) {
+		return false
+	}
+	if f.circuitOpenTill.IsZero() {
+		return true // 从未熔断
+	}
+	if f.probing {
+		return false // 已有探测在途
+	}
+	f.probing = true
+	return true
 }
 
 func (f *fallbackLookup) recordSuccess() {
@@ -73,6 +88,7 @@ func (f *fallbackLookup) recordSuccess() {
 	defer f.mu.Unlock()
 	f.consecFailures = 0
 	f.circuitOpenTill = time.Time{}
+	f.probing = false
 }
 
 func (f *fallbackLookup) recordFailure() {
@@ -81,6 +97,7 @@ func (f *fallbackLookup) recordFailure() {
 	f.consecFailures++
 	if f.consecFailures >= f.maxFailures {
 		f.circuitOpenTill = time.Now().Add(f.cooldown)
+		f.probing = false
 	}
 }
 
@@ -93,16 +110,20 @@ func (f *fallbackLookup) Lookup(ip string) Info {
 		return Info{}
 	}
 	// 内网/回环/未指定地址直接短路返回零值，避免无效外部调用
-	if parsed.IsLoopback() || parsed.IsPrivate() ||
-		parsed.IsLinkLocalUnicast() || parsed.IsLinkLocalMulticast() ||
-		parsed.IsUnspecified() {
+	if isNonPublicIP(parsed) {
 		return Info{}
 	}
 
-	if f.primary != nil && !f.isCircuitOpen() {
+	if f.primary != nil && f.tryPrimary() {
 		ctx, cancel := context.WithTimeout(context.Background(), f.timeout)
 		info, err := f.primary.LookupIP(ctx, ip)
 		cancel()
+		if err == nil {
+			// 半开探测成功:熔断复位。
+			f.mu.Lock()
+			f.probing = false
+			f.mu.Unlock()
+		}
 
 		if err == nil {
 			f.recordSuccess()
@@ -122,4 +143,11 @@ func (f *fallbackLookup) Lookup(ip string) Info {
 
 	// 远程故障、超时、熔断或未提供 Primary 时，平滑回落到本地库
 	return f.fallback.Lookup(ip)
+}
+
+// isNonPublicIP 内网/回环/链路本地/未指定地址:无地理意义且不应发起外部查询。
+func isNonPublicIP(p net.IP) bool {
+	return p.IsLoopback() || p.IsPrivate() ||
+		p.IsLinkLocalUnicast() || p.IsLinkLocalMulticast() ||
+		p.IsUnspecified()
 }

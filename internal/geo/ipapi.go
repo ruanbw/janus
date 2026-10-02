@@ -28,7 +28,7 @@ type ipapiProvider struct {
 func NewIPAPIProvider(cfg IPAPIConfig) Provider {
 	baseURL := strings.TrimRight(cfg.BaseURL, "/")
 	if baseURL == "" {
-		baseURL = "http://ip-api.com"
+		baseURL = "https://ip-api.com"
 	}
 	client := cfg.Client
 	if client == nil {
@@ -65,7 +65,8 @@ func (p *ipapiProvider) LookupIP(ctx context.Context, ip string) (Info, error) {
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return Info{}, err
+		// url.Error 会带上完整 URL(含 key),统一脱敏
+		return Info{}, fmt.Errorf("ip-api request failed: %v", sanitizeURLErr(err))
 	}
 	defer resp.Body.Close()
 

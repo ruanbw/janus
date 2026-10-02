@@ -323,3 +323,8 @@ func (c *DNSChecker) resolverForTXT() *net.Resolver {
 	})
 	return c.txtResolver
 }
+
+// NormalizeEmail 邮箱归一化:去空白、转小写。登录/注册/找回/重置共用同一个口径。
+func NormalizeEmail(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}

@@ -144,14 +144,15 @@ func TestUADetection(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := devType(c.ua); got != c.dev {
-				t.Errorf("devtype = %q, want %q", got, c.dev)
+			dev, os, br := uaFacts(c.ua)
+			if dev != c.dev {
+				t.Errorf("devtype = %q, want %q", dev, c.dev)
 			}
-			if got := osName(c.ua); got != c.osName {
-				t.Errorf("os = %q, want %q", got, c.osName)
+			if os != c.osName {
+				t.Errorf("os = %q, want %q", os, c.osName)
 			}
-			if got := browserName(c.ua); got != c.browser {
-				t.Errorf("browser = %q, want %q", got, c.browser)
+			if br != c.browser {
+				t.Errorf("browser = %q, want %q", br, c.browser)
 			}
 		})
 	}
