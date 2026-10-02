@@ -2,6 +2,8 @@
 
 地理字段的注入通道已经存在(`rules.WithGeo` / `rules.Geo`),但全仓没有调用方,`country`/`asn` 恒空,依赖它们的规则条件恒不命中。接入数据源时,接口按**能力**定义而非按供应商定义:`Lookup(ip) → {country, asn, isDatacenter}`;静态 geo 数据(mmdb)与第三方 IP 情报 API 各实现一份,mmdb 同时充当本地兜底;数据源的选择是**平台级**配置,不是租户级;取不到值一律按空值处理,恒不命中。
 
+**已实现(2026-10-02)**: 完成了远程 SaaS 与兜底链路落地。抽象了 `Provider` 接口,提供 IPinfo / IPQualityScore / IP-API 等热门厂商接入;落地 `FallbackLookup`,优先远程 SaaS、网络抖动/报错/超时(默认 500ms)自动降级到本地内嵌离线库(ip2region xdb)兜底;外层包裹分片双代缓存并记住负结果。由 `JANUS_GEO_PROVIDER`、`JANUS_GEO_API_KEY`、`JANUS_GEO_TIMEOUT` 环境变量驱动平台级配置。
+
 **已实现(2026-10-01)**:落地的是「静态库那条腿」,数据源是内嵌进二进制的 ip2region v3.18.0 离线库(V4 + V6,`internal/geo/data/`),`internal/geo/xdb.go` 提供 `Lookup`,`internal/geo/cache.go` 提供分片双代缓存(负结果也缓存)。未做远程实现,也未做平台级选择项——只有一路数据源时,「选择用哪个」是个假选择;真加了第二路再把配置表立起来。`asn` / `is_datacenter` 仍无数据源,保持空值。
 
 ## 背景与权衡

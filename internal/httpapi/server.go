@@ -103,17 +103,27 @@ func New(d Deps) http.Handler {
 		ruleCache = rules.NewCache(d.Store.RulesForTenant)
 	}
 
-	// 地理值:默认用内嵌的离线 ip2region 库(无网络、无 API Key、无挂载卷)。
-	// 加载失败回落成 geo.Disabled(恒空)而不是启动失败:国家查不到只会让
-	// country 条件恒不命中,不该因为一份附属数据而让整站起不来。
+	// 地理/情报值:默认用内嵌的离线 ip2region 库作为兜底(无网络、无 API Key、无挂载卷)。
+	// 若配置了外部 SaaS 厂商(ipinfo / ipqualityscore / ipapi),优先查询并在异常时平滑回落。
 	geoLookup := d.GeoLookup
 	if geoLookup == nil {
+		var localFB geo.Lookup
 		g, err := geo.NewXDB()
 		if err != nil {
-			log.Printf("地理数据源不可用,国家相关规则将恒不命中: %v", err)
-			geoLookup = geo.Disabled
+			log.Printf("地理离线库不可用: %v", err)
+			localFB = geo.Disabled
 		} else {
-			geoLookup = geo.Cached(g, geo.DefaultCacheEntries)
+			localFB = g
+		}
+
+		if provider := geo.NewProvider(d.Cfg.GeoProvider, d.Cfg.GeoAPIKey); provider != nil {
+			geoLookup = geo.Cached(geo.NewFallbackLookup(geo.FallbackConfig{
+				Primary:  provider,
+				Fallback: localFB,
+				Timeout:  d.Cfg.GeoTimeout,
+			}), geo.DefaultCacheEntries)
+		} else {
+			geoLookup = geo.Cached(localFB, geo.DefaultCacheEntries)
 		}
 	}
 
