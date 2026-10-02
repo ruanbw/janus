@@ -160,12 +160,12 @@ func TestAuthzTamperedToken(t *testing.T) {
 	verifyLastEmail(t, env)
 	tok := tokenFromLogin(t, env, "alice@example.com", "password123")
 
-	last := tok[len(tok)-1]
+	idx := len(tok) - 10
 	alt := byte('x')
-	if last == alt {
+	if tok[idx] == alt {
 		alt = 'y'
 	}
-	tampered := tok[:len(tok)-1] + string(alt)
+	tampered := tok[:idx] + string(alt) + tok[idx+1:]
 	resp := bearerReq(t, env, http.MethodGet, "/api/auth/me", nil, tampered)
 	assertStatus(t, resp, http.StatusUnauthorized)
 }
