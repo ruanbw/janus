@@ -25,7 +25,6 @@ Janus is a **self-hosted multi-tenant short-link platform**: tenants sign up, br
 - **Frontend/backend separation** — the frontend builds into its own nginx image; the backend image contains zero frontend files. A frontend change never requires rebuilding the backend (ADR-0006).
 - **Works out of the box** — sign up with an email and you immediately get a `<slug>.<platform-domain>` test domain. No certificate or DNS busywork.
 
-> Canonical terminology (tenant, short link, short code, landing page, target URL, rule, verdict, visit, certificate …) is defined in [`CONTEXT.md`](CONTEXT.md); this document uses those terms consistently.
 
 ---
 
@@ -314,12 +313,11 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
 ├── docker-compose.prod.yml     # Production orchestration (Postgres + backend + web + caddy)
 ├── Caddyfile / Caddyfile.prod  # Development (local CA) / production (Let's Encrypt)
 ├── .env.example                # Environment variable template
-├── CONTEXT.md                  # Domain glossary
 ├── LICENSE                     # AGPL-3.0
 └── docs/
     ├── deploy.md               # Production deployment guide
-    ├── adr/                    # Architecture decision records (0001–0010)
-    └── agents/                 # Agent collaboration conventions
+    ├── testing.md              # Testing guide and defenses
+    └── adr/                    # Architecture decision records
 ```
 
 ---
@@ -513,7 +511,7 @@ The full contract lives in [`web/UI_KIT.md`](web/UI_KIT.md); the gate script `we
 
 ### 7.5 Order of work for a new feature
 
-1. Align terminology first: add the new concept to [`CONTEXT.md`](CONTEXT.md) (with `_Avoid_` alternatives), and record any architectural trade-off in `docs/adr/NNNN-*.md`.
+1. Align architecture trade-offs first: record significant design choices in `docs/adr/NNNN-*.md`.
 2. Migration → `store` → `httpapi` (route + RBAC policy + error codes).
 3. If it touches decision logic (rule evaluation), add black-box tests in `internal/httpapi/*_test.go` using `testutil.Setup`.
 4. Frontend: API types → page → route and navigation wiring.
@@ -757,7 +755,7 @@ cd web && pnpm type-check && pnpm check:ui && pnpm build
 - Vue: three token layers + `App*` components (see 7.4); no ant-design-vue; no `dark:` patches inside `components/ui/`; no bare HTML primitives; responsive behavior only via Tailwind breakpoints or container queries.
 - Database: migrations are append-only; published migrations are never modified.
 
-**Issues and specs**: tickets and specifications are markdown files under `.scratch/<feature-slug>/` (see [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md)); terminology changes go to [`CONTEXT.md`](CONTEXT.md) (see [`docs/agents/domain.md`](docs/agents/domain.md)); architectural trade-offs go to `docs/adr/NNNN-*.md`, following the format of the existing ADRs (background → trade-offs → consequences). **Non-obvious decisions deserve an ADR, not just a commit message.**
+**Architecture decisions**: record architectural trade-offs in `docs/adr/NNNN-*.md` following the existing format (background → trade-offs → consequences). Non-obvious decisions deserve an ADR. Transient design drafts and implementation plans should not be committed to avoid becoming stale.
 
 ---
 
@@ -785,13 +783,11 @@ In short:
 
 | Document | Contents |
 | --- | --- |
-| [`CONTEXT.md`](CONTEXT.md) | **Domain glossary** — canonical definitions of tenant, link, short code, landing page, rule, verdict, visit, … |
 | [`docs/deploy.md`](docs/deploy.md) | Production deployment guide and go-live checklist |
+| [`docs/testing.md`](docs/testing.md) | Testing workflow, tiered verification, and test database setup |
 | [`web/README.md`](web/README.md) | Frontend stack, page inventory, auth and request conventions |
 | [`web/UI_KIT.md`](web/UI_KIT.md) | Frontend component contract and the three design-token layers |
-| [`docs/adr/`](docs/adr/) | Architecture decision records (Go backend, on-demand TLS, frontend/backend separation, landing-page SDK, visit detail, rule verdicts, GeoIP, world map) |
-| [`docs/agents/`](docs/agents/) | Agent collaboration conventions |
-| [`.scratch/janus/`](.scratch/janus/) | Requirement spec, full API contract, per-feature tickets |
+| [`docs/adr/`](docs/adr/) | Architecture decision records (technology choices and system decisions) |
 | [`.env.example`](.env.example) | Environment variable template with per-variable notes |
 
 **In one line**: Janus is a short-link service that works the moment DNS points at it — tenants bring domains, and certificates, analytics and rules come included.

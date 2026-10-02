@@ -653,7 +653,7 @@ req DELETE "/api/links/$ZDID"
 req POST /api/links/batch-purge "{\"ids\":[$ZDID]}" >/dev/null
 psql_q "$E2E_DB" "UPDATE tiers SET max_links=1 WHERE name='free'" >/dev/null
 req POST /api/links "{\"code\":\"$C_ZC\",\"targetUrls\":[\"https://example.com\"],\"domainIds\":[$DID]}"
-# 口径:软删的短链**仍占**配额 —— CONTEXT.md 定义为"尚未物理删除"计数,
+# 口径:软删的短链**仍占**配额 —— 业务口径定义为"尚未物理删除"计数,
 # 既有 links_test.go 也这么断言。回收站是找回入口,不是免配额出口。
 check "逻辑删除的短链仍占配额 -> 403" "403" "$STATUS"
 psql_q "$E2E_DB" "UPDATE tiers SET max_links=100 WHERE name='free'" >/dev/null

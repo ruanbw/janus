@@ -91,7 +91,7 @@ const DefaultErrorPagesTTL = time.Minute
 // 为什么必须缓存:未命中是最容易触发的路径 —— 爬虫、扫描器、输错短码都会走这里。
 // 没有缓存时,每一次未命中都要 SELECT 两个可能各 512KB 的 TEXT 字段,
 // 等于把"攻击者随便打几个不存在的短码"变成放大器。而它恰恰是 README 1.2
-// 硬约束第 1 条("零 DB 查询")与 .scratch/custom-error-pages/spec.md D3
+// 硬约束第 1 条("零 DB 查询")
 // 都承诺过要按租户缓存的东西。
 type errorPagesCache struct {
 	mu    sync.RWMutex

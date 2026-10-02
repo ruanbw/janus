@@ -198,7 +198,7 @@ func New(d Deps) http.Handler {
 	prot.GET("/links/:id/stats", a.handleLinkStats)
 	// 总览统计:按租户全量 GROUP BY 聚合各维度分布。
 	// 不走"前端拉最近 N 条明细自己数"的路径 —— 那既会漏(超过 N 条就不准),
-	// 又会让点击行与失败行混进访问量(违反 CONTEXT.md 的计数口径)。
+	// 又会让点击行与失败行混进访问量(违反统计计数口径)。
 	prot.GET("/visits/overview", a.handleVisitsOverview)
 	// 16:落地页上传(zip 替换式)
 	prot.POST("/links/:id/landing", a.handleUploadLanding)

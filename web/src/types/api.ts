@@ -1,4 +1,4 @@
-// Janus API 契约类型定义(对齐 .scratch/janus/api-contract.md)
+// Janus API 类型定义
 // 枚举:
 //   tenant.status: pending | active | banned
 //   domain.status: pending | active | failed | stopped

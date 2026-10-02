@@ -872,7 +872,7 @@ func (a *API) handleListVisits(c *gin.Context) {
 	}
 	// outcome 可选过滤(success / failed),省略则不过滤。
 	// 前端要"只统计成功访问"时必须显式传:不过滤会把点击行与失败行一起算进去,
-	// 同一访客被计两次,而点击与失败都不计入访问次数(见 CONTEXT.md 计数口径)。
+	// 同一访客被计两次,而点击与失败都不计入访问次数(业务计数口径)。
 	outcome := c.Request.URL.Query().Get("outcome")
 	if !store.ValidVisitOutcome(outcome) {
 		writeErr(c, http.StatusBadRequest, errValidation, "outcome 必须为 success / failed")

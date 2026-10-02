@@ -25,7 +25,6 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 - **前后端分离** — 前端独立构建为 nginx 镜像,后端镜像内无任何前端文件;改前端不必重打后端(ADR-0006)。
 - **开箱即用** — 邮箱注册即用,平台自动为每个租户发放 `<slug>.<平台域名>` 测试域名,无需任何证书与 DNS 手工操作。
 
-> 术语(租户、短链、短码、落地页、目标 URL、规则、裁决、访问、证书……)以 [`CONTEXT.md`](CONTEXT.md) 词汇表为准,本文只使用其中的规范叫法。
 
 ---
 
@@ -313,12 +312,11 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 ├── docker-compose.prod.yml     # 生产编排(Postgres + backend + web + caddy)
 ├── Caddyfile / Caddyfile.prod  # 开发(本地 CA)/ 生产(Let's Encrypt)
 ├── .env.example                # 环境变量模板
-├── CONTEXT.md                  # 领域词汇表
 ├── LICENSE                     # AGPL-3.0
 └── docs/
     ├── deploy.md               # 生产部署指南
-    ├── adr/                    # 架构决策记录(0001 ~ 0010)
-    └── agents/                 # agent 协作约定(issue tracker、领域文档)
+    ├── testing.md              # 测试流程与防线说明
+    └── adr/                    # 架构决策记录
 ```
 
 ---
@@ -511,7 +509,7 @@ pnpm check:ui                     # 0 违规才通过(第 8 项要读 dist 产�
 
 ### 7.5 加一个新功能的顺序
 
-1. 术语先对齐:新概念写进 [`CONTEXT.md`](CONTEXT.md)(含 `_Avoid_` 反例),有取舍的架构决策写 `docs/adr/NNNN-*.md`。
+1. 架构决策先对齐:涉及系统设计或技术选型取舍时写 `docs/adr/NNNN-*.md`。
 2. 迁移 → `store` → `httpapi`(路由 + RBAC 策略 + 错误码)。
 3. 涉及判定逻辑(如规则求值)时,补黑盒测试:`internal/httpapi/*_test.go` 走 `testutil.Setup`。
 4. 前端:API 类型 → 页面 → 接进路由与导航。
@@ -755,7 +753,7 @@ cd web && pnpm type-check && pnpm build && pnpm check:ui
 - Vue:三层令牌 + `App*` 组件(见 7.4);不引入 ant-design-vue;不在 `components/app/` 写 `dark:` 补丁;不写裸 HTML 原语;响应式只用 Tailwind 断点或 container query。
 - 数据库:迁移只增不改,已发布迁移不修改。
 
-**Issue 与规格**:票据与规格以 markdown 形式放在 `.scratch/<feature-slug>/`(见 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md));领域词汇变更改 [`CONTEXT.md`](CONTEXT.md)(见 [`docs/agents/domain.md`](docs/agents/domain.md));架构取舍写 `docs/adr/NNNN-*.md`,格式参照现有 ADR(背景 → 权衡 → 后果)。**不显然的决策要有 ADR,不要只写在提交信息里。**
+**架构决策**:架构取舍写 `docs/adr/NNNN-*.md`,格式参照现有 ADR(背景 → 权衡 → 后果)。不显然的决策要有 ADR,不要只写在提交信息里。过程性功能设计与实施草稿不随仓库提交,避免随迭代失效。
 
 ---
 
@@ -783,13 +781,11 @@ SPDX-License-Identifier: AGPL-3.0-only
 
 | 文档 | 内容 |
 | --- | --- |
-| [`CONTEXT.md`](CONTEXT.md) | **领域词汇表** — 租户/短链/短码/落地页/规则/裁决/访问等术语的规范定义 |
 | [`docs/deploy.md`](docs/deploy.md) | 生产部署指南与上线检查清单 |
+| [`docs/testing.md`](docs/testing.md) | 测试流程、分层验证与测试库要求 |
 | [`web/README.md`](web/README.md) | 前端技术栈、页面清单、认证与请求约定 |
 | [`web/UI_KIT.md`](web/UI_KIT.md) | 前端组件契约与三层设计令牌规范 |
-| [`docs/adr/`](docs/adr/) | 架构决策记录(Go 后端、on-demand TLS、前后端分离、落地页 SDK、访问明细、规则裁决、GeoIP、世界地图) |
-| [`docs/agents/`](docs/agents/) | agent 协作约定(issue tracker、领域文档) |
-| [`.scratch/janus/`](.scratch/janus/) | 需求规格、API 完整契约、逐功能票据 |
+| [`docs/adr/`](docs/adr/) | 架构决策记录(技术选型与关键系统决策) |
 | [`.env.example`](.env.example) | 环境变量模板(带逐项说明) |
 
 **一句话总结**:Janus 是一台"接上 DNS 就能用"的短链服务 —— 租户带域名进来,证书与统计与规则都自带。

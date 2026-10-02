@@ -244,4 +244,4 @@ import { Plus, Trash2, Pencil, ... } from '@lucide/vue'; — 大小用 :size="16
 - 令牌:src/styles/theme.css(唯一令牌出处);src/styles/main.css(基础层 + 动效 + 地图填色)
 - 页面:src/views/**(只用项目层令牌与 shadcn 语义层,禁 `dark:` 补丁)
 - 路由/store/api/types/utils 均不变
-- 契约变更需同步本文件;本次双层重构见 .scratch/ui-layers/(spec + 6 个 issue)与 docs/adr/0011-two-layer-component-library.md
+- 契约变更需同步本文件;双层组件架构决策见 docs/adr/0011-two-layer-component-library.md

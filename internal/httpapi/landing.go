@@ -1,7 +1,7 @@
 package httpapi
 
 // 16 — 落地页型短链:点击端点(计数+302 轮询目标)、每短链 SDK、上传落地页静态服务与 zip 上传。
-// 设计见 docs/adr/0005-landing-pages-click-sdk.md,契约见 .scratch/janus/api-contract.md。
+// 设计见 docs/adr/0005-landing-pages-click-sdk.md。
 
 import (
 	"archive/zip"

@@ -1,4 +1,4 @@
-// 状态字典:契约枚举 → 后台展示文案(遵循 CONTEXT.md 词汇表术语)
+// 状态字典:契约枚举 → 后台展示文案
 import type {
   CertStatus,
   DomainOrigin,

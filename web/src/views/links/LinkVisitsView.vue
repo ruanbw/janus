@@ -519,7 +519,7 @@
                     正则行为有差异、CIDR 为近似匹配，且 duplicated 被硬编码为恒 false。
                     所以它**可能与真实裁决不同** —— 上面的「真实裁决」才是服务端
                     记下的事实（visit.ruleId / ruleAction），回放只是解释性参考。
-                    长期修法是把回放也切到后端（见 .scratch/hardening-stats-gates/13）。
+                    长期修法是把回放也切到后端。
                   -->
                   <div class="mb-2 flex items-start gap-1.5 rounded border border-line bg-surface-muted/60 px-2 py-1.5">
                     <Info :size="13" class="mt-0.5 shrink-0 text-ink-faint" />

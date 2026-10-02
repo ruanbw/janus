@@ -589,7 +589,7 @@ const projectLayerDirs = [
 ];
 const appLayerFiles = projectLayerDirs.flatMap((dir) => walkDir(dir, (p) => p.endsWith('.vue')));
 // 白名单：这两个组件内部要用无头件的 re-export（DialogTitle / SelectContent 等），
-// 见 .scratch/ui-layers/issues/03 的例外说明。
+// 白名单例外说明: AppSelect 与 AppDialog 分别处理无样式容器与无头底座。
 const directRekaAllowList = ['AppSelect.vue', 'AppDialog.vue'];
 const rekaImportRegex = /from\s+['"]reka-ui['"]/g;
 appLayerFiles.forEach((file) => {
