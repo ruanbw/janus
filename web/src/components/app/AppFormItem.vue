@@ -44,7 +44,7 @@ const props = defineProps<{
   class?: any;
 }>();
 
-const form = inject(formContextKey);
+const form = inject(formContextKey, undefined);
 const invalid = ref(false);
 const errorMessage = ref('');
 

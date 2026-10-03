@@ -596,6 +596,7 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
   Trash2,
   Upload,
   UploadCloud,

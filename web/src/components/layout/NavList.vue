@@ -21,6 +21,7 @@
             ? 'bg-primary font-semibold text-primary-foreground shadow-sm'
             : 'text-sidebar-ink hover:bg-accent hover:text-sidebar-ink-active'
         "
+        @click="props.onItemClick?.()"
       >
         <component :is="item.icon" :size="16" class="shrink-0" :class="showLabels ? '' : 'mx-auto'" />
         <span v-if="showLabels">{{ item.label }}</span>
@@ -57,7 +58,10 @@ interface NavGroup {
   items: NavItem[];
 }
 
-const props = withDefaults(defineProps<{ collapsed?: boolean }>(), { collapsed: false });
+const props = withDefaults(
+  defineProps<{ collapsed?: boolean; onItemClick?: () => void }>(),
+  { collapsed: false },
+);
 
 const auth = useAuthStore();
 const route = useRoute();

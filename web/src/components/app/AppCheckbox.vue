@@ -78,9 +78,10 @@ const checkboxClasses = computed(() =>
   cn('border-control-thumb-edge bg-control-track', props.class),
 );
 
-function onCheckedChange(val: boolean): void {
-  emit('update:modelValue', val);
-  emit('update:checked', val);
-  emit('change', val);
+function onCheckedChange(val: boolean | 'indeterminate'): void {
+  const bool = val === true;
+  emit('update:modelValue', bool);
+  emit('update:checked', bool);
+  emit('change', bool);
 }
 </script>

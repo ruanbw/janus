@@ -57,7 +57,7 @@
               </button>
             </DialogClose>
           </div>
-          <NavList />
+          <NavList :on-item-click="() => (drawerOpen = false)" />
           <DialogTitle class="sr-only">主导航</DialogTitle>
         </DialogContent>
       </DialogPortal>
@@ -305,6 +305,22 @@ async function onLogout(): Promise<void> {
   router.push('/login');
 }
 </script>
+
+<style>
+/* 移动端抽屉面板传送至 <body>,需要全局规则覆盖 shadcn 弹窗原语的默认居中与内边距 */
+.drawer-panel.drawer-panel {
+  top: 0 !important;
+  left: 0 !important;
+  transform: none !important;
+  translate: none !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  border-radius: 0 !important;
+  border-top: none !important;
+  border-bottom: none !important;
+  border-left: none !important;
+}
+</style>
 
 <style scoped>
 /* reka 的 Presence 依据 data-state 决定卸载时机,退出动画走 CSS 即可 */
