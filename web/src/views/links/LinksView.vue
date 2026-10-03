@@ -26,73 +26,77 @@
 
     <!-- 视图切换:短链 / 回收站。回收站是软删短链唯一的入口 ——
          没有它,删掉的短链既看不见、也无法找回,短码与配额就等于被永久锁死。 -->
-    <AppTabs :model-value="viewTab" class="mb-4" @update:model-value="onSwitchTab">
-      <AppTabsList variant="line">
-        <AppTabsTrigger value="active" variant="line">短链</AppTabsTrigger>
-        <AppTabsTrigger value="deleted" variant="line">
-          回收站<template v-if="deletedTotal > 0">（{{ deletedTotal }}）</template>
-        </AppTabsTrigger>
-      </AppTabsList>
-    </AppTabs>
+    <div class="mb-4">
+      <AppTabs :model-value="viewTab" @update:model-value="onSwitchTab">
+        <AppTabsList variant="line">
+          <AppTabsTrigger value="active" variant="line">短链</AppTabsTrigger>
+          <AppTabsTrigger value="deleted" variant="line">
+            回收站<template v-if="deletedTotal > 0">（{{ deletedTotal }}）</template>
+          </AppTabsTrigger>
+        </AppTabsList>
+      </AppTabs>
+    </div>
 
     <!-- 批量操作条:有选中项时出现 -->
-    <div
-      v-if="selectedCount > 0"
-      class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand/30 bg-brand/10 px-3 py-2"
-      data-od-id="link-batch-bar"
-    >
-      <div class="flex items-center gap-2 text-xs text-ink-soft">
-        <CheckSquare :size="14" />
-        <span>
-          已选
-          <strong class="font-mono text-ink">{{ selectedCount }}</strong>
-          / {{ filteredLinks.length }} 条(当前页筛选结果)
-        </span>
+    <Transition name="batch-bar">
+      <div
+        v-if="selectedCount > 0"
+        class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand/30 bg-brand/10 px-3 py-2"
+        data-od-id="link-batch-bar"
+      >
+        <div class="flex items-center gap-2 text-xs text-ink-soft">
+          <CheckSquare :size="14" />
+          <span>
+            已选
+            <strong class="font-mono text-ink">{{ selectedCount }}</strong>
+            / {{ filteredLinks.length }} 条(当前页筛选结果)
+          </span>
+        </div>
+        <div class="flex items-center gap-2">
+          <AppButton size="sm" variant="outline" :disabled="batchOperating" @click="clearSelection">
+            <template #icon><X :size="12" /></template>
+            清空选择
+          </AppButton>
+          <AppButton
+            v-if="!recycleBin"
+            size="sm"
+            variant="outline"
+            class="border-err/60 text-err hover:border-err hover:text-err"
+            :disabled="batchOperating"
+            title="批量逻辑删除:记录与历史访问明细保留,「域名/短码」不再对外重定向"
+            @click="handleBatchDelete"
+          >
+            <template #icon><Trash2 :size="12" /></template>
+            批量逻辑删除
+          </AppButton>
+          <AppButton
+            v-if="recycleBin"
+            size="sm"
+            variant="outline"
+            :disabled="batchOperating"
+            title="批量还原:短链回到正常列表,短码重新占用"
+            @click="handleBatchRestore"
+          >
+            <template #icon><RotateCcw :size="12" /></template>
+            批量还原
+          </AppButton>
+          <AppButton
+            size="sm"
+            variant="destructive"
+            :disabled="batchOperating"
+            :title="
+              recycleBin
+                ? '批量彻底删除:物理移除回收站里的短链及全部历史访问明细,并清理其落地页文件,不可撤销'
+                : '批量彻底删除:物理移除短链及全部历史访问明细,不可撤销'
+            "
+            @click="handleBatchPurge"
+          >
+            <template #icon><Flame :size="12" /></template>
+            批量彻底删除
+          </AppButton>
+        </div>
       </div>
-      <div class="flex items-center gap-2">
-        <AppButton size="sm" variant="outline" :disabled="batchOperating" @click="clearSelection">
-          <template #icon><X :size="12" /></template>
-          清空选择
-        </AppButton>
-        <AppButton
-          v-if="!recycleBin"
-          size="sm"
-          variant="outline"
-          class="border-err/60 text-err hover:border-err hover:text-err"
-          :disabled="batchOperating"
-          title="批量逻辑删除:记录与历史访问明细保留,「域名/短码」不再对外重定向"
-          @click="handleBatchDelete"
-        >
-          <template #icon><Trash2 :size="12" /></template>
-          批量逻辑删除
-        </AppButton>
-        <AppButton
-          v-if="recycleBin"
-          size="sm"
-          variant="outline"
-          :disabled="batchOperating"
-          title="批量还原:短链回到正常列表,短码重新占用"
-          @click="handleBatchRestore"
-        >
-          <template #icon><RotateCcw :size="12" /></template>
-          批量还原
-        </AppButton>
-        <AppButton
-          size="sm"
-          variant="destructive"
-          :disabled="batchOperating"
-          :title="
-            recycleBin
-              ? '批量彻底删除:物理移除回收站里的短链及全部历史访问明细,并清理其落地页文件,不可撤销'
-              : '批量彻底删除:物理移除短链及全部历史访问明细,不可撤销'
-          "
-          @click="handleBatchPurge"
-        >
-          <template #icon><Flame :size="12" /></template>
-          批量彻底删除
-        </AppButton>
-      </div>
-    </div>
+    </Transition>
 
     <!-- 搜索与筛选工具栏(回收站只有搜索有意义:类型/状态对已删除的短链是历史快照) -->
     <div
@@ -185,7 +189,7 @@
 
         <!-- 短链链接:每个关联域名一行完整短链(同短码可被多条域名承载) -->
         <template v-else-if="column.key === 'link'">
-          <div class="flex flex-col gap-[3px]">
+          <div class="flex w-full max-w-[300px] flex-col gap-[3px]">
             <div
               v-for="url in linkUrls(toLink(record))"
               :key="url"
@@ -228,7 +232,7 @@
 
         <!-- 出口目标 URL:每个目标独占一行,序号即轮询顺序。自动适应宽度,超长悬停 tooltip -->
         <template v-else-if="column.key === 'targets'">
-          <div class="flex flex-col gap-[3px]">
+          <div class="flex w-full max-w-[200px] flex-col gap-[3px]">
             <div v-if="(toLink(record).targetUrls || []).length > 1" class="text-xs text-ink-soft">
               {{ toLink(record).targetUrls.length }} 个目标 · 轮询分发
             </div>
@@ -655,9 +659,9 @@ const activeDomains = computed(() => {
 // ==================== 表格列定义与工具栏选项 ====================
 const columns: TableColumn[] = [
   { key: 'select', title: '', width: 48 },
-  { key: 'link', title: '短链链接' },
+  { key: 'link', title: '短链链接', width: 300 },
   { key: 'type', title: '类型', width: 96 },
-  { key: 'targets', title: '出口目标 URL' },
+  { key: 'targets', title: '出口目标 URL', width: 200 },
   { key: 'visits', title: '访问 / 点击', width: 140 },
   { key: 'status', title: '状态', width: 118 },
   { key: 'rules', title: '规则', width: 220 },

@@ -22,11 +22,13 @@ import { Check } from '@lucide/vue';
 import { cn } from '@/lib/utils';
 
 const props = defineProps<CheckboxRootProps & { class?: any }>();
+const emit = defineEmits<{ 'update:modelValue': [val: boolean | 'indeterminate'] }>();
 </script>
 
 <template>
   <CheckboxRoot
     :model-value="props.modelValue"
+    @update:model-value="emit('update:modelValue', $event)"
     :default-value="props.defaultValue"
     :disabled="props.disabled"
     :id="props.id"

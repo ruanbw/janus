@@ -173,6 +173,30 @@ body {
   opacity: 0;
 }
 
+/* 批量操作条 / 明细面板的显隐过渡(LinksView / LinkVisitsView) */
+.batch-bar-enter-active,
+.batch-bar-leave-active {
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+}
+
+.batch-bar-enter-from,
+.batch-bar-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+.panel-enter-active,
+.panel-leave-active {
+  transition: opacity 0.15s ease;
+}
+
+.panel-enter-from,
+.panel-leave-to {
+  opacity: 0;
+}
+
 /* 表格样式 */
 .app-table {
   font-size: 13px;
@@ -180,6 +204,41 @@ body {
 
 .app-table thead th {
   font-weight: 600;
+}
+
+/* ==========================================================================
+   部分条形图 (Proportional Bar)
+   ------------------------------------------------------------------------
+   命名前缀取 app-，与 .app-table / .app-field 同一套项目层词汇；
+   bar-fill / bar-track 是被门禁退役的 Tech-Utility 遗产名，不得复活。
+
+   条形用 scaleX 而非 width：width 是布局属性，二十多根同时过渡会逐帧重排，
+   scaleX 跑在合成器上。origin 钉在左边缘，"从左长出来"才是条形该有的方向。
+   轨迹取项目的进场曲线 cubic-bezier(0.16, 1, 0.3, 1)（快速起步、长减速），
+   与弹窗/下拉的进场是同一条语言，不另立一套时长表。
+   刷新时比例原地滑动（变短也平滑），因为 class 不变、只有 scaleX 变。
+   值本身由 composables/useSweep.ts 决定何时写入，这里只管怎么动。 */
+.app-bar-fill {
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  transition-duration: 270ms;
+  will-change: transform;
+}
+
+/* 扫出期间压暗数字：条形到位时数字一起落定。压到 0.6 是"让位"而不是"变灰"，
+   数字在此期间仍要可读——它在说明当前的比例，不是装饰。 */
+.is-settling {
+  opacity: 0.6;
+  transition: opacity 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 刷新时旧数据仍在屏上：压暗一档，表示"这是上一次的结果，正在核对"，
+   而不是清空屏幕。空屏会把"正在请求"说成"没有数据"。 */
+.is-revalidating {
+  opacity: 0.55;
+  transition: opacity 200ms ease;
 }
 
 /* ==========================================================================
@@ -197,6 +256,24 @@ body {
 .map-shape:hover {
   stroke: var(--ink);
   stroke-width: 1.4;
+}
+
+/* 地图与右侧榜单的双向联动。fill 也要过渡，否则描边到了颜色还没到，
+   高亮会像一次闪烁而不是一次"点亮"。 */
+.map-shape {
+  transition:
+    fill 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    stroke 180ms cubic-bezier(0.16, 1, 0.3, 1),
+    stroke-width 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 悬停/联动中的国家：抬高一档填色 + 描边，让它在没有 tooltip 的触摸端
+   也留得下一条可读的痕迹（那端根本没有 hover）。 */
+.map-shape.is-active {
+  fill: var(--color-brand-500);
+  stroke: var(--brand);
+  stroke-width: 1.8;
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--brand) 60%, transparent));
 }
 
 .map-land {
@@ -252,7 +329,46 @@ body {
   stroke: var(--ink);
 }
 
+.dark .map-shape.is-active {
+  fill: var(--color-brand-400);
+  stroke: var(--color-brand-400);
+  stroke-width: 1.8;
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--color-brand-400) 80%, transparent));
+}
+
 .dark .map-land {
   background: color-mix(in srgb, var(--ink) 8%, var(--surface));
   fill: color-mix(in srgb, var(--ink) 8%, var(--surface));
+}
+
+/* ==========================================================================
+   减弱动效 (prefers-reduced-motion: reduce)
+   ------------------------------------------------------------------------
+   这里是"减少位移"，不是"全部关掉"：条形仍要瞬时落在终值上
+   （scaleX 保持走完，只是去掉过渡时长），颜色/透明度这些承载语义的状态
+   变化保留。否则用户会拿到一份"条形停在半路"的图 —— 那不是克制，是坏掉。
+   JS 侧（composables/useSweep.ts）也走同一条判断，两边都归到同一结局：
+   reduced-motion 下第一帧就是终值。 */
+@media (prefers-reduced-motion: reduce) {
+  .app-bar-fill {
+    transition-duration: 1ms;
+  }
+
+  /* 数字不再让位：条形本来就瞬时到位，没有"正在扫"的阶段可让。 */
+  .is-settling {
+    transition: none;
+  }
+
+  .is-revalidating {
+    transition: none;
+  }
+
+  /* 地图高亮保留（它是唯一能在触摸端表达"我选中了这块"的痕迹），
+     只把位移类效果去掉：描边加粗与提亮不算运动。 */
+  .map-shape,
+  .map-shape.is-active {
+    transition-property: fill, stroke, stroke-width;
+    transition-duration: 1ms;
+    filter: none;
+  }
 }

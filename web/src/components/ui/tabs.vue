@@ -7,6 +7,7 @@ const emit = defineEmits<TabsRootEmits>();
 
 <template>
   <TabsRoot
+    :model-value="props.modelValue"
     :default-value="props.defaultValue"
     :orientation="props.orientation"
     :dir="props.dir"

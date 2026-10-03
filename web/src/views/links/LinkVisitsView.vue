@@ -283,9 +283,11 @@
           class="sticky top-20 flex max-h-[calc(100vh-6rem)] min-w-0 flex-col xl:col-span-5"
           data-od-id="link-visit-detail-panel"
         >
+          <Transition mode="out-in" name="panel">
           <!-- 未选择行时的引导提示 -->
           <div
             v-if="!selectedRow"
+            key="empty"
             class="my-auto flex min-h-[380px] flex-col items-center justify-center p-10 text-center"
           >
             <div class="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-brand/10 text-brand">
@@ -298,7 +300,7 @@
           </div>
 
           <!-- 选中行时的详情展示 -->
-          <template v-else>
+          <div v-else key="detail" class="flex min-h-0 flex-1 flex-col">
             <div class="shrink-0 border-b border-line px-4 py-3">
               <div class="flex flex-wrap items-center justify-between gap-3.5">
                 <div class="min-w-0">
@@ -613,7 +615,8 @@
                 </div>
               </div>
             </div>
-          </template>
+          </div>
+          </Transition>
         </AppCard>
       </div>
     </template>
