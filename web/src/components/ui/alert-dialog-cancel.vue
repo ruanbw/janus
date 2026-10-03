@@ -18,6 +18,7 @@ const props = defineProps<AlertDialogCancelProps & { class?: any }>();
   <AlertDialogCancel
     :as-child="props.asChild"
     :class="cn(alertDialogCancelVariants(), props.class)"
+    :as="props.as"
   >
     <slot />
   </AlertDialogCancel>

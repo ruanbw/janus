@@ -39,14 +39,28 @@ const emit = defineEmits<{
  */
 const formItem = useFormItem();
 
+/**
+ * reka 的 RadioGroupRoot 发的是 `AcceptableValue`（string | number | bigint |
+ * Record<string, any> | null），比本组件对外声明的 `string | number | undefined` 宽。
+ * `ui/radio-group.vue` 补上 emit 转发后，这个宽度就必须在这一层收掉。
+ *
+ * 收窄是安全的：本组件的插槽只放得下 AppRadio / AppRadioCard，两者的 `value`
+ * 都是**必填**的 `string | number`，全仓 18 处用法无一例外，也没有裸reka
+ * RadioGroupItem 直接塞进来的情况。故 bigint /对象 / null 在本组件内不可达。
+ */
+function toModelValue(value: unknown): string | number | undefined {
+  return typeof value === 'string' || typeof value === 'number' ? value : undefined;
+}
+
 const rootProps = computed(() => ({
   modelValue: props.modelValue,
   disabled: props.disabled,
   orientation: props.orientation,
   name: props.name,
-  'onUpdate:modelValue': (value: string | number | undefined) => {
-    emit('update:modelValue', value);
-    emit('change', value);
+  'onUpdate:modelValue': (value: unknown) => {
+    const next = toModelValue(value);
+    emit('update:modelValue', next);
+    emit('change', next);
   },
 }));
 

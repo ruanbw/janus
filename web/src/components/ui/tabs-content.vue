@@ -12,6 +12,7 @@ const props = defineProps<TabsContentProps & { class?: any }>();
     :force-mount="props.forceMount"
     :as-child="props.asChild"
     :class="cn('outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50', props.class)"
+    :as="props.as"
   >
     <slot />
   </TabsContent>

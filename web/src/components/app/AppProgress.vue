@@ -34,7 +34,19 @@ const props = withDefaults(
   { percent: 0, status: 'normal', showInfo: true, strokeWidth: 8 },
 );
 
-const clamped = computed(() => Math.max(0, Math.min(100, props.percent)));
+/**
+ * 数值净化：reka 的 ProgressRoot 遇到 NaN / 越界值只会在控制台 console.error，
+ * 数值直接变成 null（不确定态），界面上的进度条会突然变回“未知进度”。
+ * Math.min(100, NaN) === NaN，clamp 本身拦不住 NaN，必须先单独判定。
+ */
+function sanitizePercent(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  // NaN 没有夹紧的语义，退到 0；±Infinity 按方向收敛到边界
+  if (Number.isNaN(n)) return 0;
+  return Math.min(100, Math.max(0, n));
+}
+
+const clamped = computed(() => sanitizePercent(props.percent));
 
 const barClasses = computed(() => {
   if (props.status === 'exception') return 'bg-err';

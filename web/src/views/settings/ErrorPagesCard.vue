@@ -14,6 +14,7 @@
         <AppButton
           type="primary"
           :loading="saving"
+          :disabled="!canSave"
           @click="onSave"
         >
           保存配置
@@ -44,10 +45,15 @@
             <AppTag v-if="mode429 === 'custom'" color="brand" size="small">自定义</AppTag>
           </AppTabsTrigger>
         </AppTabsList>
-      </AppTabs>
-
-      <!-- 404 配置区 -->
-      <div v-show="activeTab === '404'" class="space-y-4">
+        <!--
+          面板必须与 TabsTrigger 成对出现：reka 的 TabsTrigger 把 aria-controls
+          指向对应 TabsContent 的 id，没有 Content 时该属性恒为空。
+          之前两个面板用 v-show 挂在 Tabs 外面，Tab 与内容之间没有任何结构关联。
+          force-mount 保持原来的 v-show 语义（未选中的面板仍在 DOM 里，只是 hidden），
+          否则 aria-controls 指向的面板在未选中时被卸载，引用仍然是空的。
+        -->
+        <AppTabsContent value="404" force-mount>
+          <div class="space-y-4">
         <div class="flex items-center gap-4">
           <span class="text-xs font-semibold text-ink">响应模式：</span>
           <AppRadioGroup v-model="mode404" class="flex gap-4">
@@ -87,10 +93,11 @@
             class="font-mono text-xs leading-relaxed"
           />
         </div>
-      </div>
+          </div>
+        </AppTabsContent>
 
-      <!-- 429 配置区 -->
-      <div v-show="activeTab === '429'" class="space-y-4">
+        <AppTabsContent value="429" force-mount>
+          <div class="space-y-4">
         <div class="flex items-center gap-4">
           <span class="text-xs font-semibold text-ink">响应模式：</span>
           <AppRadioGroup v-model="mode429" class="flex gap-4">
@@ -130,7 +137,9 @@
             class="font-mono text-xs leading-relaxed"
           />
         </div>
-      </div>
+          </div>
+        </AppTabsContent>
+      </AppTabs>
     </CardContent>
 
     <!-- 预览弹窗 -->
@@ -183,7 +192,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { ClockAlert, Eye, FileCode, FileQuestion, Upload, X } from '@lucide/vue';
 
 import { fetchTenantErrorPages, updateTenantErrorPages } from '@/api/me';
@@ -197,6 +206,17 @@ const mode429 = ref<'default' | 'custom'>('default');
 const html404 = ref('');
 const html429 = ref('');
 const saving = ref(false);
+/**
+ * 加载是否已经成功完成。
+ * 加载未完成时表单里的 mode404/mode429/html404/html429 全是初始值（'default' + 空串），
+ * 此时点保存会把空值提交到服务端，静默抹掉租户已配置的自定义页面 —— 数据丢失。
+ * 加载失败同样不能保存：此时界面显示的是空表单，用户无法分辨“真的没有配置”与“没加载到”。
+ */
+const loadSettled = ref(false);
+const loadFailed = ref(false);
+
+/** 只有加载成功过才允许保存 */
+const canSave = computed(() => loadSettled.value && !loadFailed.value);
 
 const fileInput404 = ref<HTMLInputElement | null>(null);
 const fileInput429 = ref<HTMLInputElement | null>(null);
@@ -261,18 +281,27 @@ function openPreview(content: string, type: '404' | '429') {
 }
 
 async function loadData() {
+  loadSettled.value = false;
+  loadFailed.value = false;
   try {
     const res = await fetchTenantErrorPages();
     html404.value = res.custom404Html || '';
     mode404.value = res.custom404Html ? 'custom' : 'default';
     html429.value = res.custom429Html || '';
     mode429.value = res.custom429Html ? 'custom' : 'default';
+    loadSettled.value = true;
   } catch (error) {
+    loadFailed.value = true;
     message.error(error instanceof Error ? error.message : '加载错误页面配置失败');
   }
 }
 
 async function onSave() {
+  // 双重保险：按钮虽已禁用，但 onSave 也可能被其它入口直接调到
+  if (!canSave.value) {
+    message.error('配置尚未加载完成，请勿保存');
+    return;
+  }
   const payload404 = mode404.value === 'custom' ? html404.value.trim() : '';
   const payload429 = mode429.value === 'custom' ? html429.value.trim() : '';
 

@@ -5,7 +5,7 @@ const props = defineProps<AlertDialogTriggerProps>();
 </script>
 
 <template>
-  <AlertDialogTrigger :as-child="props.asChild">
+  <AlertDialogTrigger :as-child="props.asChild" :as="props.as">
     <slot />
   </AlertDialogTrigger>
 </template>

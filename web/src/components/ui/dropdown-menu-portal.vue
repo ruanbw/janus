@@ -15,6 +15,7 @@ const props = defineProps<DropdownMenuPortalProps>();
     :to="props.to"
     :disabled="props.disabled"
     :force-mount="props.forceMount"
+    :defer="props.defer"
   >
     <slot />
   </DropdownMenuPortal>

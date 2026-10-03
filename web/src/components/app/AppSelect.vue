@@ -34,11 +34,14 @@
         <span v-if="multipleValues.length === 0" class="text-ink-faint">{{ placeholder }}</span>
       </div>
       <!-- 单选:值/占位 -->
-      <SelectValue v-else :placeholder="placeholder" class="min-w-0 flex-1 truncate text-left">
+      <!-- 只在有值时才提供 default 插槽：消费方不传插槽时由 reka 的 fallback
+           渲染 placeholder，否则 placeholder 会被 labelOf('') 的空串吃掉。 -->
+      <SelectValue v-else-if="hasValue" class="min-w-0 flex-1 truncate text-left">
         <template #default="{ modelValue: v }">
           <span class="block truncate">{{ labelOf(v) }}</span>
         </template>
       </SelectValue>
+      <SelectValue v-else :placeholder="placeholder" class="min-w-0 flex-1 truncate text-left text-ink-faint" />
 
       <div class="flex shrink-0 items-center gap-1.5 text-ink-faint">
         <Loader2 v-if="loading" :size="14" class="animate-spin" />
@@ -255,8 +258,13 @@ function removeTag(value: string | number): void {
   }
 }
 
+/**
+ * 单选清除写回空字符串而不是 undefined：
+ * undefined 会顺着 v-model 写进调用方的表单模型（如 RuleSimulatorView 的
+ * simInput.country），让本该是 string 的字段变成 undefined。
+ */
 function clearValue(): void {
-  model.value = props.multiple ? [] : undefined;
+  model.value = props.multiple ? [] : '';
 }
 
 function onOpenAutoFocus(): void {

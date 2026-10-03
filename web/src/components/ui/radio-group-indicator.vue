@@ -24,7 +24,7 @@ const props = defineProps<RadioGroupIndicatorProps & { class?: any }>();
 </script>
 
 <template>
-  <RadioGroupIndicator :class="cn(radioGroupIndicatorVariants(), props.class)">
+  <RadioGroupIndicator :class="cn(radioGroupIndicatorVariants(), props.class)" :force-mount="props.forceMount" :as-child="props.asChild" :as="props.as">
     <span :class="radioGroupIndicatorDotVariants()" />
   </RadioGroupIndicator>
 </template>

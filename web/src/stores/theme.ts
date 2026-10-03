@@ -46,7 +46,13 @@ function prefersReducedMotion(): boolean {
 }
 
 function initialMode(): ThemeMode {
-  const saved = localStorage.getItem(STORAGE_KEY);
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(STORAGE_KEY);
+  } catch {
+    // 忽略 localStorage 访问限制异常(隐私模式 / 受限存储环境),按首次访问处理
+    saved = null;
+  }
   if (saved === 'light' || saved === 'dark' || saved === 'system') return saved;
   // 首次访问默认跟随系统
   return 'system';
@@ -71,7 +77,11 @@ export const useThemeStore = defineStore('theme', () => {
     document
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute('content', THEME_COLOR[resolved.value]);
-    localStorage.setItem(STORAGE_KEY, mode.value);
+    try {
+      localStorage.setItem(STORAGE_KEY, mode.value);
+    } catch {
+      // 忽略 localStorage 访问限制异常(隐私模式 / 受限存储环境):主题本次生效,只是不持久化
+    }
   }
 
   function setMode(next: ThemeMode): void {
@@ -141,15 +151,20 @@ export const useThemeStore = defineStore('theme', () => {
             options: KeyframeAnimationOptions & { pseudoElement: string },
           ): Animation;
         };
-        root.animate(
-          { clipPath: dark ? [...clipPath].reverse() : clipPath },
-          {
-            duration: TRANSITION_MS,
-            easing: 'ease-out',
-            fill: 'forwards',
-            pseudoElement: dark ? '::view-transition-old(root)' : '::view-transition-new(root)',
-          },
-        );
+        try {
+          root.animate(
+            { clipPath: dark ? [...clipPath].reverse() : clipPath },
+            {
+              duration: TRANSITION_MS,
+              easing: 'ease-out',
+              fill: 'forwards',
+              pseudoElement: dark ? '::view-transition-old(root)' : '::view-transition-new(root)',
+            },
+          );
+        } catch {
+          // 忽略 Web Animations 对 pseudoElement 支持不全导致的 NotSupportedError:
+          // 主题此时已经切换成功,只是缺少圆环收尾动画,不该因此抛给调用方
+        }
         await transition.finished.catch(() => undefined);
       }
     } finally {

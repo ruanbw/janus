@@ -11,14 +11,14 @@
     </span>
     <div class="min-w-0 flex-1">
       <h5
-        v-if="headingText || $slots.title"
+        v-if="$slots.title || title"
         :class="cn(alertTitleVariants(), hasBody ? 'mb-1.5' : '')"
       >
-        <slot name="title">{{ headingText }}</slot>
+        <slot name="title">{{ title }}</slot>
       </h5>
       <div v-if="hasBody" :class="alertDescriptionVariants()">
         <slot name="description">
-          <slot>{{ description }}</slot>
+          <slot>{{ description || message }}</slot>
         </slot>
       </div>
     </div>
@@ -58,10 +58,17 @@ const props = withDefaults(
 const emitUnused = null;
 const slots = useSlots();
 
-const headingText = computed(() => props.title || props.message || '');
-
+/**
+ * 标题只认 title（或 title 插槽）；message 是正文，不参与标题。
+ * 原先 headingText = title || message 且 hasBody 不看 message，
+ * 于是「title + message」时 message 全文被当标题吃掉且不进正文块。
+ */
 const hasBody = computed(
-  () => Boolean(props.description) || Boolean(slots.description) || Boolean(slots.default),
+  () =>
+    Boolean(props.description) ||
+    Boolean(props.message) ||
+    Boolean(slots.description) ||
+    Boolean(slots.default),
 );
 
 /** variant 优先于 type;destructive 归一到 error */

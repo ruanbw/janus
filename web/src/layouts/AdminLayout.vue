@@ -39,11 +39,12 @@
          modal=false + 不锁焦点:抽屉的显隐由 md: 决定,而 JS 并不知道当前断点。
          若开启焦点陷阱,用户在手机上打开抽屉后转屏到 ≥768px,焦点会被锁进
          display:none 的面板里。关闭键改由 reka 的 Esc / 点外部处理,无需自写。 -->
-    <DialogRoot :open="drawerOpen" :modal="false" @update:open="drawerOpen = $event">
+    <DialogRoot :open="drawerOpen" :modal="false" @update:open="onDrawerOpenChange">
       <DialogPortal>
         <DialogOverlay class="drawer-overlay fixed inset-0 z-40 bg-black/45 md:hidden" />
         <DialogContent
           class="drawer-panel fixed inset-y-0 left-0 z-50 flex w-[var(--sidebar-w)] max-w-[85vw] flex-col bg-[var(--sidebar-bg)] shadow-2xl outline-none md:hidden"
+          @open-auto-focus="onDrawerOpenAutoFocus"
         >
           <div class="flex h-14 shrink-0 items-center justify-between gap-2">
             <SidebarBrand />
@@ -73,7 +74,8 @@
          两条 transition 的时长与缓动也刻意一致,否则侧边栏边缘与内容区边缘
          会在动画中途分叉。 -->
     <div
-      :aria-hidden="drawerOpen ? 'true' : undefined"
+      ref="mainRegion"
+      :aria-hidden="backgroundHidden ? 'true' : undefined"
       class="flex min-h-screen flex-col transition-[padding] duration-200 ease-out motion-reduce:transition-none md:pl-[var(--sidebar-w)]"
     >
       <header
@@ -253,6 +255,41 @@ const router = useRouter();
 const collapsed = ref(readCollapsed());
 const drawerOpen = ref(false);
 
+/**
+ * 主区域是否已 aria-hidden。
+ *
+ * 刻意**不**直接绑 drawerOpen:点「打开菜单」时按钮先成为 document.activeElement,
+ * 同一轮 patch 若就把 aria-hidden="true" 写到按钮的祖先上,Chrome 会拦截这次写入
+ * 并报「Blocked aria-hidden on an element because its descendant retained focus」。
+ * 抽屉虽经 DialogPortal 传送到 body(在 aria-hidden 之外),但 reka-ui 的 FocusScope
+ * 要等它 watchEffect 里 `await nextTick()` 之后才调 dispatchMountAutoFocus 搬焦点,
+ * 补不上这个窗口。
+ *
+ * 时机改由抽屉自己的 openAutoFocus 事件给定:那一刻焦点正要搬进面板,
+ * 而 Vue 对本 ref 的 patch 排在后面的微任务里,真正写上 aria-hidden 时
+ * 焦点已在该子树之外。见 onDrawerOpenAutoFocus 里的兜底 blur。
+ */
+const backgroundHidden = ref(false);
+/** 主区域容器,仅用于判断焦点是否仍落在其中 */
+const mainRegion = ref<HTMLElement | null>(null);
+
+function onDrawerOpenChange(open: boolean): void {
+  drawerOpen.value = open;
+  // 关闭时同步撤销:reka 稍后才把焦点还给汉堡按钮,那时 aria-hidden 必须已经摘掉
+  if (!open) backgroundHidden.value = false;
+}
+
+function onDrawerOpenAutoFocus(): void {
+  // 兜底:若调用方 preventDefault 掉 reka 的自动聚焦,焦点会滞留在主区域内。
+  // 先把它交出去(随后仍由 FocusScope 搬进面板),让「打 aria-hidden 时子树内无焦点」
+  // 不依赖 reka-ui 的内部时序。
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && mainRegion.value?.contains(active)) {
+    active.blur();
+  }
+  backgroundHidden.value = true;
+}
+
 const sidebarStyle = computed<Record<string, string>>(() => ({
   '--sidebar-w': collapsed.value ? SIDEBAR_W_COLLAPSED : SIDEBAR_W_EXPANDED,
 }));
@@ -278,7 +315,7 @@ watch(collapsed, (value) => {
 watch(
   () => route.fullPath,
   () => {
-    drawerOpen.value = false;
+    onDrawerOpenChange(false);
   },
 );
 

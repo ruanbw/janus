@@ -23,6 +23,8 @@ const emit = defineEmits<AlertDialogContentEmits>();
   <AlertDialogContent
     :force-mount="props.forceMount"
     :as-child="props.asChild"
+    :as="props.as"
+    :disable-outside-pointer-events="props.disableOutsidePointerEvents"
     :class="cn(alertDialogContentVariants(), props.class)"
     @escape-key-down="emit('escapeKeyDown', $event)"
     @pointer-down-outside="emit('pointerDownOutside', $event)"

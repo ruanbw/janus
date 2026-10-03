@@ -5,7 +5,7 @@ const props = defineProps<DialogCloseProps>();
 </script>
 
 <template>
-  <DialogClose :as-child="props.asChild">
+  <DialogClose :as-child="props.asChild" :as="props.as">
     <slot />
   </DialogClose>
 </template>

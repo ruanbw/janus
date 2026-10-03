@@ -113,6 +113,20 @@ const simInput = ref<SimInput>({
 
 const fieldViews = computed(() => visitorFieldViews(profile.value));
 
+/**
+ * SimInput.country 的类型是 string，而下拉清除可能写回 undefined
+ * （AppSelect 早期版本就是这么做的，h2 lane 排查时发现）。
+ * undefined 渗进表单态后，runSimulation 会把 manualCountry: undefined 发给后端，
+ * 而且 loadSample 的 {...sample} 会把这个 undefined 一起复制到下一个样本上。
+ * 这里在 v-model 边界上归一，不让非字符串值进入 SimInput。
+ */
+const countryModel = computed({
+  get: (): string => simInput.value.country ?? '',
+  set: (value: unknown) => {
+    simInput.value.country = typeof value === 'string' ? value : '';
+  },
+});
+
 const ruleOptions = computed(() =>
   previewRuleId.value === null
     ? []
@@ -300,7 +314,7 @@ onMounted(async () => {
             <div>
               <label class="mb-1.5 block text-sm font-medium text-ink">国家 / 地区</label>
               <AppSelect
-                v-model="simInput.country"
+                v-model="countryModel"
                 :options="countryOptions"
                 show-search
                 allow-clear

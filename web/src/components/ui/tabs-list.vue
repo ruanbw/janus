@@ -19,6 +19,7 @@ const props = defineProps<TabsListProps & { class?: any }>();
     :loop="props.loop"
     :as-child="props.asChild"
     :class="cn(tabsListVariants(), props.class)"
+    :as="props.as"
   >
     <slot />
   </TabsList>

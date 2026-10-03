@@ -13,5 +13,5 @@ const props = defineProps<DropdownMenuSeparatorProps & { class?: any }>();
 </script>
 
 <template>
-  <DropdownMenuSeparator :class="cn('-mx-1 my-1 h-px bg-border', props.class)" />
+  <DropdownMenuSeparator :class="cn('-mx-1 my-1 h-px bg-border', props.class)" :as-child="props.asChild" :as="props.as" />
 </template>

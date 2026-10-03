@@ -19,5 +19,6 @@ const props = defineProps<AlertDialogOverlayProps & { class?: any }>();
     :force-mount="props.forceMount"
     :as-child="props.asChild"
     :class="cn(alertDialogOverlayVariants(), props.class)"
+    :as="props.as"
   />
 </template>

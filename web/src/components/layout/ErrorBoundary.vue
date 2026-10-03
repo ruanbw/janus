@@ -44,8 +44,10 @@ const error = ref<Error | null>(null);
 const attempt = ref(0);
 
 onErrorCaptured((err: unknown) => {
-  console.error('[ErrorBoundary]', err);
+  if (import.meta.env.DEV) console.error('[ErrorBoundary]', err);
   error.value = err instanceof Error ? err : new Error(String(err));
+  // return false:错误不往上冒泡。父级 App.vue 是最后一道防线,
+  // 一旦让它接住就会整站降级成白底卡片 —— 而这里本来就能就地降级并重建。
   return false;
 });
 

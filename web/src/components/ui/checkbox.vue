@@ -37,6 +37,8 @@ const emit = defineEmits<{ 'update:modelValue': [val: boolean | 'indeterminate']
     :true-value="props.trueValue"
     :false-value="props.falseValue"
     :as-child="props.asChild"
+    :as="props.as"
+    :required="props.required"
     :class="cn(checkboxVariants(), props.class)"
   >
     <CheckboxIndicator :class="checkboxIndicatorVariants()">

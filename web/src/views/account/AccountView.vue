@@ -139,7 +139,17 @@
         </CardHeader>
 
         <CardContent class="space-y-5 p-6">
-          <AppForm ref="pwdFormRef" :model="form" :schema="schema" @finish="onChangePassword">
+          <!-- @keydown.enter：表单内是 3 个 type="password" 字段（首次登录时 2 个），
+               远超「恰好 1 个阻塞隐式提交的字段」这一阈值，浏览器的隐式提交不会触发，
+               submit 按钮又落在 </AppForm> 之外的 CardFooter 里 —— 回车此前完全没反应。
+               事件挂在 AppForm 上会透传到其根 <form>，由内部输入框冒泡上来。 -->
+          <AppForm
+            ref="pwdFormRef"
+            :model="form"
+            :schema="schema"
+            @finish="onChangePassword"
+            @keydown.enter="submitPasswordForm"
+          >
             <!-- 当前密码(首次登录设置密码时无需输入) -->
             <AppFormItem
               v-if="!isFirstLogin"
@@ -343,11 +353,11 @@ async function load() {
 onMounted(load);
 
 async function submitPasswordForm() {
-  try {
-    await pwdFormRef.value?.validate();
-  } catch {
-    return;
-  }
+  // 重入保护：回车可被连按，validate() 之前先上锁，避免重复提交密码
+  if (changingPassword.value) return;
+  // validate() resolve boolean、永不 reject：必须判断返回值（契约见 AppForm.vue 的 validateAll）
+  const ok = await pwdFormRef.value?.validate();
+  if (!ok) return;
   await onChangePassword();
 }
 

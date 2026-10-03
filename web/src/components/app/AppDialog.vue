@@ -20,14 +20,22 @@ import DialogRootPrimitive from '@/components/ui/dialog.vue';
 import DialogPortal from '@/components/ui/dialog-portal.vue';
 import DialogOverlay from '@/components/ui/dialog-overlay.vue';
 import DialogContent from '@/components/ui/dialog-content.vue';
+import DialogTitle from '@/components/ui/dialog-title.vue';
+import DialogDescription from '@/components/ui/dialog-description.vue';
 
 import { cn } from '@/lib/utils';
+
+/** 调用方未提供标题/描述时的兜底文案；reka 只校验对应 id 的节点存在 */
+const DEFAULT_TITLE = '对话框';
+const DEFAULT_DESCRIPTION = '对话框内容';
 
 const props = withDefaults(
   defineProps<{
     open?: boolean;
     defaultOpen?: boolean;
     modal?: boolean;
+    title?: string;
+    description?: string;
     class?: any;
     overlayClass?: any;
   }>(),
@@ -49,6 +57,13 @@ const emit = defineEmits<{
     <DialogPortal>
       <DialogOverlay :class="cn(overlayClass)" />
       <DialogContent :class="cn('border-line bg-surface text-ink', props.class)">
+        <!-- 无头底座不自带标题区，语义层无条件渲染（sr-only），否则 reka 必刷两条警告 -->
+        <DialogTitle class="sr-only">
+          <slot name="title">{{ title || DEFAULT_TITLE }}</slot>
+        </DialogTitle>
+        <DialogDescription class="sr-only">
+          <slot name="description">{{ description || DEFAULT_DESCRIPTION }}</slot>
+        </DialogDescription>
         <slot />
       </DialogContent>
     </DialogPortal>

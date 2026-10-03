@@ -15,7 +15,7 @@ const props = defineProps<TabsIndicatorProps & { class?: any }>();
 </script>
 
 <template>
-  <TabsIndicator :as-child="props.asChild" :class="cn(tabsIndicatorVariants(), props.class)">
+  <TabsIndicator :as-child="props.asChild" :class="cn(tabsIndicatorVariants(), props.class)" :as="props.as">
     <slot />
   </TabsIndicator>
 </template>

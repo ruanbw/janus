@@ -24,6 +24,7 @@ const props = defineProps<TabsTriggerProps & { class?: any }>();
     :disabled="props.disabled"
     :as-child="props.asChild"
     :class="cn(tabsTriggerVariants(), props.class)"
+    :as="props.as"
   >
     <slot />
   </TabsTrigger>

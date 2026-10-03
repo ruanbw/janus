@@ -312,9 +312,16 @@ const scopeSummaryText = computed(() =>
   form.scope === 'global' ? '本租户的全部' : `所关联的 ${form.linkIds.length} 条`,
 );
 
-function setScope(scope: string) {
+/**
+ * AppRadioGroup 的 change 载荷声明为 `string | number | undefined`（见其 defineEmits），
+ * 这里按声明的宽度接收，再收窄到 RuleScope —— 不再对任意 string 盲转 `as RuleScope`。
+ * 非 'global'/'links' 的值（含 undefined）直接忽略：单选组的取值只可能来自
+ * AppRadioCard 的 value，理论外值不应改写表单状态。
+ */
+function setScope(scope: string | number | undefined): void {
+  if (scope !== 'global' && scope !== 'links') return;
   // 保留已选的 linkIds：切回「指定短链」时不用重选；真正保存为 global 时会提交空数组清理关联
-  form.scope = scope as RuleScope;
+  form.scope = scope;
 }
 
 function onFieldChange(cond: EditableCondition) {

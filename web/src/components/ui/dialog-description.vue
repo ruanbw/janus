@@ -10,6 +10,7 @@ const props = defineProps<DialogDescriptionProps & { class?: any }>();
   <DialogDescription
     :as-child="props.asChild"
     :class="cn('text-xs leading-relaxed text-muted-foreground', props.class)"
+    :as="props.as"
   >
     <slot />
   </DialogDescription>

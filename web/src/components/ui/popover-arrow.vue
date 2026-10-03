@@ -12,6 +12,8 @@ const props = defineProps<PopoverArrowProps & { class?: any }>();
     :height="props.height"
     :rounded="props.rounded"
     :class="cn('fill-popover', props.class)"
+    :as-child="props.asChild"
+    :as="props.as"
   >
     <slot />
   </PopoverArrow>

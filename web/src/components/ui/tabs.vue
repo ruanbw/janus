@@ -15,6 +15,7 @@ const emit = defineEmits<TabsRootEmits>();
     :unmount-on-hide="props.unmountOnHide"
     :as-child="props.asChild"
     @update:model-value="emit('update:modelValue', $event)"
+    :as="props.as"
   >
     <slot />
   </TabsRoot>

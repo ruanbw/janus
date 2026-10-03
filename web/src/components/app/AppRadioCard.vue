@@ -1,33 +1,38 @@
 <template>
+  <!--
+    卡片本体是一个 <button role="radio">，其内容模型只允许 phrasing content。
+    块级元素（div / p）放进去是非法的，浏览器的 foster parenting 会把它们挪出按钮，
+    焦点环与 aria-labelledby 的关系随之失效。所以这里的布局容器一律用 span + display 类。
+  -->
   <UiRadioGroupItem
     :value="value"
     :disabled="disabled"
     :class="cardClasses"
   >
-    <div
+    <span
       v-if="$slots.icon || icon"
-      class="mt-0.5 shrink-0 text-ink-soft transition-colors group-data-[state=checked]:text-brand"
+      class="mt-0.5 block shrink-0 text-ink-soft transition-colors group-data-[state=checked]:text-brand"
     >
       <slot name="icon">
         <component :is="icon" :size="20" />
       </slot>
-    </div>
+    </span>
 
-    <div class="min-w-0 flex-1">
-      <div class="flex items-center justify-between gap-2">
-        <div class="text-sm font-semibold text-ink transition-colors group-data-[state=checked]:text-brand">
+    <span class="block min-w-0 flex-1">
+      <span class="flex items-center justify-between gap-2">
+        <span class="text-sm font-semibold text-ink transition-colors group-data-[state=checked]:text-brand">
           <slot name="title">{{ title }}</slot>
           <slot v-if="!title && !$slots.title" />
-        </div>
+        </span>
         <slot name="extra" />
-      </div>
-      <p
+      </span>
+      <span
         v-if="description || $slots.description"
-        class="mt-1 text-xs leading-relaxed text-ink-faint transition-colors group-data-[state=checked]:text-ink-soft"
+        class="mt-1 block text-xs leading-relaxed text-ink-faint transition-colors group-data-[state=checked]:text-ink-soft"
       >
         <slot name="description">{{ description }}</slot>
-      </p>
-    </div>
+      </span>
+    </span>
 
     <UiRadioGroupIndicator class="mt-0.5" />
   </UiRadioGroupItem>

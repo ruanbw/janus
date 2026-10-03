@@ -22,6 +22,7 @@ const props = defineProps<SelectTriggerProps & { class?: any }>();
     :as="props.as"
     :as-child="props.asChild"
     :class="cn(selectTriggerVariants(), props.class)"
+    :reference="props.reference"
   >
     <slot />
   </SelectTrigger>

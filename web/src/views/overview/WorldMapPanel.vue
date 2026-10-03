@@ -22,7 +22,7 @@
           地图本体：viewBox 固定坐标系，宽度交给 CSS。
           移动端窄屏下按比例缩到约 340px 宽仍可读，故不需要为移动端换一套图。
         -->
-        <div class="relative min-w-0 flex-1" @mouseleave="hoveredCountry = null">
+        <div class="relative min-w-0 flex-1" @mouseleave="clearHover">
           <div
             v-if="mapFailed"
             class="flex flex-col items-center gap-1.5 py-10 text-center text-xs text-ink-soft"
@@ -48,9 +48,9 @@
               class="map-shape cursor-pointer"
               :class="[
                 fillClassOf(shape.code),
-                hoveredCountry === shape.code ? 'is-active' : ''
+                hoveredShapeKey === shape.id ? 'is-active' : ''
               ]"
-              @mouseenter="hoveredCountry = shape.code"
+              @mouseenter="hoverShape(shape)"
             />
           </svg>
           <div v-else class="py-16 text-center text-xs text-ink-faint">正在加载世界地图…</div>
@@ -65,7 +65,7 @@
           -->
           <Transition name="map-tip">
             <div
-              v-if="hoverTooltip && hoveredCountry"
+              v-if="hoverTooltip"
               class="map-tip pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-full mb-2 origin-bottom rounded-md bg-ink px-2.5 py-1.5 text-xs text-surface shadow-md"
               :style="{ left: `${mousePos.x}px`, top: `${mousePos.y}px` }"
             >
@@ -88,8 +88,8 @@
             :key="item.code"
             class="flex items-center gap-2 px-2 py-1 -mx-2 rounded cursor-pointer transition-colors"
             :class="hoveredCountry === item.code ? 'bg-surface-strong font-medium text-brand' : 'text-ink hover:bg-surface-strong/50'"
-            @mouseenter="hoveredCountry = item.code"
-            @mouseleave="hoveredCountry = null"
+            @mouseenter="hoverCountryCode(item.code)"
+            @mouseleave="clearHover"
           >
             <span class="h-2.5 w-2.5 shrink-0 rounded-xs" :class="`map-lv${levelOf(item.code)}`"></span>
             <span class="truncate">{{ item.name }}</span>
@@ -154,8 +154,21 @@ const props = defineProps<{
 
 const shapes = ref<CountryShape[]>([]);
 const mapFailed = ref(false);
-/** 悬停/联动的国家（alpha-2）：地图与右侧榜单共用它做双向高亮 */
+/**
+ * 悬停的国家（alpha-2）：右侧榜单按它选中，与地图共用。
+ *
+ * 空串是**合法**的悬停态 —— N. Cyprus / Somaliland / Kosovo 没有 id，
+ * 没有对应的 alpha-2，但它们确实在地图上，也确实该有「无访问记录」的读数。
+ */
 const hoveredCountry = ref<string | null>(null);
+/**
+ * 地图要素上的悬停身份：唯一键（shape.id），**不是** code。
+ *
+ * 用 code 判定高亮时三个无 id 的要素会一起亮起来 —— 它们都是空串，
+ * 空串 === 空串 恒真，用户看到三块地同时高亮，像是有三国访问量，
+ * 而实际上它们一个都没数据。高亮必须绑定到单个要素。
+ */
+const hoveredShapeKey = ref<string | null>(null);
 /** 指针相对地图容器的位置，只喂给浮动读数的 left/top */
 const mousePos = ref<{ x: number; y: number }>({ x: 0, y: 0 });
 
@@ -192,15 +205,40 @@ function handleMapMouseMove(e: MouseEvent) {
 }
 
 /**
+ * 悬停一个地图要素：高亮按要素 id，读数按 code。
+ *
+ * 两个身份刻意分开：高亮要「恰好一块地亮起来」，读数要「回答这个国家有多少访问」。
+ * 对有 id 的要素两者一致；对无 id 的那三个要素，只有这套分开才正确。
+ */
+function hoverShape(shape: CountryShape) {
+  hoveredShapeKey.value = shape.id;
+  hoveredCountry.value = shape.code;
+}
+
+/** 从右侧榜单悬停：只有 code，按 code 反查地图上对应的要素高亮 */
+function hoverCountryCode(code: string) {
+  hoveredCountry.value = code;
+  hoveredShapeKey.value = shapes.value.find((s) => s.code === code)?.id ?? null;
+}
+
+function clearHover() {
+  hoveredShapeKey.value = null;
+  hoveredCountry.value = null;
+}
+
+/**
  * 浮动读数的内容。
  *
  * 悬停在"有访问"的国家上给国家名 + 次数 + 占比，悬停在"无访问"的国家上
  * 也要给一句实话（无访问记录），而不是什么都不显示——地图上大片空白若不给
  * 解释，用户会以为那里没数据，其实只是"这片没人来"。
+ *
+ * hoveredCountry 为空串时（上面那三个无 id 的要素）同样要出读数，
+ * 所以这里只能按 null 判断，不能用真值判断。
  */
 const hoverTooltip = computed(() => {
   const code = hoveredCountry.value;
-  if (!code) return null;
+  if (code === null) return null;
   const hit = byCode.value.get(code);
   if (!hit) return { name: '无访问记录', code, count: 0, percent: '0.0' };
   const percent = locatedCount.value > 0 ? ((hit.count / locatedCount.value) * 100).toFixed(1) : '0.0';
@@ -211,8 +249,13 @@ async function loadShapes() {
   mapFailed.value = false;
   try {
     shapes.value = await loadCountryShapes();
-  } catch {
-    // 分包/网络失败不该让总览页整体挂掉，降级成「地图没了，榜单还在」
+  } catch (error) {
+    // 分包/网络失败不该让总览页整体挂掉，降级成「地图没了，榜单还在」。
+    // 错误本身已由 worldMap.loadCountryShapes 记入控制台，这里负责界面降级；
+    // 但 catch 曾经是空块（什么痕迹都不留），这里补一条降级原因便于定位。
+    if (import.meta.env.DEV) {
+      console.error('[WorldMapPanel] 地图数据加载失败，已降级为榜单模式', error);
+    }
     mapFailed.value = true;
   }
 }

@@ -17,11 +17,16 @@
             <AlertDialogTitle class="text-ink leading-none tracking-tight">
               {{ state?.title }}
             </AlertDialogTitle>
+            <!--
+              AlertDialogDescription 不能被 v-if 门控：ConfirmOptions.content 是可选的，
+              调用方不传 content 时描述节点消失，reka 的 useWarning 查不到
+              descriptionId 对应的元素，每次弹窗刷一条 Missing 警告。
+              无 content 时退到 sr-only，只占住 aria-describedby。
+            -->
             <AlertDialogDescription
-              v-if="state?.content"
-              class="mt-2 text-sm leading-relaxed text-ink-soft"
+              :class="state?.content ? 'mt-2 text-sm leading-relaxed text-ink-soft' : 'sr-only'"
             >
-              {{ state.content }}
+              {{ state?.content || DEFAULT_CONFIRM_DESCRIPTION }}
             </AlertDialogDescription>
           </div>
         </div>
@@ -65,6 +70,9 @@ import { closeConfirm, confirmState } from './confirm';
 
 const busy = ref(false);
 const state = computed(() => confirmState.current);
+
+/** 调用方未传 ConfirmOptions.content 时的兜底描述 */
+const DEFAULT_CONFIRM_DESCRIPTION = '请确认是否执行该操作';
 
 function onOpenChange(open: boolean): void {
   if (open === false) {

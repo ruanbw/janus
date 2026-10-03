@@ -19,5 +19,6 @@ const props = defineProps<DialogOverlayProps & { class?: any }>();
     :force-mount="props.forceMount"
     :as-child="props.asChild"
     :class="cn(dialogOverlayVariants(), props.class)"
+    :as="props.as"
   />
 </template>

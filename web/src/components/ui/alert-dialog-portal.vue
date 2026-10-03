@@ -5,7 +5,7 @@ const props = defineProps<AlertDialogPortalProps>();
 </script>
 
 <template>
-  <AlertDialogPortal :to="props.to" :disabled="props.disabled">
+  <AlertDialogPortal :to="props.to" :disabled="props.disabled" :defer="props.defer" :force-mount="props.forceMount">
     <slot />
   </AlertDialogPortal>
 </template>

@@ -29,7 +29,15 @@ export function setUnauthorizedHandler(handler: (redirectTo?: string) => void): 
 
 /** 读取 cookie 值(双提交 token 从 cookie 取) */
 export function getCookie(name: string): string | undefined {
-  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  let raw: string;
+  try {
+    // sandbox iframe(无 allow-same-origin)下读 document.cookie 会抛 SecurityError,
+    // 整段读取都要在保护内,不能只包 decodeURIComponent
+    raw = document.cookie;
+  } catch {
+    return undefined;
+  }
+  const match = raw.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
   if (!match) return undefined;
   try {
     return decodeURIComponent(match[1]);

@@ -1089,11 +1089,9 @@ type LinkPayload = {
 };
 
 async function onSubmit() {
-  try {
-    await formRef.value?.validate();
-  } catch {
-    return;
-  }
+  // validate() resolve boolean、永不 reject：必须判断返回值（契约见 AppForm.vue 的 validateAll）
+  const ok = await formRef.value?.validate();
+  if (!ok) return;
 
   submitting.value = true;
   try {

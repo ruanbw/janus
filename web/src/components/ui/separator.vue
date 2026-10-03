@@ -27,6 +27,7 @@ const props = defineProps<SeparatorProps & { class?: any }>();
     :orientation="props.orientation"
     :decorative="props.decorative"
     :as-child="props.asChild"
+    :as="props.as"
     :class="cn(separatorVariants({ orientation: props.orientation }), props.class)"
   >
     <slot />

@@ -263,16 +263,27 @@ function goBack() {
   router.push({ name: 'domains' });
 }
 
+/**
+ * 提交。有两条路径会同时到达这里：
+ *  1) 「立即添加域名」按钮的 @click；
+ *  2) FQDN 输入框的 @press-enter —— 它与 <form> 的原生隐式提交撞车：
+ *     form 内没有 submit 按钮，且恰好只有 1 个阻塞隐式提交的字段（textarea 不阻塞），
+ *     浏览器会在同一次回车里既派发 keydown.enter 又隐式提交。
+ *
+ * 所以第一行就必须同步上锁：否则一次回车打两次 POST /api/domains，
+ * 表现为 201 成功后紧跟一个 409，误报「域名已被占用」。
+ */
 async function onSubmit() {
-  try {
-    await formRef.value?.validate();
-  } catch {
-    return;
-  }
-  const fqdn = formState.fqdn.trim().toLowerCase();
-  const description = formState.description.trim();
+  if (submitting.value) return;
   submitting.value = true;
   try {
+    // validate() resolve boolean、永不 reject：必须判断返回值。
+    // 写成 try/catch 会让 catch 成为死代码、校验被静默跳过（契约见 AppForm.vue 的 validateAll）。
+    const ok = await formRef.value?.validate();
+    if (!ok) return;
+
+    const fqdn = formState.fqdn.trim().toLowerCase();
+    const description = formState.description.trim();
     const domain = await createDomain({ fqdn, description });
     message.success('域名 ' + domain.fqdn + ' 已添加，正在等待 DNS 校验');
     router.push({ name: 'domains' });

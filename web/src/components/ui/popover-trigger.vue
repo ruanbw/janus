@@ -5,7 +5,7 @@ const props = defineProps<PopoverTriggerProps>();
 </script>
 
 <template>
-  <PopoverTrigger :as-child="props.asChild">
+  <PopoverTrigger :as-child="props.asChild" :as="props.as">
     <slot />
   </PopoverTrigger>
 </template>

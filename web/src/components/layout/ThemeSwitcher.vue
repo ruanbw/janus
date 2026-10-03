@@ -83,7 +83,11 @@ function onSelect(next: ThemeMode): void {
     : { x: window.innerWidth / 2, y: 0 };
   requestAnimationFrame(() =>
     requestAnimationFrame(() => {
-      void theme.setModeAnimated(next, origin);
+      // 不能裸 void:store 里的异常已被兜住,但调用点仍要显式处理 reject,
+      // 否则一旦 store 漏接就变成 Uncaught (in promise)。
+      theme.setModeAnimated(next, origin).catch(() => {
+        // 主题切换失败:降级为硬切已在 store 内完成,此处无需再提示
+      });
     }),
   );
 }

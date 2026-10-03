@@ -35,6 +35,7 @@ const props = defineProps<
   <AlertDialogAction
     :as-child="props.asChild"
     :class="cn(alertDialogActionVariants({ variant: props.variant }), props.class)"
+    :as="props.as"
   >
     <slot />
   </AlertDialogAction>

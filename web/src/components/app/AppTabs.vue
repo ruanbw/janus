@@ -5,7 +5,7 @@
     :orientation="orientation"
     :dir="dir"
     :activation-mode="activationMode"
-    class="flex flex-col gap-2"
+    :class="cn('flex flex-col gap-2', props.class)"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <slot />
@@ -14,6 +14,8 @@
 
 <script setup lang="ts">
 import UiTabs from '@/components/ui/tabs.vue';
+
+import { cn } from '@/lib/utils';
 
 const props = defineProps<{
   modelValue?: string | number;

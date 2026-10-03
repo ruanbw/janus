@@ -5,7 +5,7 @@ const props = defineProps<DialogTriggerProps>();
 </script>
 
 <template>
-  <DialogTrigger :as-child="props.asChild">
+  <DialogTrigger :as-child="props.asChild" :as="props.as">
     <slot />
   </DialogTrigger>
 </template>

@@ -64,7 +64,7 @@
     <!-- 世界地图：与其他分布图同源，但单独占满一整行 -->
     <WorldMapPanel
       v-if="totals.visits > 0"
-      :countries="overview?.facets.countries ?? []"
+      :countries="facets?.countries ?? []"
       :total-visits="totals.visits"
       :coverage-truncated="userAgentsTruncated"
       :user-agent-limit="USER_AGENT_LIMIT"
@@ -403,11 +403,9 @@ import type { Domain, OverviewStats } from '@/types/api';
 import { message } from '@/utils/toast';
 
 import {
-  browserDistribution,
   countryDistribution,
-  deviceDistribution,
-  osDistribution,
   sourceDistribution,
+  uaDistributions,
 } from './trafficBreakdown';
 import WorldMapPanel from './WorldMapPanel.vue';
 
@@ -446,15 +444,19 @@ const totals = computed(() => overview.value?.totals ?? EMPTY_TOTALS);
 const facets = computed(() => overview.value?.facets ?? null);
 
 const userAgents = computed(() => facets.value?.userAgents ?? []);
-const userAgentsTruncated = computed(() => facets.value?.userAgentCoverage.truncated ?? false);
+// 可选链要一路兜到叶子：facets 在但 coverage 字段缺失时，`facets.userAgentCoverage.truncated`
+// 会在 computed 求值时直接抛错，整页白屏。两个 coverage 都在这里收窄成完整结构。
+const userAgentsTruncated = computed(() => facets.value?.userAgentCoverage?.truncated ?? false);
 
 /** 能定位到国家的访问次数（地图的分母） */
-const locatedVisits = computed(() => facets.value?.countryCoverage.returned ?? 0);
+const locatedVisits = computed(() => facets.value?.countryCoverage?.returned ?? 0);
 
 const sourceBreakdown = computed(() => sourceDistribution(facets.value?.sources ?? []));
-const deviceBreakdown = computed(() => deviceDistribution(userAgents.value));
-const osBreakdown = computed(() => osDistribution(userAgents.value));
-const browserBreakdown = computed(() => browserDistribution(userAgents.value));
+/** 三张 UA 分布图共用一次解析：见 trafficBreakdown.uaDistributions 的说明 */
+const uaBreakdowns = computed(() => uaDistributions(userAgents.value));
+const deviceBreakdown = computed(() => uaBreakdowns.value.device);
+const osBreakdown = computed(() => uaBreakdowns.value.os);
+const browserBreakdown = computed(() => uaBreakdowns.value.browser);
 
 // 承载域名数：真实激活的域名数量（域名不分页，一次拿全）
 const activeDomainsCount = computed(() => {
@@ -618,19 +620,47 @@ const kpiList = computed<KPIItem[]>(() => [
  */
 const revalidating = computed(() => loading.value && overview.value !== null);
 
+/**
+ * 把一次失败拆成「给用户看」与「给工程师看」两路。
+ *
+ * 只有 ApiError 是预期内的失败（后端明确回了状态码与文案），直接弹提示。
+ * 其余异常 —— 程序错误、被 catch 住的动态 import 失败、toast 本身抛错 ——
+ * 一律 DEV 下记一条 console.error：这类故障在生产环境没有任何其它出口，
+ * 页面只会安静地停在旧数据上，不留痕就等于不存在。
+ */
+function reportLoadError(scope: string, error: unknown) {
+  if (error instanceof ApiError) {
+    // 401 由全局拦截器统一跳登录，重复弹一次只会多一条无意义提示
+    if (error.status !== 401) message.error(error.message);
+    return;
+  }
+  if (import.meta.env.DEV) {
+    console.error(`[overview] ${scope}加载失败`, error);
+  }
+}
+
 async function loadData() {
   loading.value = true;
   try {
     // 两个请求互不依赖，并发拿；域名列表本身不分页。
-    const [statsRes, domainsRes] = await Promise.all([
+    // 用 allSettled 而不是 all：all 下一个失败会把另一个**已经拿到的**结果一起丢掉，
+    // /api/domains 挂掉时页面谎报「暂无流量访问数据」，而统计其实已经取到了。
+    const [statsResult, domainsResult] = await Promise.allSettled([
       fetchOverviewStats(),
       listDomains(),
     ]);
-    overview.value = statsRes;
-    domains.value = Array.isArray(domainsRes) ? domainsRes : [];
-  } catch (error) {
-    if (error instanceof ApiError && error.status !== 401) {
-      message.error(error.message);
+
+    if (statsResult.status === 'fulfilled') {
+      overview.value = statsResult.value;
+    } else {
+      // 失败时**不清空** overview：旧数据比空态诚实
+      reportLoadError('总览统计', statsResult.reason);
+    }
+
+    if (domainsResult.status === 'fulfilled') {
+      domains.value = Array.isArray(domainsResult.value) ? domainsResult.value : [];
+    } else {
+      reportLoadError('域名列表', domainsResult.reason);
     }
   } finally {
     loading.value = false;

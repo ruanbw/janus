@@ -11,6 +11,8 @@ const props = defineProps<TooltipArrowProps & { class?: any }>();
     :width="props.width"
     :height="props.height"
     :class="cn('fill-foreground', props.class)"
+    :as-child="props.asChild"
+    :as="props.as"
   >
     <slot />
   </TooltipArrow>

@@ -157,19 +157,29 @@ const DEVICE_LABELS = ['移动端', '桌面端', '平板', '爬虫 / 机器人']
 const OS_LABELS = ['iOS', 'Android', 'Windows', 'macOS', 'Linux', '其他'];
 const BROWSER_LABELS = ['Chrome / WebKit', 'Safari', 'Firefox', '应用内内置'];
 
-export function deviceDistribution(userAgents: FacetCount[]): BreakdownItem[] {
-  if (userAgents.length === 0) return [];
-  return tallyWeighted(uaWeightedFacets(userAgents).device, DEVICE_LABELS);
+/** 三个 UA 派生维度的分布，一次解析同时给出 */
+export interface UADistributions {
+  device: BreakdownItem[];
+  os: BreakdownItem[];
+  browser: BreakdownItem[];
 }
 
-export function osDistribution(userAgents: FacetCount[]): BreakdownItem[] {
-  if (userAgents.length === 0) return [];
-  return tallyWeighted(uaWeightedFacets(userAgents).os, OS_LABELS);
-}
-
-export function browserDistribution(userAgents: FacetCount[]): BreakdownItem[] {
-  if (userAgents.length === 0) return [];
-  return tallyWeighted(uaWeightedFacets(userAgents).browser, BROWSER_LABELS);
+/**
+ * 设备 / 系统 / 浏览器三张分布图，**共用一次** UA 解析。
+ *
+ * 这三个维度同源：三张图喂进来的是同一串 UA，答案也来自同一次解析。
+ * 拆成「每个维度一个导出、各自解析一遍」时，500 条 UA 要被 `new UAParser`
+ * 构造 1500 次，全部落在首次渲染的 computed 求值里（表现为进总览页卡一下）。
+ * 所以同屏三张图只留这一个入口。
+ */
+export function uaDistributions(userAgents: FacetCount[]): UADistributions {
+  if (userAgents.length === 0) return { device: [], os: [], browser: [] };
+  const facets = uaWeightedFacets(userAgents);
+  return {
+    device: tallyWeighted(facets.device, DEVICE_LABELS),
+    os: tallyWeighted(facets.os, OS_LABELS),
+    browser: tallyWeighted(facets.browser, BROWSER_LABELS),
+  };
 }
 
 /**

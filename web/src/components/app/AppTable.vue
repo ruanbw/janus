@@ -25,7 +25,7 @@
           <tbody>
             <tr
               v-for="(record, rowIndex) in dataSource"
-              :key="String(record[rowKey] ?? rowIndex)"
+              :key="String(field(record, rowKey) ?? rowIndex)"
               class="group transition-colors hover:bg-muted"
               :class="[rowClickable ? 'cursor-pointer' : '', rowClass?.(record, rowIndex)]"
               v-bind="rowProps?.(record, rowIndex) ?? {}"
@@ -118,24 +118,32 @@
   </div>
 </template>
 
-<script setup lang="ts">
+<script setup lang="ts" generic="TRow extends object">
 import { computed, getCurrentInstance, ref, watch } from 'vue';
 import { ChevronLeft, ChevronRight, Loader2 } from '@lucide/vue';
 
 import AppEmpty from './AppEmpty.vue';
 import type { TableColumn, TablePaginationConfig } from './types';
 
+// TRow 由 :data-source 实参反推。此前 dataSource 写死 Record<string, unknown>[]，
+// #cell 插槽里的 record 也随之退化成 Record<string, unknown>：调用方写 record.foo
+// 一律报 TS2339，只能在每个页面用 `as unknown as Record<string, unknown>[]` 把
+// 行类型擦掉才能过编译 —— 那些断言正是这套泛型要取代的东西。
+// 泛型是纯类型层的改动，不改变任何运行时行为。
+//
+// 约束用 `object` 而非 `Record<string, unknown>`：interface（如 Visit）没有隐式
+// 索引签名，不满足后者。行内的动态取值（rowKey / col.key）走 field() 收窄。
 const props = withDefaults(defineProps<{
     columns: TableColumn[];
-    dataSource: Record<string, unknown>[];
+    dataSource: TRow[];
     loading?: boolean;
     rowKey?: string;
     pagination?: false | TablePaginationConfig;
     scroll?: { x?: number | string };
     /** 行级 class,如按 outcome 给行加失败底色 */
-    rowClass?: (record: Record<string, unknown>, index: number) => string | undefined;
+    rowClass?: (record: TRow, index: number) => string | undefined;
     /** 行级透传属性,如 data-* 供 scoped 样式使用 */
-    rowProps?: (record: Record<string, unknown>, index: number) => Record<string, unknown> | undefined;
+    rowProps?: (record: TRow, index: number) => Record<string, unknown> | undefined;
     /**
      * 行是否可点击。默认自动检测:挂了 @row-click 就启用(tabindex + 键盘可达),
      * 显式传 false 可只保留样式不要点击行为。
@@ -149,19 +157,19 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   change: [payload: { current: number; pageSize: number }];
-  rowClick: [record: Record<string, unknown>, event: MouseEvent | KeyboardEvent];
+  rowClick: [record: TRow, event: MouseEvent | KeyboardEvent];
 }>();
 
 /** @row-click 存在与否决定行是否可聚焦;vnode.props 是这里唯一可靠的检测点 */
 const hasRowClickListener = !!getCurrentInstance()?.vnode.props?.['onRowClick'];
 const rowClickable = computed(() => props.rowClickable ?? hasRowClickListener);
 
-function onRowClick(record: Record<string, unknown>, event: MouseEvent): void {
+function onRowClick(record: TRow, event: MouseEvent): void {
   if (!rowClickable.value) return;
   emit('rowClick', record, event);
 }
 
-function onRowKeydown(record: Record<string, unknown>, event: KeyboardEvent): void {
+function onRowKeydown(record: TRow, event: KeyboardEvent): void {
   if (!rowClickable.value) return;
   if (event.key !== 'Enter' && event.key !== ' ') return;
   event.preventDefault();
@@ -256,11 +264,19 @@ const pageNumbers = computed<number[]>(() => {
   return result;
 });
 
-function cellText(record: Record<string, unknown>, col: TableColumn): string {
+function cellText(record: TRow, col: TableColumn): string {
   const key = col.dataIndex ?? col.key;
-  const value = record[key];
+  const value = field(record, key);
   if (value === undefined || value === null) return '-';
   return String(value);
+}
+
+/**
+ * 按字符串键读行上的字段。表格的列定义（dataIndex / key）与行类型是解耦的 ——
+ * TableColumn.key 是运行时才知道的字符串，这里是全表唯一无法静态核对的一处取值。
+ */
+function field(record: TRow, key: string): unknown {
+  return (record as Record<string, unknown>)[key];
 }
 
 function goPage(page: number): void {

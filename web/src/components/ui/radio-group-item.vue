@@ -22,7 +22,9 @@ const props = defineProps<RadioGroupItemProps & { class?: any }>();
     :id="props.id"
     :disabled="props.disabled"
     :name="props.name"
+    :required="props.required"
     :as-child="props.asChild"
+    :as="props.as"
     :class="cn(radioGroupItemVariants(), props.class)"
   >
     <!--

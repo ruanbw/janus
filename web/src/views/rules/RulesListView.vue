@@ -90,12 +90,12 @@ const columns: TableColumn[] = [
   { title: '操作', key: 'actions', width: 128, align: 'right', nowrap: true, fixed: 'right' },
 ];
 
-/** AppTable 插槽 record 为 Record<string, unknown>,转换为领域类型以访问字段 */
-function toRule(record: Record<string, unknown>): Rule {
-  return record as unknown as Rule;
-}
-
-const tableData = computed(() => filteredRules.value as unknown as Record<string, unknown>[]);
+/**
+ * AppTable 的行类型由 :data-source 反推（TRow），这里直接把领域类型传进去即可，
+ * 插槽里的 record 就是 Rule —— 不再需要 `as unknown as Record<string, unknown>[]`
+ * 把行类型擦成 unknown 再转回来。
+ */
+const tableData = computed<Rule[]>(() => filteredRules.value);
 
 async function loadRules() {
   loading.value = true;
@@ -283,8 +283,8 @@ onMounted(loadRules);
         </template>
 
         <template v-else-if="column.key === 'conditions'">
-          <span class="mono text-xs text-ink-soft" :title="conditionSummary(toRule(record))">
-            {{ conditionSummary(toRule(record)) }}
+          <span class="mono text-xs text-ink-soft" :title="conditionSummary(record)">
+            {{ conditionSummary(record) }}
           </span>
         </template>
 
@@ -310,13 +310,13 @@ onMounted(loadRules);
             :model-value="record.enabled === true"
             :disabled="togglingId === record.id"
             :aria-label="record.enabled ? '点击停用' : '点击启用'"
-            @change="onToggleRule(toRule(record))"
+            @change="onToggleRule(record)"
           />
         </template>
 
         <template v-else-if="column.key === 'actions'">
           <div class="flex items-center justify-end gap-1">
-            <AppButton size="small" type="text" @click="openEdit(toRule(record))">
+            <AppButton size="small" type="text" @click="openEdit(record)">
               <template #icon><Pencil :size="14" /></template>
               编辑
             </AppButton>
@@ -324,9 +324,9 @@ onMounted(loadRules);
               size="small"
               type="text"
               danger
-              :title="'删除规则 ' + toRule(record).name"
-              :aria-label="'删除规则 ' + toRule(record).name"
-              @click="handleDeleteRule(toRule(record))"
+              :title="'删除规则 ' + record.name"
+              :aria-label="'删除规则 ' + record.name"
+              @click="handleDeleteRule(record)"
             >
               <template #icon><Trash2 :size="14" /></template>
             </AppButton>

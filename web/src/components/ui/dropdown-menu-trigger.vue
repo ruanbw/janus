@@ -17,6 +17,7 @@ const props = defineProps<DropdownMenuTriggerProps & { class?: any }>();
     :disabled="props.disabled"
     :as-child="props.asChild"
     :class="cn('cursor-default outline-none', props.class)"
+    :as="props.as"
   >
     <slot />
   </DropdownMenuTrigger>

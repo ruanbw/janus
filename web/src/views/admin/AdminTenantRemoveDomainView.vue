@@ -154,18 +154,17 @@ onMounted(load);
 
 /** 点击强制移除按钮:先校验表单，然后弹出破坏性二次确认框 */
 async function onRemoveClick() {
-  try {
-    await formRef.value?.validate();
-  } catch {
-    return;
-  }
+  // validate() resolve boolean、永不 reject：必须判断返回值（契约见 AppForm.vue 的 validateAll）。
+  // 写成 try/catch 会让 catch 成为死代码，破坏性的物理强删照常执行。
+  const ok = await formRef.value?.validate();
+  if (!ok) return;
 
   if (form.domainId === undefined) {
     message.warning('请输入域名 ID');
     return;
   }
 
-  const ok = await confirmAsync({
+  const confirmed = await confirmAsync({
     title: `确认强制移除域名 ID #${form.domainId}？`,
     content: `该操作不可撤销！将物理删除该域名，并同时解除租户「${tenant.value?.email ?? '该租户'}」所有绑定在此域名上的短链关联。`,
     okText: '确认强制删除',
@@ -173,7 +172,7 @@ async function onRemoveClick() {
     danger: true,
   });
 
-  if (!ok) return;
+  if (!confirmed) return;
 
   await executeRemove();
 }

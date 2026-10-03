@@ -25,6 +25,8 @@ const emit = defineEmits<ItemEmits>();
 <template>
   <DropdownMenuItem
     :disabled="props.disabled"
+    :as-child="props.asChild"
+    :as="props.as"
     :text-value="props.textValue"
     :class="cn(dropdownMenuItemVariants(), props.class)"
     @select="emit('select', $event)"

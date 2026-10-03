@@ -1,5 +1,5 @@
 <template>
-  <UiTabsContent :value="value" :force-mount="forceMount">
+  <UiTabsContent :value="value" :force-mount="forceMount" :class="props.class">
     <slot />
   </UiTabsContent>
 </template>

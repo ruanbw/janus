@@ -15,16 +15,26 @@ export const switchThumbVariants = cva(
 </script>
 
 <script setup lang="ts">
-import { SwitchRoot, SwitchThumb, type SwitchRootProps } from 'reka-ui';
+import { SwitchRoot, SwitchThumb, type SwitchRootEmits, type SwitchRootProps } from 'reka-ui';
 
 import { cn } from '@/lib/utils';
 
 const props = defineProps<SwitchRootProps & { class?: any }>();
+
+/**
+ * 必须显式声明并转抛：只声明 props 的话，调用方的 `onUpdate:modelValue` 会进入 $attrs，
+ * 再经 fallthrough 落到根 vnode —— 而 Vue 的 filterModelListeners() 会把凡是
+ * `update:xxx`（xxx 已是本组件声明过的 prop）的键从 fallthrough 里剔除，
+ * 假设「组件自己会处理」。本组件并不处理，于是监听器被静默丢弃，
+ * AppSwitch 的 v-model 全部点不动。参见 ui/checkbox.vue 的同款写法。
+ */
+const emit = defineEmits<SwitchRootEmits>();
 </script>
 
 <template>
   <SwitchRoot
     :model-value="props.modelValue"
+    @update:model-value="emit('update:modelValue', $event)"
     :default-value="props.defaultValue"
     :disabled="props.disabled"
     :id="props.id"
@@ -33,6 +43,8 @@ const props = defineProps<SwitchRootProps & { class?: any }>();
     :true-value="props.trueValue"
     :false-value="props.falseValue"
     :as-child="props.asChild"
+    :as="props.as"
+    :required="props.required"
     :class="cn(switchVariants(), props.class)"
   >
     <SwitchThumb :class="switchThumbVariants()">
