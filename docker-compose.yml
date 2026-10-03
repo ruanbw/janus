@@ -32,9 +32,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
+      # on_demand_tls.ask 的共享密钥:必须与后端的 JANUS_CADDY_ASK_TOKEN 同值。
+      # Caddyfile 用 {$CADDY_ASK_TOKEN} 在 adapt 时展开,变量缺失会展开成空 token,
+      # 授权端点一律 403 —— 表现为泛域名 / 自有域名握手失败,很难从 Caddy 侧看出来。
+      CADDY_ASK_TOKEN: "${JANUS_CADDY_ASK_TOKEN:?未配置 JANUS_CADDY_ASK_TOKEN,caddy 容器拿不到 on-demand TLS 的 ask 密钥}"
       # 容器继承宿主 HTTP(S)_PROXY(如 host.docker.internal:7890),ask 授权请求必须直连宿主机后端
-      - NO_PROXY=host.docker.internal,localhost,127.0.0.1,.janus.test
-      - no_proxy=host.docker.internal,localhost,127.0.0.1,.janus.test
+      NO_PROXY: "host.docker.internal,localhost,127.0.0.1,.janus.test"
+      no_proxy: "host.docker.internal,localhost,127.0.0.1,.janus.test"
     ports:
       # 无端口访问:SwitchHosts 把 *.janus.test 指向 127.0.0.1 后,浏览器默认走
       # 443(https)与 80(http);80 上 Caddy 自动 308 跳转 https。

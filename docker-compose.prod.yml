@@ -89,6 +89,10 @@ services:
       # 站点域名在 Caddyfile.prod 中硬编码,此处 PLATFORM_DOMAIN 仅用于 NO_PROXY 与提示
       PLATFORM_DOMAIN: "${JANUS_PLATFORM_DOMAIN:?}"
       ACME_EMAIL: "${JANUS_ACME_EMAIL:-}"
+      # on_demand_tls.ask 的共享密钥:必须与后端的 JANUS_CADDY_ASK_TOKEN 同值。
+      # Caddyfile.prod 用 {$CADDY_ASK_TOKEN} 在 adapt 时展开,变量缺失会展开成空 token,
+      # 授权端点一律 403 —— 表现为租户域名握手失败,且 Caddy 侧看不出原因。
+      CADDY_ASK_TOKEN: "${JANUS_CADDY_ASK_TOKEN:?未配置 JANUS_CADDY_ASK_TOKEN,caddy 容器拿不到 on-demand TLS 的 ask 密钥}"
       # 生产容器同样需绕开宿主代理,授权端点直连 backend
       NO_PROXY: "backend,localhost,127.0.0.1,.${JANUS_PLATFORM_DOMAIN:?}"
       no_proxy: "backend,localhost,127.0.0.1,.${JANUS_PLATFORM_DOMAIN:?}"

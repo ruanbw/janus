@@ -339,6 +339,13 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 
 ### 6.1 启动基础设施
 
+`.env` 里需先填好 on-demand TLS 的共享密钥(与后端读同一个变量):
+
+```bash
+cp .env.example .env
+echo "JANUS_CADDY_ASK_TOKEN=$(openssl rand -hex 32)" >> .env
+```
+
 ```bash
 docker compose up -d
 ```
@@ -350,6 +357,8 @@ docker compose up -d
 
 > Caddy 占用宿主 80/443;若本机另有服务(如 openresty)也绑定这两个端口,两者错开启动。
 > 无端口访问依赖 hosts 把 `*.janus.test` 指向 `127.0.0.1`(见 6.2)。
+> `JANUS_CADDY_ASK_TOKEN` 未配置时 `docker compose up -d` 会直接报错退出:caddy 拿不到
+> ask 密钥,授权端点对所有域名一律 403,表现为"所有 HTTPS 握手失败但 Caddy 不报错"。
 
 ### 6.2 本地域名解析
 
@@ -445,6 +454,7 @@ pnpm dev         # http://localhost:5173,/api 代理到 http://localhost:8080
 | `JANUS_SESSION_TTL` / `JANUS_SESSION_TTL_SHORT` | `720h` / `24h` | 记住我 / 普通会话 |
 | `JANUS_VERIFY_TOKEN_TTL` / `JANUS_RESET_TOKEN_TTL` | `24h` / `1h` | 验证 / 重置 token 有效期 |
 | `JANUS_JWT_SECRET` / `JANUS_JWT_TTL` | 空 / `24h` | JWT 签名密钥与有效期;密钥留空则每次启动随机生成(重启后已签发 token 失效),生产必须配置 |
+| `JANUS_CADDY_ASK_TOKEN` | 空(**必填**) | Caddy on-demand TLS 授权端点的共享密钥;compose 以 `${JANUS_CADDY_ASK_TOKEN:?}` 同时注入后端与 caddy 容器,留空则基础设施起不来(见 6.1) |
 | `JANUS_DNS_RETRY_INTERVAL` / `JANUS_DNS_MAX_AGE` | `5m` / `72h` | DNS 重试间隔 / 最长等待 |
 | `JANUS_VISIT_RETENTION` / `JANUS_VISIT_CLEANUP_INTERVAL` | `2160h` / `24h` | 访问记录保留 / 清理间隔 |
 | `JANUS_LANDING_UPLOAD_DIR` | `uploads` | 上传落地页存放目录(生产挂持久卷) |

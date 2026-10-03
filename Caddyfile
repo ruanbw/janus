@@ -47,14 +47,27 @@
 }
 
 # 裸平台域名:承载后台
+#
+# 为什么控制台域名也必须写 on_demand(与 Caddyfile.prod 的 example.com /
+# app.example.com 保持一致):本文件里有 *.janus.test 泛域名站点,Caddy 的
+# TLS.Manage() 会把被通配符覆盖的 janus.test / app.janus.test 从"启动期统一
+# 签发"名单里剔除;而这两块若不声明 on_demand,握手时策略又不是按需签发,又没有
+# 预签好的证书可用,结果是 TLS alert internal error —— Caddy 默认日志级别下
+# 连一行错误都不打,只有 debug 才见 "no certificate available for 'app.janus.test'"。
+# 授权端点对裸平台域名与 app 子域始终放行(见 internal/httpapi/internal.go),
+# 因此这里的 ask 只是走一遍放行逻辑。
 janus.test {
-	tls internal
+	tls internal {
+		on_demand
+	}
 	import console
 }
 
 # 后台专用域名 app.<平台域名>
 app.janus.test {
-	tls internal
+	tls internal {
+		on_demand
+	}
 	import console
 }
 
