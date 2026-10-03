@@ -22,7 +22,7 @@
           地图本体：viewBox 固定坐标系，宽度交给 CSS。
           移动端窄屏下按比例缩到约 340px 宽仍可读，故不需要为移动端换一套图。
         -->
-        <div class="min-w-0 flex-1">
+        <div class="relative min-w-0 flex-1" @mouseleave="hoveredCountry = null">
           <div
             v-if="mapFailed"
             class="flex flex-col items-center gap-1.5 py-10 text-center text-xs text-ink-soft"
@@ -36,37 +36,71 @@
           <svg
             v-else-if="shapes.length > 0"
             :viewBox="`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`"
-            class="block h-auto w-full"
+            class="block h-auto w-full select-none"
             role="img"
             :aria-label="`世界地图：${topCountries.length ? `访问量最高的 ${topCountries.length} 个国家是 ${topCountries.map((c) => c.name).join('、')}` : '暂无国家分布'}`"
+            @mousemove="handleMapMouseMove"
           >
             <path
               v-for="shape in shapes"
               :key="shape.id"
               :d="shape.d"
-              class="map-shape"
-              :class="fillClassOf(shape.code)"
-            >
-              <!-- 原生 title：鼠标悬停即出，不引第三方 tooltip 也能读数 -->
-              <title>{{ tooltipOf(shape.code) }}</title>
-            </path>
+              class="map-shape cursor-pointer"
+              :class="[
+                fillClassOf(shape.code),
+                hoveredCountry === shape.code ? 'is-active' : ''
+              ]"
+              @mouseenter="hoveredCountry = shape.code"
+            />
           </svg>
           <div v-else class="py-16 text-center text-xs text-ink-faint">正在加载世界地图…</div>
+
+          <!--
+            浮动读数。位置（left/top）不过渡：它每帧跟着指针走，加了过渡就成了拖影，
+            读数会一直落在光标后面。只有 opacity / scale 过渡，所以淡入淡出是干净的。
+            定位类用 translate-* 工具类而非 Tailwind 的 transform-scale-*：v4 把
+            translate 编译进独立的 translate 属性，而下面的过渡写的是 transform，
+            两者会在同一次合成里叠加，把读数推到锚点两倍远的地方。缩放同理：
+            用 origin-bottom + scale-95 表达"浮起来"，而不是去改 translate。
+          -->
+          <Transition name="map-tip">
+            <div
+              v-if="hoverTooltip && hoveredCountry"
+              class="map-tip pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-full mb-2 origin-bottom rounded-md bg-ink px-2.5 py-1.5 text-xs text-surface shadow-md"
+              :style="{ left: `${mousePos.x}px`, top: `${mousePos.y}px` }"
+            >
+              <div class="flex items-center gap-1.5 font-medium">
+                <span>{{ hoverTooltip.name }}</span>
+                <span v-if="hoverTooltip.code" class="font-mono text-2xs uppercase text-surface/70">[{{ hoverTooltip.code }}]</span>
+              </div>
+              <div class="mt-0.5 font-mono text-2xs text-surface/90">
+                <span v-if="hoverTooltip.count > 0">{{ hoverTooltip.count.toLocaleString() }} 次 · {{ hoverTooltip.percent }}%</span>
+                <span v-else class="text-surface/60">无访问记录</span>
+              </div>
+            </div>
+          </Transition>
         </div>
 
-        <!-- 排行榜：手机没有悬停，触摸端靠这份列表读数 -->
-        <ol class="grid shrink-0 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-2 lg:w-[240px] lg:grid-cols-1">
-          <li v-for="item in topCountries" :key="item.code" class="flex items-center gap-2">
+        <!-- 排行榜：手机没有悬停，触摸端靠这份列表读数，支持与地图联动 -->
+        <ol class="grid shrink-0 gap-x-4 gap-y-1 text-xs sm:grid-cols-2 lg:w-[240px] lg:grid-cols-1">
+          <li
+            v-for="item in topCountries"
+            :key="item.code"
+            class="flex items-center gap-2 px-2 py-1 -mx-2 rounded cursor-pointer transition-colors"
+            :class="hoveredCountry === item.code ? 'bg-surface-strong font-medium text-brand' : 'text-ink hover:bg-surface-strong/50'"
+            @mouseenter="hoveredCountry = item.code"
+            @mouseleave="hoveredCountry = null"
+          >
             <span class="h-2.5 w-2.5 shrink-0 rounded-xs" :class="`map-lv${levelOf(item.code)}`"></span>
-            <span class="truncate text-ink">{{ item.name }}</span>
-            <span class="ml-auto shrink-0 font-mono text-ink-soft">
-              {{ item.count }} · {{ item.percent }}%
+            <span class="truncate">{{ item.name }}</span>
+            <span class="ml-auto shrink-0 font-mono text-ink-soft" :class="hoveredCountry === item.code ? 'text-brand font-semibold' : ''">
+              {{ item.count.toLocaleString() }} · {{ item.percent }}%
             </span>
           </li>
-          <li v-if="restCountries" class="flex items-center gap-2 text-ink-faint">
+          <li v-if="restCountries" class="flex items-center gap-2 px-2 py-1 -mx-2 text-ink-faint">
             <span class="h-2.5 w-2.5 shrink-0 rounded-xs map-land"></span>
             <span class="truncate">其余 {{ restCountries }} 个国家</span>
-            <span class="ml-auto shrink-0 font-mono">合计 {{ restVisits }} 次</span>
+            <span class="ml-auto shrink-0 font-mono">合计 {{ restVisits.toLocaleString() }} 次</span>
           </li>
         </ol>
       </div>
@@ -120,6 +154,10 @@ const props = defineProps<{
 
 const shapes = ref<CountryShape[]>([]);
 const mapFailed = ref(false);
+/** 悬停/联动的国家（alpha-2）：地图与右侧榜单共用它做双向高亮 */
+const hoveredCountry = ref<string | null>(null);
+/** 指针相对地图容器的位置，只喂给浮动读数的 left/top */
+const mousePos = ref<{ x: number; y: number }>({ x: 0, y: 0 });
 
 const breakdown = computed(() => countryDistribution(props.countries));
 const locatedCount = computed(() => breakdown.value.reduce((sum, c) => sum + c.count, 0));
@@ -142,12 +180,32 @@ function fillClassOf(code: string): string {
   return level === 0 ? 'map-land' : `map-lv${level}`;
 }
 
-function tooltipOf(code: string): string {
-  const hit = byCode.value.get(code);
-  if (!hit) return '无访问';
-  const percent = ((hit.count / locatedCount.value) * 100).toFixed(1);
-  return `${hit.name}：${hit.count} 次 · ${percent}%`;
+/** 指针位置跟着 mousemove 走：只写 left/top，不参与过渡，否则读数会拖在光标后面 */
+function handleMapMouseMove(e: MouseEvent) {
+  const target = e.currentTarget as HTMLElement | null;
+  if (!target) return;
+  const rect = target.getBoundingClientRect();
+  mousePos.value = {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top,
+  };
 }
+
+/**
+ * 浮动读数的内容。
+ *
+ * 悬停在"有访问"的国家上给国家名 + 次数 + 占比，悬停在"无访问"的国家上
+ * 也要给一句实话（无访问记录），而不是什么都不显示——地图上大片空白若不给
+ * 解释，用户会以为那里没数据，其实只是"这片没人来"。
+ */
+const hoverTooltip = computed(() => {
+  const code = hoveredCountry.value;
+  if (!code) return null;
+  const hit = byCode.value.get(code);
+  if (!hit) return { name: '无访问记录', code, count: 0, percent: '0.0' };
+  const percent = locatedCount.value > 0 ? ((hit.count / locatedCount.value) * 100).toFixed(1) : '0.0';
+  return { name: hit.name, code: hit.code, count: hit.count, percent };
+});
 
 async function loadShapes() {
   mapFailed.value = false;
@@ -166,3 +224,45 @@ function retry() {
   void loadShapes();
 }
 </script>
+
+<style scoped>
+/* 浮动读数的进出场。
+   出场比进场快（120ms vs 160ms）：读数是跟随指针的附属信息，离开时该立刻
+   让路给下一次 hover；进场稍慢一点，是让它"浮起来"而不是突然贴在光标上。
+
+   只动 opacity 与 scale 两项，绝不动 translate：锚点由 left/top + translate-*
+   工具类决定，那是 Tailwind v4 的 translate 属性，与 transform 是两套独立的
+   合成通道 —— 在 transform 里写 translate 会和工具类叠加，把读数推离锚点。
+   缩放从 0.96 起步而不是从 0：读数是正文尺寸的小浮层，完全缩到 0 等于先闪一个点。 */
+.map-tip {
+  scale: 1;
+  transition:
+    opacity 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    scale 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.map-tip-leave-active {
+  transition:
+    opacity 120ms ease-in,
+    scale 120ms ease-in;
+}
+
+.map-tip-enter-from,
+.map-tip-leave-to {
+  opacity: 0;
+  scale: 0.96;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-tip {
+    transition: opacity 1ms linear;
+  }
+
+  /* 缩放去掉，但保留淡入淡出：它承载的是"有/无读数"这个状态，
+     删掉之后读数会凭空出现/消失，而 reduced-motion 并不要求抹掉状态提示。 */
+  .map-tip-enter-from,
+  .map-tip-leave-to {
+    scale: 1;
+  }
+}
+</style>

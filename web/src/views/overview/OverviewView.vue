@@ -1,9 +1,9 @@
 <template>
   <div class="space-y-5" data-od-id="overview-view">
-    <!-- 初次加载骨架屏过渡 (优化 CLS 与交互跳动) -->
+    <!-- 初次加载骨架屏过渡 (与 kpiList 的 5 项卡片对齐，消除布局跳动 CLS) -->
     <template v-if="loading && !overview">
       <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
-        <AppCard v-for="i in 6" :key="'kpi-skel-' + i" class="flex flex-col justify-between min-h-[118px] p-4">
+        <AppCard v-for="i in 5" :key="'kpi-skel-' + i" class="flex flex-col justify-between min-h-[118px] p-4">
           <div class="space-y-2">
             <AppSkeleton width="60px" height="12px" />
             <AppSkeleton width="110px" height="28px" />
@@ -28,7 +28,7 @@
     <!-- 正常数据内容 -->
     <template v-else>
       <!-- KPI 卡片网格 (真实数据驱动：3列自适应、高度统一) -->
-      <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
+      <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr" :class="revalidating && 'is-revalidating'">
       <AppCard
         v-for="kpi in kpiList"
         :key="kpi.label"
@@ -119,34 +119,47 @@
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
             <h2 class="text-base font-semibold tracking-tight text-ink">热门短链访问排行</h2>
-            <p class="mt-0.5 text-xs text-ink-soft">按访问量降序排列的短链流量表现。</p>
+            <p class="mt-0.5 text-xs text-ink-soft">按访问量降序排列，点击单条短链可下钻明细。</p>
           </div>
           <AppButton to="/links" size="sm" variant="outline">
             全部短链 →
           </AppButton>
         </div>
         <div class="flex-1 p-4">
-          <div class="flex flex-col gap-2.5">
+          <div class="flex flex-col gap-2.5" :class="settling && 'is-settling'">
             <div
-              v-for="link in topLinks"
+              v-for="(link, index) in topLinks"
               :key="link.id"
-              class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
+              class="group grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 rounded-md px-1.5 py-1 -mx-1.5 transition-colors hover:bg-surface-strong/60 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
             >
               <div class="flex items-center gap-1.5 min-w-0 @max-[340px]:col-span-1" :title="`/${link.code}`">
-                <span class="truncate font-mono text-xs font-semibold text-ink">/{{ link.code }}</span>
+                <router-link
+                  :to="`/links/${link.id}/visits`"
+                  class="truncate font-mono text-xs font-semibold text-ink group-hover:text-brand transition-colors hover:underline"
+                >
+                  /{{ link.code }}
+                </router-link>
                 <AppTag :color="link.linkType === 'landing' ? 'info' : 'default'">
                   {{ link.linkType === 'landing' ? '落地页' : '跳转' }}
                 </AppTag>
               </div>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div
-                  class="h-full min-w-[2px] rounded bg-brand transition-all duration-300"
-                  :style="{ width: `${shareWidth(link.visits)}%` }"
+                  class="app-bar-fill h-full w-full rounded"
+                  :class="index === 0 ? 'bg-brand' : 'bg-brand/80'"
+                  :style="{ transform: `scaleX(${shareWidth(link.id)})` }"
                 />
               </div>
-              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">
-                {{ link.visits.toLocaleString() }} · {{ sharePercent(link.visits) }}%
-              </span>
+              <div class="flex items-center justify-end gap-1.5 whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">
+                <span>{{ link.visits.toLocaleString() }} · {{ sharePercent(link.visits) }}%</span>
+                <router-link
+                  :to="`/links/${link.id}/visits`"
+                  class="opacity-0 group-hover:opacity-100 transition-opacity text-ink-faint hover:text-brand"
+                  title="查看该短链访问明细"
+                >
+                  <ExternalLink :size="12" />
+                </router-link>
+              </div>
             </div>
           </div>
         </div>
@@ -167,13 +180,18 @@
           </AppButton>
         </div>
         <div class="flex-1 p-4">
+          <!--
+            分段条不做扫出：它的两段各自都是"占满自己那一格"，值全在**格子的分界**上。
+            把分界做成动画就只能过渡 width（布局属性），而为了 26px 高的一根条
+            去动 width 不划算。真正的部分条在下面三行，那里才有"从无到有"可说。
+          -->
           <div
             class="flex h-6.5 w-full overflow-hidden rounded-md border border-line"
             role="img"
             :aria-label="`跳转型 ${totals.redirectVisits.toLocaleString()} 次占 ${redirectPercent}%，落地页型 ${totals.landingVisits.toLocaleString()} 次占 ${landingPercent}%`"
           >
-            <span class="h-full bg-brand transition-all duration-300" :style="{ width: `${redirectPercent}%` }"></span>
-            <span class="h-full bg-info transition-all duration-300" :style="{ width: `${landingPercent}%` }"></span>
+            <span class="h-full bg-brand" :style="{ width: `${redirectPercent}%` }"></span>
+            <span class="h-full bg-info" :style="{ width: `${landingPercent}%` }"></span>
           </div>
 
           <div class="mt-3 flex flex-wrap items-center gap-3.5 text-xs text-ink-soft">
@@ -187,25 +205,25 @@
             </span>
           </div>
 
-          <div class="mt-4 flex flex-col gap-2.5">
+          <div class="mt-4 flex flex-col gap-2.5" :class="settling && 'is-settling'">
             <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
               <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">跳转型访问</span>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
-                <div class="h-full min-w-[2px] rounded bg-brand transition-all duration-300" :style="{ width: `${redirectPercent}%` }" />
+                <div class="app-bar-fill h-full w-full rounded bg-brand" :style="{ transform: `scaleX(${sweepRatioOfStructure('跳转')})` }" />
               </div>
               <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ totals.redirectVisits.toLocaleString() }} · {{ redirectPercent }}%</span>
             </div>
             <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
               <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">落地页访问</span>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
-                <div class="h-full min-w-[2px] rounded bg-info transition-all duration-300" :style="{ width: `${landingPercent}%` }" />
+                <div class="app-bar-fill h-full w-full rounded bg-info" :style="{ transform: `scaleX(${sweepRatioOfStructure('落地页')})` }" />
               </div>
               <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ totals.landingVisits.toLocaleString() }} · {{ landingPercent }}%</span>
             </div>
             <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
               <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">落地页点击</span>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
-                <div class="h-full min-w-[2px] rounded bg-ok transition-all duration-300" :style="{ width: `${landingCtrPercent}%` }" />
+                <div class="app-bar-fill h-full w-full rounded bg-ok" :style="{ transform: `scaleX(${sweepRatioOfStructure('点击')})` }" />
               </div>
               <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ totals.clicks.toLocaleString() }} · CTR {{ ctrText }}</span>
             </div>
@@ -225,21 +243,21 @@
           </div>
         </div>
         <div class="flex-1 p-4">
-          <div class="flex flex-col gap-2.5">
+          <div class="flex flex-col gap-2.5" :class="settling && 'is-settling'">
             <div
-              v-for="src in sourceBreakdown"
+              v-for="(src, index) in sourceBreakdown"
               :key="src.name"
               class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
             >
               <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">{{ src.name }}</span>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div
-                  class="h-full min-w-[2px] rounded transition-all duration-300"
-                  :class="src.percent > 30 ? 'bg-brand' : 'bg-ink-soft'"
-                  :style="{ width: `${src.percent}%` }"
+                  class="app-bar-fill h-full w-full rounded"
+                  :class="index === 0 && src.count > 0 ? 'bg-brand' : 'bg-brand/40'"
+                  :style="{ transform: `scaleX(${sweepRatioOf('来源', src.name)})` }"
                 />
               </div>
-              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ src.count }} 次 · {{ src.percent }}%</span>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ src.count.toLocaleString() }} 次 · {{ src.percent }}%</span>
             </div>
           </div>
         </div>
@@ -257,21 +275,24 @@
           </div>
         </div>
         <div class="flex-1 p-4">
-          <div class="flex flex-col gap-2.5">
+          <div class="flex flex-col gap-2.5" :class="settling && 'is-settling'">
             <div
-              v-for="dev in deviceBreakdown"
+              v-for="(dev, index) in deviceBreakdown"
               :key="dev.name"
               class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
             >
-              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">{{ dev.name }}</span>
+              <div class="flex items-center gap-1 min-w-0 @max-[340px]:col-span-1">
+                <span class="min-w-0 truncate text-xs text-ink">{{ dev.name }}</span>
+                <span v-if="dev.name === '爬虫 / 机器人' && dev.count > 0" class="shrink-0 text-2xs text-warn font-medium px-1 rounded bg-warn/10">风险</span>
+              </div>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div
-                  class="h-full min-w-[2px] rounded transition-all duration-300"
-                  :class="dev.name === '移动端' ? 'bg-brand' : 'bg-ink-soft'"
-                  :style="{ width: `${dev.percent}%` }"
+                  class="app-bar-fill h-full w-full rounded"
+                  :class="dev.name === '爬虫 / 机器人' && dev.count > 0 ? 'bg-warn' : (index === 0 && dev.count > 0 ? 'bg-brand' : 'bg-brand/40')"
+                  :style="{ transform: `scaleX(${sweepRatioOf('设备', dev.name)})` }"
                 />
               </div>
-              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ dev.count }} 次 · {{ dev.percent }}%</span>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ dev.count.toLocaleString() }} 次 · {{ dev.percent }}%</span>
             </div>
           </div>
         </div>
@@ -289,21 +310,21 @@
           </div>
         </div>
         <div class="flex-1 p-4">
-          <div class="flex flex-col gap-2.5">
+          <div class="flex flex-col gap-2.5" :class="settling && 'is-settling'">
             <div
-              v-for="os in osBreakdown"
+              v-for="(os, index) in osBreakdown"
               :key="os.name"
               class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
             >
               <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">{{ os.name }}</span>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div
-                  class="h-full min-w-[2px] rounded transition-all duration-300"
-                  :class="os.name.includes('iOS') ? 'bg-brand' : 'bg-ink-soft'"
-                  :style="{ width: `${os.percent}%` }"
+                  class="app-bar-fill h-full w-full rounded"
+                  :class="index === 0 && os.count > 0 ? 'bg-brand' : 'bg-brand/40'"
+                  :style="{ transform: `scaleX(${sweepRatioOf('系统', os.name)})` }"
                 />
               </div>
-              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ os.count }} 次 · {{ os.percent }}%</span>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ os.count.toLocaleString() }} 次 · {{ os.percent }}%</span>
             </div>
           </div>
         </div>
@@ -321,20 +342,21 @@
           </div>
         </div>
         <div class="flex-1 p-4">
-          <div class="flex flex-col gap-2.5">
+          <div class="flex flex-col gap-2.5" :class="settling && 'is-settling'">
             <div
-              v-for="br in browserBreakdown"
+              v-for="(br, index) in browserBreakdown"
               :key="br.name"
               class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
             >
               <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">{{ br.name }}</span>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
                 <div
-                  class="h-full min-w-[2px] rounded bg-ink-soft transition-all duration-300"
-                  :style="{ width: `${br.percent}%` }"
+                  class="app-bar-fill h-full w-full rounded"
+                  :class="index === 0 && br.count > 0 ? 'bg-brand' : 'bg-brand/40'"
+                  :style="{ transform: `scaleX(${sweepRatioOf('浏览器', br.name)})` }"
                 />
               </div>
-              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ br.count }} 次 · {{ br.percent }}%</span>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ br.count.toLocaleString() }} 次 · {{ br.percent }}%</span>
             </div>
           </div>
         </div>
@@ -365,7 +387,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { CircleHelp, RefreshCw } from '@lucide/vue';
+import { CircleHelp, ExternalLink, RefreshCw } from '@lucide/vue';
 
 import { listDomains } from '@/api/domains';
 import { fetchOverviewStats } from '@/api/visits';
@@ -375,6 +397,7 @@ import AppCard from '@/components/app/AppCard.vue';
 import AppSkeleton from '@/components/app/AppSkeleton.vue';
 import AppTag from '@/components/app/AppTag.vue';
 import AppTooltip from '@/components/app/AppTooltip.vue';
+import { useSweep, sweepRatio, type SweepRow } from '@/composables/useSweep';
 import { ApiError } from '@/types/api';
 import type { Domain, OverviewStats } from '@/types/api';
 import { message } from '@/utils/toast';
@@ -477,10 +500,64 @@ function sharePercent(visits: number): string {
   return ((visits / totals.value.visits) * 100).toFixed(1);
 }
 
-/** 排行条形图的宽度百分比：与 sharePercent 同一分母，但至少留 2% 让零星短链也可见 */
-function shareWidth(visits: number): number {
-  if (totals.value.visits === 0) return 0;
-  return Math.min(100, Math.max(2, Math.round((visits / totals.value.visits) * 100)));
+/**
+ * 六处条形共用一套扫出状态，但键必须互不重名：维度用 `来源:`/`设备:`… 前缀，
+ * 排行用 `link:` + 短链 id，结构三行用 `结构:`。共用一套只是省一个 watcher，
+ * 不是为了共享"进度"——六处是六个独立的画面，被同一个进度条连起来反而会互相拖慢。
+ */
+const sweepRows = computed<SweepRow[]>(() => {
+  const visitTotal = totals.value.visits || 1;
+  return [
+    ...topLinks.value.map((link) => ({
+      key: `link:${link.id}`,
+      ratio: sweepRatio(link.visits / visitTotal),
+    })),
+    ...sourceBreakdown.value.map((item) => ({
+      key: `来源:${item.name}`,
+      ratio: sweepRatio(item.percent / 100),
+    })),
+    ...deviceBreakdown.value.map((item) => ({
+      key: `设备:${item.name}`,
+      ratio: sweepRatio(item.percent / 100),
+    })),
+    ...osBreakdown.value.map((item) => ({
+      key: `系统:${item.name}`,
+      ratio: sweepRatio(item.percent / 100),
+    })),
+    ...browserBreakdown.value.map((item) => ({
+      key: `浏览器:${item.name}`,
+      ratio: sweepRatio(item.percent / 100),
+    })),
+    // 跳转 / 落地页 / 点击三行：分母并不相同（点击那一行的分母是落地页访问，
+    // 不是总访问），所以各给各的比例，绝不共用一个分母凑成"看起来一样长"。
+    { key: '结构:跳转', ratio: sweepRatio(redirectPercent.value / 100) },
+    { key: '结构:落地页', ratio: sweepRatio(landingPercent.value / 100) },
+    { key: '结构:点击', ratio: sweepRatio(landingCtrPercent.value / 100) },
+  ];
+});
+
+const { value: sweepValue, settling } = useSweep(() => sweepRows.value);
+
+/**
+ * 排行条形当前应当显示的比例（0–1，直接喂给 scaleX）。
+ *
+ * 分母是总访问，与 sharePercent 同一分母，所以图形和旁边的百分比永远一致；
+ * 比例下限由 sweepRatio 统一兜（不足 2% 仍留一条发丝），文字不受影响。
+ * 取的是「应当显示」的值而不是目标值：入场时它从 0 走到这里，之后每次刷新
+ * 都是旧值滑到新值。
+ */
+function shareWidth(linkId: number): number {
+  return sweepValue(`link:${linkId}`);
+}
+
+/** 四张分布图通用：按维度键取当前应当显示的比例 */
+function sweepRatioOf(dimension: '来源' | '设备' | '系统' | '浏览器', name: string): number {
+  return sweepValue(`${dimension}:${name}`);
+}
+
+/** 结构卡三行：跳转 / 落地页 / 点击 */
+function sweepRatioOfStructure(row: '跳转' | '落地页' | '点击'): number {
+  return sweepValue(`结构:${row}`);
 }
 
 interface KPIItem {
@@ -531,6 +608,15 @@ const kpiList = computed<KPIItem[]>(() => [
     tip: `转化率（CTR）= 落地页点击数 / 落地页访问数。分母只取落地页访问 —— 跳转型短链的访问不可能产生点击，算进去会系统性压低这个指标。分子与分母同源同期，都受 ${VISIT_RETENTION_DAYS} 天保留期约束。`,
   },
 ]);
+
+/**
+ * 二次拉取时已有数据在场：把内容压暗而不是清空。
+ *
+ * 清空会把「正在核对」说成「没有数据」，而空态还要走另一条分支（骨架屏/空卡），
+ * 一次刷新就闪一次骨架屏是自找的抖动。压暗一档 + 按钮转圈就够了：
+ * 用户知道请求在飞，同时旧数字还留着可读。
+ */
+const revalidating = computed(() => loading.value && overview.value !== null);
 
 async function loadData() {
   loading.value = true;
