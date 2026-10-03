@@ -139,9 +139,13 @@ const props = withDefaults(defineProps<{
     /**
      * 行是否可点击。默认自动检测:挂了 @row-click 就启用(tabindex + 键盘可达),
      * 显式传 false 可只保留样式不要点击行为。
+     *
+     * 注意:withDefaults 里必须显式给 rowClickable: undefined。Vue 会把 Boolean 类型的
+     * 可选 prop 强制转换成布尔值(未传 = false),未传时 props.rowClickable 因而是 false
+     * 而非 undefined,下面 ?? 永远不会回退到自动检测,行点击会静默失效。
      */
     rowClickable?: boolean;
-  }>(), { loading: false, rowKey: 'id', pagination: false });
+  }>(), { loading: false, rowKey: 'id', pagination: false, rowClickable: undefined });
 
 const emit = defineEmits<{
   change: [payload: { current: number; pageSize: number }];

@@ -945,31 +945,41 @@ function toRow(visit: Visit): VisitRow {
 
 const rows = computed<VisitRow[]>(() => visits.value.map(toRow));
 
-/** #cell 插槽拿到的 record 是 Record<string, unknown>,按仓库既有模式收窄回 VisitRow */
-function asRow(record: Record<string, unknown>): VisitRow {
-  return record as unknown as VisitRow;
+/**
+ * AppTable 交给插槽 / 回调的 record 是 Record<string, unknown>,按仓库既有模式收窄回 Visit。
+ *
+ * 表格行的统一形态是 **摊平的原始 Visit + 一个扁平 id**（见 tableData）：插槽里 32 处读的都是
+ * `toRow(record).<字段>`,而 toRow 的入参是 Visit —— 若把包装后的 VisitRow 传进去,
+ * visit.ip / visit.createdAt / userAgent 全是 undefined,每一列都会静默退化成兜底文案。
+ * 曾出现过 `{"text":"跳转","color":"default"}` 被当文案直接渲染出来的情况,就是这里错位了。
+ */
+function asVisit(record: Record<string, unknown>): Visit {
+  return record as unknown as Visit;
 }
 
 /**
- * #cell 插槽拿到的 record 是 Record<string, unknown>,按仓库既有模式收窄回 VisitRow。
- * 另给每行补一个扁平 id 供 AppTable 的 row-key 使用:行数据是包装对象(visit 在里面),
- * 而 AppTable 取 key 的方式是 record[rowKey],撑不起 'visit.id' 这种路径。
+ * 摊平的那一份是原始 Visit(不是包装后的 VisitRow),另补一个扁平 id 供 row-key 使用:
+ * AppTable 取 key 的方式是 record[rowKey],撑不起 'visit.id' 这种路径。
+ * 包装后的 VisitRow 只给 filteredRows / selectedRow 用(本地过滤与右侧详情面板)。
  */
 const tableData = computed<Record<string, unknown>[]>(() =>
-  filteredRows.value.map((row) => ({ ...row, id: row.visit.id })),
+  filteredRows.value.map((row) => ({ ...row.visit, id: row.visit.id })),
 );
 
 /** 把行状态透传到真实 <tr>,供 <style scoped> 里的 :deep() 行状态规则消费 */
 function visitRowProps(record: Record<string, unknown>): Record<string, unknown> {
-  const row = asRow(record);
+  const visit = asVisit(record);
   return {
-    'data-outcome': row.visit.outcome,
-    'data-selected': selectedId.value === row.visit.id,
+    'data-outcome': visit.outcome,
+    'data-selected': selectedId.value === visit.id,
   };
 }
 
+/** 点击行 → 选中该行。复用 filteredRows 里的同一个实例,保证与 selectedRow 的查找一致 */
 function onRowClick(record: Record<string, unknown>): void {
-  selectRow(asRow(record));
+  const visit = asVisit(record);
+  const row = filteredRows.value.find((r) => r.visit.id === visit.id);
+  if (row) selectRow(row);
 }
 
 /** 回放裁决对应的徽标色:命中拦截=红,命中非拦截=绿,未命中=中性 */
