@@ -43,7 +43,7 @@
           </div>
 
           <!-- 域名 ID 输入表单 -->
-          <AppForm ref="formRef" :model="form" :rules="rules" @finish="onFormSubmit">
+          <AppForm ref="formRef" :model="form" :schema="schema" @finish="onFormSubmit">
             <AppFormItem
               name="domainId"
               label="违规域名 ID"
@@ -101,7 +101,8 @@ import { ArrowLeft, ShieldAlert, Trash2 } from '@lucide/vue';
 import { getTenant, removeDomain } from '@/api/admin';
 import PageHeader from '@/components/PageHeader.vue';
 import { confirmAsync } from '@/components/app/confirm';
-import type { FormRule } from '@/components/app/types';
+import { z } from 'zod';
+import type { FormSchema } from '@/components/app/form';
 import { ApiError } from '@/types/api';
 import type { Tenant } from '@/types/api';
 import { message } from '@/utils/toast';
@@ -118,19 +119,11 @@ const formRef = ref();
 
 const form = reactive<{ domainId: number | undefined }>({ domainId: undefined });
 
-const rules: Record<string, FormRule[]> = {
-  domainId: [
-    { required: true, message: '请输入域名 ID' },
-    {
-      validator: (_rule, value) => {
-        if (value === undefined || value === null) return Promise.resolve();
-        const v = value as number;
-        return Number.isInteger(v) && v >= 1
-          ? Promise.resolve()
-          : Promise.reject(new Error('域名 ID 须为不小于 1 的整数'));
-      },
-    },
-  ],
+const schema: FormSchema = {
+  domainId: z
+    .number({ required_error: '请输入域名 ID', invalid_type_error: '请输入域名 ID' })
+    .int('域名 ID 须为不小于 1 的整数')
+    .min(1, '域名 ID 须为不小于 1 的整数'),
 };
 
 function goBack() {

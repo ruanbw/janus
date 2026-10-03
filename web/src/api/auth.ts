@@ -8,6 +8,11 @@ export function register(data: { email: string; password: string; slug: string }
   return post<Tenant>('/auth/register', data);
 }
 
+/** 重发验证邮件:恒 202,不泄露邮箱是否存在 */
+export function resendVerification(data: { email: string }): Promise<void> {
+  return post<void>('/auth/resend-verification', data);
+}
+
 /** 邮箱验证 */
 export function verifyEmail(data: { token: string }): Promise<void> {
   return post<void>('/auth/verify-email', data);

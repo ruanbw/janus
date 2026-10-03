@@ -3,13 +3,13 @@
     <template #title>登录后台</template>
     <template #subtitle>管理你的域名、短链与访问统计</template>
 
-    <AppForm :model="form" :rules="rules" @finish="onSubmit">
-      <AppFormItem label="邮箱" name="email">
+    <AppForm :model="form" :schema="schema" @finish="onSubmit">
+      <AppFormItem ref="emailItem" label="邮箱" name="email">
         <AppInput v-model="form.email" placeholder="you@example.com" autocomplete="email" size="large">
           <template #prefix><Mail :size="16" /></template>
         </AppInput>
       </AppFormItem>
-      <AppFormItem label="密码" name="password">
+      <AppFormItem ref="passwordItem" label="密码" name="password">
         <AppInput
           v-model="form.password"
           type="password"
@@ -44,7 +44,8 @@
 import { reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { Lock, Mail } from '@lucide/vue';
-import type { FormRule } from '@/components/app/types';
+import { z } from 'zod';
+import type { FormSchema } from '@/components/app/form';
 
 import AuthShell from '@/components/AuthShell.vue';
 import { useAuthStore } from '@/stores/auth';
@@ -56,18 +57,17 @@ const route = useRoute();
 const router = useRouter();
 
 const submitting = ref(false);
+const emailItem = ref<{ setError: (m: string) => void } | null>(null);
+const passwordItem = ref<{ setError: (m: string) => void } | null>(null);
 const form = reactive({
   email: '',
   password: '',
   rememberMe: true,
 });
 
-const rules: Record<string, FormRule[]> = {
-  email: [
-    { required: true, message: '请输入邮箱' },
-    { type: 'email', message: '邮箱格式不正确' },
-  ],
-  password: [{ required: true, message: '请输入密码' }],
+const schema: FormSchema = {
+  email: z.string().min(1, '请输入邮箱').email('邮箱格式不正确'),
+  password: z.string().min(1, '请输入密码'),
 };
 
 async function onSubmit() {
@@ -91,8 +91,11 @@ async function onSubmit() {
     if (error instanceof ApiError) {
       if (error.status === 403) {
         message.error('账号已被封禁,无法登录');
+      } else if (/未验证|验证邮件/.test(error.message)) {
+        emailItem.value?.setError(error.message);
+      } else if (/邮箱或密码错误/.test(error.message)) {
+        passwordItem.value?.setError(error.message);
       } else {
-        // 后端区分「邮箱或密码错误」与「邮箱未验证,请查收验证邮件」,直接透出更准确
         message.error(error.message);
       }
     } else {

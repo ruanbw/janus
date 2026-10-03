@@ -1,11 +1,11 @@
-// 表单校验引擎: 使用成熟的社区工业级校验库 async-validator
+// 表单校验引擎: 使用 zod
 // 由 AppForm + AppFormItem 驱动;AppInput 等字段组件可注入错误态与清除时机。
 import { inject } from 'vue';
 import type { InjectionKey, Ref } from 'vue';
-import Schema from 'async-validator';
-import type { RuleItem } from 'async-validator';
+import { z } from 'zod';
 
-import type { FormRule } from './types';
+/** 字段 schema 表:每个表单项一个 zod schema,是校验的唯一真源 */
+export type FormSchema = Record<string, z.ZodTypeAny>;
 
 export interface FormItemContext {
   name: string;
@@ -27,11 +27,13 @@ export interface FormItemContext {
   errorMessage: Ref<string>;
   validate: () => Promise<boolean>;
   clearError: () => void;
+  /** 外部(如接口层)把服务端错误挂回字段上做内联展示 */
+  setError: (message: string) => void;
 }
 
 export interface FormContext {
   model: Record<string, unknown>;
-  rules: Record<string, FormRule[]>;
+  schema: FormSchema;
   registerItem: (ctx: FormItemContext) => void;
   unregisterItem: (ctx: FormItemContext) => void;
 }
@@ -44,53 +46,45 @@ export function useFormItem(): FormItemContext | undefined {
 }
 
 /**
- * validateRules 使用 async-validator 进行多规则校验，自动处理 sync/async、type、pattern 等。
+ * 用字段 schema 校验单个值,返回第一个错误文案;通过返回 null。
  */
-export async function validateRules(rules: FormRule[], value: unknown): Promise<string | null> {
-  if (!rules || rules.length === 0) return null;
+export async function validateWithSchema(schema: z.ZodTypeAny | undefined, value: unknown): Promise<string | null> {
+  if (schema === undefined) return null;
+  const result = await schema.safeParseAsync(value);
+  if (result.success) return null;
+  return result.error.issues[0]?.message ?? '校验失败';
+}
 
-  // 将 FormRule 映射为 async-validator 的 RuleItem
-  const descriptorRules: RuleItem[] = rules.map((r) => {
-    const item: RuleItem = {};
-    if (r.required !== undefined) item.required = r.required;
-    if (r.whitespace !== undefined) item.whitespace = r.whitespace;
-    if (r.message !== undefined) item.message = r.message;
-    if (r.type !== undefined) item.type = r.type;
-    if (r.min !== undefined) item.min = r.min;
-    if (r.max !== undefined) item.max = r.max;
-    if (r.pattern !== undefined) item.pattern = r.pattern;
-    if (r.validator) {
-      const origValidator = r.validator;
-      item.asyncValidator = async (rule, val) => {
-        await origValidator(r, val);
-      };
-    }
-    return item;
-  });
+/**
+ * 字段是否必填:schema 拒绝 undefined 或空串即视为必填。
+ * 可选字段(.optional() / .nullable() / 默认值)拒之门外,boolean 开关类除外。
+ */
+export function isRequiredSchema(schema: z.ZodTypeAny | undefined): boolean {
+  if (schema === undefined) return false;
+  const defName = (schema as { _def?: { typeName?: string } })._def?.typeName;
+  if (defName === 'ZodOptional' || defName === 'ZodDefault' || defName === 'ZodNullable') return false;
+  return schema.safeParse(undefined).success === false && schema.safeParse('').success === false;
+}
 
-  const validator = new Schema({ value: descriptorRules });
-
-  try {
-    await validator.validate({ value }, { first: true });
-    return null;
-  } catch (err: unknown) {
-    if (err && typeof err === 'object' && 'errors' in err) {
-      const errors = (err as { errors: Array<{ message?: string }> }).errors;
-      if (errors && errors.length > 0 && errors[0].message) {
-        return errors[0].message;
-      }
-    }
-    if (err instanceof Error) {
-      return err.message;
-    }
-    return '校验失败';
+/**
+ * 必填未填时的文案:取 schema 对空串的第一个错误 message(通常就是页面写的 min(1, '请输入...')),
+ * 取不到再按 label 拼一句兜底。
+ */
+export function requiredMessageOf(schema: z.ZodTypeAny | undefined, label?: string): string {
+  if (schema !== undefined) {
+    const res = schema.safeParse('');
+    if (!res.success && res.error.issues[0]?.message) return res.error.issues[0].message;
+    const resUndef = schema.safeParse(undefined);
+    if (!resUndef.success && resUndef.error.issues[0]?.message) return resUndef.error.issues[0].message;
   }
+  const l = label?.trim();
+  return l ? `请填写${l}` : '此项为必填';
 }
 
 /**
  * 「空」的统一判定：undefined / null / 空串 / 纯空白串 / 空数组都算空。
  *
- * async-validator 的 required 只挡 undefined / null / ''，挡不住 "   "；
+ * zod 的 required 等价判定只挡 undefined / null / ''，挡不住 "   "；
  * 而 AppFormItem 的 required 是「显示星号 + 拦截提交」两件事的单一开关，
  * 必须在校验引擎之外再兜一次，否则会出现「有红星、却能提交空值」的不一致。
  */

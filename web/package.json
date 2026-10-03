@@ -17,7 +17,6 @@
     "@lucide/vue": "^1.31.0",
     "@tailwindcss/vite": "^4.3.3",
     "@vueuse/core": "^15.0.0",
-    "async-validator": "^4.2.5",
     "axios": "^1.7.9",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -33,7 +32,8 @@
     "ua-parser-js": "^2.0.10",
     "vue": "^3.5.13",
     "vue-router": "^4.5.0",
-    "world-atlas": "^2.0.2"
+    "world-atlas": "^2.0.2",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/d3-geo": "^3.1.1",

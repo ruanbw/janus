@@ -33,9 +33,8 @@ import { computed, inject, onBeforeUnmount, onMounted, provide, ref, useId } fro
 import { CircleAlert } from '@lucide/vue';
 
 import { cn } from '@/lib/utils';
-import { formContextKey, formItemKey, isBlank, validateRules } from './form';
+import { formContextKey, formItemKey, isBlank, isRequiredSchema, requiredMessageOf, validateWithSchema } from './form';
 import type { FormItemContext } from './form';
-import type { FormRule } from './types';
 
 const props = defineProps<{
   label?: string;
@@ -57,23 +56,18 @@ const errorMessage = ref('');
 const fieldId = `app-field-${props.name ?? 'x'}-${useId()}`;
 const labelId = `app-label-${props.name ?? 'x'}-${useId()}`;
 
-const rules = computed<FormRule[]>(() => {
-  if (props.name === undefined || form === undefined) return [];
-  return form.rules[props.name] ?? [];
+const fieldSchema = computed(() => {
+  if (props.name === undefined || form === undefined) return undefined;
+  return form.schema[props.name];
 });
 
 const isRequired = computed(() => {
   if (props.required !== undefined) return props.required;
-  return rules.value.some((r) => r.required === true);
+  return isRequiredSchema(fieldSchema.value);
 });
 
-/** 必填未填时的文案：优先用规则里已有的 required 文案，否则按 label 拼一句 */
-const requiredMessage = computed(() => {
-  const fromRules = rules.value.find((r) => r.required === true && r.message);
-  if (fromRules?.message) return fromRules.message;
-  const label = props.label?.trim();
-  return label ? `请填写${label}` : '此项为必填';
-});
+/** 必填未填时的文案：取 schema 对空串的第一个错误 message，否则按 label 拼一句 */
+const requiredMessage = computed(() => requiredMessageOf(fieldSchema.value, props.label));
 
 async function validate(): Promise<boolean> {
   if (props.name === undefined || form === undefined) {
@@ -90,7 +84,7 @@ async function validate(): Promise<boolean> {
     return false;
   }
 
-  const error = await validateRules(rules.value, value);
+  const error = await validateWithSchema(fieldSchema.value, value);
   if (error !== null) {
     errorMessage.value = error;
     invalid.value = true;
@@ -106,6 +100,11 @@ function clearError(): void {
   invalid.value = false;
 }
 
+function setError(message: string): void {
+  errorMessage.value = message;
+  invalid.value = true;
+}
+
 const ctx: FormItemContext = {
   get name() {
     return props.name ?? '';
@@ -116,6 +115,7 @@ const ctx: FormItemContext = {
   errorMessage,
   validate,
   clearError,
+  setError,
 };
 
 provide(formItemKey, ctx);
@@ -131,4 +131,6 @@ onBeforeUnmount(() => {
     form.unregisterItem(ctx);
   }
 });
+
+defineExpose({ setError });
 </script>

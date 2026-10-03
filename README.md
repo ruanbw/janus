@@ -272,7 +272,7 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 | 图标 | `@lucide/vue` |
 | 状态 / 路由 | Pinia / Vue Router 4 |
 | 请求 | Axios(统一封装 + CSRF 头 + `ApiError`) |
-| 校验 / 工具 | `async-validator` / `@vueuse/core` / `ipaddr.js` |
+| 校验 / 工具 | `zod` / `@vueuse/core` / `ipaddr.js` |
 | 图表与地图 | `d3-geo` + `topojson-client` + `world-atlas` + `i18n-iso-countries`(总览页懒加载) |
 
 ---

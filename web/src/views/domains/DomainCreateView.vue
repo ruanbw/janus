@@ -30,7 +30,7 @@
             <AppForm
               ref="formRef"
               :model="formState as unknown as Record<string, unknown>"
-              :rules="createRules"
+              :schema="createSchema"
               @finish="onSubmit"
             >
               <!-- 域名 FQDN 输入框 -->
@@ -191,7 +191,10 @@ import { ArrowLeft, Clock, Globe, Server, ShieldCheck } from '@lucide/vue';
 
 import { createDomain } from '@/api/domains';
 import PageHeader from '@/components/PageHeader.vue';
-import type { FormRule, TableColumn } from '@/components/app/types';
+import { z } from 'zod';
+
+import type { TableColumn } from '@/components/app/types';
+import type { FormSchema } from '@/components/app/form';
 import { message } from '@/utils/toast';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError, getQuotaUsage } from '@/types/api';
@@ -240,19 +243,20 @@ function isValidFQDN(s: string): boolean {
   });
 }
 
-const createRules: Record<string, FormRule[]> = {
-  fqdn: [
-    { required: true, message: '请输入域名' },
-    {
-      validator: (_rule, value: unknown) => {
-        if (!value) return Promise.resolve();
-        return isValidFQDN(value as string)
-          ? Promise.resolve()
-          : Promise.reject(new Error('域名格式非法:仅支持字母、数字、连字符，标签不能以连字符开头或结尾，如 links.example.com'));
-      },
-    },
-  ],
-  description: [{ max: 200, message: '描述最多 200 字' }],
+const createSchema: FormSchema = {
+  fqdn: z
+    .string()
+    .min(1, '请输入域名')
+    .superRefine((value, ctx) => {
+      if (!value) return;
+      if (!isValidFQDN(value)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: '域名格式非法:仅支持字母、数字、连字符，标签不能以连字符开头或结尾，如 links.example.com',
+        });
+      }
+    }),
+  description: z.string().max(200, '描述最多 200 字'),
 };
 
 function goBack() {

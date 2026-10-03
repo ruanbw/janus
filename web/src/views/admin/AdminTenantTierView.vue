@@ -44,7 +44,7 @@
           </div>
 
           <!-- 调整后等级表单项 -->
-          <AppForm :model="form" :rules="rules" @finish="onSubmit">
+          <AppForm :model="form" :schema="schema" @finish="onSubmit">
             <AppFormItem
               name="tierId"
               label="调整为新等级"
@@ -148,7 +148,8 @@ import { ArrowLeft, ArrowRight, Sliders, TrendingUp } from '@lucide/vue';
 
 import { getTenant, listTiers, updateTenant } from '@/api/admin';
 import PageHeader from '@/components/PageHeader.vue';
-import type { FormRule } from '@/components/app/types';
+import { z } from 'zod';
+import type { FormSchema } from '@/components/app/form';
 import { ApiError } from '@/types/api';
 import type { Tenant, Tier } from '@/types/api';
 import { message } from '@/utils/toast';
@@ -165,8 +166,8 @@ const submitting = ref(false);
 
 const form = reactive<{ tierId: number | undefined }>({ tierId: undefined });
 
-const rules: Record<string, FormRule[]> = {
-  tierId: [{ required: true, message: '请选择调整后的等级' }],
+const schema: FormSchema = {
+  tierId: z.number({ required_error: '请选择调整后的等级', invalid_type_error: '请选择调整后的等级' }),
 };
 
 /** 等级选项:直接使用平台全部等级,避免只显示“已有租户占用”的等级 */

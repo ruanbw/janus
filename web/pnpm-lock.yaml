@@ -20,9 +20,6 @@ importers:
       '@vueuse/core':
         specifier: ^15.0.0
         version: 15.0.0(vue@3.5.41(typescript@5.6.3))
-      async-validator:
-        specifier: ^4.2.5
-        version: 4.2.5
       axios:
         specifier: ^1.7.9
         version: 1.19.0
@@ -71,6 +68,9 @@ importers:
       world-atlas:
         specifier: ^2.0.2
         version: 2.0.2
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
     devDependencies:
       '@types/d3-geo':
         specifier: ^3.1.1
@@ -685,9 +685,6 @@ packages:
     resolution: {integrity: sha512-ik3ZgC9dY/lYVVM++OISsaYDeg1tb0VtP5uL3ouh1koGOaUMDPpbFIei4JkFimWUFPn90sbMNMXQAIVOlnYKJA==}
     engines: {node: '>=10'}
 
-  async-validator@4.2.5:
-    resolution: {integrity: sha512-7HhHjtERjqlNbZtqNqy2rckN/SpOOlmDliet+lP7k+eKZEjPk3DgyeU9lIXLdeLz0uBbbVp+9Qdow9wJWgwwfg==}
-
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
 
@@ -1140,6 +1137,9 @@ packages:
 
   world-atlas@2.0.2:
     resolution: {integrity: sha512-IXfV0qwlKXpckz1FhwXVwKRjiIhOnWttOskm5CtxMsjgE/MXAYRHWJqgXOpM8IkcPBoXnyTU5lFHcYa5ChG0LQ==}
+
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
 snapshots:
 
@@ -1596,8 +1596,6 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  async-validator@4.2.5: {}
-
   asynckit@0.4.0: {}
 
   axios@1.19.0:
@@ -2010,3 +2008,5 @@ snapshots:
       typescript: 5.6.3
 
   world-atlas@2.0.2: {}
+
+  zod@3.25.76: {}

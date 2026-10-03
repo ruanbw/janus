@@ -9,11 +9,11 @@ import { provide, reactive, ref } from 'vue';
 
 import { formContextKey } from './form';
 import type { FormItemContext } from './form';
-import type { FormRule } from './types';
+import type { FormSchema } from './form';
 
 const props = defineProps<{
   model: Record<string, unknown>;
-  rules?: Record<string, FormRule[]>;
+  schema?: FormSchema;
   class?: any;
 }>();
 
@@ -26,7 +26,7 @@ const submitCount = ref(0);
 
 const context = reactive({
   model: props.model,
-  rules: props.rules ?? {},
+  schema: props.schema ?? {},
   submitCount,
   registerItem(ctx: FormItemContext): void {
     items.set(ctx.name, ctx);

@@ -29,7 +29,8 @@ import { createRule, deleteRule, getRule, updateRule, type RuleCreatePayload } f
 import PageHeader from '@/components/PageHeader.vue';
 import { confirm } from '@/components/app/confirm';
 import { useDirtyGuard } from '@/composables/useDirtyGuard';
-import type { FormRule } from '@/components/app/types';
+import { z } from 'zod';
+import type { FormSchema } from '@/components/app/form';
 import { COUNTRY_OPTIONS } from '@/constants/countries';
 import type { Rule, RuleCondition, RuleOperator, RulePageMode, RuleScope } from '@/types/api';
 import { message } from '@/utils/toast';
@@ -110,21 +111,20 @@ const headerDescription = computed(() =>
     : '新建规则。规则在短链可用性之后裁决：按优先级升序逐条求值，首条命中即定案。',
 );
 
-const rules: Record<string, FormRule[]> = {
-  name: [{ required: true, message: '请填写规则名称' }],
-  destination: [
-    {
-      validator: (_rule, value) => {
-        if (form.action !== 'redirect') return Promise.resolve();
-        const url = String(value ?? '').trim();
-        if (!url) return Promise.reject(new Error('动作为「重定向到指定 URL」时必须填写改写目标'));
-        if (!/^https?:\/\/\S+$/i.test(url)) {
-          return Promise.reject(new Error('改写目标必须是完整的 http(s) URL'));
-        }
-        return Promise.resolve();
-      },
-    },
-  ],
+const schema: FormSchema = {
+  name: z.string().min(1, '请填写规则名称'),
+  destination: z.string().superRefine((value, ctx) => {
+    if (form.action !== 'redirect') return;
+    const url = String(value ?? '').trim();
+    if (!url) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '动作为「重定向到指定 URL」时必须填写改写目标' });
+      return;
+    }
+    if (!/^https?:\/\/\S+$/i.test(url)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '改写目标必须是完整的 http(s) URL' });
+      return;
+    }
+  }),
 };
 
 // ---- 租户域名列表（用于 domain 字段下拉候选） ----
@@ -651,7 +651,7 @@ onMounted(init);
     </PageHeader>
 
     <AppSpin :spinning="loading">
-      <AppForm ref="formRef" :model="form as unknown as Record<string, unknown>" :rules="rules">
+      <AppForm ref="formRef" :model="form as unknown as Record<string, unknown>" :schema="schema">
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <!-- 左侧 2 列：表单主操作区 -->
           <div class="space-y-6 lg:col-span-2">

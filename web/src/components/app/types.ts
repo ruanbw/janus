@@ -28,22 +28,6 @@ export interface TablePaginationConfig {
   showTotal?: (total: number) => string;
 }
 
-/** 表单校验规则(与 antd Rule 兼容的子集:required/type/min/max/pattern/validator) */
-export interface FormRule {
-  required?: boolean;
-  /**
-   * 把纯空白（"   "）也判成空。与 required 同时生效时才算真正挡住"必填"：
-   * 只写 required 的话，用户打几个空格就能提交过去。
- */
-  whitespace?: boolean;
-  type?: 'email' | 'url' | 'number';
-  min?: number;
-  max?: number;
-  pattern?: RegExp;
-  message?: string;
-  validator?: (rule: FormRule, value: unknown) => Promise<void> | void;
-}
-
 /** Select 选项 */
 export interface SelectOption {
   value: string | number;

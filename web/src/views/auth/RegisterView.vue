@@ -6,7 +6,7 @@
       <span class="slug-chip mono ml-1 inline-block rounded-md border border-brand/30 bg-brand/10 px-1.5 py-px align-middle text-xs text-brand">{{ slugHint }}</span>
     </template>
 
-    <AppForm :model="form" :rules="rules" @finish="onSubmit">
+    <AppForm :model="form" :schema="schema" @finish="onSubmit">
       <AppFormItem label="邮箱" name="email">
         <AppInput v-model="form.email" placeholder="you@example.com" autocomplete="email" size="large">
           <template #prefix><Mail :size="16" /></template>
@@ -22,6 +22,7 @@
         >
           <template #prefix><Lock :size="16" /></template>
         </AppInput>
+        <PasswordStrength :password="form.password" />
       </AppFormItem>
       <AppFormItem label="确认密码" name="confirmPassword">
         <AppInput
@@ -66,10 +67,12 @@
 import { computed, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { Globe, Lock, Mail } from '@lucide/vue';
-import type { FormRule } from '@/components/app/types';
+import { z } from 'zod';
+import type { FormSchema } from '@/components/app/form';
 
 import { register } from '@/api/auth';
 import AuthShell from '@/components/AuthShell.vue';
+import PasswordStrength from '@/components/PasswordStrength.vue';
 import { SLUG_MAX_LENGTH, SLUG_PATTERN } from '@/constants/dict';
 import { ApiError } from '@/types/api';
 import { message } from '@/utils/toast';
@@ -91,28 +94,21 @@ const slugHint = computed(() => {
   return slug ? slug + '.' + PLATFORM_DOMAIN : '<前缀>.' + PLATFORM_DOMAIN;
 });
 
-const rules: Record<string, FormRule[]> = {
-  email: [
-    { required: true, message: '请输入邮箱' },
-    { type: 'email', message: '邮箱格式不正确' },
-  ],
-  password: [
-    { required: true, message: '请输入密码' },
-    { min: 8, message: '密码至少 8 位' },
-  ],
-  confirmPassword: [
-    { required: true, message: '请再次输入密码' },
-    {
-      validator: (_rule, value) => {
-        if (!value || value === form.password) return Promise.resolve();
-        return Promise.reject(new Error('两次输入的密码不一致'));
-      },
-    },
-  ],
-  slug: [
-    { required: true, message: '请输入前缀' },
-    { pattern: SLUG_PATTERN, message: '仅允许小写字母、数字与连字符,且须以字母或数字开头/结尾' },
-  ],
+const schema: FormSchema = {
+  email: z.string().min(1, '请输入邮箱').email('邮箱格式不正确'),
+  password: z
+    .string()
+    .min(1, '请输入密码')
+    .min(8, '密码至少 8 位')
+    .regex(/^(?=.*[A-Za-z])(?=.*\d)/, '密码需同时包含字母与数字'),
+  confirmPassword: z
+    .string()
+    .min(1, '请再次输入密码')
+    .refine((v) => !v || v === form.password, { message: '两次输入的密码不一致' }),
+  slug: z
+    .string()
+    .min(1, '请输入前缀')
+    .regex(SLUG_PATTERN, '仅允许小写字母、数字与连字符,且须以字母或数字开头/结尾'),
 };
 
 async function onSubmit() {

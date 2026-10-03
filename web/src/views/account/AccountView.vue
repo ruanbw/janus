@@ -139,7 +139,7 @@
         </CardHeader>
 
         <CardContent class="space-y-5 p-6">
-          <AppForm ref="pwdFormRef" :model="form" :rules="rules" @finish="onChangePassword">
+          <AppForm ref="pwdFormRef" :model="form" :schema="schema" @finish="onChangePassword">
             <!-- 当前密码(首次登录设置密码时无需输入) -->
             <AppFormItem
               v-if="!isFirstLogin"
@@ -244,8 +244,8 @@ import {
   TriangleAlert,
 } from '@lucide/vue';
 import { message } from '@/utils/toast';
-import type { FormRule } from '@/components/app/types';
-
+import { z } from 'zod';
+import type { FormSchema } from '@/components/app/form';
 import { changePassword } from '@/api/auth';
 import { fetchMyTenant } from '@/api/me';
 import PageHeader from '@/components/PageHeader.vue';
@@ -314,21 +314,17 @@ const quotaRows = computed<QuotaRow[]>(() => {
   });
 });
 
-const rules: Record<string, FormRule[]> = {
-  oldPassword: [{ required: true, message: '请输入当前密码' }],
-  newPassword: [
-    { required: true, message: '请输入新密码' },
-    { min: 8, message: '密码至少 8 位' },
-  ],
-  confirmPassword: [
-    { required: true, message: '请再次输入新密码' },
-    {
-      validator: (_rule, value) => {
-        if (!value || value === form.newPassword) return Promise.resolve();
-        return Promise.reject(new Error('两次输入的密码不一致'));
-      },
-    },
-  ],
+const schema: FormSchema = {
+  oldPassword: z.string().min(1, '请输入当前密码'),
+  newPassword: z
+    .string()
+    .min(1, '请输入新密码')
+    .min(8, '密码至少 8 位')
+    .regex(/^(?=.*[A-Za-z])(?=.*\d)/, '密码需同时包含字母与数字'),
+  confirmPassword: z
+    .string()
+    .min(1, '请再次输入新密码')
+    .refine((v) => !v || v === form.newPassword, { message: '两次输入的密码不一致' }),
 };
 
 async function load() {

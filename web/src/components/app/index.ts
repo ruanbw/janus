@@ -134,8 +134,9 @@ export { default as AppTooltip } from './AppTooltip.vue';
 export { default as AppUpload } from './AppUpload.vue';
 export { default as CopyText } from './CopyText.vue';
 
-export { useFormItem } from './form';
+export { useFormItem, validateWithSchema } from './form';
+export type { FormSchema } from './form';
 export { message, toasts, dismiss } from './toast';
 export { confirm, confirmAsync, closeConfirm } from './confirm';
 export type { ConfirmOptions } from './confirm';
-export type { FormRule, TableColumn, TablePaginationConfig, SelectOption } from './types';
+export type { TableColumn, TablePaginationConfig, SelectOption } from './types';

@@ -10,7 +10,7 @@
     </PageHeader>
 
     <AppSpin :spinning="loading">
-      <AppForm ref="formRef" :model="form as unknown as Record<string, unknown>" :rules="rules">
+      <AppForm ref="formRef" :model="form as unknown as Record<string, unknown>" :schema="schema">
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <!-- 左侧 2 列:表单主操作区 -->
           <div class="space-y-6 lg:col-span-2">
@@ -601,7 +601,7 @@ import {
   UploadCloud,
   Zap,
 } from '@lucide/vue';
-import type { FormRule } from '@/components/app/types';
+import { z } from 'zod';
 
 import { listDomains } from '@/api/domains';
 import { createLink, getLink, updateLink, uploadLanding } from '@/api/links';
@@ -629,6 +629,7 @@ import type {
   RuleAction,
   RuleScope,
 } from '@/types/api';
+import type { FormSchema } from '@/components/app/form';
 import { message } from '@/utils/toast';
 
 const route = useRoute();
@@ -750,103 +751,85 @@ const codeExtra = computed(() =>
 
 const hasControlChars = (value: string) => /[\u0000-\u001f\u007f]/.test(value);
 
-const rules: Record<string, FormRule[]> = {
-  code: [
-    {
-      validator: (_rule, value: unknown) => {
-        const v = value as string;
-        if (!v) return Promise.resolve();
-        if (!SHORT_CODE_PATTERN.test(v)) {
-          return Promise.reject(new Error('短码仅允许字母与数字'));
-        }
-        if (SHORT_CODE_FORBIDDEN_PATTERN.test(v)) {
-          return Promise.reject(new Error('短码不能包含易混淆字符 0/O/1/l/I'));
-        }
-        if (v.length > SHORT_CODE_MAX_LENGTH) {
-          return Promise.reject(new Error('短码最长 ' + SHORT_CODE_MAX_LENGTH + ' 位'));
-        }
-        return Promise.resolve();
-      },
-    },
-  ],
-  targetUrls: [
-    {
-      // 标 required 才会显示红星；空值判定仍交给下面的自定义校验，
-      // 因为 targetUrls 的初始值是 ['']（数组非空但首个元素为空），
-      // 只用 isBlank 判不出「没填」这种真正要报错的情况。
-      required: true,
-      validator: (_rule, value: unknown) => {
-        if (!Array.isArray(value) || value.length === 0) {
-          return Promise.reject(new Error('请至少填写一个目标 URL'));
-        }
-        const urls = value as string[];
-        for (let i = 0; i < urls.length; i++) {
-          const url = (urls[i] ?? '').trim();
-          if (!url) {
-            return Promise.reject(new Error('第 ' + (i + 1) + ' 个目标 URL 不能为空'));
-          }
-          if (hasControlChars(url)) {
-            return Promise.reject(new Error('目标 URL 不能包含控制字符(换行/制表符等)'));
-          }
-          if (url.length > 4096) {
-            return Promise.reject(new Error('目标 URL 最长 4096 字符'));
-          }
-        }
-        return Promise.resolve();
-      },
-    },
-  ],
-  landingUrl: [
-    {
-      validator: (_rule, value: unknown) => {
-        if (form.linkType !== 'landing' || form.landingSource !== 'url') {
-          return Promise.resolve();
-        }
-        const url = String(value ?? '').trim();
-        if (!url) {
-          return Promise.reject(new Error('请填写落地页地址'));
-        }
-        if (hasControlChars(url)) {
-          return Promise.reject(new Error('落地页地址不能包含控制字符(换行/制表符等)'));
-        }
-        if (url.length > 4096) {
-          return Promise.reject(new Error('落地页地址最长 4096 字符'));
-        }
-        return Promise.resolve();
-      },
-    },
-  ],
-  landingFile: [
-    {
-      // 「已有托管文件」与「本次选了新文件」二者居其一即可。
-      // 后端在创建/编辑时也会拒 landing+upload 且无文件(issue 04),这里是同一条
-      // 不变式的前置提示 —— 没有它,用户填完表单点保存才会撞上 400。
-      validator: () => {
-        if (form.linkType !== 'landing' || form.landingSource !== 'upload') {
-          return Promise.resolve();
-        }
-        if (form.landingUploaded || landingFile.value) {
-          return Promise.resolve();
-        }
-        return Promise.reject(
-          new Error('请选择要上传的落地页压缩包(zip,须含 index.html)'),
-        );
-      },
-    },
-  ],
-  domainIds: [
-    {
-      // 同上：空数组能被 isBlank 认出，这里给出更准确的文案
-      required: true,
-      message: '请至少选择一个关联域名',
-      validator: (_rule, value: unknown) => {
-        if (!Array.isArray(value) || value.length === 0) {
-          return Promise.reject(new Error('请至少选择一个关联域名'));
-        }
-        return Promise.resolve();
-      },
-    },
-  ],
+const schema: FormSchema = {
+  code: z.string().superRefine((value, ctx) => {
+    if (!value) return;
+    if (!SHORT_CODE_PATTERN.test(value)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '短码仅允许字母与数字' });
+      return;
+    }
+    if (SHORT_CODE_FORBIDDEN_PATTERN.test(value)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '短码不能包含易混淆字符 0/O/1/l/I' });
+      return;
+    }
+    if (value.length > SHORT_CODE_MAX_LENGTH) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '短码最长 ' + SHORT_CODE_MAX_LENGTH + ' 位' });
+      return;
+    }
+  }),
+  targetUrls: z.array(z.string()).superRefine((value, ctx) => {
+    // 标 required 才会显示红星；空值判定仍是本处校验，
+    // 因为 targetUrls 的初始值是 ['']（数组非空但首个元素为空），
+    // 只看非空判不出「没填」这种真正要报错的情况。
+    if (!Array.isArray(value) || value.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '请至少填写一个目标 URL' });
+      return;
+    }
+    for (let i = 0; i < value.length; i++) {
+      const url = (value[i] ?? '').trim();
+      if (!url) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: '第 ' + (i + 1) + ' 个目标 URL 不能为空' });
+        return;
+      }
+      if (hasControlChars(url)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: '目标 URL 不能包含控制字符(换行/制表符等)' });
+        return;
+      }
+      if (url.length > 4096) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: '目标 URL 最长 4096 字符' });
+        return;
+      }
+    }
+  }),
+  landingUrl: z.string().superRefine((value, ctx) => {
+    if (form.linkType !== 'landing' || form.landingSource !== 'url') {
+      return;
+    }
+    const url = String(value ?? '').trim();
+    if (!url) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '请填写落地页地址' });
+      return;
+    }
+    if (hasControlChars(url)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '落地页地址不能包含控制字符(换行/制表符等)' });
+      return;
+    }
+    if (url.length > 4096) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '落地页地址最长 4096 字符' });
+      return;
+    }
+  }),
+  landingFile: z.unknown().superRefine((_value, ctx) => {
+    // 「已有托管文件」与「本次选了新文件」二者居其一即可。
+    // 后端在创建/编辑时也会拒 landing+upload 且无文件(issue 04),这里是同一条
+    // 不变式的前置提示 —— 没有它,用户填完表单点保存才会撞上 400。
+    if (form.linkType !== 'landing' || form.landingSource !== 'upload') {
+      return;
+    }
+    if (form.landingUploaded || landingFile.value) {
+      return;
+    }
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: '请选择要上传的落地页压缩包(zip,须含 index.html)',
+    });
+  }),
+  domainIds: z.array(z.number()).superRefine((value, ctx) => {
+    // 空数组能看出，这里给出更准确的文案
+    if (!Array.isArray(value) || value.length === 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '请至少选择一个关联域名' });
+    }
+  }),
 };
 
 /** 格式化文件大小 */

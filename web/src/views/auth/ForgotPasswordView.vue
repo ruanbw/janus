@@ -9,7 +9,7 @@
       </template>
     </AppResult>
 
-    <AppForm v-else :model="form" :rules="rules" @finish="onSubmit">
+    <AppForm v-else :model="form" :schema="schema" @finish="onSubmit">
       <AppFormItem label="邮箱" name="email">
         <AppInput v-model="form.email" placeholder="you@example.com" autocomplete="email" size="large">
           <template #prefix><Mail :size="16" /></template>
@@ -34,7 +34,8 @@
 import { reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { Mail } from '@lucide/vue';
-import type { FormRule } from '@/components/app/types';
+import { z } from 'zod';
+import type { FormSchema } from '@/components/app/form';
 
 import { forgotPassword } from '@/api/auth';
 import AuthShell from '@/components/AuthShell.vue';
@@ -51,11 +52,8 @@ const form = reactive({ email: '' });
 const sentHint =
   '如果该邮箱已注册,重置链接已发送。开发环境中,链接打印在后端容器日志,请执行 docker logs janus-backend-1 查看。';
 
-const rules: Record<string, FormRule[]> = {
-  email: [
-    { required: true, message: '请输入邮箱' },
-    { type: 'email', message: '邮箱格式不正确' },
-  ],
+const schema: FormSchema = {
+  email: z.string().min(1, '请输入邮箱').email('邮箱格式不正确'),
 };
 
 async function onSubmit() {
