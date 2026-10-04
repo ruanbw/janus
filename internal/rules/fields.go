@@ -404,20 +404,16 @@ func remoteAddrIP(r *http.Request) netip.Addr {
 	return netip.Addr{}
 }
 
-// ApplyEnrichers 依次执行已注册的富化器。
+// ApplyEnrichers 依次执行已注册的富化器（遍历与 panic 隔离复用 enrichOne/enricherSnapshot）。
 func (c *LazyVisitorContext) ApplyEnrichers(ctx context.Context, r *http.Request) {
-	enrichersLock.RLock()
-	if len(enrichers) == 0 {
-		enrichersLock.RUnlock()
+	list := enricherSnapshot()
+	if len(list) == 0 {
 		return
 	}
-	list := make([]FactEnricher, len(enrichers))
-	copy(list, enrichers)
-	enrichersLock.RUnlock()
 
 	fact := c.ToFact()
 	for _, e := range list {
-		e.Enrich(ctx, r, &fact)
+		enrichOne(e, ctx, r, &fact)
 	}
 	// 回填可能被富化的字段(如 ASN、Country、IP 等)
 	c.country = fact.Country
@@ -714,3 +710,7 @@ func containsAny(s string, subs []string) bool {
 	}
 	return false
 }
+
+// mutate4go-manifest-begin
+// {"version":1,"tested_at":"2026-10-04T13:37:40+08:00","module_hash":"b663ce44c751137ecef3fc0a6d21cef44d1b651d99d159484fa1bb80ec850d70","functions":[{"id":"func/WithGeo","name":"WithGeo","line":100,"end_line":102,"hash":"f2efdacdd0413bb59940755cbbe0d9acee11cfda00832b8f4dd055cb4050f9e3"},{"id":"func/SeenKey","name":"SeenKey","line":105,"end_line":105,"hash":"ec970018b1009ceaf412a50f35813ca9b9bc6cce9ddb96701fe6157560f3fda1"},{"id":"func/Fact.value","name":"Fact.value","line":110,"end_line":140,"hash":"f5288b9303f54300344fd1183989894e4e040007dcf60fcd2a7a0f1ddcaae649"},{"id":"func/Fact.ClientIP","name":"Fact.ClientIP","line":156,"end_line":166,"hash":"bc7b1175dc150c0680477a5b855a50a84dcd9d911b0b7fe07a07fc2a1e9e6eec"},{"id":"func/Fact.Field","name":"Fact.Field","line":169,"end_line":171,"hash":"3ea1e0c53759e32fd0fbf136471fe3d39159d142a5096ec21044ef37c840e59d"},{"id":"func/AcquireVisitorContext","name":"AcquireVisitorContext","line":216,"end_line":222,"hash":"c3e25aaffe67a43ccd24d3820fbe6e466b5885b0164c1906553454a76cd788bf"},{"id":"func/ReleaseVisitorContext","name":"ReleaseVisitorContext","line":225,"end_line":231,"hash":"f161269f96c3d5cb847601ed705c4029c3b1430ffca77dedb5c4bdae67afb6dd"},{"id":"func/LazyVisitorContext.reset","name":"LazyVisitorContext.reset","line":233,"end_line":235,"hash":"21784fa29ccfa8f0a1292263fcb8021a427b1dd269dc31615b15077cc04d7b9a"},{"id":"func/LazyVisitorContext.WithIP","name":"LazyVisitorContext.WithIP","line":248,"end_line":258,"hash":"1dc8a54dacd31668959c0b5dba3a17ebc049f012abaf2a74d95e3f54d478ef63"},{"id":"func/LazyVisitorContext.UAParsed","name":"LazyVisitorContext.UAParsed","line":261,"end_line":263,"hash":"64a689207f4cbe51ddc40d23ee36cfbbcf0ecbd07283ccbdfd063fcf10356701"},{"id":"func/LazyVisitorContext.rawUA","name":"LazyVisitorContext.rawUA","line":265,"end_line":273,"hash":"7a0e4840fbbf929728223a31789ab2ce68f9ee6b519e2be8ef7d9b0ae390b54e"},{"id":"func/LazyVisitorContext.ensureUAParsed","name":"LazyVisitorContext.ensureUAParsed","line":275,"end_line":285,"hash":"a5d3af1a926314f931908d0b31b402a0272979eb5216f6cbac52aa8803e2fb6d"},{"id":"func/LazyVisitorContext.ClientIP","name":"LazyVisitorContext.ClientIP","line":291,"end_line":293,"hash":"cdcca03252a5e460bf28e274e617ff095358b542adddf8708ebbaeddcece8a91"},{"id":"func/LazyVisitorContext.Field","name":"LazyVisitorContext.Field","line":296,"end_line":390,"hash":"9526826fad07215ba4acd3717088d2257c852dad8e930bb4f00765e8ef166e38"},{"id":"func/remoteAddrIP","name":"remoteAddrIP","line":394,"end_line":405,"hash":"7c51f3f3e9856967e8b9453c5014ecbd5c5c044d80ecb9f59e3ea32bc45293d1"},{"id":"func/LazyVisitorContext.ApplyEnrichers","name":"LazyVisitorContext.ApplyEnrichers","line":408,"end_line":428,"hash":"a855f9f739422f24136a5efd994a3e7ffc78831f699b004a9f5d7cdaa3641165"},{"id":"func/LazyVisitorContext.Fact","name":"LazyVisitorContext.Fact","line":431,"end_line":433,"hash":"3a44e6071cf038c1c23a0e7f94eb6e771dca809f6121358eb701ed1e11fddca8"},{"id":"func/LazyVisitorContext.ToFact","name":"LazyVisitorContext.ToFact","line":435,"end_line":465,"hash":"b1bb737d18953be6cea1c8e5b7348a49c95df9bdf12b48d079bf1f692481bc29"},{"id":"func/Fact.Fields","name":"Fact.Fields","line":472,"end_line":482,"hash":"2b1ecae32c733443f32b2086da2f02e48305b4fe6dd1f4657fd8d26a1cdbeb6d"},{"id":"func/Fact.WithIP","name":"Fact.WithIP","line":484,"end_line":489,"hash":"6ffb380e55af06d36b89e7393ddf6cb29ffea46ca5b44fb65966fb1af31b0e13"},{"id":"func/FromRequest","name":"FromRequest","line":493,"end_line":502,"hash":"e20eace54b082d0d122130165609c0ed7c39b88fef86ed0fbe3e3c131c0e32c1"},{"id":"func/hostOnly","name":"hostOnly","line":505,"end_line":515,"hash":"e1db036a5c40a9bd947f584ec1c9939fbd5d3734c4dc4de49508021b8b90c9ed"},{"id":"func/ipAttrFromAddr","name":"ipAttrFromAddr","line":518,"end_line":532,"hash":"0dbea7898525e771f86f14f707e7fad8a40e99d61c35c6b026f33136fbca4850"},{"id":"func/ipAttr","name":"ipAttr","line":535,"end_line":541,"hash":"6f58237f5995bb5cec3b6436fcee60677bebf4dd4e6a5c8593ef43dfb96c625f"},{"id":"func/firstLangTag","name":"firstLangTag","line":545,"end_line":554,"hash":"8f242d693488b7e5fd5f1d15af1dcbefe7839166cefb29e7e65d886d0879ec2a"},{"id":"func/utmSource","name":"utmSource","line":559,"end_line":578,"hash":"620af7eed617fcad48676ceb0d37f56dfb9fd10d8c4bf85c86c6c9e61260b232"},{"id":"func/refererHost","name":"refererHost","line":585,"end_line":605,"hash":"9db8e17139d61d77a42e50ff2b239c6395dfa575bd0a1dc805450421cc41472e"},{"id":"func/uaFacts","name":"uaFacts","line":628,"end_line":634,"hash":"8ea220372616516ea7d0e0bb5cf0ae1c03f0be23bd6d883ab34d506e95f1c984"},{"id":"func/devTypeOf","name":"devTypeOf","line":636,"end_line":647,"hash":"632bfbf90757517930a2a56530250e372bcce906e762a872b5a717d8fa725c6b"},{"id":"func/osOf","name":"osOf","line":659,"end_line":673,"hash":"5289046fa728a79b71d03bd2fff7ac3eb25482962ad7799e910a1cb0a7704d7c"},{"id":"func/browserOf","name":"browserOf","line":689,"end_line":703,"hash":"b8bc9de5ce16692e0912f23a651c18b74d6afde13a079c4837a8e08393c12367"},{"id":"func/containsAny","name":"containsAny","line":705,"end_line":712,"hash":"4825929f0e69114fe78bf1cbdd596d3aaf76c3ef4deb33d13c544cd8f6a3c5ad"}]}
+// mutate4go-manifest-end
