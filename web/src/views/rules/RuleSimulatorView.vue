@@ -287,7 +287,7 @@ onMounted(async () => {
     <div class="mb-4">
       <AppAlert type="info" title="与线上同一套求值">
         判定由后端 <code class="mono">internal/rules</code> 完成，与真实访问同一套条件语义与匹配顺序（首条命中即停）。
-        国家码由后端离线库按 IP 解析；<code class="mono">asn</code> 尚无数据源，依赖它的条件恒不命中。
+        国家码由后端离线库按 IP 解析；<code class="mono">asn</code> 等高级情报字段需通过插件扩展器提供。
       </AppAlert>
     </div>
 

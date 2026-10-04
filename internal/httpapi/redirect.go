@@ -371,6 +371,15 @@ func (a *API) ruleDecision(c *gin.Context, link *store.Link) rules.Decision {
 	vCtx := rules.AcquireVisitorContext(req, g.Country, g.ASN).WithIP(a.clientIPForVisitor(req))
 	defer rules.ReleaseVisitorContext(vCtx)
 
+	// 画像富化扩展点 (FactEnricher): 纯内存纳秒级富化扩展画像
+	vCtx.ApplyEnrichers(c.Request.Context(), req)
+
+	// 前置规则拦截器扩展点 (RuleInterceptor): 审核期 Safe Mode 纯白放行或一键熔断
+	fact := vCtx.Fact()
+	if intercepted, ok := rules.CheckInterceptors(c.Request.Context(), req, link.ID, &fact); ok && intercepted != nil {
+		return *intercepted
+	}
+
 	dec, matched := snap.Evaluate(vCtx, link.ID)
 	if !matched {
 		return rules.Decision{}
@@ -396,6 +405,16 @@ func visitRuleFields(dec rules.Decision) (*int64, string) {
 // 每命中一次写一次库就是写放大,而"24h 命中"由规则列表从明细读时聚合(spec D9)。
 func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domain, action string, dec rules.Decision) bool {
 	ruleID, ruleAction := visitRuleFields(dec)
+	// 先尝试外部注册的交付动作处理器（例如 proxy 服务端反代）
+	if ExecuteActionHandler(c, dec.Action, DeliveryContext{
+		Link:     link,
+		Domain:   d,
+		Decision: dec,
+		Target:   dec.Destination,
+	}) {
+		return true
+	}
+
 	switch dec.Action {
 	case store.RuleActionNotfound:
 		a.recordVisit(c, store.VisitRecord{

@@ -90,6 +90,7 @@ func (a *API) recordVisit(c *gin.Context, rec store.VisitRecord) {
 	rec.Lang = clientLang(c.Request)
 	rec.Country = a.visitGeo(c).Country
 	_ = a.store.InsertVisit(c.Request.Context(), rec)
+	TriggerPostVisitHooks(c.Request.Context(), c.Request, rec)
 }
 
 // clientLang 取 Accept-Language 的首个语言标签:

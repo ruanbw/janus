@@ -237,6 +237,8 @@ func (a *API) handleLandingSDK(c *gin.Context, code string) {
 	// 直接拼进 JS 字符串会形成响应注入面。
 	clickURL := proto + "://" + domain.FQDN + "/" + link.Code + "/click"
 	js := strings.ReplaceAll(landingSDKTemplate, "__CLICK_URL__", clickURL)
+	// 扩展点 SDKInjector: 允许私有高级版动态包裹混淆探针脚本
+	js = WrapGeneratedSDK(domain.FQDN, link.Code, js)
 	c.Header("Content-Type", "application/javascript; charset=utf-8")
 	c.Header("Cache-Control", "public, max-age=300")
 	c.String(http.StatusOK, js)

@@ -104,3 +104,9 @@ func (f LookupFunc) Lookup(ip string) Info { return f(ip) }
 func ipForIndex(i int) string {
 	return "198.51.100." + strconv.Itoa(i+1)
 }
+
+func TestDisabledLookup(t *testing.T) {
+	if got := Disabled.Lookup("8.8.8.8"); got != (Info{}) {
+		t.Fatalf("Disabled.Lookup() = %+v, want empty Info{}", got)
+	}
+}

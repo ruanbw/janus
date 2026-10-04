@@ -404,7 +404,38 @@ func remoteAddrIP(r *http.Request) netip.Addr {
 	return netip.Addr{}
 }
 
-// ToFact 将惰性画像折成完整的 Fact 结构(向后兼容现有调用方与测试)。
+// ApplyEnrichers 依次执行已注册的富化器。
+func (c *LazyVisitorContext) ApplyEnrichers(ctx context.Context, r *http.Request) {
+	enrichersLock.RLock()
+	if len(enrichers) == 0 {
+		enrichersLock.RUnlock()
+		return
+	}
+	list := make([]FactEnricher, len(enrichers))
+	copy(list, enrichers)
+	enrichersLock.RUnlock()
+
+	fact := c.ToFact()
+	for _, e := range list {
+		e.Enrich(ctx, r, &fact)
+	}
+	// 回填可能被富化的字段(如 ASN、Country、IP 等)
+	c.country = fact.Country
+	c.asn = fact.ASN
+	if fact.IP != "" && fact.IP != c.ipStr {
+		c.ipStr = fact.IP
+		c.clientIP = netip.Addr{}
+		if addr, err := netip.ParseAddr(fact.IP); err == nil {
+			c.clientIP = addr
+		}
+	}
+}
+
+// Fact 返回当前的 Fact 镜像（供拦截器判定）。
+func (c *LazyVisitorContext) Fact() Fact {
+	return c.ToFact()
+}
+
 func (c *LazyVisitorContext) ToFact() Fact {
 	c.ensureUAParsed()
 	ipStr, _ := c.Field(FieldIP)

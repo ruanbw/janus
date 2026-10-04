@@ -65,12 +65,6 @@ type Config struct {
 
 	MigrationsDir string `env:"JANUS_MIGRATIONS_DIR" envDefault:"migrations"`
 
-	// IP 情报与地理数据源配置(ADR 0009):
-	// GeoProvider 可选值: "local"(默认仅离线库), "ipinfo", "ipqualityscore", "ipapi"
-	GeoProvider string        `env:"JANUS_GEO_PROVIDER" envDefault:"local"`
-	GeoAPIKey   string        `env:"JANUS_GEO_API_KEY"`
-	GeoTimeout  time.Duration `env:"JANUS_GEO_TIMEOUT" envDefault:"500ms"`
-
 	// SMTP 邮件(可选):配置后启用真实邮件发送,否则控制台 mailer
 	PublicBaseURL string `env:"JANUS_PUBLIC_BASE_URL" envDefault:"https://app.janus.test"`
 	SMTPHost      string `env:"JANUS_SMTP_HOST"`
@@ -110,7 +104,6 @@ func (c Config) Validate() error {
 		{"JANUS_DNS_MAX_AGE", c.DNSMaxAge},
 		{"JANUS_VISIT_RETENTION", c.VisitRetention},
 		{"JANUS_VISIT_CLEANUP_INTERVAL", c.VisitCleanupEvery},
-		{"JANUS_GEO_TIMEOUT", c.GeoTimeout},
 	}
 	for _, d := range positiveDurations {
 		if d.v <= 0 {
@@ -144,11 +137,6 @@ func (c Config) Validate() error {
 	}
 	if _, err := c.TrustedProxyNets(); err != nil {
 		return fmt.Errorf("JANUS_TRUSTED_PROXY_CIDRS: %w", err)
-	}
-	switch c.GeoProvider {
-	case "", "local", "ipinfo", "ipqualityscore", "ipapi":
-	default:
-		return fmt.Errorf("JANUS_GEO_PROVIDER 只支持 local/ipinfo/ipqualityscore/ipapi,当前为 %q(拼错会静默回退到 local)", c.GeoProvider)
 	}
 	if c.SMTPPort < 1 || c.SMTPPort > 65535 {
 		return fmt.Errorf("JANUS_SMTP_PORT 必须是 1-65535,当前为 %d", c.SMTPPort)

@@ -122,3 +122,10 @@ func isAlpha2(s string) bool {
 	}
 	return true
 }
+
+// isNonPublicIP 内网/回环/链路本地/未指定地址:无地理意义，不发起查询。
+func isNonPublicIP(p net.IP) bool {
+	return p.IsLoopback() || p.IsPrivate() ||
+		p.IsLinkLocalUnicast() || p.IsLinkLocalMulticast() ||
+		p.IsUnspecified()
+}

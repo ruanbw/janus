@@ -233,14 +233,13 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 		if err := rules.ValidateExpression(w.expression); err != nil {
 			return ruleWrite{}, ruleErr("expression 非法: %v", err)
 		}
-		// 表达式里引用 asn 与条件里用 asn 是同一件事:asn 当前没有数据源,
-		// 恒不命中。放它进来等于收下一条永不生效的规则,而租户在界面上看到的是
-		//「已启用」。前端已把它置灰(ruleMeta.ts pending),后端这里对齐。
-		// 注:rules.ValidField 仍保留 asn —— 那是**求值期**的字段集,
-		// 闸门要靠它知道"asn 恒不命中";收窄它会让 `asn == ""` 失去闸门保护。
+		// 表达式引用的字段校验:确保字段在基座有效字段集合内。
 		if refs, err := rules.ExpressionFieldRefs(w.expression); err == nil {
 			for _, ref := range refs {
-				if ref == rules.FieldASN {
+				if !rules.ValidField(ref) {
+					return ruleWrite{}, ruleErr("expression 引用了未知字段: %s", ref)
+				}
+				if ref == rules.FieldASN && !rules.HasASNProvider() {
 					return ruleWrite{}, ruleErr("asn 字段当前没有数据源,依赖它的条件恒不命中,不能用于规则")
 				}
 			}
@@ -330,12 +329,7 @@ func validateConditionLeaf(cond store.RuleCondition, path string) error {
 	if !rules.ValidField(cond.Field) {
 		return ruleErr("%s.field 不在可求值字段集内:%s", path, cond.Field)
 	}
-	// asn 当前没有数据源(FieldASN 恒返回 ok=false),条件恒不命中。
-	// 收下来等于让租户拿到一条"界面上显示已启用、线上永不生效"的规则 ——
-	// 前端已置灰(ruleMeta.ts 的 pending),这里对齐,免得 API/脚本绕过界面。
-	// 注:rules.ValidField 刻意仍保留 asn,那是**求值期**的字段集,
-	// 闸门要靠它知道"asn 恒不命中";收窄它会让 `asn == ""` 失去闸门保护。
-	if cond.Field == rules.FieldASN {
+	if cond.Field == rules.FieldASN && !rules.HasASNProvider() {
 		return ruleErr("%s.field:asn 当前没有数据源,依赖它的条件恒不命中,不能用于规则", path)
 	}
 	if !rules.ValidOperator(cond.Operator) {

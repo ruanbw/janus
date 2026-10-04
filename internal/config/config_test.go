@@ -87,7 +87,6 @@ func validConfig() Config {
 		MaxTargetURLs:        50,
 		LandingMaxZipBytes:   1 << 20,
 		LandingMaxTotalBytes: 1 << 20,
-		GeoTimeout:           500 * time.Millisecond,
 	}
 }
 

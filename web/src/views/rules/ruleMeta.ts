@@ -31,7 +31,7 @@ export const FIELD_OPTIONS: FieldOption[] = [
   { value: 'ip', label: 'IP 地址 / CIDR', defaultOp: 'in', placeholder: '198.51.100.0/24, 203.0.113.7', hint: '支持 CIDR 网段与单个 IP', source: 'X-Forwarded-For / RemoteAddr' },
   { value: 'ipattr', label: 'IP 属性', defaultOp: 'in', placeholder: 'private, loopback, linklocal', hint: 'private / loopback / linklocal', source: 'net.IP 判定' },
   { value: 'country', label: '国家 / 地区', defaultOp: 'in', placeholder: 'US, CN', hint: 'ISO 国家码', source: '访客 IP 的离线 GeoIP 库（ip2region）' },
-  { value: 'asn', label: 'ASN / 运营商', defaultOp: 'in', placeholder: 'AS15169, AS16509', hint: 'AS 号', pending: true, source: 'visits.asn（ASN mmdb 接入前恒空）' },
+  { value: 'asn', label: 'ASN / 运营商', defaultOp: 'in', placeholder: 'AS15169, AS16509', hint: 'AS 号', pending: true, source: 'visits.asn（需注册 FactEnricher 插件）' },
   { value: 'lang', label: '语言 (Accept-Language)', defaultOp: 'in', placeholder: 'zh-CN, pt-BR', hint: '取首个语言标签', source: 'Accept-Language 首标签' },
   { value: 'ref', label: 'Referrer 主机名', defaultOp: 'in', placeholder: 'facebook.com, google.com', hint: '取主机名，不含协议与路径', source: 'Referer 主机名' },
   { value: 'utm', label: 'UTM 来源', defaultOp: 'eq', placeholder: 'wechat, google', hint: '取 utm_source 查询参数', source: 'utm_source 查询参数' },
