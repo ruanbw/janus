@@ -12,9 +12,6 @@ docs/plans/
 docs/superpowers/
 plans/
 specs/
-.worktrees/
-.swarmforge/
 target/
-swarmforge/scripts/shared-articles/
 # 本地私有文档，严禁推送到远程仓库
 private_docs/
