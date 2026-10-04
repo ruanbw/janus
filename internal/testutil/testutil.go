@@ -101,10 +101,14 @@ func setup(t *testing.T, rc *httpapi.RateLimitConfig, geoLookup geo.Lookup) *Env
 		}
 		t.Skipf("test database not available (%v); set JANUS_TEST_DB_REQUIRED=1 to fail instead of skip", err)
 	}
+	// 先注册回收再做任何校验：下面任何一步 Fatal 都会把连接池漏在进程里。
+	// 上百个用例各自漏一个池，max_connections 会被很快耗光，
+	// 后面的用例卡在 db.Connect 的重试循环里，整包表现成“跑了 10 分钟然后超时”，
+	// 真实病因（某个前置校验没过）会被彻底掩盖。
+	t.Cleanup(pool.Close)
 	if !strings.Contains(TestDatabaseURL, "_test") {
 		t.Fatalf("refusing to run tests against non-test database: %s", TestDatabaseURL)
 	}
-	t.Cleanup(pool.Close)
 	// 独占测试库到本包测试结束:各包都连同一个库并 TRUNCATE 业务表,
 	// 而 go test 并行跑各包,不加互斥会互相把对方的数据清掉
 	release, err := db.LockTestDB(ctx, pool)

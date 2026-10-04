@@ -60,7 +60,13 @@ run_isolated_tests() {
   : > "$PROFILE_DIR/all.out"
 
   for pkg in $pkgs; do
-    local db="${DB_PREFIX}_$(sanitize "$pkg")"
+    # 库名必须含 "_test"：testutil.setup 有一条硬守卫，拒绝任何名字里没有
+    # "_test" 的连接串（防止误连生产库或 janus 主库）。
+    # 少了这个 "_test"，每个用例会以 0.01s 立刻失败；又因为守卫 Fatal 发生在
+    # pool.Close 注册之前，连接池不会被回收，169 个用例把 max_connections 耗光后，
+    # 余下用例全卡进 db.Connect 的 30 次重试 —— 最终表现成一个与真实病因毫无关系的
+    # “测试跑了 10 分钟然后超时”。
+    local db="${DB_PREFIX}_test_$(sanitize "$pkg")"
     dropdb --if-exists --force "$db" >/dev/null 2>&1 || true
     createdb "$db"
     echo "==> $pkg  (db: $db)"
