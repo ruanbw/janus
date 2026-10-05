@@ -212,7 +212,6 @@ export interface VisitorFieldView {
   label: string;
   value: string;
   note: string;
-  pending: boolean;
 }
 
 /**
@@ -309,11 +308,15 @@ export function verdictFromServer(v: SimulateVerdict): VerdictView {
   };
 }
 
-/** 访客画像:13 个字段的展示形态(空值显式标出,不静默留白) */
+/**
+ * 访客画像:平台有真实数据源的 12 个字段的展示形态(空值显式标出,不静默留白)。
+ * 后端回传的 asn 平台无数据源(仅外部插件可能填值),不在这里展示——
+ * 放一行「数据源待接入 · 恒不命中」的占位等于向用户展示不存在的选择。
+ */
 export function visitorFieldViews(facts: VisitorFacts | null): VisitorFieldView[] {
   const f = facts;
   return [
-    { field: 'ip', label: 'IP 地址', value: f?.ip || '—', note: '', pending: false },
+    { field: 'ip', label: 'IP 地址', value: f?.ip || '—', note: '' },
     {
       field: 'ipattr',
       label: 'IP 属性',
@@ -321,7 +324,6 @@ export function visitorFieldViews(facts: VisitorFacts | null): VisitorFieldView[
       // 展示成「公网 IP」会诱导用户去配 ipattr eq 公网——那条规则永不成立。
       value: f?.ipattr || '—',
       note: f?.ipattr ? '' : '非 private / loopback / linklocal · 该字段空值恒不命中',
-      pending: false,
     },
     {
       field: 'country',
@@ -331,18 +333,16 @@ export function visitorFieldViews(facts: VisitorFacts | null): VisitorFieldView[
       // 国家由后端离线库按 IP 解析,前端不再自己猜。回空串只有两种可能:IP 是私网/保留段,
       // 或离线库里没有该段——两种都不该配国家条件,写清楚比显示一个中文名有用。
       note: f?.country ? '' : '后端离线库未解析出国家(私网 IP 或库中无此段) · 留空按取不到处理',
-      pending: false,
     },
-    { field: 'asn', label: 'ASN / 运营商', value: '—', note: '数据源待接入 · 恒不命中', pending: true },
-    { field: 'lang', label: '语言', value: f?.lang || '—', note: '', pending: false },
-    { field: 'ref', label: 'Referrer 主机', value: f?.ref || '—', note: '', pending: false },
-    { field: 'utm', label: 'UTM 来源', value: f?.utm || '—', note: '', pending: false },
-    { field: 'ua', label: 'User-Agent', value: f?.ua || '—', note: '', pending: false },
-    { field: 'devtype', label: '设备类型', value: f?.devtype || '—', note: '', pending: false },
-    { field: 'os', label: '操作系统', value: f?.os || '—', note: '', pending: false },
-    { field: 'browser', label: '浏览器', value: f?.browser || '—', note: '', pending: false },
-    { field: 'path', label: '请求路径', value: f?.path || '—', note: '', pending: false },
-    { field: 'domain', label: '请求 Host', value: f?.domain || '—', note: '', pending: false },
+    { field: 'lang', label: '语言', value: f?.lang || '—', note: '' },
+    { field: 'ref', label: 'Referrer 主机', value: f?.ref || '—', note: '' },
+    { field: 'utm', label: 'UTM 来源', value: f?.utm || '—', note: '' },
+    { field: 'ua', label: 'User-Agent', value: f?.ua || '—', note: '' },
+    { field: 'devtype', label: '设备类型', value: f?.devtype || '—', note: '' },
+    { field: 'os', label: '操作系统', value: f?.os || '—', note: '' },
+    { field: 'browser', label: '浏览器', value: f?.browser || '—', note: '' },
+    { field: 'path', label: '请求路径', value: f?.path || '—', note: '' },
+    { field: 'domain', label: '请求 Host', value: f?.domain || '—', note: '' },
   ];
 }
 

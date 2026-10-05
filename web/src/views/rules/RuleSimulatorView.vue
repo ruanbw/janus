@@ -287,7 +287,7 @@ onMounted(async () => {
     <div class="mb-4">
       <AppAlert type="info" title="与线上同一套求值">
         判定由后端 <code class="mono">internal/rules</code> 完成，与真实访问同一套条件语义与匹配顺序（首条命中即停）。
-        国家码由后端离线库按 IP 解析；<code class="mono">asn</code> 等高级情报字段需通过插件扩展器提供。
+        国家码由后端离线库按 IP 解析。
       </AppAlert>
     </div>
 
@@ -386,7 +386,7 @@ onMounted(async () => {
             <CardTitle class="flex items-center gap-2">
               <Globe :size="18" class="text-brand" />
               访客画像
-              <span class="rounded-md bg-surface-muted px-1.5 py-0.5 text-2xs text-ink-faint">13 字段</span>
+              <span class="rounded-md bg-surface-muted px-1.5 py-0.5 text-2xs text-ink-faint">{{ fieldViews.length }} 字段</span>
             </CardTitle>
             <CardDescription>{{ scopeNote || '运行模拟后，这里显示从请求解析出的可判定字段' }}</CardDescription>
           </CardHeader>
@@ -401,7 +401,6 @@ onMounted(async () => {
                 <span class="mono truncate text-sm text-ink" :class="f.value === '—' ? 'text-ink-faint' : ''" :title="f.value">
                   {{ f.value }}
                 </span>
-                <span v-if="f.pending" class="text-2xs text-warn">{{ f.note }}</span>
               </div>
             </div>
           </CardContent>

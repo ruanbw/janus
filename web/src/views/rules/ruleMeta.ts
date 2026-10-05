@@ -14,24 +14,22 @@ export interface FieldOption {
   placeholder: string;
   /** 取值示例,展示在条件区提示里 */
   hint?: string;
-  /** 数据源待接入:后端恒取不到值,置灰不可选(spec D5) */
-  pending?: boolean;
-  /** 接入后的数据来源,写进代码注释便于将来接回 */
+  /** 该字段的取值来源(平台必须真实持有,才允许出现在下拉里) */
   source: string;
 }
 
 /**
- * 条件判定字段(spec D5):收敛到后端从请求即可真实求值的 13 个。
+ * 条件判定字段(spec D5):收敛到平台有真实数据源、后端能真实求值的 12 个。
  * 原型里的 18 个字段里,region / city / tz / screen / tls(JA3) / canvas / cookie
  * 后端当前没有任何数据源,已移出 v1 —— 不把不可求值的字段落库,否则就是「能配不能跑」的假能力。
- * country 已接后端内嵌的离线 GeoIP 库(取不到时恒空、恒不命中);
- * asn 仍无数据源,保留占位,UI 上置灰并显式说明。
+ * country 走后端内嵌的离线 GeoIP 库(取不到时恒空、恒不命中);
+ * asn 平台无数据源(仅外部工程注册 FactEnricher 才可能提供值),控制台不放出——
+ * 下拉里留置灰占位就是「看得见、选不了」的假能力。
  */
 export const FIELD_OPTIONS: FieldOption[] = [
   { value: 'ip', label: 'IP 地址 / CIDR', defaultOp: 'in', placeholder: '198.51.100.0/24, 203.0.113.7', hint: '支持 CIDR 网段与单个 IP', source: 'X-Forwarded-For / RemoteAddr' },
   { value: 'ipattr', label: 'IP 属性', defaultOp: 'in', placeholder: 'private, loopback, linklocal', hint: 'private / loopback / linklocal', source: 'net.IP 判定' },
   { value: 'country', label: '国家 / 地区', defaultOp: 'in', placeholder: 'US, CN', hint: 'ISO 国家码', source: '访客 IP 的离线 GeoIP 库（ip2region）' },
-  { value: 'asn', label: 'ASN / 运营商', defaultOp: 'in', placeholder: 'AS15169, AS16509', hint: 'AS 号', pending: true, source: 'visits.asn（需注册 FactEnricher 插件）' },
   { value: 'lang', label: '语言 (Accept-Language)', defaultOp: 'in', placeholder: 'zh-CN, pt-BR', hint: '取首个语言标签', source: 'Accept-Language 首标签' },
   { value: 'ref', label: 'Referrer 主机名', defaultOp: 'in', placeholder: 'facebook.com, google.com', hint: '取主机名，不含协议与路径', source: 'Referer 主机名' },
   { value: 'utm', label: 'UTM 来源', defaultOp: 'eq', placeholder: 'wechat, google', hint: '取 utm_source 查询参数', source: 'utm_source 查询参数' },

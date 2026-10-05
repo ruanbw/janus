@@ -240,14 +240,10 @@ function resetForm() {
   initialFormJson.value = JSON.stringify(form);
 }
 
-const fieldOptions = computed(() =>
-  FIELD_OPTIONS.map((f) => ({
-    value: f.value as string,
-    label: f.pending ? `${f.label}（数据源待接入）` : f.label,
-    // 数据源未接入的字段置灰：它是「能配不能跑」的死选项（spec D5）
-    disabled: f.pending === true,
-  })),
-);
+const fieldOptions = FIELD_OPTIONS.map((f) => ({
+  value: f.value as string,
+  label: f.label,
+}));
 // 运算符按字段过滤：in_cidr 后端只允许 ip 字段（eval.go 会 drop 其它字段的 in_cidr，
 // 条件被丢弃 = 规则被静默收紧），ip 之外不出现在下拉里。
 const IP_ONLY_OPERATORS: RuleOperator[] = ['in_cidr', 'not_in_cidr'];
@@ -342,7 +338,6 @@ function conditionHint(cond: EditableCondition): string {
   const field = cond.field;
   const opt = fieldOption(field);
   if (!opt) return '';
-  if (opt.pending) return '该字段的数据源尚未接入，现在保存也会恒不命中';
   if (cond.operator === 'regex') return '正则匹配语法支持 RE2，大小写敏感；忽略大小写可用 (?i)';
   if (field === 'country') return '从下拉里选国家 / 地区，支持搜索 · 查不到国家的 IP 恒不命中';
   if (field === 'devtype') return '从下拉里选设备类型：爬虫 (bot)、手机 (mobile)、平板 (tablet)、桌面端 (desktop)';
@@ -446,10 +441,11 @@ function buildConditions(): RuleCondition[] {
   return form.conditions.map((cond, idx) => {
     const opt = fieldOption(cond.field);
     if (!opt) {
-      throw new Error(`第 ${idx + 1} 条条件的字段「${cond.field}」不在后端支持的 13 个字段内`);
-    }
-    if (opt.pending) {
-      throw new Error(`第 ${idx + 1} 条条件使用了「${opt.label}」，该字段数据源尚未接入，无法保存`);
+      // 经 API / 插件写入的历史条件（如 asn）：控制台没有该字段的数据源，
+      // 不能静默丢弃条件，必须点名原始字段拒绝保存。
+      throw new Error(
+        `第 ${idx + 1} 条条件的字段「${cond.field}」当前控制台不支持（平台无该数据源），请改为其他字段`,
+      );
     }
     const op = OPERATOR_OPTIONS.find((o) => o.value === cond.operator);
     if (!op) {
