@@ -20,12 +20,12 @@ import { mount } from '@vue/test-utils';
 import { CheckboxRoot, ProgressRoot, RadioGroupRoot, SwitchRoot } from 'reka-ui';
 import { defineComponent, h, nextTick } from 'vue';
 
-import Checkbox from '@/components/ui/checkbox.vue';
-import Progress from '@/components/ui/progress.vue';
-import RadioGroup from '@/components/ui/radio-group.vue';
-import RadioGroupItem from '@/components/ui/radio-group-item.vue';
-import Separator from '@/components/ui/separator.vue';
-import Switch from '@/components/ui/switch.vue';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Progress } from '@/components/ui/progress';
+import { RadioGroup } from '@/components/ui/radio-group';
+import { RadioGroupItem } from '@/components/ui/radio-group';
+import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
 
 /** 点击后把 emit 记录清空前的载荷取出来 */
 async function settle(): Promise<void> {

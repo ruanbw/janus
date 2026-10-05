@@ -11,10 +11,10 @@
 import { mount } from '@vue/test-utils';
 import { h } from 'vue';
 
-import DropdownMenu from '@/components/ui/dropdown-menu.vue';
-import DropdownMenuContent from '@/components/ui/dropdown-menu-content.vue';
-import DropdownMenuItem from '@/components/ui/dropdown-menu-item.vue';
-import DropdownMenuTrigger from '@/components/ui/dropdown-menu-trigger.vue';
+import { DropdownMenu } from '@/components/ui/dropdown-menu';
+import { DropdownMenuContent } from '@/components/ui/dropdown-menu';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 /**
  * 挂一个带 trigger + content 的下拉根。

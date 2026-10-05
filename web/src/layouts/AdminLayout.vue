@@ -186,13 +186,15 @@ import {
   DialogPortal,
   DialogRoot,
   DialogTitle,
+} from '@/components/ui/dialog';
+import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuPortal,
   DropdownMenuRoot,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui';
+} from '@/components/ui/dropdown-menu';
 
 import ErrorBoundary from '@/components/layout/ErrorBoundary.vue';
 import NavList from '@/components/layout/NavList.vue';

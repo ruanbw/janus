@@ -14,8 +14,8 @@ import { mount } from '@vue/test-utils';
 import { TooltipContent, TooltipPortal, TooltipRoot, TooltipTrigger } from 'reka-ui';
 
 import AppTooltip from '@/components/app/AppTooltip.vue';
-import UiTooltip from '@/components/ui/tooltip.vue';
-import UiTooltipContent from '@/components/ui/tooltip-content.vue';
+import { Tooltip as UiTooltip } from '@/components/ui/tooltip';
+import { TooltipContent as UiTooltipContent } from '@/components/ui/tooltip';
 
 beforeEach(() => {
   document.body.innerHTML = '';

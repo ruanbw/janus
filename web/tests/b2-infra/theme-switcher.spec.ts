@@ -8,9 +8,9 @@ import { useThemeStore } from '@/stores/theme';
 
 /**
  * 把 reka-ui 的下拉原语换成能在happy-dom 里直接 emit select 的替身。
- * 组件从 '@/components/ui' 桶文件导入,所以按模块 mock 才拦得住。
+ * 组件从 '@/components/ui/dropdown-menu' 族索引导入,所以按模块 mock 才拦得住。
  */
-vi.mock('@/components/ui', () => {
+vi.mock('@/components/ui/dropdown-menu', () => {
   const passthrough = (name: string) => ({
     name,
     setup: (_: unknown, ctx: { slots: Record<string, unknown> }) => () =>

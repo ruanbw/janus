@@ -26,7 +26,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import UiTextarea from '@/components/ui/textarea.vue';
+import { Textarea as UiTextarea } from '@/components/ui/textarea';
 
 import { cn } from '@/lib/utils';
 import { useFormItem } from './form';

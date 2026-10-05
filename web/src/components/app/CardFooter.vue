@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import CardFooterPrimitive from '@/components/ui/card-footer.vue';
+import { CardFooter as CardFooterPrimitive } from '@/components/ui/card';
 
 import { cn } from '@/lib/utils';
 

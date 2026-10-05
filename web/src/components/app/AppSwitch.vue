@@ -10,7 +10,7 @@
 </template>
 
 <script lang="ts">
-import { switchThumbVariants, switchVariants as uiSwitchVariants } from '@/components/ui/switch.vue';
+import { switchThumbVariants, switchVariants as uiSwitchVariants } from '@/components/ui/switch';
 
 import { cn } from '@/lib/utils';
 
@@ -46,7 +46,7 @@ export const switchVariants = (options: {
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import UiSwitch from '@/components/ui/switch.vue';
+import { Switch as UiSwitch } from '@/components/ui/switch';
 
 import { useFormItem } from './form';
 

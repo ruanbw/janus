@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import CardContentPrimitive from '@/components/ui/card-content.vue';
+import { CardContent as CardContentPrimitive } from '@/components/ui/card';
 
 import { cn } from '@/lib/utils';
 

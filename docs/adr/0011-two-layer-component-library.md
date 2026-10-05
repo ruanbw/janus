@@ -7,3 +7,5 @@
 视觉方向定为 nova：中性 zinc 灰阶、近黑主色、紧凑字号（11/12/13/14/16/20/24/32）、小圆角（控件 6px / 卡片 8px / 弹窗 10px）、极浅阴影，靛蓝只保留给焦点环、链接与品牌标签。全部令牌集中在 `web/src/styles/theme.css` 一个文件，字体、字号尺度、圆角、阴影、明暗两套色板都在那里，`main.css` 只剩基础层与动效。令牌值只用 hex / rgb 写，因为 UI 门禁脚本要静态解析颜色做对比度校验。
 
 影响：多一层目录和一道跨层纪律，需要机器守卫——`web/scripts/check-ui-consistency.mjs` 增加三条规则拦截 `ui/` 反向依赖 `app/`、`app/` 直连 reka-ui、`ui/` 使用项目层令牌。改主题只改 `theme.css` 一个文件；换组件库只动 `ui/` 目录。
+
+> 修订（ADR-0016）：原语层的落盘形态已从扁平 kebab-case 文件迁移为 shadcn-vue CLI 原生族目录（`ui/<slug>/<PascalName>.vue` + 族 `index.ts`），引用统一走 `@/components/ui/<slug>`；本 ADR 的双层与单向依赖决策不变。

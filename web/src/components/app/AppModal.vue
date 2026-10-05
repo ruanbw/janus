@@ -108,13 +108,13 @@
 import { computed, useSlots } from 'vue';
 import { X } from '@lucide/vue';
 
-import DialogRoot from '@/components/ui/dialog.vue';
-import DialogPortal from '@/components/ui/dialog-portal.vue';
-import DialogOverlay from '@/components/ui/dialog-overlay.vue';
-import DialogContent from '@/components/ui/dialog-content.vue';
-import DialogClose from '@/components/ui/dialog-close.vue';
-import DialogTitle from '@/components/ui/dialog-title.vue';
-import DialogDescription from '@/components/ui/dialog-description.vue';
+import { DialogRoot } from '@/components/ui/dialog';
+import { DialogPortal } from '@/components/ui/dialog';
+import { DialogOverlay } from '@/components/ui/dialog';
+import { DialogContent } from '@/components/ui/dialog';
+import { DialogClose } from '@/components/ui/dialog';
+import { DialogTitle } from '@/components/ui/dialog';
+import { DialogDescription } from '@/components/ui/dialog';
 
 import { cn } from '@/lib/utils';
 

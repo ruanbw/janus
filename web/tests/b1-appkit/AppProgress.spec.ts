@@ -9,7 +9,7 @@
 import { mount } from '@vue/test-utils';
 
 import AppProgress from '@/components/app/AppProgress.vue';
-import UiProgress from '@/components/ui/progress.vue';
+import { Progress as UiProgress } from '@/components/ui/progress';
 
 /** reka 把净化后的进度写到 role=progressbar 的 aria-valuenow 上 */
 function indicatorPercent(wrapper: ReturnType<typeof mount>): number | null {

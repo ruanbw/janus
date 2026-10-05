@@ -38,7 +38,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import Card from '@/components/ui/card.vue';
+import { Card } from '@/components/ui/card';
 
 import { cn } from '@/lib/utils';
 import CardHeader from './CardHeader.vue';

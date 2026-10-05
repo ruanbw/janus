@@ -127,8 +127,8 @@ import {
 } from 'reka-ui';
 import { Check, ChevronDown, Loader2, Search, X } from '@lucide/vue';
 
-import SelectTrigger from '@/components/ui/select.vue';
-import SelectValue from '@/components/ui/select-value.vue';
+import { SelectTrigger } from '@/components/ui/select';
+import { SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useFormItem } from './form';
 import type { SelectOption } from './types';

@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import CardTitlePrimitive from '@/components/ui/card-title.vue';
+import { CardTitle as CardTitlePrimitive } from '@/components/ui/card';
 
 import { cn } from '@/lib/utils';
 

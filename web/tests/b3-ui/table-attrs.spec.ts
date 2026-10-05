@@ -11,7 +11,7 @@
  */
 import { mount } from '@vue/test-utils';
 
-import Table from '@/components/ui/table.vue';
+import { Table } from '@/components/ui/table';
 
 describe('table.vue — attrs 落点必须统一在 <table> 上', () => {
   it('class 落在 <table> 上', () => {
