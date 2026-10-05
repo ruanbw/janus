@@ -160,14 +160,24 @@ $BH evaluate --page-name janus --code "document.body.innerText.slice(0,200)"
 
 ## 回归检查清单
 
-改动后至少跑:
-
+### 1. 日常快速验证（推荐，30秒内完成）：
 ```bash
-./scripts/quality.sh tests                            # 第 1 层(每包独立测试库)
-./scripts/quality.sh crap                             # 复杂度/覆盖率门禁
-./scripts/quality.sh changed                          # 变更文件的变异测试
-./scripts/e2e.sh                                      # 第 2 层
-cd web && npx vue-tsc --noEmit -p tsconfig.json       # 前端类型
+# 场景 A：后端逻辑/API 改动（极速自包含验证，约 15~25s）
+./scripts/e2e.sh
+# 或单包轻量定向测试（1~3s）：
+# go test -count=1 ./internal/<受影响的包>/...
+
+# 场景 B：前端改动（约 5s）
+cd web && npx vue-tsc --noEmit -p tsconfig.json
 ```
 
-改动前端交互时,额外按第 3 层手测受影响的页面。
+### 2. 阶段性全量回归（按需选跑，约 3 分钟）：
+```bash
+./scripts/quality.sh tests                            # 每包独立临时库全量跑
+```
+
+### 3. 离线深度审计 / 发版前门禁（耗时长，日常禁止自动执行）：
+```bash
+./scripts/quality.sh crap                             # CRAP 复杂度/覆盖率门禁
+./scripts/quality.sh changed                          # 变异测试（仅显式要求或发版审计时执行）
+```
