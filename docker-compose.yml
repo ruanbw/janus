@@ -36,7 +36,10 @@ services:
       # Caddyfile 用 {$CADDY_ASK_TOKEN} 在 adapt 时展开,变量缺失会展开成空 token,
       # 授权端点一律 403 —— 表现为泛域名 / 自有域名握手失败,很难从 Caddy 侧看出来。
       CADDY_ASK_TOKEN: "${JANUS_CADDY_ASK_TOKEN:?未配置 JANUS_CADDY_ASK_TOKEN,caddy 容器拿不到 on-demand TLS 的 ask 密钥}"
-      # 容器继承宿主 HTTP(S)_PROXY(如 host.docker.internal:7890),ask 授权请求必须直连宿主机后端
+      # 显式清空代理:宿主设了全局 HTTP(S)_PROXY(如 host.docker.internal:7890)时
+      # 容器会继承,ask 授权请求就会被送去代理而不是直连宿主机后端,表现为
+      # 泛域名 / 自有域名握手失败。这里覆盖成空值 + NO_PROXY="*",比逐个 host
+      # 维护 NO_PROXY 白名单更不容易漏。
       HTTP_PROXY: ""
       http_proxy: ""
       HTTPS_PROXY: ""
