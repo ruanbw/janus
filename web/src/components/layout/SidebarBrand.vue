@@ -1,13 +1,13 @@
 <template>
   <RouterLink
     to="/overview"
-    aria-label="Janus 控制台首页"
+    :aria-label="brandConfig.name + ' 控制台首页'"
     class="flex h-14 shrink-0 items-center gap-2.5 px-3.5 transition-opacity hover:opacity-80"
   >
     <BrandMark :size="28" class="shrink-0" />
     <span v-if="showLabels" class="flex flex-col leading-tight">
-      <span class="text-sm font-bold tracking-tight text-sidebar-ink-active">Janus</span>
-      <span class="font-mono text-2xs tracking-wider text-sidebar-ink uppercase">Janus Console</span>
+      <span class="text-sm font-bold tracking-tight text-sidebar-ink-active">{{ brandConfig.name }}</span>
+      <span class="font-mono text-2xs tracking-wider text-sidebar-ink uppercase">{{ brandConfig.subTitle }}</span>
     </span>
   </RouterLink>
 </template>
@@ -16,6 +16,7 @@
 import { computed } from 'vue';
 
 import BrandMark from '@/components/BrandMark.vue';
+import { brandConfig } from '@/config/brand';
 
 const props = withDefaults(defineProps<{ collapsed?: boolean }>(), { collapsed: false });
 

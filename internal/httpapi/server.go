@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/netip"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -44,6 +45,8 @@ type Deps struct {
 	// 测试注入假校验器:归属证明依赖公网 DNS,而黑盒测试既无法在权威 DNS 上
 	// 发布 TXT,也不该依赖外网解析结果(同 GeoLookup 的理由)。
 	DomainOwnership OwnershipChecker
+	// ProtectedRoutes 外部注入的受保护控制面路由注入回调
+	ProtectedRoutes []func(rg *gin.RouterGroup)
 }
 
 // OwnershipChecker 抽象域名归属校验(见 Deps.DomainOwnership)。
@@ -170,7 +173,8 @@ func New(d Deps) http.Handler {
 
 	// ---------- 受保护路由:先认证(会话 cookie 或 Bearer JWT)后授权(Casbin RBAC) ----------
 	// 中间件顺序:authenticate 产出 context(租户/角色/认证方式),authorize 据此判权。
-	prot := r.Group("/api", a.authenticate(), a.authorize())
+	protAuth := r.Group("/api", a.authenticate())
+	prot := protAuth.Group("", a.authorize())
 	// 02:登出 / me
 	prot.POST("/auth/logout", a.handleLogout)
 	prot.GET("/auth/me", a.handleMe)
@@ -225,6 +229,13 @@ func New(d Deps) http.Handler {
 	prot.PATCH("/admin/tenants/:id", a.handleAdminPatchTenant)
 	prot.DELETE("/admin/domains/:id", a.handleAdminDeleteDomain)
 
+	// 挂载外部受保护扩展路由
+	for _, inject := range d.ProtectedRoutes {
+		if inject != nil {
+			inject(protAuth)
+		}
+	}
+
 	// 跳转(公开):路径首段为短码,由 Host 决定域名(在受保护组外注册)
 	// 公开跳转路由挂访客限流:落地页型短链每次访问都要写一行访问明细,
 	// 点击回传还要额外做一次地理解析,无节制的脚本刷量会同时撑大 visits 表
@@ -260,6 +271,19 @@ func isPrivateAddr(remote string) bool {
 		return false
 	}
 	return ip.IsLoopback() || ip.IsPrivate()
+}
+
+// ginPathToCasbinPath 将 Gin 路由路径中的动态参数(:param 或 *param)转换为 Casbin keyMatch3 支持的通配符 *
+func ginPathToCasbinPath(p string) string {
+	parts := strings.Split(p, "/")
+	for i, part := range parts {
+		if strings.HasPrefix(part, ":") {
+			parts[i] = "{" + strings.TrimPrefix(part, ":") + "}"
+		} else if strings.HasPrefix(part, "*") {
+			parts[i] = "*"
+		}
+	}
+	return strings.Join(parts, "/")
 }
 
 // randomSecret 生成 32 字节随机 hex 密钥(JANUS_JWT_SECRET 未配置时的回退,

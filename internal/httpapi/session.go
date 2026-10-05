@@ -131,6 +131,9 @@ func (a *API) authenticate() gin.HandlerFunc {
 			c.Set(ctxTenantKey, t)
 			c.Set(ctxRoleKey, role)
 			c.Set(ctxMethodKey, "jwt")
+			c.Set("janus.auth.tenant_id", t.ID)
+			c.Set("janus.auth.user_id", t.ID)
+			c.Set("janus.auth.role", role)
 			c.Next()
 			return
 		}
@@ -150,6 +153,9 @@ func (a *API) authenticate() gin.HandlerFunc {
 		c.Set(ctxRoleKey, role)
 		c.Set(ctxMethodKey, "cookie")
 		c.Set(ctxSessionKey, sess)
+		c.Set("janus.auth.tenant_id", t.ID)
+		c.Set("janus.auth.user_id", t.ID)
+		c.Set("janus.auth.role", role)
 		c.Next()
 	}
 }
@@ -226,6 +232,11 @@ func (a *API) authorize() gin.HandlerFunc {
 			// 防御:缺少角色(未认证不应到达这里)→ 拒绝
 			writeErr(c, http.StatusForbidden, errForbidden, "permission denied")
 			c.Abort()
+			return
+		}
+		// 若为外部注入的受保护扩展路由，且已认证(tenant 或 superadmin)，直接放行
+		if v, exists := c.Get("janus.auth.is_protected_extension"); exists && v == true {
+			c.Next()
 			return
 		}
 		// gin-contrib/authz(v1.0.7)仅从 Basic Auth 取 subject(用户名),故先注入:

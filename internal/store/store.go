@@ -47,6 +47,7 @@ type Tenant struct {
 	Slug            string     `json:"slug"`
 	Status          string     `json:"status"`
 	IsSuperAdmin    bool       `json:"isSuperAdmin" gorm:"column:is_super_admin"`
+	TokenVersion    int64      `json:"-" gorm:"column:token_version"`
 	TierID          int64      `json:"-" gorm:"column:tier_id"`
 	Tier            Tier       `json:"tier" gorm:"foreignKey:TierID"`
 	VerifiedAt      *time.Time `json:"-" gorm:"column:verified_at"`
@@ -122,6 +123,7 @@ func (s *Store) CreateTenant(ctx context.Context, email, passwordHash, slug stri
 	t := Tenant{
 		Email: email, Slug: slug, Status: "pending",
 		IsSuperAdmin: isSuperAdmin, TierID: tier.ID,
+		TokenVersion: 1,
 	}
 	if passwordHash != "" {
 		t.PasswordHash = &passwordHash

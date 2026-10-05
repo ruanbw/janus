@@ -58,6 +58,11 @@ func (m *Manager) Issue(tenantID int64, role string, tokenVersion int64) (string
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(m.secret)
 }
 
+// Sign 为便捷签发方法，默认使用 "tenant" 角色签发。
+func (m *Manager) Sign(tenantID int64, tokenVersion int64) (string, error) {
+	return m.Issue(tenantID, "tenant", tokenVersion)
+}
+
 // Parse 校验签名、过期时间与 issuer,任一不合法均返回 error(调用方按 401 处理)。
 func (m *Manager) Parse(tokenString string) (*Claims, error) {
 	claims := &Claims{}

@@ -23,6 +23,7 @@ type Link struct {
 	Status         string         `json:"status"`
 	RulesEnabled   bool           `json:"rulesEnabled" gorm:"column:rules_enabled"`
 	Clicks         int64          `json:"clicks" gorm:"column:clicks"`
+	Metadata       Metadata       `json:"metadata" gorm:"column:metadata;type:jsonb"`
 	// DeletedAt 对外可见:回收站列表要靠它区分「已删除」,且前端在 PATCH 无关字段时
 	// 也需要知道这条记录处于已删除态(不可编辑)。omitempty 让未删除的记录不带该字段。
 	DeletedAt *time.Time `json:"deletedAt,omitempty" gorm:"column:deleted_at"`
@@ -117,6 +118,9 @@ func (s *Store) fillLinkMeta(ctx context.Context, l *Link) error {
 		return err
 	}
 	l.ClickVisits = c
+	if l.Metadata == nil {
+		l.Metadata = Metadata{}
+	}
 	return s.fillLinkRuleMeta(ctx, []*Link{l})
 }
 
@@ -306,7 +310,7 @@ func (s *Store) CreateLinkInTx(ctx context.Context, tx *gorm.DB, tenantID int64,
 	link := Link{TenantID: tenantID, Code: code,
 		RedirectStatus: effectiveRedirectStatus(redirectStatus, linkType),
 		LinkType:       linkType, LandingSource: landingSource, LandingURL: landingURL,
-		Status: "enabled", RulesEnabled: true}
+		Status: "enabled", RulesEnabled: true, Metadata: Metadata{}}
 	if err := tx.WithContext(ctx).Create(&link).Error; err != nil {
 		return 0, err
 	}
@@ -407,6 +411,7 @@ type LinkUpdate struct {
 	LandingURL     *string
 	Status         *string
 	RulesEnabled   *bool
+	Metadata       *Metadata
 	// DomainIDs 非空时整体替换关联域名(空数组 = 清空关联,由调用方保证不合法场景已拦截)。
 	DomainIDs *[]int64
 }
@@ -472,10 +477,16 @@ func (s *Store) UpdateLink(ctx context.Context, tenantID, id int64, upd LinkUpda
 		}
 		// 落地页型一律 302(写入侧钉死,见 effectiveRedirectStatus 的注释)
 		redirectStatus = effectiveRedirectStatus(redirectStatus, linkType)
+		updates := map[string]any{
+			"redirect_status": redirectStatus, "status": status,
+			"link_type": linkType, "landing_source": landingSource, "landing_url": landingURL,
+			"rules_enabled": rulesEnabled,
+		}
+		if upd.Metadata != nil {
+			updates["metadata"] = *upd.Metadata
+		}
 		if err := tx.Model(&Link{}).Where("id = ? AND tenant_id = ?", id, tenantID).
-			Updates(map[string]any{"redirect_status": redirectStatus, "status": status,
-				"link_type": linkType, "landing_source": landingSource, "landing_url": landingURL,
-				"rules_enabled": rulesEnabled}).Error; err != nil {
+			Updates(updates).Error; err != nil {
 			return err
 		}
 		// TargetURLs 非空时整体替换目标列表(先删后插,保持 position 顺序)

@@ -3,7 +3,9 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"sort"
 	"strings"
@@ -13,12 +15,30 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
+// ExtraMigrationsTableName 外部专有迁移的版本表名，与核心迁移版本隔离
+const ExtraMigrationsTableName = "goose_db_version_extra"
+
 // Migrate 使用成熟的数据库迁移库 github.com/pressly/goose/v3 执行 SQL 迁移。
 // 保持对外签名完全不变，且自动兼容历史 schema_migrations 记录。
 func Migrate(ctx context.Context, pool *pgxpool.Pool, dir string) error {
+	return MigrateWithExtra(ctx, pool, dir, nil)
+}
+
+// MigrateExtra 执行外部专有迁移，使用独立的 goose_db_version_extra 表记录版本。
+func MigrateExtra(ctx context.Context, pool *pgxpool.Pool, extraFS fs.FS) error {
+	return MigrateWithExtra(ctx, pool, "", extraFS)
+}
+
+// MigrateWithExtra 统一在分布式锁下执行基座核心迁移与外部专有迁移（双轨迁移流水线）。
+func MigrateWithExtra(ctx context.Context, pool *pgxpool.Pool, dir string, extraFS fs.FS) error {
 	db := stdlib.OpenDBFromPool(pool)
 	defer func() { _ = db.Close() }()
 
+	return MigrateDBWithExtra(ctx, db, dir, extraFS)
+}
+
+// MigrateDBWithExtra 在已有 *sql.DB 实例上执行双轨迁移（先核心迁移，后外部迁移）
+func MigrateDBWithExtra(ctx context.Context, db *sql.DB, dir string, extraFS fs.FS) error {
 	if err := goose.SetDialect("postgres"); err != nil {
 		return fmt.Errorf("goose set dialect: %w", err)
 	}
@@ -38,17 +58,27 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, dir string) error {
 		_, _ = lockConn.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock(hashtext('janus-migrate'))`)
 	}()
 
-	// 平滑兼容历史迁移记录：
-	// Janus 早期使用自研 schema_migrations 表（存储 0001_init.sql 等文件名）。
-	// goose 默认使用 goose_db_version 表（版本号为 int64，如 1, 2, 3）。
-	// 为防止切换到 goose 时重复执行已有历史迁移导致冲突，在此做一次平滑对齐。
-	if err := syncLegacyMigrations(ctx, db, dir); err != nil {
-		return fmt.Errorf("sync legacy migrations: %w", err)
+	// 第一轨：基座核心迁移
+	if dir != "" {
+		if err := syncLegacyMigrations(ctx, db, dir); err != nil {
+			return fmt.Errorf("sync legacy migrations: %w", err)
+		}
+		if err := goose.UpContext(ctx, db, dir); err != nil {
+			return fmt.Errorf("goose up: %w", err)
+		}
 	}
 
-	// 使用 goose 执行迁移
-	if err := goose.UpContext(ctx, db, dir); err != nil {
-		return fmt.Errorf("goose up: %w", err)
+	// 第二轨：外部专有迁移
+	if extraFS != nil {
+		origTable := goose.TableName()
+		goose.SetTableName(ExtraMigrationsTableName)
+		goose.SetBaseFS(extraFS)
+		err := goose.UpContext(ctx, db, ".")
+		goose.SetBaseFS(nil)
+		goose.SetTableName(origTable)
+		if err != nil && !errors.Is(err, goose.ErrNoMigrations) && !errors.Is(err, goose.ErrNoMigrationFiles) {
+			return fmt.Errorf("goose extra up: %w", err)
+		}
 	}
 
 	return nil
