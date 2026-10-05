@@ -19,7 +19,7 @@
 import { UAParser } from 'ua-parser-js';
 
 import { countryName } from '@/constants/countries';
-import type { FacetCount, SourceCount } from '@/types/api';
+import type { FacetCount, FacetCoverage, SourceCount } from '@/types/api';
 
 export interface BreakdownItem {
   name: string;
@@ -187,11 +187,30 @@ export function uaDistributions(userAgents: FacetCount[]): UADistributions {
  * 这里只把「标签 → 占比」这一步做完，并补齐固定标签集里没出现的项。
  */
 export function sourceDistribution(sources: SourceCount[]): BreakdownItem[] {
-  if (sources.length === 0) return [];
-  return tallyWeighted(
+	if (sources.length === 0) return [];
+	return tallyWeighted(
 		sources.map((s) => ({ label: s.name, count: s.count })),
 		['TikTok Ads', 'Meta Ads', 'Google Ads', '直接访问', '其他来源'],
 	);
+}
+
+/**
+ * 通用分桶分布:某个维度的「值 → 次数 + 占比」。
+ *
+ * 分母优先用 coverage.returned:维度被按基数上限截断时,它就是"已返回部分的总数",
+ * 拿被截断的桶去凑全量分母会算出偏小的占比(而且占比永远凑不满 100%)。
+ * 语言维度用这个函数;失败原因分桶没有 coverage(原因取值是封闭集合),
+ * 不传即可,分母退化为各桶之和。
+ */
+export function facetDistribution(items: FacetCount[], coverage?: FacetCoverage): BreakdownItem[] {
+	if (items.length === 0) return [];
+	const total = coverage?.returned || items.reduce((sum, item) => sum + item.count, 0);
+	if (total === 0) return [];
+	return items.map((item) => ({
+		name: item.value,
+		count: item.count,
+		percent: Math.round((item.count / total) * 100),
+	}));
 }
 
 /**

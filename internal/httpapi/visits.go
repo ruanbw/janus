@@ -10,6 +10,7 @@ package httpapi
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -17,14 +18,56 @@ import (
 	"janus/internal/store"
 )
 
+// overviewRangeDays 时间范围快捷值 → 窗口跨度(自然日,含今日)。
+//
+// 键是对外契约的一部分(前端快捷选择直接传这些值),改动等于破坏 API。
+// 一年按 365 个自然日算:窗口右端是请求时刻,所以 1y 必然覆盖不到未来的部分,
+// 但对"按天看趋势"来说这就是用户要的窗口。
+var overviewRangeDays = map[string]int{
+	"today": 1,
+	"3d":    3,
+	"7d":    7,
+	"30d":   30,
+	"1y":    365,
+}
+
+// defaultOverviewRange 未指定 range 时的默认窗口。
+//
+// 存在意义是给非界面调用方(脚本/第三方)一个确定的缺省口径:总览页自己永远
+// 显式传当前选中值。选 7d 而不是"保留期内全部",是因为后者的时长随部署配置
+// 变化,同一个请求在不同部署上含义不同。
+const defaultOverviewRange = "7d"
+
+// overviewWindowResp 窗口回显:让前端如实标注"这些数字是哪一段的"。
+//
+// RetentionDays 是访问明细保留期(天)。1y 窗口必然超出它(默认 90 天),
+// 前端据此说明"更早的数据已被清理任务删除",而不是把不足一年的数据冒充一年。
+type overviewWindowResp struct {
+	Range         string    `json:"range"`
+	From          time.Time `json:"from"`
+	To            time.Time `json:"to"`
+	RetentionDays int       `json:"retentionDays"`
+}
+
 // overviewResp GET /api/visits/overview 的响应体。
 //
-// 形状与 store.OverviewStats 一致,中间没有二次加工:handler 只做"取会话租户 →
-// 调 store → 写 JSON",口径判断全部留在 SQL 里,避免出现"前端算一遍、后端再算一遍"
-// 的两套实现。
-type overviewResp = store.OverviewStats
+// 聚合形状与 store.OverviewStats 一致,中间没有二次加工:handler 只做"取会话租户 →
+// 解析窗口 → 调 store → 写 JSON",口径判断全部留在 SQL 里,避免出现"前端算一遍、
+// 后端再算一遍"的两套实现;handler 加上的只有窗口本身(时区与日历属于展示口径)。
+type overviewResp struct {
+	Window overviewWindowResp `json:"window"`
+	store.OverviewStats
+}
 
-// handleVisitsOverview GET /api/visits/overview — 总览页的全量聚合。
+// localDayStart 返回 t 所在自然日的本地 00:00。
+// "今日"以服务器本地时区为准(生产容器用 TZ 指定);展示端不自己推算窗口,
+// 直接用响应里的 from/to,避免浏览器时区与服务器时区不一致时算出两个"今日"。
+func localDayStart(t time.Time) time.Time {
+	y, m, d := t.Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+// handleVisitsOverview GET /api/visits/overview?range=today|3d|7d|30d|1y — 总览页的全量聚合。
 //
 // 为什么不用"前端拉明细自己数"(这是本端点存在的原因,也是它与 handleListVisits
 // 的分工):
@@ -40,17 +83,49 @@ type overviewResp = store.OverviewStats
 //
 // 代价是几条覆盖索引上的聚合扫描(见迁移 0019 的部分索引),换来的是分布图与 KPI
 // 同源同口径,以及超过 100 条短链的租户也能看到真实总量。
+//
+// range 省略或为空按 defaultOverviewRange;非法值 400,而不是静默退回默认 ——
+// 拼错参数时给人一个"别的窗口"的数字,比报错更糟。
 func (a *API) handleVisitsOverview(c *gin.Context) {
 	t, _, ok := a.requireSession(c)
 	if !ok {
 		return
 	}
-	stats, err := a.store.OverviewStatsForTenant(c.Request.Context(), t.ID)
+
+	rangeValue := c.Request.URL.Query().Get("range")
+	if rangeValue == "" {
+		rangeValue = defaultOverviewRange
+	}
+	days, ok := overviewRangeDays[rangeValue]
+	if !ok {
+		writeErr(c, http.StatusBadRequest, errValidation, "range 必须为 today / 3d / 7d / 30d / 1y")
+		return
+	}
+
+	// 窗口右端取请求时刻(含右端之后写入的行本就不存在);左端是自然日 00:00,
+	// 因此 today 就是"今日 00:00 到现在", Nd 是"含今日在内的 N 个自然日"。
+	now := time.Now()
+	from := localDayStart(now).AddDate(0, 0, -(days - 1))
+	// 上一周期按同样的自然日跨度左移:7d 的上一周期就是再往前 7 个自然日。
+	previousFrom := from.AddDate(0, 0, -days)
+
+	stats, err := a.store.OverviewStatsForTenant(c.Request.Context(), t.ID, store.OverviewWindow{
+		From:         from,
+		PreviousFrom: previousFrom,
+	})
 	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	writeJSON(c, http.StatusOK, overviewResp(*stats))
+	writeJSON(c, http.StatusOK, overviewResp{
+		Window: overviewWindowResp{
+			Range:         rangeValue,
+			From:          from,
+			To:            now,
+			RetentionDays: int(a.cfg.VisitRetention / (24 * time.Hour)),
+		},
+		OverviewStats: *stats,
+	})
 }
 
 // visitGeoKey 请求级地理值的缓存键(gin.Context,生命周期就是一个请求)。

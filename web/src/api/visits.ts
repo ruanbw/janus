@@ -2,6 +2,7 @@
 import { get } from '@/utils/request';
 
 import type {
+  OverviewRange,
   OverviewStats,
   PageResult,
   Visit,
@@ -27,12 +28,15 @@ export function listVisits(
 }
 
 /**
- * 总览页的全量聚合(总访问数、CTR、各维度分布、热门短链排行)。
+ * 总览页的窗口内聚合(总访问数、CTR、各维度分布、热门短链排行)。
  *
  * 总览页不再用 listVisits 拉明细自己数:那会让分布图混入点击行与失败行,
  * 把"最近 50 行"当全量,并且只覆盖短链列表第一页的 100 条。口径与理由见
  * internal/httpapi/visits.go 的 handleVisitsOverview。
+ *
+ * range 是必传的:缺省由服务端兜底(7d)只服务于脚本/第三方调用,
+ * 界面永远显式传当前选中的窗口,避免"界面显示 A 窗口、请求实为 B 窗口"。
  */
-export function fetchOverviewStats(): Promise<OverviewStats> {
-  return get<OverviewStats>('/visits/overview');
+export function fetchOverviewStats(range: OverviewRange): Promise<OverviewStats> {
+  return get<OverviewStats>('/visits/overview', { range });
 }

@@ -278,6 +278,15 @@ type OverviewTopLink struct {
 	Visits   int64  `json:"visits"`
 }
 
+// OverviewPreviousTotals 上一周期(紧邻当前窗口之前、等长)的访问计数,用于环比。
+//
+// 只带三个"会随时间涨落"的计数:links 那类是当前库存,不存在"上一周期"。
+type OverviewPreviousTotals struct {
+	Visits        int64 `json:"visits"`
+	LandingVisits int64 `json:"landingVisits"`
+	Clicks        int64 `json:"clicks"`
+}
+
 // FacetCount 维度分布的一桶:原始取值 + 访问次数。
 type FacetCount struct {
 	Value string `json:"value"`
@@ -308,9 +317,19 @@ type OverviewFacets struct {
 	// Countries 只含可定位的访问;解析不出国家的访问既不进任何国家,
 	// 也不塞进"其他"——那批访问的来源确实未知。
 	Countries []FacetCount `json:"countries"`
+	// FailureReasons 窗口内 outcome='failed' 的行按 reason 分桶。
+	// 失败行不进 totals.visits(它们不是访问量),但也绝不该不可见:
+	// 规则拦截(404/429)与短链失效正是斗篷部署里最需要盯的一类流量。
+	FailureReasons []FacetCount `json:"failureReasons"`
+	// Languages 窗口内成功访问按 Accept-Language 首标签分桶,
+	// 空标签统一映射为「未携带」——这批访问占比要能凑满 100%,
+	// 又不该由每个展示端各自翻译一次。
+	Languages []FacetCount `json:"languages"`
 	// UserAgentCoverage / CountryCoverage 说明各自分母的取法。
 	UserAgentCoverage FacetCoverage `json:"userAgentCoverage"`
 	CountryCoverage   FacetCoverage `json:"countryCoverage"`
+	// LanguageCoverage 与 UA 同一策略:lang 是客户端可控请求头,基数有上限。
+	LanguageCoverage FacetCoverage `json:"languageCoverage"`
 }
 
 // OverviewStats 总览页一次取齐的聚合结果。
@@ -318,6 +337,18 @@ type OverviewStats struct {
 	Totals   OverviewTotals    `json:"totals"`
 	TopLinks []OverviewTopLink `json:"topLinks"`
 	Facets   OverviewFacets    `json:"facets"`
+	// PreviousTotals 用于环比:只有和上一周期比,绝对值才说明"在涨还是在跌"。
+	PreviousTotals OverviewPreviousTotals `json:"previousTotals"`
+}
+
+// OverviewWindow 总览统计的时间窗口:当前窗口 + 上一周期,由调用方给定时点。
+//
+// From 是当前窗口左端(含),右端隐含为查询时刻(SQL 里的 now);PreviousFrom 是
+// 上一周期左端(含),上一周期的右端就是 From —— 左闭右开,边界上的那一行
+// 不会被两个窗口各数一次,也不会两边都漏。
+type OverviewWindow struct {
+	From         time.Time
+	PreviousFrom time.Time
 }
 
 // overviewScopeFrom 总览统计的公共作用域:只圈定"哪些行属于本租户在册的短链"。
@@ -364,34 +395,49 @@ const overviewSourceExpr = `
 
 // OverviewStatsForTenant 一次取齐总览页所需的全部聚合。
 //
-// 各维度都是"全量 GROUP BY",不再是把最近 N 行当全量的抽样:代价是几条
+// window.From 是窗口左端(含):所有访问维度(totals 的访问计数、topLinks、facets)
+// 都只统计 created_at >= window.From 的行。窗口右端是"现在"(查询时刻),由 SQL 的
+// 隐式 now 决定,不传参。window.PreviousFrom 只作用于 previousTotals —— 环比要的是
+// "上一个等长窗口",它与当前窗口的其它维度不共享任何过滤。
+//
+// 为什么窗口由调用方传相对时刻而不是让 store 自己算"今日 00:00":
+// "今日"是展示口径(服务器本地时区的自然日),属于 HTTP 层;store 只做
+// "给定起点,统计之后的行",才不用在数据层复刻一份时区/日历逻辑。
+// 存量计数(links/activeLinks/landingLinks)是当前库存,不受窗口影响。
+//
+// 各维度都是"窗口内全量 GROUP BY",不是把最近 N 行当全量的抽样:代价是几条
 // 覆盖索引上的聚合扫描(见迁移 0019 的部分索引),换来的是分布图与 KPI
 // 必然对得上,以及超过 100 条短链的租户也能看到真实总量。
-func (s *Store) OverviewStatsForTenant(ctx context.Context, tenantID int64) (*OverviewStats, error) {
-	totals, err := s.overviewTotals(ctx, tenantID)
+func (s *Store) OverviewStatsForTenant(ctx context.Context, tenantID int64, window OverviewWindow) (*OverviewStats, error) {
+	totals, err := s.overviewTotals(ctx, tenantID, window.From)
 	if err != nil {
 		return nil, err
 	}
-	top, err := s.overviewTopLinks(ctx, tenantID)
+	previous, err := s.overviewPreviousTotals(ctx, tenantID, window.From, window.PreviousFrom)
 	if err != nil {
 		return nil, err
 	}
-	facets, err := s.overviewFacets(ctx, tenantID)
+	top, err := s.overviewTopLinks(ctx, tenantID, window.From)
 	if err != nil {
 		return nil, err
 	}
-	return &OverviewStats{Totals: *totals, TopLinks: top, Facets: *facets}, nil
+	facets, err := s.overviewFacets(ctx, tenantID, window.From)
+	if err != nil {
+		return nil, err
+	}
+	return &OverviewStats{Totals: *totals, PreviousTotals: *previous, TopLinks: top, Facets: *facets}, nil
 }
 
-// overviewTotals 短链存量与累计访问计数。
+// overviewTotals 短链存量与窗口内访问计数。
 //
 // 存量(links / activeLinks / landingLinks)来自 links 表,与 /api/links 同口径;
-// 累计访问与点击来自 visits 表,与 CountVisitsByLink 同口径。两组数放在同一个响应里,
+// 访问与点击来自 visits 表,与 CountVisitsByLink 同口径(再多一个 since 窗口)。
+// 两组数放在同一个响应里,
 // 就是为了让前端不必再"把短链列表的 visits 字段加起来"——那正是漏算超过 100 条短链的地方。
-func (s *Store) overviewTotals(ctx context.Context, tenantID int64) (*OverviewTotals, error) {
+func (s *Store) overviewTotals(ctx context.Context, tenantID int64, since time.Time) (*OverviewTotals, error) {
 	var t OverviewTotals
-	// 分母与分子同源同期:两者都只数 visits 表当前持有的行(同一个保留期窗口),
-	// 唯一的差别是 FILTER 里的动作集合。这也是 CTR 落在 0~100% 的结构前提 ——
+	// 分母与分子同源同期:两者都只数同一个 since 窗口里的行,唯一的差别是
+	// FILTER 里的动作集合。这也是 CTR 落在 0~100% 的结构前提 ——
 	// 分子不再取 links.clicks 那个永不衰减的永久计数器,否则 90 天清理会持续
 	// 削掉分母而分子不动,运行满一个保留期后 CTR 单调虚高到 100% 以上。
 	if err := s.db.WithContext(ctx).Raw(`
@@ -408,7 +454,7 @@ func (s *Store) overviewTotals(ctx context.Context, tenantID int64) (*OverviewTo
 		         WHERE v.action = 'click' AND v.outcome = 'success'
 		       ) AS clicks
 		`+overviewScopeFrom+`
-		 AND v.outcome = 'success'`, tenantID).Scan(&t).Error; err != nil {
+		 AND v.outcome = 'success' AND v.created_at >= ?`, tenantID, since).Scan(&t).Error; err != nil {
 		return nil, err
 	}
 	// 短链存量:与 /api/links 同口径(不含逻辑删除),供「共 N 条短链」一类文案使用。
@@ -428,15 +474,45 @@ func (s *Store) overviewTotals(ctx context.Context, tenantID int64) (*OverviewTo
 	return &t, nil
 }
 
-// overviewTopLinks 全租户按访问量降序的前 N 条短链(不受短链列表分页限制)。
-func (s *Store) overviewTopLinks(ctx context.Context, tenantID int64) ([]OverviewTopLink, error) {
+// overviewPreviousTotals 上一周期(紧邻当前窗口之前、等长)的访问计数,用于环比。
+//
+// 上一周期 = [previousFrom, from),左闭右开:与当前窗口 [from, now] 在边界上
+// 恰好互补,边界那一行既不会被两个窗口各数一次,也不会被漏掉。
+//
+// 更早的行若已被保留期清理,上一周期自然就是 0 —— 这里不做"保留期不足就改用
+// 其它窗口"的特殊处理:环比的分母必须真的是"上一个等长窗口",凑不出分母时
+// 前端按"新增/持平"如实降级,而不是拿个别的窗口冒充。
+func (s *Store) overviewPreviousTotals(ctx context.Context, tenantID int64, from, previousFrom time.Time) (*OverviewPreviousTotals, error) {
+	var t OverviewPreviousTotals
+	if err := s.db.WithContext(ctx).Raw(`
+		SELECT count(*) FILTER (
+		         WHERE v.action IN ('redirect','landing_view')
+		       ) AS visits,
+		       count(*) FILTER (
+		         WHERE v.action = 'landing_view'
+		       ) AS landing_visits,
+		       count(*) FILTER (
+		         WHERE v.action = 'click'
+		       ) AS clicks
+		`+overviewScopeFrom+`
+		 AND v.outcome = 'success' AND v.created_at >= ? AND v.created_at < ?`,
+		tenantID, previousFrom, from).Scan(&t).Error; err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// overviewTopLinks 窗口内全租户按访问量降序的前 N 条短链(不受短链列表分页限制)。
+// 窗口外的短链直接不出现在排行里:排行与总访问数必须同一口径。
+func (s *Store) overviewTopLinks(ctx context.Context, tenantID int64, since time.Time) ([]OverviewTopLink, error) {
 	var out []OverviewTopLink
 	err := s.db.WithContext(ctx).Raw(`
 		SELECT v.link_id AS id, l.code AS code, l.link_type AS link_type, count(*) AS visits
 		`+overviewVisitScope+`
+		 AND v.created_at >= ?
 		GROUP BY v.link_id, l.code, l.link_type
 		ORDER BY visits DESC, v.link_id ASC
-		LIMIT ?`, tenantID, OverviewTopLimit).Scan(&out).Error
+		LIMIT ?`, tenantID, since, OverviewTopLimit).Scan(&out).Error
 	if err != nil {
 		return nil, err
 	}
@@ -446,37 +522,63 @@ func (s *Store) overviewTopLinks(ctx context.Context, tenantID int64) ([]Overvie
 	return out, nil
 }
 
-// overviewFacets 三个维度的分布:UA 原始串、来源、国家。
-func (s *Store) overviewFacets(ctx context.Context, tenantID int64) (*OverviewFacets, error) {
+// overviewFacets 窗口内各维度的分布:UA 原始串、来源、国家、失败原因、语言。
+func (s *Store) overviewFacets(ctx context.Context, tenantID int64, since time.Time) (*OverviewFacets, error) {
 	f := &OverviewFacets{
 		UserAgents: []FacetCount{}, Sources: []SourceCount{}, Countries: []FacetCount{},
+		FailureReasons: []FacetCount{}, Languages: []FacetCount{},
 	}
 	// UA:按原始串分组,标签留给前端ua-parser-js 翻译。
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT v.user_agent AS value, count(*) AS count
 		`+overviewVisitScope+`
+		 AND v.created_at >= ?
 		GROUP BY v.user_agent
 		ORDER BY count DESC, v.user_agent ASC
-		LIMIT ?`, tenantID, overviewFacetLimit).Scan(&f.UserAgents).Error; err != nil {
+		LIMIT ?`, tenantID, since, overviewFacetLimit).Scan(&f.UserAgents).Error; err != nil {
+		return nil, err
+	}
+	// 语言:写入侧已把 Accept-Language 收敛成首标签(见 httpapi.clientLang),
+	// 这里只把空标签单列成「未携带」——与 UA 同一基数上限,截断时前端要说明。
+	if err := s.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(NULLIF(v.lang, ''), '未携带') AS value, count(*) AS count
+		`+overviewVisitScope+`
+		 AND v.created_at >= ?
+		GROUP BY 1
+		ORDER BY count DESC, value ASC
+		LIMIT ?`, tenantID, since, overviewFacetLimit).Scan(&f.Languages).Error; err != nil {
 		return nil, err
 	}
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT `+overviewSourceExpr+` AS name, count(*) AS count
 		`+overviewVisitScope+`
+		 AND v.created_at >= ?
 		GROUP BY 1
-		ORDER BY count DESC, name ASC`, tenantID).Scan(&f.Sources).Error; err != nil {
+		ORDER BY count DESC, name ASC`, tenantID, since).Scan(&f.Sources).Error; err != nil {
 		return nil, err
 	}
 	if err := s.db.WithContext(ctx).Raw(`
 		SELECT v.country AS value, count(*) AS count
 		`+overviewVisitScope+`
-		 AND v.country <> ''
+		 AND v.country <> '' AND v.created_at >= ?
 		GROUP BY v.country
-		ORDER BY count DESC, v.country ASC`, tenantID).Scan(&f.Countries).Error; err != nil {
+		ORDER BY count DESC, v.country ASC`, tenantID, since).Scan(&f.Countries).Error; err != nil {
+		return nil, err
+	}
+	// 失败分桶用 overviewScopeFrom 而不是 overviewVisitScope:后者排除了失败行。
+	// reason 为空的行不入任何桶(写入侧保证失败行 reason 非空,空值只可能来自
+	// 历史脏数据,硬塞一个"未知原因"反而像是查到了原因)。
+	if err := s.db.WithContext(ctx).Raw(`
+		SELECT v.reason AS value, count(*) AS count
+		`+overviewScopeFrom+`
+		 AND v.outcome = 'failed' AND v.reason <> '' AND v.created_at >= ?
+		GROUP BY v.reason
+		ORDER BY count DESC, v.reason ASC`, tenantID, since).Scan(&f.FailureReasons).Error; err != nil {
 		return nil, err
 	}
 	f.UserAgentCoverage = coverageOf(f.UserAgents, len(f.UserAgents) >= overviewFacetLimit)
 	f.CountryCoverage = coverageOf(f.Countries, false)
+	f.LanguageCoverage = coverageOf(f.Languages, len(f.Languages) >= overviewFacetLimit)
 	return f, nil
 }
 

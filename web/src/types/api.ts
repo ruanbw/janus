@@ -340,6 +340,18 @@ export interface OverviewTopLink {
   visits: number;
 }
 
+/**
+ * 上一周期(紧邻当前窗口之前、等长)的访问计数,用于环比。
+ *
+ * 可选:老响应/降级路径可能没有这一块,那时不显示环比 —— 宁可什么都不说,
+ * 也不能拿别的窗口的数字冒充"上一周期"。
+ */
+export interface OverviewPreviousTotals {
+  visits: number;
+  landingVisits: number;
+  clicks: number;
+}
+
 /** 维度分布的一桶:原始取值 + 访问次数 */
 export interface FacetCount {
   value: string;
@@ -378,15 +390,50 @@ export interface OverviewFacets {
   sources: SourceCount[];
   /** 只含可定位的访问(解析不出国家的不进任何桶) */
   countries: FacetCount[];
+  /** 窗口内失败访问按原因分桶(失败不计入 totals.visits,但必须看得见) */
+  failureReasons?: FacetCount[];
+  /** 窗口内成功访问按 Accept-Language 首标签分桶,空标签由后端归入「未携带」 */
+  languages?: FacetCount[];
   userAgentCoverage: FacetCoverage;
   countryCoverage: FacetCoverage;
+  /** 与 UA 同一策略:lang 是客户端可控请求头,基数有上限,截断时界面要说明 */
+  languageCoverage?: FacetCoverage;
 }
 
 /** 总览页一次取齐的聚合结果 */
 export interface OverviewStats {
+  /**
+   * 本次统计的时间窗口(服务端按本地自然日切分并把实际边界回显)。
+   *
+   * 可选:老响应/降级路径可能没有这一块,页面要能照常渲染 ——
+   * 与 facets 的 coverage 字段同一防御策略。
+   */
+  window?: OverviewWindow;
   totals: OverviewTotals;
+  /** 环比基准,可选(缺字段/为 null 时页面不显示环比) */
+  previousTotals?: OverviewPreviousTotals | null;
   topLinks: OverviewTopLink[];
   facets: OverviewFacets;
+}
+
+/** 总览时间范围的快捷值(与服务端 httpapi.overviewRangeDays 的键一一对应) */
+export type OverviewRange = 'today' | '3d' | '7d' | '30d' | '1y';
+
+/**
+ * 总览统计的时间窗口。
+ *
+ * from/to 由服务端给出:浏览器时区与服务器时区不一致时,前端自己推算"今日"
+ * 会算出第二个窗口。retentionDays 供"近一年"这类超出保留期的范围如实提示。
+ */
+export interface OverviewWindow {
+  /** 命中的范围值(缺省请求时是服务端默认值,不是空串) */
+  range: OverviewRange;
+  /** 窗口左端(含),ISO 8601 时刻 */
+  from: string;
+  /** 窗口右端(请求时刻),ISO 8601 时刻 */
+  to: string;
+  /** 访问明细保留期(天) */
+  retentionDays: number;
 }
 
 /** 统一错误响应:{ code, message, details? } */

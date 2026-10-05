@@ -1,9 +1,40 @@
 <template>
   <div class="space-y-5" data-od-id="overview-view">
-    <!-- 初次加载骨架屏过渡 (与 kpiList 的 5 项卡片对齐，消除布局跳动 CLS) -->
+    <!--
+      时间范围快捷选择。窗口作用于所有访问类指标（总访问数、点击数、CTR、地图、
+      排行与各分布图）；短链/域名这类"当前库存"不随时间变化。
+      控件放在加载分支之外：切窗口时数据要清空重拉，但控件必须一直在，
+      否则用户在等待期间连改回原来的范围都做不到。
+    -->
+    <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+      <div
+        role="group"
+        aria-label="时间范围"
+        class="inline-flex gap-0.5 rounded-lg border border-border bg-muted p-0.5"
+      >
+        <AppButton
+          v-for="opt in OVERVIEW_RANGES"
+          :key="opt.value"
+          size="sm"
+          variant="ghost"
+          :disabled="loading"
+          :aria-pressed="range === opt.value"
+          :class="range === opt.value
+            ? 'bg-background font-semibold text-foreground shadow-xs hover:bg-background'
+            : 'text-muted-foreground'"
+          @click="selectRange(opt.value)"
+        >
+          {{ opt.label }}
+        </AppButton>
+      </div>
+      <!-- 服务端回显的实际窗口边界：展示端不自己推算"今日"，时区不一致时那是第二个窗口 -->
+      <p v-if="windowText" class="font-mono text-xs text-ink-faint">{{ windowText }}</p>
+    </div>
+
+    <!-- 初次加载骨架屏过渡 (与 kpiList 的 4 项卡片对齐，消除布局跳动 CLS) -->
     <template v-if="loading && !overview">
       <section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
-        <AppCard v-for="i in 5" :key="'kpi-skel-' + i" class="flex flex-col justify-between min-h-[118px] p-4">
+        <AppCard v-for="i in 4" :key="'kpi-skel-' + i" class="flex flex-col justify-between min-h-[118px] p-4">
           <div class="space-y-2">
             <AppSkeleton width="60px" height="12px" />
             <AppSkeleton width="110px" height="28px" />
@@ -32,6 +63,7 @@
       <AppCard
         v-for="kpi in kpiList"
         :key="kpi.label"
+        :data-od-id="kpi.odId"
         class="relative flex flex-col justify-between min-h-[118px] hover:z-20 focus-within:z-20 p-4"
       >
         <div>
@@ -44,7 +76,26 @@
           </div>
         </div>
         <div class="mt-2 text-xs text-ink-soft">
-          {{ kpi.sub }}
+          <p>{{ kpi.sub }}</p>
+          <!-- 环比：只有和上一个等长窗口比，绝对值才说明"在涨还是在跌" -->
+          <p v-if="kpi.compare" class="mt-1 font-mono">{{ kpi.compare }}</p>
+        </div>
+
+        <!--
+          跳转 / 落地页占比是原「短链类型与流量结构」卡唯一独有的信息
+          （其余数字与其它卡片完全重复），折进总访问数这张卡里：
+          合计恒等于卡片上的总访问数，分母是现成的。
+        -->
+        <div v-if="kpi.split" class="mt-3">
+          <div
+            class="flex h-1.5 w-full overflow-hidden rounded-full border border-line"
+            role="img"
+            :aria-label="kpi.split.ariaLabel"
+          >
+            <span class="h-full bg-brand" :style="{ width: `${kpi.split.redirectPercent}%` }"></span>
+            <span class="h-full bg-info" :style="{ width: `${kpi.split.landingPercent}%` }"></span>
+          </div>
+          <div class="mt-1.5 font-mono text-2xs text-ink-soft">{{ kpi.split.text }}</div>
         </div>
 
         <!-- 说明提示气泡 -->
@@ -96,7 +147,7 @@
             </div>
             <h3 class="mt-4 text-base font-semibold text-ink">暂无流量访问数据</h3>
             <p class="mt-1.5 text-xs leading-relaxed text-ink-soft">
-              暂无流量访问数据，投放或测试访问后将在此自动汇总。
+              {{ rangeLabel }}内暂无流量访问数据，投放或测试访问后将在此自动汇总。
             </p>
             <p class="mt-1 text-xs text-ink-faint">
               当前已配置 {{ totals.links.toLocaleString() }} 条短链（{{ totals.activeLinks.toLocaleString() }} 条已启用），{{ domains.length }} 个域名（{{ activeDomainsCount }} 个已激活）。
@@ -168,69 +219,71 @@
         </div>
       </AppCard>
 
-      <!-- 短链类型与流量结构 -->
-      <AppCard v-if="totals.visits > 0" :padding="false" class="@container flex flex-col">
+      <!-- 失败与风险拦截 -->
+      <AppCard v-if="totals.visits > 0 || failureTotal > 0" :padding="false" class="@container flex flex-col">
         <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div>
-            <h2 class="text-base font-semibold tracking-tight text-ink">短链类型与流量结构</h2>
-            <p class="mt-0.5 text-xs text-ink-soft">区分直接跳转与落地页承接，合计等于总访问量。</p>
+            <h2 class="text-base font-semibold tracking-tight text-ink">失败与风险拦截</h2>
+            <p class="mt-0.5 text-xs text-ink-soft">规则拦截（404 / 429）与短链失效的访问。</p>
           </div>
-          <AppButton to="/links" size="sm" variant="outline">
-            查看各短链的访问 →
-          </AppButton>
+          <span v-if="failureTotal > 0" class="whitespace-nowrap font-mono text-xs font-medium text-warn">失败率 {{ failureRateText }}</span>
         </div>
         <div class="flex-1 p-4">
-          <!--
-            分段条不做扫出：它的两段各自都是"占满自己那一格"，值全在**格子的分界**上。
-            把分界做成动画就只能过渡 width（布局属性），而为了 26px 高的一根条
-            去动 width 不划算。真正的部分条在下面三行，那里才有"从无到有"可说。
-          -->
-          <div
-            class="flex h-6.5 w-full overflow-hidden rounded-md border border-line"
-            role="img"
-            :aria-label="`跳转型 ${totals.redirectVisits.toLocaleString()} 次占 ${redirectPercent}%，落地页型 ${totals.landingVisits.toLocaleString()} 次占 ${landingPercent}%`"
-          >
-            <span class="h-full bg-brand" :style="{ width: `${redirectPercent}%` }"></span>
-            <span class="h-full bg-info" :style="{ width: `${landingPercent}%` }"></span>
-          </div>
-
-          <div class="mt-3 flex flex-wrap items-center gap-3.5 text-xs text-ink-soft">
-            <span class="flex items-center gap-1.5">
-              <span class="h-2.5 w-2.5 shrink-0 rounded-xs bg-brand"></span>
-              跳转型
-            </span>
-            <span class="flex items-center gap-1.5">
-              <span class="h-2.5 w-2.5 shrink-0 rounded-xs bg-info"></span>
-              落地页型
-            </span>
-          </div>
-
-          <div class="mt-4 flex flex-col gap-2.5" :class="settling && 'is-settling'">
-            <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
-              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">跳转型访问</span>
+          <p v-if="failureRows.length === 0" class="py-6 text-center text-xs text-ink-soft">
+            窗口内没有失败访问
+          </p>
+          <div v-else class="flex flex-col gap-2.5" :class="settling && 'is-settling'">
+            <div
+              v-for="row in failureRows"
+              :key="row.reason"
+              class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
+            >
+              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">{{ row.label }}</span>
               <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
-                <div class="app-bar-fill h-full w-full rounded bg-brand" :style="{ transform: `scaleX(${sweepRatioOfStructure('跳转')})` }" />
+                <div class="app-bar-fill h-full w-full rounded bg-warn" :style="{ transform: `scaleX(${sweepRatioOf('失败', row.reason)})` }" />
               </div>
-              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ totals.redirectVisits.toLocaleString() }} · {{ redirectPercent }}%</span>
-            </div>
-            <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
-              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">落地页访问</span>
-              <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
-                <div class="app-bar-fill h-full w-full rounded bg-info" :style="{ transform: `scaleX(${sweepRatioOfStructure('落地页')})` }" />
-              </div>
-              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ totals.landingVisits.toLocaleString() }} · {{ landingPercent }}%</span>
-            </div>
-            <div class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5">
-              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">落地页点击</span>
-              <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
-                <div class="app-bar-fill h-full w-full rounded bg-ok" :style="{ transform: `scaleX(${sweepRatioOfStructure('点击')})` }" />
-              </div>
-              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ totals.clicks.toLocaleString() }} · CTR {{ ctrText }}</span>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ row.count.toLocaleString() }} 次 · {{ row.percent }}%</span>
             </div>
           </div>
         </div>
         <div class="border-t border-line px-4 py-2.5 text-xs text-ink-faint">
-          落地页点击经平台 JS SDK 回传，整体转化率（CTR）反映落地页对目标 URL 的转化效率。
+          失败访问不计入总访问数；失败率 = 失败 /（成功访问 + 失败）。短码本身不存在（扫描器乱猜）不落行，故不在此列。
+        </div>
+      </AppCard>
+
+      <!-- 语言分布 -->
+      <AppCard v-if="totals.visits > 0" :padding="false" class="@container flex flex-col">
+        <div class="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <div>
+            <h2 class="text-base font-semibold tracking-tight text-ink">语言分布</h2>
+            <p class="mt-0.5 text-xs text-ink-soft">按 Accept-Language 的首个语言标签统计。</p>
+          </div>
+        </div>
+        <div class="flex-1 p-4">
+          <p v-if="languageBreakdown.length === 0" class="py-6 text-center text-xs text-ink-soft">
+            窗口内没有语言数据
+          </p>
+          <div v-else class="flex flex-col gap-2.5" :class="settling && 'is-settling'">
+            <div
+              v-for="(lang, index) in languageBreakdown"
+              :key="lang.name"
+              class="grid grid-cols-[124px_minmax(0,1fr)_116px] items-center gap-3 @max-[470px]:grid-cols-[minmax(72px,1fr)_minmax(48px,1.3fr)_max-content] @max-[340px]:grid-cols-2 @max-[340px]:gap-y-1.5"
+            >
+              <span class="min-w-0 truncate text-xs text-ink @max-[340px]:col-span-1">{{ lang.name }}</span>
+              <div class="h-3.5 w-full overflow-hidden rounded bg-surface-strong @max-[340px]:col-span-2 @max-[340px]:row-start-2">
+                <div
+                  class="app-bar-fill h-full w-full rounded"
+                  :class="index === 0 && lang.count > 0 ? 'bg-brand' : 'bg-brand/40'"
+                  :style="{ transform: `scaleX(${sweepRatioOf('语言', lang.name)})` }"
+                />
+              </div>
+              <span class="whitespace-nowrap font-mono text-right text-xs text-ink-soft @max-[340px]:col-start-2 @max-[340px]:row-start-1">{{ lang.count.toLocaleString() }} 次 · {{ lang.percent }}%</span>
+            </div>
+          </div>
+        </div>
+        <div class="border-t border-line px-4 py-2.5 text-xs text-ink-faint">
+          未携带该请求头的访问归入「未携带」；规则引擎的「语言」条件用的就是这个标签。
+          <template v-if="languageTruncated">标签种类过多，本图按访问量前 {{ USER_AGENT_LIMIT }} 种语言标签统计。</template>
         </div>
       </AppCard>
 
@@ -366,10 +419,16 @@
       </AppCard>
     </section>
 
-    <!-- 口径提示：分布图覆盖到什么范围（被截断时必须如实说明，不能默认当成全量） -->
+    <!-- 口径提示：统计窗口与分布图覆盖到什么范围（被截断时必须如实说明，不能默认当成全量） -->
     <p v-if="totals.visits > 0" class="text-xs text-ink-faint">
-      分布口径：只统计<strong class="font-medium text-ink-soft">成功</strong>的跳转与落地页视图（不含点击与失败），
-      时间范围为访问明细的保留期。地图分母是<strong class="font-medium text-ink-soft">能定位到国家</strong>的
+      <template v-if="windowText">{{ windowText }}（服务器本地时区的自然日）。</template>
+      分布口径：各分布图只统计<strong class="font-medium text-ink-soft">成功</strong>的跳转与落地页视图（不含点击与失败），
+      失败访问单列在「失败与风险拦截」，
+      <template v-if="retentionExceeded">
+        所选范围超过访问明细保留期（{{ retentionDays }} 天），更早的数据已被清理任务删除，
+        图表只覆盖保留期内的部分。
+      </template>
+      地图分母是<strong class="font-medium text-ink-soft">能定位到国家</strong>的
       {{ locatedVisits.toLocaleString() }} 次访问，其余 {{ (totals.visits - locatedVisits).toLocaleString() }} 次
       无法定位（私网 / 回环 / 离线库未收录），不进任何国家。
       <template v-if="userAgentsTruncated">
@@ -386,7 +445,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, inject, onMounted, ref } from 'vue';
+import { routeLocationKey, routerKey } from 'vue-router';
 import { CircleHelp, ExternalLink, RefreshCw } from '@lucide/vue';
 
 import { listDomains } from '@/api/domains';
@@ -399,11 +459,22 @@ import AppTag from '@/components/app/AppTag.vue';
 import AppTooltip from '@/components/app/AppTooltip.vue';
 import { useSweep, sweepRatio, type SweepRow } from '@/composables/useSweep';
 import { ApiError } from '@/types/api';
-import type { Domain, OverviewStats } from '@/types/api';
+import type { Domain, OverviewRange, OverviewStats } from '@/types/api';
 import { message } from '@/utils/toast';
 
 import {
+  DEFAULT_OVERVIEW_RANGE,
+  formatWindowDay,
+  isOverviewRange,
+  OVERVIEW_RANGES,
+  OVERVIEW_RANGE_DAYS,
+  overviewRangeLabel,
+} from './overviewRange';
+import { failureReasonLabel } from './failureReasons';
+import { recentCompareText } from './recentCompare';
+import {
   countryDistribution,
+  facetDistribution,
   sourceDistribution,
   uaDistributions,
 } from './trafficBreakdown';
@@ -417,16 +488,44 @@ import WorldMapPanel from './WorldMapPanel.vue';
 const USER_AGENT_LIMIT = 500;
 
 /**
- * 访问明细保留期（天）。分布图的时间范围就是它 —— 超过这个窗口的访问
- * 已被后台清理任务删除，所以任何分布都只覆盖这段窗口，文案必须如实说明。
- * 默认值与后端 JANUS_VISIT_RETENTION 的默认值一致。
+ * 保留期的兜底值（天）。正常路径用响应里的 window.retentionDays ——
+ * 它是服务端配置（JANUS_VISIT_RETENTION）的真实值；这里只在老响应/降级
+ * 缺 window 时兜底，避免文案出现 undefined。
  */
-const VISIT_RETENTION_DAYS = 90;
+const FALLBACK_RETENTION_DAYS = 90;
+
+/**
+ * 路由用带默认值的 inject 取，而不是 useRoute/useRouter。
+ *
+ * 总览页必须能在没有路由上下文时渲染（单测、嵌入式挂载都是这种场景），
+ * 而那两处 ?range= 的读写是增强而不是渲染前提；inject 的 null 默认值把这个
+ * 前提写在了注入点上，也省掉一条每次挂载都会出现的 "injection not found" 警告。
+ */
+const route = inject(routeLocationKey, null);
+const router = inject(routerKey, null);
 
 const loading = ref(false);
 const domains = ref<Domain[]>([]);
 /** 后端一次性算好的聚合结果；null = 尚未加载或加载失败 */
 const overview = ref<OverviewStats | null>(null);
+/**
+ * 从 URL 读初始范围。
+ *
+ * 非法值（包括没有路由上下文时的空值）一律回落到默认窗口：页面照常渲染，
+ * 地址栏随后由 syncRangeQuery 规范回这个值。
+ */
+function initialOverviewRange(): OverviewRange {
+  const value = route?.query?.range;
+  return isOverviewRange(value) ? value : DEFAULT_OVERVIEW_RANGE;
+}
+
+/**
+ * 当前选中的时间窗口；窗口边界不在这里推算，只用服务端回显的 window.from/to 展示。
+ *
+ * 初值来自 URL 的 ?range=：范围是"可刷新、可分享"的状态，刷新后还在同一个窗口，
+ * 把链接发给同事看到的也是同一个窗口。
+ */
+const range = ref<OverviewRange>(initialOverviewRange());
 
 /** 尚未加载 / 加载失败时的占位：全 0，让页面显示"暂无数据"而不是 undefined */
 const EMPTY_TOTALS: OverviewStats['totals'] = {
@@ -450,6 +549,28 @@ const userAgentsTruncated = computed(() => facets.value?.userAgentCoverage?.trun
 
 /** 能定位到国家的访问次数（地图的分母） */
 const locatedVisits = computed(() => facets.value?.countryCoverage?.returned ?? 0);
+
+const rangeLabel = computed(() => overviewRangeLabel(range.value));
+const windowInfo = computed(() => overview.value?.window ?? null);
+
+/** 服务端回显的实际窗口，如「统计窗口：近 7 天 · 2026-09-30 ~ 2026-10-06」 */
+const windowText = computed(() => {
+  const w = windowInfo.value;
+  if (!w) return '';
+  return `统计窗口：${rangeLabel.value} · ${formatWindowDay(w.from)} ~ ${formatWindowDay(w.to)}`;
+});
+
+const retentionDays = computed(() => windowInfo.value?.retentionDays ?? FALLBACK_RETENTION_DAYS);
+
+/**
+ * 所选范围是否超出访问明细保留期。
+ *
+ * 「近一年」在默认 90 天保留期下必然超限：更早的明细已被清理任务删除，
+ * 图表只能覆盖保留期内的部分，必须如实说明，不能把不足一年的数据当成一年。
+ */
+const retentionExceeded = computed(
+  () => windowInfo.value !== null && OVERVIEW_RANGE_DAYS[range.value] > retentionDays.value,
+);
 
 const sourceBreakdown = computed(() => sourceDistribution(facets.value?.sources ?? []));
 /** 三张 UA 分布图共用一次解析：见 trafficBreakdown.uaDistributions 的说明 */
@@ -481,8 +602,6 @@ const ctrPercent = computed(() => {
 
 const ctrText = computed(() => (totals.value.landingVisits === 0 ? '0%' : `${ctrPercent.value.toFixed(1)}%`));
 
-const landingCtrPercent = computed(() => Math.min(100, Math.round(ctrPercent.value)));
-
 const redirectPercent = computed(() => {
   if (totals.value.visits === 0) return 0;
   return Math.round((totals.value.redirectVisits / totals.value.visits) * 1000) / 10;
@@ -492,6 +611,52 @@ const landingPercent = computed(() => {
   if (totals.value.visits === 0) return 0;
   return Math.round((totals.value.landingVisits / totals.value.visits) * 1000) / 10;
 });
+
+/**
+ * 失败与风险拦截：窗口内失败行按原因分桶。
+ *
+ * 失败行不计入 totals.visits（它们不是访问量），但它们恰恰是斗篷部署里最需要
+ * 盯的一类流量：规则拦截 404/429、短链停用/删除、无可用目标、落地页缺失。
+ * 一行的占比分母是**失败总数**（不是总访问），否则三行加起来永远不够 100%。
+ */
+const failureRows = computed(() => {
+  const items = facets.value?.failureReasons ?? [];
+  const total = items.reduce((sum, item) => sum + item.count, 0);
+  return items.map((item) => ({
+    reason: item.value,
+    label: failureReasonLabel(item.value),
+    count: item.count,
+    percent: total === 0 ? 0 : Math.round((item.count / total) * 100),
+  }));
+});
+
+const failureTotal = computed(() => failureRows.value.reduce((sum, row) => sum + row.count, 0));
+
+/**
+ * 失败率 = 失败 /（成功访问 + 失败）。
+ *
+ * 分母不是 totals.visits 本身：那个数只含成功访问，拿它当分母会得到一个
+ * "失败占比"而不是"失败率"，失败越多这个比例的语义越离谱（可以超过 100%）。
+ */
+const failureRateText = computed(() => {
+  const denominator = totals.value.visits + failureTotal.value;
+  if (denominator === 0) return '0%';
+  return `${((failureTotal.value / denominator) * 100).toFixed(1)}%`;
+});
+
+/** 访问量环比：缺 previousTotals（老响应/降级）时返回 null，界面整行不显示 */
+const visitsCompare = computed(() => {
+  const previous = overview.value?.previousTotals;
+  if (!previous) return null;
+  return recentCompareText(totals.value.visits, previous.visits);
+});
+
+/** 语言分布：分母用 coverage.returned（截断时它是"已返回部分"的总数） */
+const languageBreakdown = computed(() =>
+  facetDistribution(facets.value?.languages ?? [], facets.value?.languageCoverage),
+);
+
+const languageTruncated = computed(() => facets.value?.languageCoverage?.truncated ?? false);
 
 /** 热门短链排行：后端已按全租户访问量降序取好，不再在前端对"前 100 条"重排 */
 const topLinks = computed(() => overview.value?.topLinks ?? []);
@@ -503,9 +668,9 @@ function sharePercent(visits: number): string {
 }
 
 /**
- * 六处条形共用一套扫出状态，但键必须互不重名：维度用 `来源:`/`设备:`… 前缀，
- * 排行用 `link:` + 短链 id，结构三行用 `结构:`。共用一套只是省一个 watcher，
- * 不是为了共享"进度"——六处是六个独立的画面，被同一个进度条连起来反而会互相拖慢。
+ * 各处条形共用一套扫出状态，但键必须互不重名：维度用 `来源:`/`设备:`… 前缀，
+ * 排行用 `link:` + 短链 id。共用一套只是省一个 watcher，不是为了共享"进度"——
+ * 每张图都是独立的画面，被同一个进度条连起来反而会互相拖慢。
  */
 const sweepRows = computed<SweepRow[]>(() => {
   const visitTotal = totals.value.visits || 1;
@@ -530,11 +695,14 @@ const sweepRows = computed<SweepRow[]>(() => {
       key: `浏览器:${item.name}`,
       ratio: sweepRatio(item.percent / 100),
     })),
-    // 跳转 / 落地页 / 点击三行：分母并不相同（点击那一行的分母是落地页访问，
-    // 不是总访问），所以各给各的比例，绝不共用一个分母凑成"看起来一样长"。
-    { key: '结构:跳转', ratio: sweepRatio(redirectPercent.value / 100) },
-    { key: '结构:落地页', ratio: sweepRatio(landingPercent.value / 100) },
-    { key: '结构:点击', ratio: sweepRatio(landingCtrPercent.value / 100) },
+    ...languageBreakdown.value.map((item) => ({
+      key: `语言:${item.name}`,
+      ratio: sweepRatio(item.percent / 100),
+    })),
+    ...failureRows.value.map((row) => ({
+      key: `失败:${row.reason}`,
+      ratio: sweepRatio(row.percent / 100),
+    })),
   ];
 });
 
@@ -552,26 +720,33 @@ function shareWidth(linkId: number): number {
   return sweepValue(`link:${linkId}`);
 }
 
-/** 四张分布图通用：按维度键取当前应当显示的比例 */
-function sweepRatioOf(dimension: '来源' | '设备' | '系统' | '浏览器', name: string): number {
+/** 分布图通用：按维度键取当前应当显示的比例 */
+function sweepRatioOf(dimension: '来源' | '设备' | '系统' | '浏览器' | '语言' | '失败', name: string): number {
   return sweepValue(`${dimension}:${name}`);
 }
 
-/** 结构卡三行：跳转 / 落地页 / 点击 */
-function sweepRatioOfStructure(row: '跳转' | '落地页' | '点击'): number {
-  return sweepValue(`结构:${row}`);
-}
-
 interface KPIItem {
+  /** 卡片根节点的 data-od-id（自动化测试锚点，与其它页面同一约定） */
+  odId: string;
   label: string;
   value: string;
   unit?: string;
   sub: string;
   tip: string;
+  /** 环比文案；缺 previousTotals 时为 null，整行不渲染 */
+  compare?: string | null;
+  /** 结构分段条：跳转 vs 落地页占比（目前只有总访问数卡片用） */
+  split?: {
+    ariaLabel: string;
+    text: string;
+    redirectPercent: number;
+    landingPercent: number;
+  };
 }
 
 const kpiList = computed<KPIItem[]>(() => [
   {
+    odId: 'kpi-links',
     label: '活跃短链',
     value: totals.value.activeLinks.toLocaleString(),
     unit: '条',
@@ -579,6 +754,7 @@ const kpiList = computed<KPIItem[]>(() => [
     tip: '状态为「启用」的短链数量。已停用的短链不计入，不参与重定向与流量承接。',
   },
   {
+    odId: 'kpi-domains',
     label: '承载域名',
     value: activeDomainsCount.value.toLocaleString(),
     unit: '个',
@@ -586,28 +762,28 @@ const kpiList = computed<KPIItem[]>(() => [
     tip: 'DNS 解析已指向本服务器且状态为「已激活」的域名数量，可正常签发证书并承载短链跳转。',
   },
   {
+    odId: 'kpi-visits',
     label: '总访问数',
     value: totals.value.visits.toLocaleString(),
     unit: '次',
-    sub: totals.value.visits > 0 ? '所有短链累计访问总量' : '暂无访问记录',
-    tip: `所有在册短链收到的成功跳转与落地页视图累计总数（保留期 ${VISIT_RETENTION_DAYS} 天内）。跳转型短链重定向即记录一次，落地页型短链落地页展现即记录一次；点击与失败都不计入。`,
+    sub: totals.value.visits > 0 ? `${rangeLabel.value} · 所有在册短链` : `${rangeLabel.value}暂无访问记录`,
+    tip: `${rangeLabel.value}内所有在册短链收到的成功跳转与落地页视图。跳转型短链重定向即记录一次，落地页型短链落地页展现即记录一次；点击与失败都不计入。统计窗口由上方时间范围决定，最长只覆盖访问明细保留期（${retentionDays.value} 天）。进度条是跳转型与落地页型的构成占比，两段合计等于这个总数。`,
+    compare: visitsCompare.value,
+    split: {
+      ariaLabel: `跳转型 ${totals.value.redirectVisits.toLocaleString()} 次占 ${redirectPercent.value}%，落地页型 ${totals.value.landingVisits.toLocaleString()} 次占 ${landingPercent.value}%`,
+      text: `跳转 ${totals.value.redirectVisits.toLocaleString()} / 落地页 ${totals.value.landingVisits.toLocaleString()}`,
+      redirectPercent: redirectPercent.value,
+      landingPercent: landingPercent.value,
+    },
   },
   {
-    label: '落地页点击数',
-    value: totals.value.clicks.toLocaleString(),
-    unit: '次',
-    sub: totals.value.landingLinks > 0
-      ? `来自 ${totals.value.landingLinks.toLocaleString()} 条落地页型短链`
-      : '暂无落地页短链',
-    tip: '落地页上按钮经 SDK 触发回传的累计有效点击次数。仅落地页型短链拥有点击统计。',
-  },
-  {
+    odId: 'kpi-ctr',
     label: '整体转化率 (CTR)',
     value: ctrText.value,
     sub: totals.value.visits > 0
       ? `点击 ${totals.value.clicks.toLocaleString()} / 落地页访问 ${totals.value.landingVisits.toLocaleString()}`
       : '访问量为 0 时显示 0%',
-    tip: `转化率（CTR）= 落地页点击数 / 落地页访问数。分母只取落地页访问 —— 跳转型短链的访问不可能产生点击，算进去会系统性压低这个指标。分子与分母同源同期，都受 ${VISIT_RETENTION_DAYS} 天保留期约束。`,
+    tip: `转化率（CTR）= 落地页点击数 / 落地页访问数。分母只取落地页访问 —— 跳转型短链的访问不可能产生点击，算进去会系统性压低这个指标。分子与分母同源同窗口（${rangeLabel.value}），不会跨窗口拼数。`,
   },
 ]);
 
@@ -619,6 +795,36 @@ const kpiList = computed<KPIItem[]>(() => [
  * 用户知道请求在飞，同时旧数字还留着可读。
  */
 const revalidating = computed(() => loading.value && overview.value !== null);
+
+/**
+ * 切换时间窗口。
+ *
+ * 旧窗口的数字必须立即离场：把 A 窗口的数字留在 B 窗口的标签下，比让用户
+ * 看到加载态更糟 —— 数字和它所属的窗口对不上，是口径事故而不是体验问题。
+ * 同窗口刷新（空态里的"刷新数据"）不走这里，仍走 revalidating 的压暗保留旧值路径。
+ */
+function selectRange(next: OverviewRange) {
+  if (next === range.value) return;
+  range.value = next;
+  void syncRangeQuery(next);
+  overview.value = null;
+  void loadData();
+}
+
+/**
+ * 把选中的范围写回地址栏（?range=）。
+ *
+ * 范围是页面状态而不只是组件状态：刷新后要还在同一个窗口，把链接发给同事
+ * 看到的也必须是同一个窗口。用 replace 而不是 push —— 连点几个范围不该在
+ * 浏览器历史里堆出一串中间态，"返回"要能直接回到上一页。
+ *
+ * 没有路由上下文时（单测/嵌入式挂载）静默跳过。
+ */
+async function syncRangeQuery(value: OverviewRange) {
+  if (!router || !route) return;
+  if (route.query.range === value) return;
+  await router.replace({ query: { ...route.query, range: value } });
+}
 
 /**
  * 把一次失败拆成「给用户看」与「给工程师看」两路。
@@ -646,7 +852,7 @@ async function loadData() {
     // 用 allSettled 而不是 all：all 下一个失败会把另一个**已经拿到的**结果一起丢掉，
     // /api/domains 挂掉时页面谎报「暂无流量访问数据」，而统计其实已经取到了。
     const [statsResult, domainsResult] = await Promise.allSettled([
-      fetchOverviewStats(),
+      fetchOverviewStats(range.value),
       listDomains(),
     ]);
 
@@ -668,6 +874,9 @@ async function loadData() {
 }
 
 onMounted(() => {
+  // 地址栏与页面不允许各说各话：URL 里是非法范围时，按默认窗口加载后
+  // 顺手把地址栏规范回合法值，否则用户复制出去的链接会把别人也带进降级态。
+  void syncRangeQuery(range.value);
   loadData();
 });
 </script>
