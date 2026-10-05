@@ -11,10 +11,10 @@
 import { mount } from '@vue/test-utils';
 import { h, type Component } from 'vue';
 
-import DropdownMenu from '@/components/ui/dropdown-menu.vue';
-import DropdownMenuTrigger from '@/components/ui/dropdown-menu-trigger.vue';
-import Popover from '@/components/ui/popover.vue';
-import PopoverTrigger from '@/components/ui/popover-trigger.vue';
+import { DropdownMenu } from '@/components/ui/dropdown-menu';
+import { DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { Popover } from '@/components/ui/popover';
+import { PopoverTrigger } from '@/components/ui/popover';
 
 describe('popover.vue / dropdown-menu.vue — 根上的 attrs 必须落到真实 DOM', () => {
   it('popover：class 落到根 DOM 元素上', () => {

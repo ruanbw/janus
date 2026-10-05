@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import UiTabsContent from '@/components/ui/tabs-content.vue';
+import { TabsContent as UiTabsContent } from '@/components/ui/tabs';
 
 const props = defineProps<{
   value: string | number;

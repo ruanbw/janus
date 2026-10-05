@@ -22,7 +22,7 @@ import {
   buttonVariants as uiButtonVariants,
   type ButtonSize as UiButtonSize,
   type ButtonVariant as UiButtonVariant,
-} from '@/components/ui/button.vue';
+} from '@/components/ui/button';
 
 import { cn } from '@/lib/utils';
 
@@ -96,7 +96,7 @@ import { computed } from 'vue';
 import { RouterLink, type RouteLocationRaw } from 'vue-router';
 import { Loader2 } from '@lucide/vue';
 
-import UiButton from '@/components/ui/button.vue';
+import { Button as UiButton } from '@/components/ui/button';
 
 const emit = defineEmits<{ click: [event: MouseEvent] }>();
 

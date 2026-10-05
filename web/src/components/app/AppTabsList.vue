@@ -7,7 +7,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import TabsList from '@/components/ui/tabs-list.vue';
+import { TabsList } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 
 const props = withDefaults(

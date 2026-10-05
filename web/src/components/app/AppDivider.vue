@@ -33,7 +33,7 @@
 </template>
 
 <script setup lang="ts">
-import UiSeparator from '@/components/ui/separator.vue';
+import { Separator as UiSeparator } from '@/components/ui/separator';
 
 import { cn } from '@/lib/utils';
 

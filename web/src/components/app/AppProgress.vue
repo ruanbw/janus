@@ -19,7 +19,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import UiProgress from '@/components/ui/progress.vue';
+import { Progress as UiProgress } from '@/components/ui/progress';
 
 import { cn } from '@/lib/utils';
 

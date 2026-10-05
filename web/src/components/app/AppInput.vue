@@ -65,7 +65,7 @@
 import { computed, ref, useSlots } from 'vue';
 import { Eye, EyeOff, X } from '@lucide/vue';
 
-import UiInput from '@/components/ui/input.vue';
+import { Input as UiInput } from '@/components/ui/input';
 
 import { cn } from '@/lib/utils';
 import { useFormItem } from './form';

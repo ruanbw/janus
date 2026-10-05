@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import CardDescriptionPrimitive from '@/components/ui/card-description.vue';
+import { CardDescription as CardDescriptionPrimitive } from '@/components/ui/card';
 
 import { cn } from '@/lib/utils';
 

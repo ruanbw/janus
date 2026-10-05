@@ -9,7 +9,7 @@
 </template>
 
 <script lang="ts">
-import { badgeVariants, type BadgeVariant } from '@/components/ui/badge.vue';
+import { badgeVariants, type BadgeVariant } from '@/components/ui/badge';
 
 export type TagVariant = BadgeVariant;
 export type TagSize = 'default' | 'small';
@@ -40,7 +40,7 @@ export { badgeVariants };
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import Badge from '@/components/ui/badge.vue';
+import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
 const props = withDefaults(

@@ -18,7 +18,7 @@ import {
 } from 'reka-ui';
 
 import AppSelect from '@/components/app/AppSelect.vue';
-import UiSelectValue from '@/components/ui/select-value.vue';
+import { SelectValue as UiSelectValue } from '@/components/ui/select';
 import { SelectValue } from 'reka-ui';
 
 const OPTIONS = [

@@ -58,12 +58,12 @@
 import { computed, ref } from 'vue';
 import { ShieldQuestion, TriangleAlert } from '@lucide/vue';
 
-import AlertDialog from '@/components/ui/alert-dialog.vue';
-import AlertDialogPortal from '@/components/ui/alert-dialog-portal.vue';
-import AlertDialogOverlay from '@/components/ui/alert-dialog-overlay.vue';
-import AlertDialogContent from '@/components/ui/alert-dialog-content.vue';
-import AlertDialogTitle from '@/components/ui/alert-dialog-title.vue';
-import AlertDialogDescription from '@/components/ui/alert-dialog-description.vue';
+import { AlertDialog } from '@/components/ui/alert-dialog';
+import { AlertDialogPortal } from '@/components/ui/alert-dialog';
+import { AlertDialogOverlay } from '@/components/ui/alert-dialog';
+import { AlertDialogContent } from '@/components/ui/alert-dialog';
+import { AlertDialogTitle } from '@/components/ui/alert-dialog';
+import { AlertDialogDescription } from '@/components/ui/alert-dialog';
 
 import AppButton from './AppButton.vue';
 import { closeConfirm, confirmState } from './confirm';

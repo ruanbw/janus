@@ -12,7 +12,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import RadioGroup from '@/components/ui/radio-group.vue';
+import { RadioGroup } from '@/components/ui/radio-group';
 import { cn } from '@/lib/utils';
 import { useFormItem } from './form';
 

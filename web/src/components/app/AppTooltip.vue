@@ -18,11 +18,11 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
-import UiTooltip from '@/components/ui/tooltip.vue';
-import UiTooltipArrow from '@/components/ui/tooltip-arrow.vue';
-import UiTooltipContent from '@/components/ui/tooltip-content.vue';
-import UiTooltipPortal from '@/components/ui/tooltip-portal.vue';
-import UiTooltipTrigger from '@/components/ui/tooltip-trigger.vue';
+import { Tooltip as UiTooltip } from '@/components/ui/tooltip';
+import { TooltipArrow as UiTooltipArrow } from '@/components/ui/tooltip';
+import { TooltipContent as UiTooltipContent } from '@/components/ui/tooltip';
+import { TooltipPortal as UiTooltipPortal } from '@/components/ui/tooltip';
+import { TooltipTrigger as UiTooltipTrigger } from '@/components/ui/tooltip';
 
 const props = withDefaults(
   defineProps<{

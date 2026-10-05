@@ -19,6 +19,10 @@
  * 13. 分层方向：components/ui/** 不得 import components/app
  * 14. 分层方向：项目层（components/app + components/layout + layouts）不得直接 import reka-ui（有白名单）
  * 15. 分层方向：components/ui/** 不得使用项目层令牌（--surface/--ink/--line/… 与对应工具类）
+ * 16. ui 层目录形态：components/ui/ 根目录只允许 kebab-case 族目录（对齐 shadcn-vue CLI 落盘）
+ * 17. ui 族目录：组件文件必须 PascalCase，且 index.ts 全量 named export 目录内每个 .vue
+ * 18. web/components.json 必须存在，且 ui/utils 别名与 tailwind.css 指向真实位置
+ * 19. 引用形态：业务层与测试不得深路径 @/components/ui/x.vue（含动态导入与相对深路径）；ui 内部不得走 @/components/ui 绝对导入
  */
 
 import fs from 'node:fs';
@@ -676,6 +680,242 @@ uiLayerFiles.forEach((file) => {
         (classMatch.index ?? 0) + 1,
         `ui/ 只允许使用 shadcn 语义层工具类，不得引用项目层工具类："${classMatch[0]}"`,
       );
+    }
+  });
+});
+
+// 16. ui 层目录形态：与 shadcn-vue CLI 原生落盘一致。
+//     ui/ 根目录只允许 kebab-case 族目录（button/、card/、dialog/ …），
+//     组件一律 ui/<slug>/<PascalName>.vue + index.ts，不再有扁平的 button.vue。
+console.log('16. 检查 components/ui/ 根目录形态（shadcn-vue CLI 原生布局）...');
+const uiDir = path.resolve(srcDir, 'components/ui');
+const familyDirNameRegex = /^[a-z][a-z0-9-]*$/;
+let uiRootEntries = [];
+if (!fs.existsSync(uiDir)) {
+  reportError(
+    'UiCliLayout',
+    uiDir,
+    1,
+    1,
+    'components/ui/ 目录不存在：ui 原语层必须位于 shadcn-vue CLI 的落盘路径上',
+  );
+} else {
+  uiRootEntries = fs.readdirSync(uiDir, { withFileTypes: true });
+}
+for (const entry of uiRootEntries) {
+  const fullPath = path.join(uiDir, entry.name);
+  if (!entry.isDirectory()) {
+    reportError(
+      'UiCliLayout',
+      fullPath,
+      1,
+      1,
+      `components/ui/ 根目录禁止放任何文件（含 index.ts），只允许 kebab-case 族目录（如 button/）："${entry.name}"`,
+    );
+    continue;
+  }
+  if (!familyDirNameRegex.test(entry.name)) {
+    reportError(
+      'UiCliLayout',
+      fullPath,
+      1,
+      1,
+      `ui 族目录名必须是 kebab-case（与 shadcn registry slug 同名）："${entry.name}"`,
+    );
+  }
+}
+
+// 17. ui 族目录内容：组件文件 PascalCase（与 CLI 产物同形），index.ts 必须存在且
+//     把目录内每个 .vue 以 `export { default as X } from './X.vue'` 形式导出，防搬完漏导出。
+console.log('17. 检查 ui 族目录：PascalCase 组件文件 + index.ts 全量导出...');
+const pascalVueNameRegex = /^[A-Z][A-Za-z0-9]*\.vue$/;
+for (const entry of uiRootEntries.filter((item) => item.isDirectory())) {
+  const familyDir = path.join(uiDir, entry.name);
+  const familyVueFiles = fs
+    .readdirSync(familyDir)
+    .filter((fileName) => fileName.endsWith('.vue'));
+  const familyIndexPath = path.join(familyDir, 'index.ts');
+  if (familyVueFiles.length === 0) {
+    reportError('UiCliLayout', familyDir, 1, 1, `族目录 "${entry.name}/" 下没有任何 *.vue 组件文件`);
+  }
+  if (!fs.existsSync(familyIndexPath)) {
+    reportError(
+      'UiCliLayout',
+      familyDir,
+      1,
+      1,
+      `族目录 "${entry.name}/" 缺少 index.ts（shadcn-vue CLI 落盘产物必备）`,
+    );
+  }
+  const familyIndexContent = fs.existsSync(familyIndexPath)
+    ? fs.readFileSync(familyIndexPath, 'utf8')
+    : '';
+  for (const vueFile of familyVueFiles) {
+    if (!pascalVueNameRegex.test(vueFile)) {
+      reportError(
+        'UiCliLayout',
+        path.join(familyDir, vueFile),
+        1,
+        1,
+        `ui 组件文件名必须是 PascalCase（与 shadcn CLI 产物一致）："${vueFile}"`,
+      );
+      continue;
+    }
+    const componentName = vueFile.slice(0, -'.vue'.length);
+    if (!familyIndexContent) continue;
+    const escapedVueFile = vueFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const exportRegex = new RegExp(
+      `export\\s*\\{[^}]*default\\s+as\\s+${componentName}\\b[^}]*\\}\\s*from\\s*['"]\\./${escapedVueFile}['"]`,
+    );
+    if (!exportRegex.test(familyIndexContent)) {
+      reportError(
+        'UiCliLayout',
+        familyIndexPath,
+        1,
+        1,
+        `index.ts 必须以 named export 导出 "${componentName}"：export { default as ${componentName} } from './${vueFile}'`,
+      );
+    }
+  }
+  // 反向校验：index.ts 里每个相对 .vue 导出都必须指向目录内真实文件，
+  // 防「文件已删/改名，barrel 还挂着悬空导出」。
+  if (familyIndexContent) {
+    const exportFromRegex = /from\s+['"]\.\/([^/'"]+\.vue)['"]/g;
+    for (const match of familyIndexContent.matchAll(exportFromRegex)) {
+      const targetVueFile = match[1];
+      if (!familyVueFiles.includes(targetVueFile)) {
+        const lineNumber = familyIndexContent.slice(0, match.index).split('\n').length;
+        reportError(
+          'UiCliLayout',
+          familyIndexPath,
+          lineNumber,
+          1,
+          `index.ts 的导出指向不存在的组件文件："./${targetVueFile}"`,
+        );
+      }
+    }
+  }
+}
+
+// 18. components.json：shadcn-vue CLI 据它确定落盘目录与别名，缺失时 add 会另起一套结构。
+console.log('18. 检查 web/components.json（shadcn-vue CLI 落盘配置）...');
+const componentsJsonPath = path.resolve(webRoot, 'components.json');
+if (!fs.existsSync(componentsJsonPath)) {
+  reportError(
+    'ComponentsJson',
+    componentsJsonPath,
+    1,
+    1,
+    '缺少 web/components.json：shadcn-vue CLI 无法确定落盘目录与别名',
+  );
+} else {
+  let componentsJson = null;
+  try {
+    componentsJson = JSON.parse(fs.readFileSync(componentsJsonPath, 'utf8'));
+  } catch (error) {
+    reportError('ComponentsJson', componentsJsonPath, 1, 1, `components.json 不是合法 JSON：${error.message}`);
+  }
+  if (componentsJson) {
+    if (componentsJson.aliases?.ui !== '@/components/ui') {
+      reportError(
+        'ComponentsJson',
+        componentsJsonPath,
+        1,
+        1,
+        `aliases.ui 必须指向 @/components/ui，当前为："${componentsJson.aliases?.ui ?? '(缺失)'}"`,
+      );
+    }
+    if (componentsJson.aliases?.utils !== '@/lib/utils') {
+      reportError(
+        'ComponentsJson',
+        componentsJsonPath,
+        1,
+        1,
+        `aliases.utils 必须指向 @/lib/utils，当前为："${componentsJson.aliases?.utils ?? '(缺失)'}"`,
+      );
+    }
+    if (componentsJson.aliases?.components !== '@/components') {
+      reportError(
+        'ComponentsJson',
+        componentsJsonPath,
+        1,
+        1,
+        `aliases.components 必须指向 @/components（shadcn schema 必填项），当前为："${componentsJson.aliases?.components ?? '(缺失)'}"`,
+      );
+    }
+    if (componentsJson.typescript !== true) {
+      reportError(
+        'ComponentsJson',
+        componentsJsonPath,
+        1,
+        1,
+        `typescript 必须为 true（本仓库只允许 TS 产物），当前为：${JSON.stringify(componentsJson.typescript ?? null)}`,
+      );
+    }
+    const cssPath = componentsJson.tailwind?.css;
+    if (!cssPath || !fs.existsSync(path.resolve(webRoot, cssPath))) {
+      reportError(
+        'ComponentsJson',
+        componentsJsonPath,
+        1,
+        1,
+        `tailwind.css 必须指向存在的样式入口，当前为："${cssPath ?? '(缺失)'}"`,
+      );
+    }
+  }
+}
+
+// 19. 引用形态：ui 组件一律从 @/components/ui/<slug> 导入（CLI 惯用法）；
+//     禁止深到具体文件的 @/components/ui/x.vue（静态/动态导入都算），
+//     项目层也不得用相对路径深进 ui/*.vue；ui 内部只允许同族相对导入。
+console.log('19. 检查 ui 引用形态（slug 导入 / ui 内部相对导入）...');
+const testsDir = path.resolve(webRoot, 'tests');
+const referenceFiles = [
+  ...walkDir(srcDir, (p) => p.endsWith('.vue') || p.endsWith('.ts')),
+  ...walkDir(testsDir, (p) => p.endsWith('.vue') || p.endsWith('.ts')),
+];
+const uiAliasDeepImportRegex = /(?:from\s+|import\s*\(\s*)['"]@\/components\/ui\/[^'"]+\.vue['"]/g;
+const uiInternalAbsoluteRegex = /(?:from\s+|import\s*\(\s*)['"]@\/components\/ui(?:\/[^'"]*)?['"]/g;
+const relativeSpecifierRegex = /(?:from\s+|import\s*\(\s*)['"](\.[^'"]+)['"]/g;
+const uiDirPrefix = `${uiDir}${path.sep}`;
+referenceFiles.forEach((file) => {
+  const insideUiLayer = file.startsWith(uiDirPrefix);
+  const lines = fs.readFileSync(file, 'utf8').split('\n');
+  lines.forEach((line, idx) => {
+    const column = (match) => (match.index ?? 0) + 1;
+    if (insideUiLayer) {
+      for (const absoluteMatch of line.matchAll(uiInternalAbsoluteRegex)) {
+        reportError(
+          'UiImportStyle',
+          file,
+          idx + 1,
+          column(absoluteMatch),
+          `ui/ 内部不得走 @/components/ui 绝对导入，请用同族相对导入（如 ./Button.vue）："${absoluteMatch[0]}"`,
+        );
+      }
+      return;
+    }
+    for (const deepMatch of line.matchAll(uiAliasDeepImportRegex)) {
+      reportError(
+        'UiImportStyle',
+        file,
+        idx + 1,
+        column(deepMatch),
+        `不得深路径导入 ui 文件，请改为 slug 入口 @/components/ui/<slug>："${deepMatch[0]}"`,
+      );
+    }
+    for (const relativeMatch of line.matchAll(relativeSpecifierRegex)) {
+      const specifier = relativeMatch[1];
+      const resolvedTarget = path.resolve(path.dirname(file), specifier);
+      if (resolvedTarget.startsWith(uiDirPrefix) && resolvedTarget.endsWith('.vue')) {
+        reportError(
+          'UiImportStyle',
+          file,
+          idx + 1,
+          column(relativeMatch),
+          `项目层不得用相对路径深进 ui 组件文件，请改为 @/components/ui/<slug>："${specifier}"`,
+        );
+      }
     }
   });
 });

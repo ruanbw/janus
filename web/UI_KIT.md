@@ -7,11 +7,18 @@ ant-design-vue 已移除,任何文件不得再 import 自 'ant-design-vue' 或�
 
 ```
 web/src/components/
-  ui/    ← shadcn 风格原语层。kebab-case 文件名(button.vue / input.vue / switch.vue …)，
-          相当于「shadcn 下载件」：可以整目录覆盖升级，改它只改外观与状态。
-  app/   ← 项目组件层。App* 前缀(AppButton / AppInput / AppTable …)，
-          承载本项目的契约：antd 兼容的 props、插槽、表单联动。全局注册只发生在这里。
+  ui/<slug>/ ← shadcn-vue 原语层,落盘形态与 `shadcn-vue add` 产物一致:
+               ui/button/{Button.vue, index.ts}、ui/dialog/{Dialog.vue, DialogContent.vue, index.ts} …
+               相当于「shadcn 下载件」:可以整目录覆盖升级,改它只改外观与状态。
+               引用一律走族索引 @/components/ui/<slug>;ui/ 内部同族用相对导入。
+  app/       ← 项目组件层。App* 前缀(AppButton / AppInput / AppTable …),
+               承载本项目的契约:antd 兼容的 props、插槽、表单联动。全局注册只发生在这里。
 ```
+
+布局与引用形态由门禁第 16–19 项守着:ui 根目录只允许 kebab-case 族目录、族目录内必须
+PascalCase 组件文件 + 全量导出的 index.ts、web/components.json 必须存在、业务层与测试不得深路径导入。
+新增组件用 CLI:`cd web && pnpm dlx shadcn-vue@latest add <component>`(落盘即 ui/<slug>/)。
+已按本项目令牌定制过的既有原语不要被 CLI 覆盖升级,升级走人工 diff。
 
 方向是**单向**的，三条硬约束（门禁第 13/14/15 项守着）：
 
@@ -238,10 +245,10 @@ import { Plus, Trash2, Pencil, ... } from '@lucide/vue'; — 大小用 :size="16
 
 ## 目录
 
-- 原语层:src/components/ui/(shadcn 风格,可整目录覆盖升级;只用 shadcn 语义层令牌)
+- 原语层:src/components/ui/<slug>/(shadcn-vue CLI 原生族目录:组件文件 + index.ts;新增走 pnpm dlx shadcn-vue@latest add;只用 shadcn 语义层令牌)
 - 项目组件层:src/components/app/(App* 全局注册;构建在 ui/ 之上;禁止直连 reka-ui)
 - 布局层:src/components/layout/、src/layouts/(同样走 ui/ 原语)
 - 令牌:src/styles/theme.css(唯一令牌出处);src/styles/main.css(基础层 + 动效 + 地图填色)
 - 页面:src/views/**(只用项目层令牌与 shadcn 语义层,禁 `dark:` 补丁)
 - 路由/store/api/types/utils 均不变
-- 契约变更需同步本文件;双层组件架构决策见 docs/adr/0011-two-layer-component-library.md
+- 契约变更需同步本文件;双层组件架构决策见 docs/adr/0011-two-layer-component-library.md;落盘布局见 docs/adr/0015-shadcn-vue-cli-native-layout.md

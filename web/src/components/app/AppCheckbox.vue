@@ -27,8 +27,8 @@
 import { computed } from 'vue';
 import { Check, Minus } from '@lucide/vue';
 
-import UiCheckbox from '@/components/ui/checkbox.vue';
-import UiLabel from '@/components/ui/label.vue';
+import { Checkbox as UiCheckbox } from '@/components/ui/checkbox';
+import { Label as UiLabel } from '@/components/ui/label';
 
 import { cn } from '@/lib/utils';
 import { useFormItem } from './form';

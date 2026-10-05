@@ -32,7 +32,7 @@ const LINE_VARIANTS =
 </script>
 
 <script setup lang="ts">
-import UiTabsTrigger from '@/components/ui/tabs-trigger.vue';
+import { TabsTrigger as UiTabsTrigger } from '@/components/ui/tabs';
 
 const props = withDefaults(
   defineProps<{

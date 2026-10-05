@@ -41,8 +41,8 @@
 <script setup lang="ts">
 import { computed, type Component } from 'vue';
 
-import UiRadioGroupIndicator from '@/components/ui/radio-group-indicator.vue';
-import UiRadioGroupItem from '@/components/ui/radio-group-item.vue';
+import { RadioGroupIndicator as UiRadioGroupIndicator } from '@/components/ui/radio-group';
+import { RadioGroupItem as UiRadioGroupItem } from '@/components/ui/radio-group';
 
 import { cn } from '@/lib/utils';
 

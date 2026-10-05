@@ -45,8 +45,8 @@ import {
   DropdownMenuPortal,
   DropdownMenuRoot,
   DropdownMenuTrigger,
-} from '@/components/ui';
-import { buttonVariants } from '@/components/ui/button.vue';
+} from '@/components/ui/dropdown-menu';
+import { buttonVariants } from '@/components/ui/button';
 
 import { useThemeStore, type ThemeMode } from '@/stores/theme';
 import { cn } from '@/lib/utils';

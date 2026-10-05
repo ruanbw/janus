@@ -15,16 +15,16 @@
 import { mount, type VueWrapper } from '@vue/test-utils';
 import { h, type Component } from 'vue';
 
-import DropdownMenuContent from '@/components/ui/dropdown-menu-content.vue';
-import DropdownMenuItem from '@/components/ui/dropdown-menu-item.vue';
-import DropdownMenuRoot from '@/components/ui/dropdown-menu.vue';
-import DropdownMenuTrigger from '@/components/ui/dropdown-menu-trigger.vue';
-import PopoverContent from '@/components/ui/popover-content.vue';
-import PopoverRoot from '@/components/ui/popover.vue';
-import PopoverTrigger from '@/components/ui/popover-trigger.vue';
-import TooltipContent from '@/components/ui/tooltip-content.vue';
-import TooltipRoot from '@/components/ui/tooltip.vue';
-import TooltipTrigger from '@/components/ui/tooltip-trigger.vue';
+import { DropdownMenuContent } from '@/components/ui/dropdown-menu';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { DropdownMenuRoot } from '@/components/ui/dropdown-menu';
+import { DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { PopoverContent } from '@/components/ui/popover';
+import { Popover as PopoverRoot } from '@/components/ui/popover';
+import { PopoverTrigger } from '@/components/ui/popover';
+import { TooltipContent } from '@/components/ui/tooltip';
+import { Tooltip as TooltipRoot } from '@/components/ui/tooltip';
+import { TooltipTrigger } from '@/components/ui/tooltip';
 
 const mounted: ReturnType<typeof mount>[] = [];
 

@@ -13,14 +13,14 @@ import { mount } from '@vue/test-utils';
 import { SelectRoot } from 'reka-ui';
 import { h } from 'vue';
 
-import Checkbox from '@/components/ui/checkbox.vue';
-import Label from '@/components/ui/label.vue';
-import RadioGroup from '@/components/ui/radio-group.vue';
-import RadioGroupItem from '@/components/ui/radio-group-item.vue';
-import Select from '@/components/ui/select.vue';
-import Separator from '@/components/ui/separator.vue';
-import Switch from '@/components/ui/switch.vue';
-import Textarea from '@/components/ui/textarea.vue';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
+import { RadioGroup } from '@/components/ui/radio-group';
+import { RadioGroupItem } from '@/components/ui/radio-group';
+import { SelectTrigger as Select } from '@/components/ui/select';
+import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 
 /** asChild=true 时，本体应当就是 slot 里那个元素：tag 应为 span，且不应多出包裹的 div */
 function expectAsChildPassesThrough(wrapper: ReturnType<typeof mount>) {

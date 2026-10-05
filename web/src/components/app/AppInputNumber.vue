@@ -49,7 +49,7 @@
 import { computed, ref, watch } from 'vue';
 import { ChevronDown, ChevronUp } from '@lucide/vue';
 
-import UiInput from '@/components/ui/input.vue';
+import { Input as UiInput } from '@/components/ui/input';
 
 import { cn } from '@/lib/utils';
 import { useFormItem } from './form';

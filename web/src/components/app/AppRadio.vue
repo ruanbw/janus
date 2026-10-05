@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import RadioGroupItem from '@/components/ui/radio-group-item.vue';
+import { RadioGroupItem } from '@/components/ui/radio-group';
 
 import { useFormItem } from './form';
 

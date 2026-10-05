@@ -13,7 +13,7 @@
 </template>
 
 <script setup lang="ts">
-import UiTabs from '@/components/ui/tabs.vue';
+import { Tabs as UiTabs } from '@/components/ui/tabs';
 
 import { cn } from '@/lib/utils';
 

@@ -7,7 +7,7 @@
 </template>
 
 <script setup lang="ts">
-import CardHeaderPrimitive from '@/components/ui/card-header.vue';
+import { CardHeader as CardHeaderPrimitive } from '@/components/ui/card';
 
 import { cn } from '@/lib/utils';
 

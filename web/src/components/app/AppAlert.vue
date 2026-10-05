@@ -38,8 +38,8 @@ import {
   alertDescriptionVariants,
   alertTitleVariants,
   type AlertVariant as PrimitiveAlertVariant,
-} from '@/components/ui/alert.vue';
-import Alert from '@/components/ui/alert.vue';
+} from '@/components/ui/alert';
+import { Alert } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 
 const props = withDefaults(

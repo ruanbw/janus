@@ -26,11 +26,11 @@
 import { computed, ref } from 'vue';
 import { Info } from '@lucide/vue';
 
-import UiPopover from '@/components/ui/popover.vue';
-import UiPopoverArrow from '@/components/ui/popover-arrow.vue';
-import UiPopoverContent from '@/components/ui/popover-content.vue';
-import UiPopoverPortal from '@/components/ui/popover-portal.vue';
-import UiPopoverTrigger from '@/components/ui/popover-trigger.vue';
+import { Popover as UiPopover } from '@/components/ui/popover';
+import { PopoverArrow as UiPopoverArrow } from '@/components/ui/popover';
+import { PopoverContent as UiPopoverContent } from '@/components/ui/popover';
+import { PopoverPortal as UiPopoverPortal } from '@/components/ui/popover';
+import { PopoverTrigger as UiPopoverTrigger } from '@/components/ui/popover';
 
 import { cn } from '@/lib/utils';
 import AppButton from './AppButton.vue';
