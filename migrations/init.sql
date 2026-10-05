@@ -1,8 +1,13 @@
--- +goose Up
--- 0001_init.sql — Janus 初始数据库表结构与索引
+-- Janus 数据库初始化脚本(schema 唯一事实来源,见 AGENTS.md「数据库与 Schema 约定」)
+--
+-- 契约:
+--   1. 整段可重复执行 —— 启动、重跑、并发多副本都必须安全,不破坏已有数据;
+--   2. 不写增量迁移 —— 改表直接改本文件,改完 DROP 开发库重建即可;
+--   3. 语句幂等 —— 建表/索引用 IF NOT EXISTS,函数用 OR REPLACE,触发器先 DROP;
+--   4. 整段在一个事务里执行 —— 任何一句失败都不会留下半截 schema。
 
 -- 1. 等级表 (Tiers)
-CREATE TABLE tiers (
+CREATE TABLE IF NOT EXISTS tiers (
     id          BIGSERIAL PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,
     max_links   INT  NOT NULL,
@@ -10,7 +15,7 @@ CREATE TABLE tiers (
 );
 
 -- 2. 租户表 (Tenants)
-CREATE TABLE tenants (
+CREATE TABLE IF NOT EXISTS tenants (
     id              BIGSERIAL PRIMARY KEY,
     email           TEXT NOT NULL UNIQUE,
     password_hash   TEXT,              -- 超管首次登录前为 NULL
@@ -26,7 +31,7 @@ CREATE TABLE tenants (
 );
 
 -- 3. 域名表 (Domains)
-CREATE TABLE domains (
+CREATE TABLE IF NOT EXISTS domains (
     id                      BIGSERIAL PRIMARY KEY,
     tenant_id               BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     fqdn                    TEXT NOT NULL UNIQUE,
@@ -42,15 +47,15 @@ CREATE TABLE domains (
     activated_at            TIMESTAMPTZ,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_domains_tenant ON domains(tenant_id);
-CREATE INDEX idx_domains_status ON domains(status);
-CREATE INDEX idx_domains_dns_retry ON domains(origin, COALESCE(dns_checked_at, created_at))
+CREATE INDEX IF NOT EXISTS idx_domains_tenant ON domains(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_domains_status ON domains(status);
+CREATE INDEX IF NOT EXISTS idx_domains_dns_retry ON domains(origin, COALESCE(dns_checked_at, created_at))
     WHERE status IN ('pending','failed');
-CREATE INDEX idx_domains_cert_probe ON domains(COALESCE(cert_probed_at, created_at))
+CREATE INDEX IF NOT EXISTS idx_domains_cert_probe ON domains(COALESCE(cert_probed_at, created_at))
     WHERE status = 'active' AND cert_status IN ('pending','failed');
 
 -- 4. 短链表 (Links)
-CREATE TABLE links (
+CREATE TABLE IF NOT EXISTS links (
     id              BIGSERIAL PRIMARY KEY,
     tenant_id       BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     code            TEXT NOT NULL,
@@ -62,35 +67,35 @@ CREATE TABLE links (
     clicks          BIGINT NOT NULL DEFAULT 0,
     rr_index        BIGINT NOT NULL DEFAULT 0,
     rules_enabled   BOOLEAN NOT NULL DEFAULT true,
+    metadata        JSONB NOT NULL DEFAULT '{}'::jsonb,  -- 外部工程业务自定义元数据(ADR-0014)
     deleted_at      TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_links_tenant ON links(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_links_tenant ON links(tenant_id);
 
 -- 5. 短链多目标表 (Link Targets)
-CREATE TABLE link_targets (
+CREATE TABLE IF NOT EXISTS link_targets (
     id       BIGSERIAL PRIMARY KEY,
     link_id  BIGINT NOT NULL REFERENCES links(id) ON DELETE CASCADE,
     url      TEXT NOT NULL,
     position INT NOT NULL DEFAULT 0,
     UNIQUE (link_id, position)
 );
-CREATE INDEX idx_link_targets_link ON link_targets(link_id);
+CREATE INDEX IF NOT EXISTS idx_link_targets_link ON link_targets(link_id);
 
 -- 6. 短链-域名关联表 (Link Domains)
 -- 唯一性约束采用部分唯一索引：只对未删除短链生效 (WHERE NOT link_deleted)
-CREATE TABLE link_domains (
+CREATE TABLE IF NOT EXISTS link_domains (
     id           BIGSERIAL PRIMARY KEY,
     link_id      BIGINT NOT NULL REFERENCES links(id) ON DELETE CASCADE,
     domain_id    BIGINT NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
     code         TEXT NOT NULL,
     link_deleted BOOLEAN NOT NULL DEFAULT false
 );
-CREATE INDEX idx_link_domains_link ON link_domains(link_id);
-CREATE INDEX idx_link_domains_domain ON link_domains(domain_id);
-CREATE UNIQUE INDEX link_domains_live_code_uniq ON link_domains(domain_id, code) WHERE NOT link_deleted;
+CREATE INDEX IF NOT EXISTS idx_link_domains_link ON link_domains(link_id);
+CREATE INDEX IF NOT EXISTS idx_link_domains_domain ON link_domains(domain_id);
+CREATE UNIQUE INDEX IF NOT EXISTS link_domains_live_code_uniq ON link_domains(domain_id, code) WHERE NOT link_deleted;
 
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION link_domains_sync_link_deleted() RETURNS trigger AS $$
 BEGIN
     UPDATE link_domains
@@ -99,15 +104,14 @@ BEGIN
     RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
--- +goose StatementEnd
 
+DROP TRIGGER IF EXISTS trg_links_sync_link_deleted ON links;
 CREATE TRIGGER trg_links_sync_link_deleted
     AFTER UPDATE OF deleted_at ON links
     FOR EACH ROW
     WHEN (OLD.deleted_at IS DISTINCT FROM NEW.deleted_at)
     EXECUTE FUNCTION link_domains_sync_link_deleted();
 
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION link_domains_derive_link_deleted() RETURNS trigger AS $$
 BEGIN
     SELECT (l.deleted_at IS NOT NULL) INTO NEW.link_deleted
@@ -115,15 +119,15 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
--- +goose StatementEnd
 
+DROP TRIGGER IF EXISTS trg_link_domains_derive_link_deleted ON link_domains;
 CREATE TRIGGER trg_link_domains_derive_link_deleted
     BEFORE INSERT ON link_domains
     FOR EACH ROW
     EXECUTE FUNCTION link_domains_derive_link_deleted();
 
 -- 7. 规则表 (Rules)
-CREATE TABLE rules (
+CREATE TABLE IF NOT EXISTS rules (
     id          BIGSERIAL PRIMARY KEY,
     tenant_id   BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
@@ -143,19 +147,19 @@ CREATE TABLE rules (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (tenant_id, name)
 );
-CREATE INDEX idx_rules_tenant ON rules(tenant_id, priority, id);
+CREATE INDEX IF NOT EXISTS idx_rules_tenant ON rules(tenant_id, priority, id);
 
 -- 8. 规则-短链关联表 (Rule Links)
-CREATE TABLE rule_links (
+CREATE TABLE IF NOT EXISTS rule_links (
     id      BIGSERIAL PRIMARY KEY,
     rule_id BIGINT NOT NULL REFERENCES rules(id) ON DELETE CASCADE,
     link_id BIGINT NOT NULL REFERENCES links(id) ON DELETE CASCADE,
     UNIQUE (rule_id, link_id)
 );
-CREATE INDEX idx_rule_links_link ON rule_links(link_id);
+CREATE INDEX IF NOT EXISTS idx_rule_links_link ON rule_links(link_id);
 
 -- 9. 访问明细表 (Visits)
-CREATE TABLE visits (
+CREATE TABLE IF NOT EXISTS visits (
     id            BIGSERIAL PRIMARY KEY,
     link_id       BIGINT NOT NULL REFERENCES links(id) ON DELETE CASCADE,
     domain_id     BIGINT NOT NULL REFERENCES domains(id),
@@ -174,16 +178,18 @@ CREATE TABLE visits (
     rule_action   TEXT NOT NULL DEFAULT '' CHECK (rule_action IN ('', 'pass', 'redirect', 'notfound', 'throttle')),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_visits_created ON visits(created_at);
-CREATE INDEX idx_visits_link_action ON visits(link_id, action, id DESC);
-CREATE INDEX idx_visits_link_id_desc ON visits(link_id, id DESC);
-CREATE INDEX idx_visits_link_success ON visits(link_id)
+CREATE INDEX IF NOT EXISTS idx_visits_created ON visits(created_at);
+CREATE INDEX IF NOT EXISTS idx_visits_link_action ON visits(link_id, action, id DESC);
+CREATE INDEX IF NOT EXISTS idx_visits_link_id_desc ON visits(link_id, id DESC);
+CREATE INDEX IF NOT EXISTS idx_visits_link_success ON visits(link_id)
     WHERE action IN ('redirect','landing_view') AND outcome = 'success';
-CREATE INDEX idx_visits_rule ON visits(rule_id, created_at DESC)
+CREATE INDEX IF NOT EXISTS idx_visits_rule ON visits(rule_id, created_at DESC)
     WHERE rule_id IS NOT NULL;
+-- 域名删除(detachInTx)按 domain_id 清 visits,无此索引是全表扫描 + 长锁。
+CREATE INDEX IF NOT EXISTS idx_visits_domain ON visits(domain_id);
 
 -- 10. 会话表 (Sessions)
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
     id         BIGSERIAL PRIMARY KEY,
     tenant_id  BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     token_hash TEXT NOT NULL UNIQUE,     -- SHA-256(token),明文仅存于 cookie
@@ -191,11 +197,11 @@ CREATE TABLE sessions (
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_sessions_tenant ON sessions(tenant_id);
-CREATE INDEX idx_sessions_expires ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON sessions(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
 -- 11. 邮箱验证/重置/设置 Token 表 (Email Tokens)
-CREATE TABLE email_tokens (
+CREATE TABLE IF NOT EXISTS email_tokens (
     id         BIGSERIAL PRIMARY KEY,
     tenant_id  BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     token_hash TEXT NOT NULL UNIQUE,
@@ -204,7 +210,7 @@ CREATE TABLE email_tokens (
     used_at    TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_email_tokens_expires ON email_tokens(expires_at);
+CREATE INDEX IF NOT EXISTS idx_email_tokens_expires ON email_tokens(expires_at);
 
 -- 初始种子数据
 INSERT INTO tiers (name, max_links, max_domains) VALUES ('free', 100, 10)

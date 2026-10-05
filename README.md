@@ -189,7 +189,7 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 
 ### 2.10 平台化运维
 
-- **迁移**:启动时自动执行 `migrations/*.sql`(goose,幂等)。
+- **数据库初始化**:启动时自动执行 `migrations/init.sql`(单文件、整段幂等,无版本表)。
 - **后台 worker**:DNS 重试、证书探活、访问记录清理、会话与邮箱 token 清理。
 - **可插拔邮件**:配置 SMTP 用真实发送;未配置时用控制台 mailer(邮件内容打印到后端日志),便于无外网环境开发。
 - **可插拔 geo 数据源**:按能力抽象(ADR-0009),当前落地的是内嵌 ip2region 离线库,`asn` / `is_datacenter` 无数据源时恒为空(规则里相应条件恒不命中,而不是"当成匹配")。
@@ -237,9 +237,9 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 | 组件 | 职责 | 关键点 |
 | --- | --- | --- |
 | **Caddy** | TLS 终止与证书生命周期 | on-demand TLS:陌生域名首次握手时问应用 `/internal/caddy/authorize` 该域名是否已激活,是则签发 Let's Encrypt 证书并自动续期(ADR-0002);应用不直接操作 Caddy 配置 |
-| **Go 后端** | 业务逻辑 + REST API + 跳转热路径 | 启动顺序:加载配置 → 连接 Postgres → 执行迁移 → 初始化超管 → 启动后台 worker → 监听 HTTP |
+| **Go 后端** | 业务逻辑 + REST API + 跳转热路径 | 启动顺序:加载配置 → 连接 Postgres → 执行初始化脚本 → 初始化超管 → 启动后台 worker → 监听 HTTP |
 | **nginx(web 镜像)** | SPA 静态资源 + history 路由回退 | 独立于后端镜像,构建期自行 `pnpm build` |
-| **PostgreSQL** | 全部持久状态 | 唯一数据源;迁移文件随镜像发布 |
+| **PostgreSQL** | 全部持久状态 | 唯一数据源;初始化脚本随镜像发布 |
 | **前端 SPA** | 后台管理界面 | Vue 3 + TypeScript + Vite + Tailwind CSS 4 + Reka UI,自研 `App*` 组件库 |
 
 ### 3.3 技术栈
@@ -251,7 +251,7 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 | HTTP 框架 | `gin-gonic/gin` |
 | 授权 | `casbin/casbin` + `gin-contrib/authz`(策略内存装载) |
 | 数据访问 | `gorm.io/gorm` + `gorm.io/driver/postgres`(`pgx/v5` 驱动) |
-| 迁移 | `pressly/goose/v3` |
+| 数据库初始化 | `migrations/init.sql`(整段幂等);外部专有迁移轨用 `pressly/goose/v3` |
 | 规则表达式 | `expr-lang/expr` |
 | JWT | `golang-jwt/jwt/v5` |
 | 限流 | `golang.org/x/time/rate` |
@@ -281,11 +281,11 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 
 ```
 .
-├── cmd/janus/                  # 后端入口(加载配置 → 连库 → 迁移 → worker → HTTP)
+├── cmd/janus/                  # 后端入口(加载配置 → 连库 → 初始化脚本 → worker → HTTP)
 ├── internal/
 │   ├── bootstrap/              # 部署期初始化(超管幂等创建)
 │   ├── config/                 # 环境变量配置(caarlos0/env)
-│   ├── db/                     # Postgres 连接 + goose 迁移
+│   ├── db/                     # Postgres 连接 + 初始化脚本执行
 │   ├── domain/                 # 域名激活校验、证书探活、后台 worker
 │   ├── geo/                    # IP 地理值(ip2region 离线库 + 分片缓存)
 │   ├── httpapi/                # HTTP 路由与处理器(黑盒测试所在)
@@ -296,7 +296,7 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 │   ├── rules/                  # 规则引擎:字段、条件求值、租户快照与仿真
 │   ├── store/                  # 数据访问层(租户 / 域名 / 短链 / 规则 / 访问)
 │   └── testutil/               # 测试基础设施(httptest + 真实 Postgres)
-├── migrations/                 # 数据库初始化 SQL (启动时自动执行)
+├── migrations/init.sql         # 数据库初始化脚本(唯一 schema 事实来源,启动时自动执行)
 ├── web/                        # 前端 SPA(见 web/README.md、web/UI_KIT.md)
 │   ├── src/
 │   │   ├── api/  types/  utils/ # 请求封装、类型、错误与工具
@@ -448,7 +448,7 @@ pnpm dev         # http://localhost:5173,/api 代理到 http://localhost:8080
 | `JANUS_PUBLIC_BASE_URL` | `https://app.janus.test` | 邮件里验证 / 重置链接的前缀 |
 | `JANUS_DATABASE_URL` | `postgres://janus:janus@localhost:5432/janus?sslmode=disable` | 后端直连 Postgres |
 | `JANUS_TEST_DATABASE_URL` | `…/janus_test…` | 测试库连接串(与开发库分离) |
-| `JANUS_MIGRATIONS_DIR` | `migrations` | 迁移文件目录(生产容器内为 `/app/migrations`) |
+| `JANUS_MIGRATIONS_DIR` | `migrations` | 初始化脚本目录(内含 `init.sql`;生产容器内为 `/app/migrations`) |
 | `JANUS_SUPERADMIN_EMAIL` | 空 | 超管邮箱,启动时初始化(留空则无超管) |
 | `JANUS_COOKIE_SECURE` | `false` | 会话 cookie Secure 标记;开发 http 必须 false |
 | `JANUS_SESSION_TTL` / `JANUS_SESSION_TTL_SHORT` | `720h` / `24h` | 记住我 / 普通会话 |
@@ -498,12 +498,12 @@ pnpm check:ui                     # 0 违规才通过(第 8 项要读 dist 产�
 - **不重造轮子**:网络、解析、限流、邮件、迁移、配置、CIDR 匹配一律用成熟库(见 3.3);新增依赖前先确认标准库或已有依赖不能解决。
 - **不要给 `geo` 填假值**:查不到就是空值,空值下规则条件恒不命中(ADR-0009)。
 
-### 7.3 数据库迁移
+### 7.3 数据库初始化
 
-- 迁移文件放在 `migrations/`,命名 `NNNN_snake_case.sql`,由 **goose** 执行;文件头写 `-- +goose Up` / `-- +goose Down`。
-- 只增不改:已发布的迁移**不修改**,新增一条向后兼容的迁移。
-- 当前 14 条迁移只提供 `-- +goose Up`(v1 不支持 `goose down`),回滚靠反向迁移。
-- 启动时自动 `goose up`,幂等;新增迁移后同时更新 `internal/store` 的读写代码与相关测试。
+- `migrations/` 只有一份 `init.sql`,它是 schema 的**唯一事实来源**:开发期数据库可破坏性重建,不写增量迁移,也不建任何迁移版本表。
+- 改表直接改 `init.sql`,然后 DROP 开发库重建即可生效。
+- 脚本必须整段幂等(建表/索引 `IF NOT EXISTS`、函数 `OR REPLACE`、触发器先 `DROP TRIGGER IF EXISTS`、种子 `ON CONFLICT DO NOTHING`);启动、重跑、并发多副本都不破坏已有数据。整段在一个隐式事务里执行,任何一句失败都整体回滚。
+- 外部工程的专有表走 `pkg/janus` 的 `WithExtraMigrations` 轨(goose + `goose_db_version_extra`),不写进 `migrations/`。
 
 ### 7.4 前端约定
 
@@ -520,7 +520,7 @@ pnpm check:ui                     # 0 违规才通过(第 8 项要读 dist 产�
 ### 7.5 加一个新功能的顺序
 
 1. 架构决策先对齐:涉及系统设计或技术选型取舍时写 `docs/adr/NNNN-*.md`。
-2. 迁移 → `store` → `httpapi`(路由 + RBAC 策略 + 错误码)。
+2. `init.sql` → `store` → `httpapi`(路由 + RBAC 策略 + 错误码)。
 3. 涉及判定逻辑(如规则求值)时,补黑盒测试:`internal/httpapi/*_test.go` 走 `testutil.Setup`。
 4. 前端:API 类型 → 页面 → 接进路由与导航。
 5. 更新本 README 的功能列表与 `docs/`。
@@ -531,7 +531,7 @@ pnpm check:ui                     # 0 违规才通过(第 8 项要读 dist 产�
 
 ### 8.1 后端自动化测试
 
-后端测试是**黑盒 HTTP 测试**:`httptest.Server` + **真实 Postgres** + **真实迁移**,不 mock 内部函数(`internal/testutil/testutil.go`)。需要 `janus_test` 测试库,不可用时用例自动跳过。
+后端测试是**黑盒 HTTP 测试**:`httptest.Server` + **真实 Postgres** + **真实初始化脚本**,不 mock 内部函数(`internal/testutil/testutil.go`)。需要 `janus_test` 测试库,不可用时用例自动跳过。
 
 ```bash
 docker compose up -d postgres
@@ -543,7 +543,7 @@ go test ./... -cover                            # 覆盖率
 JANUS_TEST_DATABASE_URL='postgres://janus:janus@localhost:5432/other_test?sslmode=disable' go test ./...
 ```
 
-每个测试的 `Setup` 会连接测试库、执行迁移、`TRUNCATE` 业务表并重新插入免费档种子(短链 100 / 域名 10),用例之间互不干扰,可重复运行。**看到全部 SKIP 就是连不上测试库**,先建库。
+每个测试的 `Setup` 会连接测试库、执行初始化脚本、`TRUNCATE` 业务表并重新插入免费档种子(短链 100 / 域名 10),用例之间互不干扰,可重复运行。**看到全部 SKIP 就是连不上测试库**,先建库。
 
 ### 8.2 前端质量门禁
 
@@ -658,7 +658,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml ps
 ```
 
-**首次启动自动完成**:连库 → goose 迁移 → 插入免费档种子 → 按 `JANUS_SUPERADMIN_EMAIL` 幂等初始化超管 → 启动后台 worker → 监听 8080。证书是**按需签发**的:租户域名激活后,首次访问时 Caddy 询问授权端点并签发 Let's Encrypt 证书,到期前自动续期。
+**首次启动自动完成**:连库 → 执行初始化脚本 → 插入免费档种子 → 按 `JANUS_SUPERADMIN_EMAIL` 幂等初始化超管 → 启动后台 worker → 监听 8080。证书是**按需签发**的:租户域名激活后,首次访问时 Caddy 询问授权端点并签发 Let's Encrypt 证书,到期前自动续期。
 
 **发布与回滚**:改前端只重建 `web` 镜像,改后端只重建 `backend` 镜像(前后端分离,互不牵连);镜像无版本 tag,回滚 = `git checkout <上一个正常提交>` 后重新 `up -d --build`。
 
@@ -759,9 +759,9 @@ cd web && pnpm type-check && pnpm build && pnpm check:ui
 
 **代码风格**
 
-- Go:`gofmt`;注释解释"为什么"与不变式,不写复述代码的注释;新依赖前先确认标准库/已有依赖不能解决(仓库已明确不自造轮子:迁移、限流、邮件、配置、CIDR 匹配、表达式引擎都用成熟库)。
+- Go:`gofmt`;注释解释"为什么"与不变式,不写复述代码的注释;新依赖前先确认标准库/已有依赖不能解决(仓库已明确不自造轮子:数据库初始化/外部迁移、限流、邮件、配置、CIDR 匹配、表达式引擎都用成熟库)。
 - Vue:三层令牌 + `App*` 组件(见 7.4);不引入 ant-design-vue;不在 `components/app/` 写 `dark:` 补丁;不写裸 HTML 原语;响应式只用 Tailwind 断点或 container query。
-- 数据库:迁移只增不改,已发布迁移不修改。
+- 数据库:核心 schema 只维护 `migrations/init.sql` 一份初始化脚本,不写增量迁移;改表直接改脚本并重建开发库(见 AGENTS.md)。
 
 **架构决策**:架构取舍写 `docs/adr/NNNN-*.md`,格式参照现有 ADR(背景 → 权衡 → 后果)。不显然的决策要有 ADR,不要只写在提交信息里。过程性功能设计与实施草稿不随仓库提交,避免随迭代失效。
 

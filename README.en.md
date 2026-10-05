@@ -190,7 +190,7 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
 
 ### 2.10 Platform operations
 
-- **Migrations**: `migrations/*.sql` are applied automatically on boot (goose, idempotent).
+- **Database init**: `migrations/init.sql` — the single source of truth for the schema — is applied automatically on boot (idempotent whole-file run, no version table).
 - **Background workers**: DNS retries, certificate probing, visit pruning, session and email-token cleanup.
 - **Pluggable mailer**: real SMTP when configured, otherwise a console mailer that prints messages to the backend log (handy in air-gapped environments).
 - **Pluggable geo source**: abstracted by capability (ADR-0009); the shipped implementation is the bundled ip2region offline database. `asn` and `is_datacenter` stay empty because no source provides them (a rule depending on them simply never matches — values are never guessed).
@@ -240,7 +240,7 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
 | **Caddy** | TLS termination and certificate lifecycle | On-demand TLS: on the first handshake for an unknown domain, Caddy asks the app's `/internal/caddy/authorize` whether the domain is activated; if so it issues a Let's Encrypt certificate and renews automatically (ADR-0002). The app never edits Caddy config. |
 | **Go backend** | Business logic, REST API, redirect hot path | Boot order: load config → connect Postgres → migrate → initialize super admin → start workers → serve HTTP |
 | **nginx (web image)** | SPA assets and history fallback | Independent of the backend image; runs `pnpm build` during its own image build |
-| **PostgreSQL** | All persistent state | Single source of truth; migration files ship with the image |
+| **PostgreSQL** | All persistent state | Single source of truth; the init script ships with the image |
 | **Frontend SPA** | Admin console | Vue 3 + TypeScript + Vite + Tailwind CSS 4 + Reka UI, with an in-house `App*` component kit |
 
 ### 3.3 Technology stack
@@ -252,7 +252,7 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
 | HTTP framework | `gin-gonic/gin` |
 | Authorization | `casbin/casbin` + `gin-contrib/authz` (policy loaded in memory) |
 | Data access | `gorm.io/gorm` + `gorm.io/driver/postgres` (on `pgx/v5`) |
-| Migrations | `pressly/goose/v3` |
+| Database init | `migrations/init.sql` (idempotent whole-file run); external proprietary migrations use `pressly/goose/v3` |
 | Rule expressions | `expr-lang/expr` |
 | JWT | `golang-jwt/jwt/v5` |
 | Rate limiting | `golang.org/x/time/rate` |
@@ -286,7 +286,7 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
 ├── internal/
 │   ├── bootstrap/              # Boot-time initialization (idempotent super admin)
 │   ├── config/                 # Env-var config (caarlos0/env)
-│   ├── db/                     # Postgres connection + goose migrations
+│   ├── db/                     # Postgres connection + init script runner
 │   ├── domain/                 # Domain activation checks, cert probing, background workers
 │   ├── geo/                    # IP geolocation (ip2region offline db + sharded cache)
 │   ├── httpapi/                # HTTP routes and handlers (black-box tests live here)
@@ -297,7 +297,7 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
 │   ├── rules/                  # Rule engine: fields, condition evaluation, tenant snapshot, simulation
 │   ├── store/                  # Data access (tenants / domains / links / rules / visits)
 │   └── testutil/               # Test infrastructure (httptest + real Postgres)
-├── migrations/                 # Database initialization SQL (applied on boot)
+├── migrations/init.sql         # Single schema source of truth (applied on boot)
 ├── web/                        # Frontend SPA (see web/README.md and web/UI_KIT.md)
 │   ├── src/
 │   │   ├── api/  types/  utils/ # Request layer, types, errors and helpers
@@ -440,7 +440,7 @@ Development defaults work out of the box; `cp .env.example .env` when you need t
 | `JANUS_PUBLIC_BASE_URL` | `https://app.janus.test` | Link prefix in verification / reset emails |
 | `JANUS_DATABASE_URL` | `postgres://janus:janus@localhost:5432/janus?sslmode=disable` | Backend connection string |
 | `JANUS_TEST_DATABASE_URL` | `…/janus_test…` | Test database (separate from the dev database) |
-| `JANUS_MIGRATIONS_DIR` | `migrations` | Migration directory (`/app/migrations` in the container) |
+| `JANUS_MIGRATIONS_DIR` | `migrations` | Init script directory holding `init.sql` (`/app/migrations` in the container) |
 | `JANUS_SUPERADMIN_EMAIL` | empty | Super admin email, initialized on boot (no super admin when empty) |
 | `JANUS_COOKIE_SECURE` | `false` | Session cookie `Secure` flag; must be false for dev HTTP |
 | `JANUS_SESSION_TTL` / `JANUS_SESSION_TTL_SHORT` | `720h` / `24h` | Remember-me / regular session |
@@ -488,14 +488,15 @@ pnpm check:ui                     # passes only with zero violations (check 8 re
 - **Every new protected route needs a Casbin policy**: append `p, tenant, <path>, <METHOD>` to `policyText` in `internal/rbac/rbac.go`; **missing it means a 403 from the authorization middleware even when logged in.** Note that under `keyMatch3` a bare path and a `/*` path are distinct policies and must be listed as a pair.
 - **Uniform errors**: return `{ code, message, details }` through the helpers in `respond.go`; keep codes stable and messages human-readable.
 - **Do not introduce DB queries or counter-table writes on the redirect hot path** (see the three hard constraints in 1.2).
-- **Do not reinvent wheels**: networking, parsing, rate limiting, mail, migrations, config and CIDR matching all use established libraries (see 3.3). Confirm neither the standard library nor an existing dependency suffices before adding one.
+- **Do not reinvent wheels**: networking, parsing, rate limiting, mail, database init/external migrations, config and CIDR matching all use established libraries (see 3.3). Confirm neither the standard library nor an existing dependency suffices before adding one.
 - **Never invent geo values**: "not found" means empty, and an empty value makes a rule condition never match (ADR-0009).
 
-### 7.3 Database migrations
+### 7.3 Database initialization
 
-- Migrations live in `migrations/`, named `NNNN_snake_case.sql`, executed by **goose**, with `-- +goose Up` / `-- +goose Down` headers.
-- Append only: **never modify a published migration**; add a new backward-compatible one.
-- After adding a migration, update the read/write code in `internal/store` and the related tests.
+- `migrations/` holds a single `init.sql` — the **single source of truth** for the schema. The development database is disposable: there are no incremental migrations and no migration version tables.
+- Change the schema by editing `init.sql` and recreating the dev database.
+- The script must be idempotent end to end (`CREATE TABLE/INDEX IF NOT EXISTS`, `OR REPLACE FUNCTION`, `DROP TRIGGER IF EXISTS` before `CREATE TRIGGER`, `ON CONFLICT DO NOTHING` seeds); boot, re-runs and concurrent replicas must never damage existing data. It runs as one implicit transaction, so a failure rolls back entirely.
+- Tables owned by external projects go through `pkg/janus` `WithExtraMigrations` (goose + `goose_db_version_extra`) and never into `migrations/`.
 
 ### 7.4 Frontend conventions
 
@@ -512,7 +513,7 @@ The full contract lives in [`web/UI_KIT.md`](web/UI_KIT.md); the gate script `we
 ### 7.5 Order of work for a new feature
 
 1. Align architecture trade-offs first: record significant design choices in `docs/adr/NNNN-*.md`.
-2. Migration → `store` → `httpapi` (route + RBAC policy + error codes).
+2. `init.sql` → `store` → `httpapi` (route + RBAC policy + error codes).
 3. If it touches decision logic (rule evaluation), add black-box tests in `internal/httpapi/*_test.go` using `testutil.Setup`.
 4. Frontend: API types → page → route and navigation wiring.
 5. Update the feature list in this README and the docs.
@@ -523,7 +524,7 @@ The full contract lives in [`web/UI_KIT.md`](web/UI_KIT.md); the gate script `we
 
 ### 8.1 Backend tests
 
-Backend tests are **black-box HTTP tests**: `httptest.Server` + a **real Postgres** + **real migrations**, with no internal mocking (`internal/testutil/testutil.go`). They need a `janus_test` database and skip automatically when it is unavailable.
+Backend tests are **black-box HTTP tests**: `httptest.Server` + a **real Postgres** + **the real init script**, with no internal mocking (`internal/testutil/testutil.go`). They need a `janus_test` database and skip automatically when it is unavailable.
 
 ```bash
 docker compose up -d postgres
@@ -535,7 +536,7 @@ go test ./... -cover                            # coverage
 JANUS_TEST_DATABASE_URL='postgres://janus:janus@localhost:5432/other_test?sslmode=disable' go test ./...
 ```
 
-Each test's `Setup` connects to the test database, applies migrations, `TRUNCATE`s business tables and re-seeds the free tier (100 links / 10 domains), so cases are isolated and repeatable. **If everything reports SKIP, the test database is missing** — create it as above.
+Each test's `Setup` connects to the test database, applies the init script, `TRUNCATE`s business tables and re-seeds the free tier (100 links / 10 domains), so cases are isolated and repeatable. **If everything reports SKIP, the test database is missing** — create it as above.
 
 ### 8.2 Frontend quality gates
 
@@ -650,7 +651,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml ps
 ```
 
-**First boot does this automatically**: connect → goose migrations → seed the free tier → idempotently initialize the super admin from `JANUS_SUPERADMIN_EMAIL` → start background workers → listen on 8080. Certificates are issued **on demand**: once a tenant domain is activated, Caddy asks the authorization endpoint on the first visit and issues a Let's Encrypt certificate, renewing before expiry.
+**First boot does this automatically**: connect → apply the init script → seed the free tier → idempotently initialize the super admin from `JANUS_SUPERADMIN_EMAIL` → start background workers → listen on 8080. Certificates are issued **on demand**: once a tenant domain is activated, Caddy asks the authorization endpoint on the first visit and issues a Let's Encrypt certificate, renewing before expiry.
 
 **Release and rollback**: a frontend change rebuilds only the `web` image, a backend change only the `backend` image (they never block each other). Images carry no version tag, so rollback means `git checkout <last good commit>` followed by `up -d --build`.
 
@@ -753,7 +754,7 @@ cd web && pnpm type-check && pnpm check:ui && pnpm build
 
 - Go: `gofmt`; comments explain "why" and invariants rather than restating code; check the standard library and existing dependencies before adding a new one (this repo deliberately delegates migrations, rate limiting, mail, config, CIDR matching and expression evaluation to established libraries).
 - Vue: three token layers + `App*` components (see 7.4); no ant-design-vue; no `dark:` patches inside `components/ui/`; no bare HTML primitives; responsive behavior only via Tailwind breakpoints or container queries.
-- Database: migrations are append-only; published migrations are never modified.
+- Database: the schema lives in a single `migrations/init.sql`; no incremental migrations — edit the script and recreate the dev database (see `AGENTS.md`).
 
 **Architecture decisions**: record architectural trade-offs in `docs/adr/NNNN-*.md` following the existing format (background → trade-offs → consequences). Non-obvious decisions deserve an ADR. Transient design drafts and implementation plans should not be committed to avoid becoming stale.
 

@@ -63,6 +63,7 @@ type Config struct {
 	// MaxTargetURLs 一条短链可配置的目标 URL 个数上限(轮询池大小)。
 	MaxTargetURLs int `env:"JANUS_MAX_TARGET_URLS" envDefault:"50"`
 
+	// MigrationsDir 初始化脚本目录(内含唯一的 init.sql,见 AGENTS.md「数据库与 Schema 约定」)。
 	MigrationsDir string `env:"JANUS_MIGRATIONS_DIR" envDefault:"migrations"`
 
 	// SMTP 邮件(可选):配置后启用真实邮件发送,否则控制台 mailer

@@ -35,7 +35,7 @@ cp .env.example .env   # 填写生产值
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-- 首次启动自动执行数据库迁移、创建免费档种子、按 `JANUS_SUPERADMIN_EMAIL` 初始化超管;
+- 首次启动自动执行数据库初始化脚本、创建免费档种子、按 `JANUS_SUPERADMIN_EMAIL` 初始化超管;
 - 证书按需签发:租户域名激活后,访问者首次访问时 Caddy 询问授权端点并签发 Let's Encrypt 证书,到期前自动续期(ADR-0002、ADR-0004);
 - 查看状态:`docker compose -f docker-compose.prod.yml ps`、`docker compose -f docker-compose.prod.yml logs -f caddy`。
 

@@ -6,7 +6,7 @@
 
 ## 第 1 层:Go 测试(黑盒,真实 Postgres)
 
-`internal/testutil` 提供黑盒设施:启动 `httptest.Server` + 连真实 `janus_test` 库 + 跑真实迁移,
+`internal/testutil` 提供黑盒设施:启动 `httptest.Server` + 连真实 `janus_test` 库 + 跑真实初始化脚本,
 测试 seam 是 HTTP API 边界,不 mock 内部函数。
 
 ```bash

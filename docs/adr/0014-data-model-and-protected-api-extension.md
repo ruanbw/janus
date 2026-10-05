@@ -104,6 +104,8 @@ func WithExtraMigrationsDir(dir string) Option
          SELECT pg_advisory_unlock(hashtext('janus-migrate'))
 ```
 
+> 注:基座核心轨已由 [ADR-0017](0017-single-init-script.md) 修订为「单一 `init.sql`、无版本表、无增量迁移」。上文图中第一轨与 `goose_db_version` 的对应关系仅对第二轨(外部专有迁移)仍然成立。
+
 #### 2.3 版本隔离与安全性保障
 - **版本表命名隔离**：外部迁移使用独立的 Goose 版本控制表（如 `goose_db_version_extra`，通过 `goose.WithTableName("goose_db_version_extra")` 或 `goose.SetTableName` 隔离），彻底消除外部迁移版本号（如 `0001_`）与基座内建迁移版本号之间的命名与顺序冲突。
 - **全内存文件系统支持 (`fs.FS`)**：接受标准库 `io/fs.FS`，使外部工程可以通过 Go 1.16+ 的 `//go:embed migrations/*.sql` 将私有 SQL 内嵌在私有二进制中，无需额外在宿主机挂载文件目录。
