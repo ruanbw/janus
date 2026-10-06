@@ -100,10 +100,11 @@ type Compiled struct {
 	Rule       store.Rule
 	evaluator  ConditionEvaluator // 双层统一求值器接口(Tier-1 nativeVisualEvaluator / Tier-2 exprEvaluator)
 	logicAll   bool
-	appliesAll bool           // scope=global
-	linkIDs    map[int64]bool // scope=links 时的适用短链
-	root       compiledNode   // 条件树(扁平形态 = 一层 logicAll 组)
-	nested     bool           // 是否真的用了嵌套(用于把「为什么没命中」说成人话)
+	appliesAll bool               // scope=global
+	linkIDs    map[int64]bool     // scope=links 时的适用短链
+	root       compiledNode       // 条件树(扁平形态 = 一层 logicAll 组)
+	pipeline   *ConditionPipeline // 解耦流水线容器
+	nested     bool               // 是否真的用了嵌套(用于把「为什么没命中」说成人话)
 }
 
 // compileRule 预编译一条规则。conditions 非空但全部被丢弃(字段不认识/正则非法/CIDR 非法)
@@ -159,21 +160,28 @@ func compileRule(r store.Rule, log *slog.Logger) (Compiled, bool) {
 	} else {
 		// 扁平形态就是"一层 + rules.logic"的树:求值路径只有 root 一条
 		root := compiledNode{op: nodeOpFor(c.logicAll)}
+		var preds []ConditionPredicate
 		for _, cond := range r.Conditions.Leaves {
 			cc, ok := compileCond(cond, r.ID, log)
 			if !ok {
 				continue
 			}
 			root.conds = append(root.conds, cc)
+			if p, ok := CompilePredicate(cond, log); ok {
+				preds = append(preds, p)
+			}
 			kept++
 		}
 		c.root = root
+		if len(preds) > 0 {
+			c.pipeline = NewOptimizedConditionPipeline(c.logicAll, preds)
+		}
 	}
 	if declared > 0 && kept == 0 {
 		log.Warn("规则条件全部不可求值,整条规则不参与求值", "rule", r.ID, "name", r.Name)
 		return Compiled{}, false
 	}
-	c.evaluator = &nativeVisualEvaluator{root: c.root}
+	c.evaluator = &nativeVisualEvaluator{root: c.root, pipeline: c.pipeline}
 	return c, true
 }
 

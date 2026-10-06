@@ -92,12 +92,16 @@ type ConditionEvaluator interface {
 	Match(ctx VisitorContext) bool
 }
 
-// nativeVisualEvaluator Tier-1 原生条件树求值器(基于 compiledNode)。
+// nativeVisualEvaluator Tier-1 原生条件树求值器(基于 compiledNode 与 ConditionPipeline 流水线)。
 type nativeVisualEvaluator struct {
-	root compiledNode
+	root     compiledNode
+	pipeline *ConditionPipeline
 }
 
 func (e *nativeVisualEvaluator) Match(ctx VisitorContext) bool {
+	if e.pipeline != nil {
+		return e.pipeline.Match(ctx)
+	}
 	return e.root.match(ctx)
 }
 

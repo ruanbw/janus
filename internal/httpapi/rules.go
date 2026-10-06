@@ -944,9 +944,42 @@ func (a *API) handleSimulateRules(c *gin.Context) {
 
 	// 假想请求走的是 LazyVisitorContext:UA/语言/来源站点的解析路径与线上跳转完全一致,
 	// 仿真不会另造一套解析(另造一套迟早会和线上分叉)。
-	vctx := rules.AcquireVisitorContext(
-		target.request(req.UserAgent, req.AcceptLanguage, req.Referrer), country, asn).WithIP(ip)
+	simReq := target.request(req.UserAgent, req.AcceptLanguage, req.Referrer)
+	vctx := rules.AcquireVisitorContext(simReq, country, asn).WithIP(ip)
 	defer rules.ReleaseVisitorContext(vctx)
+
+	// 规则模拟器必须执行与线上一致的画像富化扩展点 (FactEnricher)
+	vctx.ApplyEnrichers(c.Request.Context(), simReq)
+
+	// 前置拦截器 (RuleInterceptor): 若触发前置熔断/短路放行，模拟器如实呈现短路裁决
+	fact := vctx.Fact()
+	if intercepted, ok := rules.CheckInterceptors(c.Request.Context(), simReq, linkID, &fact); ok && intercepted != nil {
+		blocked := intercepted.Action == store.RuleActionNotfound || intercepted.Action == store.RuleActionThrottle
+		writeJSON(c, http.StatusOK, simulateResp{
+			Facts:     vctx.ToFact().Fields(),
+			ScopeNote: note,
+			Steps: []rules.StepTrace{
+				{
+					RuleName: "[前置拦截器拦截]",
+					Action:   intercepted.Action,
+					Priority: 0,
+					Status:   rules.StepStatusHit,
+					Reason:   "前置规则拦截器已短路判定 (RuleInterceptor 短路生效)，线上跳过后续规则匹配。",
+				},
+			},
+			Verdict: simulateVerdictResp{
+				Matched:     true,
+				Blocked:     blocked,
+				RuleID:      intercepted.RuleID,
+				RuleName:    "[前置拦截器]",
+				Action:      intercepted.Action,
+				Destination: intercepted.Destination,
+				Priority:    intercepted.Priority,
+				Message:     fmt.Sprintf("触发前置拦截器短路判定: %s", actionVerdict(*intercepted)),
+			},
+		})
+		return
+	}
 
 	res := a.ruleCache.Get(c.Request.Context(), t.ID).Simulate(vctx, linkID, onlyID, draft)
 	steps := res.Steps
