@@ -582,3 +582,57 @@ func TestResendVerification(t *testing.T) {
 		t.Errorf("active tenant triggered %d extra mail bytes, want 0", got)
 	}
 }
+
+// TestSuperadminBootstrapPromotionResetsCredentials 回归:有人抢先用超管邮箱注册了普通
+// 账号,随后部署配置 JANUS_SUPERADMIN_EMAIL 并启动。提权后原密码、会话、JWT 必须全部
+// 作废,只能凭发往该邮箱的 setup token 首登。修复前原密码直接就是超管密码。
+func TestSuperadminBootstrapPromotionResetsCredentials(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "squatter")
+	tok := tokenFromLogin(t, env, "squatter@example.com", "password123")
+
+	bootstrapSuperadmin(t, env, "squatter@example.com")
+
+	// 旧会话、旧 JWT 立即失效
+	resp := c.get("/api/auth/me")
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+	resp = bearerReq(t, env, http.MethodGet, "/api/auth/me", nil, tok)
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+
+	// 原密码不再可用(进入 setup 模式;该次失败补发一枚 setup token)
+	resp = newClient(env).post("/api/auth/login", map[string]string{"email": "squatter@example.com", "password": "password123"})
+	assertStatus(t, resp, http.StatusUnauthorized)
+	_ = resp.Body.Close()
+
+	// 凭 setup token 才能登录,且是超管
+	resp = newClient(env).post("/api/auth/login", map[string]string{
+		"email": "squatter@example.com", "setupToken": env.LastToken(t),
+	})
+	assertStatus(t, resp, http.StatusOK)
+	tenant := decodeBody[store.Tenant](t, resp)
+	if !tenant.IsSuperAdmin || !tenant.FirstLoginSetup {
+		t.Fatalf("superadmin=%v firstLoginSetup=%v, want both true", tenant.IsSuperAdmin, tenant.FirstLoginSetup)
+	}
+}
+
+// TestSuperadminBootstrapKeepsBannedTenantBanned bootstrap 不得把封禁账号复活。
+func TestSuperadminBootstrapKeepsBannedTenantBanned(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "banned")
+	id := tenantIDOf(t, c)
+	if err := env.Store.SetTenantStatus(context.Background(), id, "banned"); err != nil {
+		t.Fatalf("ban tenant: %v", err)
+	}
+
+	bootstrapSuperadmin(t, env, "banned@example.com")
+
+	got, err := env.Store.GetTenantByID(context.Background(), id)
+	if err != nil {
+		t.Fatalf("get tenant: %v", err)
+	}
+	if got.Status != "banned" {
+		t.Fatalf("status = %q, want banned (bootstrap must not reactivate)", got.Status)
+	}
+}

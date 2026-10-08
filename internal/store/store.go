@@ -229,6 +229,31 @@ func (s *Store) SetTenantSuperAdmin(ctx context.Context, id int64) error {
 	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Update("is_super_admin", true).Error
 }
 
+// PromoteToSuperAdminResetCredentials 把**既有的非超管**租户提升为超管,并在**同一事务**内
+// 作废它原有的全部凭据:清空 password_hash(强制走一次性 setup token 首登流程)、
+// 自增 token_version(已签发 JWT 立即失效)、删除全部会话。
+//
+// 为什么必须原子:分步执行时若进程死在"已置 is_super_admin、尚未清密码"之间,
+// 下次启动 bootstrap 看到 IsSuperAdmin=true 就不会再清 —— 账号原持有人(可能是
+// 抢先用超管邮箱注册的攻击者)保留原密码直接成为超管,正是这里要堵的洞。
+// 不改 status:封禁与否由调用方决定(封禁账号不得被复活)。
+func (s *Store) PromoteToSuperAdminResetCredentials(ctx context.Context, id int64) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&Tenant{}).Where("id = ?", id).Updates(map[string]any{
+			"is_super_admin": true,
+			"password_hash":  nil,
+			"token_version":  gorm.Expr("token_version + 1"),
+		})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected == 0 {
+			return ErrNotFound
+		}
+		return tx.Where("tenant_id = ?", id).Delete(&Session{}).Error
+	})
+}
+
 // ListTenants 平台管理:全部租户(按创建时间倒序)。
 func (s *Store) ListTenants(ctx context.Context) ([]*Tenant, error) {
 	var out []*Tenant

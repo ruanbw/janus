@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -166,7 +167,13 @@ func WithRoutes(fn func(engine *gin.Engine)) Option {
 	}
 }
 
-// WithProtectedRoutes 注入受保护的控制面路由组，外部 Handler 自动继承基座的多租户认证与 Casbin RBAC 鉴权
+// WithProtectedRoutes 注入受保护的控制面路由组(挂在基座 /api 下),外部 Handler 依次经过:
+//   - 多租户认证(会话 cookie 或 Bearer JWT;封禁、token_version 吊销同基座);
+//   - Casbin RBAC 授权:superadmin 全通;tenant 仅放行扩展**实际注册**的 (方法, 路径)。
+//     挂在 /api/admin/ 下、或首段为参数/通配(如 /api/:x、/api/*all)的扩展路由
+//     不对租户放行,即超管专属;
+//   - CSRF:会话 cookie 认证的非安全方法(POST/PUT/PATCH/DELETE 等)必须携带
+//     与会话匹配的 X-CSRF-Token 头,Bearer 认证不受影响。
 func WithProtectedRoutes(fn func(rg *gin.RouterGroup)) Option {
 	return func(o *options) error {
 		if fn != nil {
@@ -245,8 +252,12 @@ type App struct {
 	extraFS               fs.FS
 	workerDone            chan struct{}
 	cancelRun             context.CancelFunc
-	mu                    sync.Mutex
-	running               bool
+	fallback              atomic.Pointer[http.Handler]
+	// visitQueue 访问明细异步队列:每次组装完整业务路由(fullHandler)时创建,
+	// Shutdown 在 HTTP 停止后排空;Run 退出关闭自有数据库连接前也会再排空一次。受 mu 保护。
+	visitQueue *httpapi.VisitQueue
+	mu         sync.Mutex
+	running    bool
 }
 
 // New 基于给定的选项构建并校验 App 实例
@@ -318,7 +329,11 @@ func validateAppConfig(cfg Config) error {
 	return nil
 }
 
-// initHandler 初始化底层 HTTP 路由
+// initHandler 初始化底层 HTTP 路由。
+//
+// 只在 New 中调用一次:外部 WithRoutes 回调只执行一次,不会因 Run 中补齐 DB 而被重复注册。
+// 业务路由通过 NoRoute 委托给 a.fallback,Run 连上数据库后只需原子替换 fallback,
+// 无需重建 engine(旧实现在 Run 里再次 initHandler,导致路由回调执行两遍)。
 func (a *App) initHandler() error {
 	gin.SetMode(gin.ReleaseMode)
 	engine := gin.New()
@@ -329,48 +344,93 @@ func (a *App) initHandler() error {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	// 若提供了 Store 则组装完整业务路由，否则保持轻量基础路由（支持无 DB 测试与自定义路由注入）
-	if a.store != nil {
-		var smtpCfg *mailer.SMTPConfig
-		if a.cfg.SMTPHost != "" {
-			smtpCfg = &mailer.SMTPConfig{
-				Host:     a.cfg.SMTPHost,
-				Port:     a.cfg.SMTPPort,
-				Username: a.cfg.SMTPUsername,
-				Password: a.cfg.SMTPPassword,
-				From:     a.cfg.SMTPFrom,
-			}
-		}
-		m := mailer.NewMailer(mailer.Config{
-			BaseURL: a.cfg.PublicBaseURL,
-			SMTP:    smtpCfg,
-		}, io.Discard)
+	// 外部自定义路由优先于基座业务路由(与旧实现一致:基座路由挂在 NoRoute 上)
+	for _, inject := range a.routeInjects {
+		inject(engine)
+	}
 
-		fullHandler := httpapi.New(httpapi.Deps{
-			Store:           a.store,
-			Mailer:          m,
-			Cfg:             a.cfg,
-			ProtectedRoutes: a.protectedRouteInjects,
-		})
-		engine.NoRoute(func(c *gin.Context) {
-			fullHandler.ServeHTTP(c.Writer, c.Request)
-		})
-	} else if len(a.protectedRouteInjects) > 0 {
-		prot := engine.Group("/api", func(c *gin.Context) {
+	engine.NoRoute(func(c *gin.Context) {
+		if h := a.fallback.Load(); h != nil {
+			(*h).ServeHTTP(c.Writer, c.Request)
+			return
+		}
+		// 已配置 DatabaseURL 但 Run 尚未完成数据库初始化(或已停止)
+		c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "service not ready"})
+	})
+	a.engine = engine
+
+	switch {
+	case a.store != nil:
+		// 若提供了 Store 则组装完整业务路由
+		a.setFallback(a.fullHandler())
+	case a.cfg.DatabaseURL == "":
+		// 无 DB 模式:保持轻量基础路由(支持无 DB 测试与自定义路由注入)
+		a.setFallback(a.noDBHandler())
+	default:
+		// 已配置 DatabaseURL:完整业务路由等 Run 连上数据库后再组装,
+		// 受保护路由回调届时由 httpapi.New 调用一次。
+	}
+	return nil
+}
+
+func (a *App) setFallback(h http.Handler) {
+	if h == nil {
+		a.fallback.Store(nil)
+		return
+	}
+	a.fallback.Store(&h)
+}
+
+// fullHandler 基于 a.store 组装完整业务路由
+func (a *App) fullHandler() http.Handler {
+	var smtpCfg *mailer.SMTPConfig
+	if a.cfg.SMTPHost != "" {
+		smtpCfg = &mailer.SMTPConfig{
+			Host:     a.cfg.SMTPHost,
+			Port:     a.cfg.SMTPPort,
+			Username: a.cfg.SMTPUsername,
+			Password: a.cfg.SMTPPassword,
+			From:     a.cfg.SMTPFrom,
+		}
+	}
+	m := mailer.NewMailer(mailer.Config{
+		BaseURL: a.cfg.PublicBaseURL,
+		SMTP:    smtpCfg,
+	}, io.Discard)
+
+	// 每份完整业务路由配一条新的访问明细队列;替换下来的旧队列先排空再丢弃,
+	// 避免旧队列 worker 泄漏、已入队的明细丢失。
+	q := httpapi.NewVisitQueue(a.store, httpapi.VisitQueueConfig{
+		Size: a.cfg.VisitQueueSize, Workers: a.cfg.VisitQueueWorkers, BatchSize: a.cfg.VisitQueueBatch,
+	})
+	a.mu.Lock()
+	old := a.visitQueue
+	a.visitQueue = q
+	a.mu.Unlock()
+	closeVisitQueue(context.Background(), old)
+
+	return httpapi.New(httpapi.Deps{
+		Store:           a.store,
+		Mailer:          m,
+		Cfg:             a.cfg,
+		ProtectedRoutes: a.protectedRouteInjects,
+		VisitQueue:      q,
+	})
+}
+
+// noDBHandler 无 DB 模式下的兜底路由:受保护路由一律 401,其余 404
+func (a *App) noDBHandler() http.Handler {
+	h := gin.New()
+	h.RedirectTrailingSlash = false
+	if len(a.protectedRouteInjects) > 0 {
+		prot := h.Group("/api", func(c *gin.Context) {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "not authenticated"})
 		})
 		for _, inject := range a.protectedRouteInjects {
 			inject(prot)
 		}
 	}
-
-	// 注入外部自定义路由
-	for _, inject := range a.routeInjects {
-		inject(engine)
-	}
-
-	a.engine = engine
-	return nil
+	return h
 }
 
 // Handler 暴露底层的 http.Handler（供单元测试、边缘测试或自定义编排）
@@ -378,7 +438,109 @@ func (a *App) Handler() http.Handler {
 	return a.engine
 }
 
-// Run 启动应用（包括数据库连接、Worker 任务与 HTTP 服务监听），该调用是阻塞式的
+// validateDatabaseURL 接受 postgres:// 与 postgresql:// 两种 URL scheme(pgx/libpq 均支持),
+// 以及 libpq 的 key=value DSN;其它 scheme 直接报错,而不是像旧实现那样静默以无 DB 模式启动。
+func validateDatabaseURL(u string) error {
+	i := strings.Index(u, "://")
+	if i < 0 {
+		return nil // key=value DSN,交给 pgx 解析
+	}
+	switch strings.ToLower(u[:i]) {
+	case "postgres", "postgresql":
+		return nil
+	default:
+		return fmt.Errorf("unsupported database url scheme %q (want postgres:// or postgresql://)", u[:i])
+	}
+}
+
+// setupDB 连接数据库、执行迁移并初始化超管。任何一步失败都返回错误,由 Run 终止启动。
+// 返回值 owned 为本次 Run 自行打开的 GORM 连接(需在 Run 退出时关闭);WithDB 注入的连接不归 App 管。
+func (a *App) setupDB(ctx context.Context) (owned *gorm.DB, err error) {
+	needMigrate := a.cfg.MigrationsDir != "" || a.extraFS != nil
+
+	if a.gdb != nil {
+		// WithDB 注入:同样执行基座核心迁移(旧实现传 dir="",核心迁移从不执行)与外部迁移
+		if !needMigrate {
+			return nil, nil
+		}
+		sqlDB, err := a.gdb.DB()
+		if err != nil {
+			return nil, fmt.Errorf("get sql db: %w", err)
+		}
+		if err := db.MigrateDBWithExtra(ctx, sqlDB, a.cfg.MigrationsDir, a.extraFS); err != nil {
+			return nil, fmt.Errorf("migrate: %w", err)
+		}
+		return nil, nil
+	}
+
+	if a.cfg.DatabaseURL == "" {
+		return nil, nil
+	}
+	if err := validateDatabaseURL(a.cfg.DatabaseURL); err != nil {
+		return nil, err
+	}
+
+	pool, err := db.Connect(ctx, a.cfg.DatabaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("connect db: %w", err)
+	}
+	if needMigrate {
+		err = db.MigrateWithExtra(ctx, pool, a.cfg.MigrationsDir, a.extraFS)
+	}
+	// 迁移完成即关闭:业务数据访问全部走 GORM
+	pool.Close()
+	if err != nil {
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+
+	gdb, err := db.OpenGORMWithPool(a.cfg.DatabaseURL, a.cfg.DBMaxOpenConns)
+	if err != nil {
+		return nil, fmt.Errorf("open gorm: %w", err)
+	}
+	st := store.New(gdb)
+	if a.cfg.SuperadminEmail != "" {
+		if err := bootstrap.Superadmin(ctx, st, a.cfg.SuperadminEmail); err != nil {
+			closeGORM(gdb)
+			return nil, fmt.Errorf("init superadmin: %w", err)
+		}
+	}
+
+	a.mu.Lock()
+	a.gdb = gdb
+	a.store = st
+	a.mu.Unlock()
+	// 组装完整业务路由(受保护路由回调在此执行一次)
+	a.setFallback(a.fullHandler())
+	return gdb, nil
+}
+
+// closeVisitQueue 排空并关闭访问明细队列(q 为 nil 时无操作;VisitQueue.Close 可重复调用)。
+func closeVisitQueue(ctx context.Context, q *httpapi.VisitQueue) {
+	if q == nil {
+		return
+	}
+	drainCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_ = q.Close(drainCtx)
+}
+
+func closeGORM(gdb *gorm.DB) {
+	if gdb == nil {
+		return
+	}
+	if sqlDB, err := gdb.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+}
+
+// Run 启动应用（包括数据库连接、迁移、Worker 任务与 HTTP 服务监听），该调用是阻塞式的。
+//
+// 返回值约定:
+//   - 数据库连接/迁移/超管初始化/端口监听失败:返回对应错误;
+//   - ctx 取消或调用 Shutdown 触发的优雅停止:返回 nil;
+//   - HTTP 服务异常退出:先停止 worker 与服务,再返回该错误。
+//
+// 无论何种方式退出,running 都会复位,Run 自行打开的数据库连接都会关闭。
 func (a *App) Run(ctx context.Context) error {
 	a.mu.Lock()
 	if a.running {
@@ -389,47 +551,59 @@ func (a *App) Run(ctx context.Context) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	a.cancelRun = cancel
-	a.workerDone = make(chan struct{})
+	workerDone := make(chan struct{})
+	a.workerDone = workerDone
+	a.mu.Unlock()
 
-	// 若尚未注入 DB，且配置了有效的 DatabaseURL 则尝试连接（非强制：连接失败由外层捕获）
-	if a.gdb == nil && a.cfg.DatabaseURL != "" && strings.HasPrefix(a.cfg.DatabaseURL, "postgres://") {
-		pool, err := db.Connect(runCtx, a.cfg.DatabaseURL)
-		if err == nil {
-			if a.cfg.MigrationsDir != "" || a.extraFS != nil {
-				_ = db.MigrateWithExtra(runCtx, pool, a.cfg.MigrationsDir, a.extraFS)
+	var (
+		owned         *gorm.DB
+		workerStarted bool
+	)
+	defer func() {
+		cancel()
+		if !workerStarted {
+			close(workerDone)
+		} else {
+			// 关闭 DB 前等待 worker 退出(无 worker 时已关闭),避免其继续使用已关闭的连接池
+			select {
+			case <-workerDone:
+			case <-time.After(5 * time.Second):
 			}
-			pool.Close()
 		}
+		// 关闭数据库前排空访问明细队列(Shutdown 通常已排空;监听失败等未经 Shutdown 的路径在此兜底)
+		a.mu.Lock()
+		q := a.visitQueue
+		a.mu.Unlock()
+		closeVisitQueue(context.Background(), q)
+		a.mu.Lock()
+		if owned != nil {
+			closeGORM(owned)
+			a.gdb = nil
+			a.store = nil
+			a.setFallback(nil)
+		}
+		a.server = nil
+		a.running = false
+		a.mu.Unlock()
+	}()
 
-		gdb, err := db.OpenGORM(a.cfg.DatabaseURL)
-		if err == nil {
-			a.gdb = gdb
-			a.store = store.New(gdb)
-			if a.cfg.SuperadminEmail != "" {
-				_ = bootstrap.Superadmin(runCtx, a.store, a.cfg.SuperadminEmail)
-			}
-			// 组装底层完整路由
-			_ = a.initHandler()
+	// 数据库初始化期间不持锁,Shutdown 可随时通过 cancelRun 中断启动
+	var err error
+	owned, err = a.setupDB(runCtx)
+	if err != nil {
+		if runCtx.Err() != nil {
+			return nil // 启动期间被请求停止
 		}
-	} else if a.gdb != nil && a.extraFS != nil {
-		if sqlDB, err := a.gdb.DB(); err == nil {
-			_ = db.MigrateDBWithExtra(runCtx, sqlDB, "", a.extraFS)
-		}
-	}
-
-	// 启动后台 worker
-	if a.store != nil {
-		go func() {
-			defer close(a.workerDone)
-			domain.NewWorker(a.store, a.cfg).Run(runCtx)
-		}()
-	} else {
-		close(a.workerDone)
+		return err
 	}
 
 	addr := a.cfg.Addr
 	if addr == "" {
 		addr = ":8080"
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", addr, err)
 	}
 
 	srv := &http.Server{
@@ -440,16 +614,30 @@ func (a *App) Run(ctx context.Context) error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+
+	a.mu.Lock()
+	if runCtx.Err() != nil {
+		// 在启动过程中已被 Shutdown/ctx 取消
+		a.mu.Unlock()
+		_ = listener.Close()
+		return nil
+	}
 	a.server = srv
+	st := a.store
 	a.mu.Unlock()
 
-	serverErrCh := make(chan error, 1)
-	listener, err := net.Listen("tcp", addr)
-	if err != nil {
-		cancel()
-		return err
+	// 启动后台 worker;无 Store 时立即关闭 workerDone,Shutdown 无需等待
+	workerStarted = true
+	if st != nil {
+		go func() {
+			defer close(workerDone)
+			domain.NewWorker(st, a.cfg).Run(runCtx)
+		}()
+	} else {
+		close(workerDone)
 	}
 
+	serverErrCh := make(chan error, 1)
 	go func() {
 		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErrCh <- err
@@ -462,36 +650,51 @@ func (a *App) Run(ctx context.Context) error {
 	case <-runCtx.Done():
 		shutdownCtx, sCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer sCancel()
-		_ = a.Shutdown(shutdownCtx)
-		return runCtx.Err()
+		// 请求的优雅停止返回 nil,而不是 context.Canceled
+		return a.Shutdown(shutdownCtx)
 	case err := <-serverErrCh:
-		return err
+		if err == nil {
+			return nil // Shutdown 已关闭服务
+		}
+		shutdownCtx, sCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer sCancel()
+		_ = a.Shutdown(shutdownCtx)
+		return fmt.Errorf("http serve: %w", err)
 	}
 }
 
-// Shutdown 优雅关闭服务
+// Shutdown 优雅关闭服务:取消 Run 上下文、关闭 HTTP 服务并等待 worker 退出。
+// running 状态与 Run 自行打开的数据库连接由 Run 退出时统一复位/关闭。
 func (a *App) Shutdown(ctx context.Context) error {
+	// 只在取快照时持锁:等待 worker/服务退出期间不持锁,避免与 Run 的启动/退出路径互相阻塞
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	cancelRun, srv, workerDone := a.cancelRun, a.server, a.workerDone
+	a.server = nil
+	a.mu.Unlock()
 
-	if a.cancelRun != nil {
-		a.cancelRun()
+	if cancelRun != nil {
+		cancelRun()
 	}
 
 	var srvErr error
-	if a.server != nil {
-		srvErr = a.server.Shutdown(ctx)
-		a.server = nil
+	if srv != nil {
+		srvErr = srv.Shutdown(ctx)
 	}
 
-	if a.workerDone != nil {
+	// HTTP 已停止接收请求,此后不会再有明细入队:排空访问明细队列。
+	// 关闭后 recordVisit 退回同步写入(WithDB 注入的 Store 在再次 Run 时仍可用)。
+	a.mu.Lock()
+	q := a.visitQueue
+	a.mu.Unlock()
+	closeVisitQueue(ctx, q)
+
+	if workerDone != nil {
 		select {
-		case <-a.workerDone:
+		case <-workerDone:
 		case <-ctx.Done():
 		}
 	}
 
-	a.running = false
 	return srvErr
 }
 

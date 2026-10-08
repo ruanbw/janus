@@ -103,3 +103,70 @@ func TestEnforce(t *testing.T) {
 		})
 	}
 }
+
+// TestGrantTenantExtension 外部扩展路由:租户只被放行扩展实际注册的 (方法, 路径);
+// /api/admin 下或首段为参数/通配的扩展路由视为超管专属。
+func TestGrantTenantExtension(t *testing.T) {
+	en, err := New()
+	if err != nil {
+		t.Fatalf("New() 失败: %v", err)
+	}
+	grants := []struct {
+		method, path string
+		want         bool
+	}{
+		{http.MethodGet, "/api/cloak/campaigns", true},
+		{http.MethodPost, "/api/cloak/campaigns", true},
+		{http.MethodPatch, "/api/cloak/campaigns/:id", true},
+		{http.MethodGet, "/api/admin/cloak/stats", false}, // 管理命名空间:超管专属
+		{http.MethodGet, "/api/:anything/x", false},       // 首段参数可命中 /api/admin
+		{http.MethodGet, "/api/*all", false},              // 通配可命中一切
+		{http.MethodGet, "/other/x", false},               // 不在 /api 下
+	}
+	for _, g := range grants {
+		got, err := en.GrantTenantExtension(g.method, g.path)
+		if err != nil {
+			t.Fatalf("GrantTenantExtension(%s %s): %v", g.method, g.path, err)
+		}
+		if got != g.want {
+			t.Errorf("GrantTenantExtension(%s %s) = %v, want %v", g.method, g.path, got, g.want)
+		}
+	}
+
+	cases := []struct {
+		role, method, path string
+		want               bool
+	}{
+		{RoleTenant, http.MethodGet, "/api/cloak/campaigns", true},
+		{RoleTenant, http.MethodPost, "/api/cloak/campaigns", true},
+		{RoleTenant, http.MethodPatch, "/api/cloak/campaigns/5", true},
+		// 未注册的方法/路径不会被顺带放行
+		{RoleTenant, http.MethodDelete, "/api/cloak/campaigns/5", false},
+		{RoleTenant, http.MethodGet, "/api/cloak/other", false},
+		// 超管专属扩展与基座管理路由仍拒绝租户
+		{RoleTenant, http.MethodGet, "/api/admin/cloak/stats", false},
+		{RoleTenant, http.MethodGet, "/api/admin/tenants", false},
+		{RoleTenant, http.MethodGet, "/api/foo/x", false},
+		// 超管全通
+		{RoleSuperadmin, http.MethodGet, "/api/admin/cloak/stats", true},
+		{RoleSuperadmin, http.MethodDelete, "/api/cloak/campaigns/5", true},
+	}
+	for _, c := range cases {
+		if got := en.Enforce(c.role, c.method, c.path); got != c.want {
+			t.Errorf("Enforce(%q, %q, %q) = %v, want %v", c.role, c.method, c.path, got, c.want)
+		}
+	}
+}
+
+func TestGinPathToPolicyPath(t *testing.T) {
+	cases := map[string]string{
+		"/api/x/:id":         "/api/x/{id}",
+		"/api/x/:id/y/*rest": "/api/x/{id}/y/*",
+		"/api/plain":         "/api/plain",
+	}
+	for in, want := range cases {
+		if got := GinPathToPolicyPath(in); got != want {
+			t.Errorf("GinPathToPolicyPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

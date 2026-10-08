@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/netip"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -47,6 +46,10 @@ type Deps struct {
 	DomainOwnership OwnershipChecker
 	// ProtectedRoutes 外部注入的受保护控制面路由注入回调
 	ProtectedRoutes []func(rg *gin.RouterGroup)
+	// VisitQueue 访问明细异步写入队列(见 visit_queue.go)。
+	// nil 时访问明细在请求内同步落库:黑盒测试依赖"请求返回即可查到明细"。
+	// 生产(cmd/janus、pkg/janus)总是传入,并负责在 http.Server.Shutdown 之后 Close 它。
+	VisitQueue *VisitQueue
 }
 
 // OwnershipChecker 抽象域名归属校验(见 Deps.DomainOwnership)。
@@ -75,6 +78,7 @@ type API struct {
 	jwtMgr           *jwt.Manager   // Bearer JWT 校验(authenticate 中间件使用)
 	ruleCache        *rules.Cache   // 规则快照(跳转热路径求值;nil 时求值恒为"无规则")
 	geo              geo.Lookup     // IP → 国家码(跳转热路径在构造 Fact 之前查,ADR 0009)
+	visitQueue       *VisitQueue    // 访问明细异步队列(nil = 同步落库,见 recordVisit)
 }
 
 // New 构建 Gin 引擎:全局中间件(panic 恢复+访问日志、后台域名 SPA 分流)+ 全部路由。
@@ -142,6 +146,7 @@ func New(d Deps) http.Handler {
 		jwtMgr:           jwtMgr,
 		ruleCache:        ruleCache,
 		geo:              geoLookup,
+		visitQueue:       d.VisitQueue,
 	}
 	if a.dns == nil {
 		a.dns = &domain.DNSChecker{ExpectedIP: d.Cfg.ServerPublicIP}
@@ -229,18 +234,19 @@ func New(d Deps) http.Handler {
 	prot.PATCH("/admin/tenants/:id", a.handleAdminPatchTenant)
 	prot.DELETE("/admin/domains/:id", a.handleAdminDeleteDomain)
 
-	// 挂载外部受保护扩展路由
-	for _, inject := range d.ProtectedRoutes {
-		if inject != nil {
-			inject(protAuth)
-		}
-	}
+	// 挂载外部受保护扩展路由:与基座路由同一条防线(认证 → Casbin 授权 → CSRF)。
+	a.mountProtectedExtensions(r, prot, d.ProtectedRoutes)
 
 	// 跳转(公开):路径首段为短码,由 Host 决定域名(在受保护组外注册)
 	// 公开跳转路由挂访客限流:落地页型短链每次访问都要写一行访问明细,
 	// 点击回传还要额外做一次地理解析,无节制的脚本刷量会同时撑大 visits 表
 	// 与吃掉 CPU。阈值按"CGNAT/公司出口下正常用户感知不到"来定。
 	r.GET("/:code", a.visitorGuard(), a.handleRedirect)
+	// HEAD 与 GET 同响应(状态码 / Location / 缓存头):链接预览器、监控探测、
+	// curl -I 都用 HEAD 判断短链是否可用。原先 HEAD 落进 NoRoute 被当成"短码/子路径"
+	// 解析失败,一律 404 —— 健康的短链在这些工具眼里是坏链。
+	// HEAD 不记明细、不推进轮询指针(见 recordVisit / handleRedirect)。
+	r.HEAD("/:code", a.visitorGuard(), a.handleRedirect)
 	// 16:落地页型短链二级路径(点击端点/每短链 SDK/上传落地页静态服务)。
 	// gin 路由树不支持 /:code 与 /:code/... 子路由并存,统一由 NoRoute 兜底分发;
 	// 关闭尾斜杠重定向,避免 gin 把 /{code}/ 重定向回 /{code} 造成环。
@@ -273,17 +279,45 @@ func isPrivateAddr(remote string) bool {
 	return ip.IsLoopback() || ip.IsPrivate()
 }
 
-// ginPathToCasbinPath 将 Gin 路由路径中的动态参数(:param 或 *param)转换为 Casbin keyMatch3 支持的通配符 *
-func ginPathToCasbinPath(p string) string {
-	parts := strings.Split(p, "/")
-	for i, part := range parts {
-		if strings.HasPrefix(part, ":") {
-			parts[i] = "{" + strings.TrimPrefix(part, ":") + "}"
-		} else if strings.HasPrefix(part, "*") {
-			parts[i] = "*"
+// mountProtectedExtensions 挂载外部注入的受保护扩展路由(janus.WithProtectedRoutes)。
+//
+// 原实现把扩展挂在只有 authenticate() 的 protAuth 组上:没有 Casbin authorize(),
+// 也没有 CSRF 校验 —— 任何已登录租户都能调用扩展的"超管接口",而且浏览器会话下
+// 跨站页面就能对扩展的写接口发起 CSRF。authorize() 里那段 is_protected_extension
+// 放行分支从来没有任何代码设置该标记,是死代码,只会误导读者以为扩展走过 RBAC。
+//
+// 现在:
+//  1. 扩展挂在 prot(已含 authorize())下的子组,并追加 csrfGuard();
+//  2. 挂载完成后,对比挂载前后的路由表,把扩展**实际注册**的每条 (方法, 路径)
+//     交给 rbac.GrantTenantExtension 登记租户策略(超管已由 /api/* 通配覆盖);
+//     /api/admin 下或首段是参数/通配的扩展路由不登记,即超管专属(见该函数注释)。
+func (a *API) mountProtectedExtensions(r *gin.Engine, prot *gin.RouterGroup, injects []func(rg *gin.RouterGroup)) {
+	if len(injects) == 0 {
+		return
+	}
+	before := make(map[string]bool)
+	for _, ri := range r.Routes() {
+		before[ri.Method+" "+ri.Path] = true
+	}
+	ext := prot.Group("", a.csrfGuard())
+	for _, inject := range injects {
+		if inject != nil {
+			inject(ext)
 		}
 	}
-	return strings.Join(parts, "/")
+	for _, ri := range r.Routes() {
+		if before[ri.Method+" "+ri.Path] {
+			continue
+		}
+		granted, err := a.rbacEnforcer.GrantTenantExtension(ri.Method, ri.Path)
+		if err != nil {
+			// 启动期即失败:策略登记失败意味着租户会被全部 403,静默降级更难排查。
+			panic(err.Error())
+		}
+		if !granted {
+			log.Printf("扩展路由 %s %s 未对租户放行(管理命名空间或首段为参数/通配),仅超管可访问", ri.Method, ri.Path)
+		}
+	}
 }
 
 // randomSecret 生成 32 字节随机 hex 密钥(JANUS_JWT_SECRET 未配置时的回退,
