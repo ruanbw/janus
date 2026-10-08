@@ -796,7 +796,7 @@ func (a *API) visitorLimiter() *rateLimiter {
 //	  失去意义(它拿不到比正常用户更多的额度)。
 //	· 换句话说:正常用户感知不到,脚本刷不动,这就是这组数字的目标。
 func (a *API) allowVisitor(c *gin.Context) bool {
-	return a.visitorLimiter().Allow(a.clientIPForVisitor(c.Request))
+	return a.visitorLimiter().AllowIP(a.clientIPForVisitor(c.Request))
 }
 
 // ---------- 落地页静态资源 / SDK 的按 IP 限流 ----------
@@ -827,7 +827,7 @@ func (a *API) landingAssetLimiter() *rateLimiter {
 
 // allowLandingAsset 落地页 sdk.js / 静态文件的准入判断。
 func (a *API) allowLandingAsset(c *gin.Context) bool {
-	return a.landingAssetLimiter().Allow(a.clientIPForVisitor(c.Request))
+	return a.landingAssetLimiter().AllowIP(a.clientIPForVisitor(c.Request))
 }
 
 // visitorGuard 是 allowVisitor 的中间件形态,供公开跳转路由挂载:

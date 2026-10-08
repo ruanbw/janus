@@ -124,6 +124,45 @@ func TestCustomCodeAnd301(t *testing.T) {
 	if loc := resp.Header.Get("Location"); loc != "https://example.com/permanent" {
 		t.Errorf("Location = %q", loc)
 	}
+	// 301 必须带有界缓存:默认浏览器会无限期缓存 301,改目标/停用后老访客永远收不到。
+	// testutil 的配置没设 JANUS_REDIRECT_301_MAX_AGE(零值 = no-store);生产默认 5m 时为
+	// "private, max-age=300"。两种都可接受,不可接受的是缺省(= 无限期缓存)。
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" && !strings.HasPrefix(cc, "private, max-age=") {
+		t.Errorf("301 Cache-Control = %q, want no-store 或 private, max-age=N", cc)
+	}
+}
+
+// TestHeadRedirectMatchesGet HEAD /{code} 与 GET 同状态码/Location,且不记明细。
+// 原先 HEAD 落进 NoRoute 一律 404,链接预览器与监控探测会把健康短链当成坏链。
+func TestHeadRedirectMatchesGet(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	link := createLink(t, c, map[string]any{
+		"code":       "headok",
+		"targetUrls": []string{"https://example.com/head"},
+		"domainIds":  []int64{localhostDomainID(t, c)},
+	})
+	req, err := http.NewRequest(http.MethodHead, env.Server.URL+"/headok", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "localhost"
+	resp, err := noFollowClient(env).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	assertStatus(t, resp, http.StatusFound)
+	if loc := resp.Header.Get("Location"); loc != "https://example.com/head" {
+		t.Fatalf("HEAD Location = %q", loc)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("HEAD 302 Cache-Control = %q, want no-store", cc)
+	}
+	if got := linkStats(t, c, link.ID)["visits"].(float64); got != 0 {
+		t.Fatalf("HEAD 不应计入访问量,link.visits = %v", got)
+	}
 }
 
 // TestSameCodeAcrossDomains 同一短码在不同域名下指向不同目标。

@@ -4,34 +4,45 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 
 	"janus/internal/domain"
 	"janus/internal/store"
 )
 
+// tenantStore 是 bootstrap 用到的最小存储接口(*store.Store 实现),
+// 抽出来是为了让提权/封禁分支能在无数据库的单元测试里覆盖。
+type tenantStore interface {
+	GetTenantByEmail(ctx context.Context, email string) (*store.Tenant, error)
+	CreateTenant(ctx context.Context, email, passwordHash, slug string, isSuperAdmin bool) (*store.Tenant, error)
+	SetTenantStatus(ctx context.Context, id int64, status string) error
+	PromoteToSuperAdminResetCredentials(ctx context.Context, id int64) error
+}
+
 // Superadmin 按环境变量指定的邮箱初始化超管租户:
 // 不存在则创建(is_super_admin、active、暂无密码);已存在则确保标志位。
 // 首次登录引导设置密码(见 spec 决策 #4、票据 08)。
+//
+// 已存在且**尚不是超管**的账号被提升时,原有凭据一律作废(清空密码、自增
+// token_version、删除会话),必须重新走 setup token 首登流程。原实现保留原密码:
+// 任何人只要抢在运维配置 JANUS_SUPERADMIN_EMAIL 之前用该邮箱注册(注册不需要
+// 能收信),重启后就带着自己设的密码直接成为超管 —— 整个平台被接管。
+//
+// 封禁(banned)状态永不被覆盖:bootstrap 只把 pending 收敛为 active,
+// 不替运维"解封"一个被封禁的账号。
 func Superadmin(ctx context.Context, st *store.Store, email string) error {
+	return superadmin(ctx, st, email)
+}
+
+func superadmin(ctx context.Context, st tenantStore, email string) error {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if email == "" {
 		return errors.New("empty superadmin email")
 	}
 	t, err := st.GetTenantByEmail(ctx, email)
 	if err == nil {
-		// 已存在:标志位与状态都要确保就绪——进程可能死在 CreateTenant 与
-		// SetTenantStatus 之间,此时租户存在但 status=pending,重启应把它修复,
-		// 而不是因 IsSuperAdmin 已是 true 就当作「已是超管」直接返回。
-		if !t.IsSuperAdmin {
-			if err := st.SetTenantSuperAdmin(ctx, t.ID); err != nil {
-				return err
-			}
-		}
-		if t.Status != "active" {
-			return st.SetTenantStatus(ctx, t.ID, "active")
-		}
-		return nil
+		return ensureExisting(ctx, st, t)
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		return err
@@ -61,13 +72,40 @@ func Superadmin(ctx context.Context, st *store.Store, email string) error {
 			return err
 		}
 	}
-	// 超管无平台默认域名需求;直接置 active(可登录引导设置密码)。
-	// 即使是另一个副本创建的,这一步也必须做,保证 status=active 收敛。
 	nt, err := st.GetTenantByEmail(ctx, email)
 	if err != nil {
 		return err
 	}
+	if !created {
+		// 不是本进程建的(另一个副本,或恰好有人并发用该邮箱注册了普通租户):
+		// 一律按「已存在」分支处理 —— 普通租户要先作废凭据再提权,封禁不复活。
+		// 原实现在这里无条件置 active,并发注册的普通账号会被免验证激活。
+		return ensureExisting(ctx, st, nt)
+	}
+	// 超管无平台默认域名需求;直接置 active(可登录引导设置密码)。
 	return st.SetTenantStatus(ctx, nt.ID, "active")
+}
+
+// ensureExisting 处理「超管邮箱对应的租户已存在」:标志位与状态都要确保就绪——
+// 进程可能死在 CreateTenant 与 SetTenantStatus 之间,此时租户存在但 status=pending,
+// 重启应把它修复,而不是因 IsSuperAdmin 已是 true 就当作「已是超管」直接返回。
+func ensureExisting(ctx context.Context, st tenantStore, t *store.Tenant) error {
+	if !t.IsSuperAdmin {
+		log.Printf("WARNING: JANUS_SUPERADMIN_EMAIL 对应的既有普通租户(id=%d)将被提升为超管;"+
+			"其原有密码、会话与已签发 token 已全部作废,须通过发往该邮箱的一次性 setup token 重新设置密码", t.ID)
+		if err := st.PromoteToSuperAdminResetCredentials(ctx, t.ID); err != nil {
+			return err
+		}
+	}
+	switch t.Status {
+	case "active":
+		return nil
+	case "banned":
+		log.Printf("WARNING: 超管邮箱对应的租户(id=%d)处于封禁状态,bootstrap 不会自动解封;如需启用请由运维显式处理", t.ID)
+		return nil
+	default:
+		return st.SetTenantStatus(ctx, t.ID, "active")
+	}
 }
 
 func superadminSlug(email string) string {

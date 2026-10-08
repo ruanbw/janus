@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -33,8 +34,24 @@ func DefaultRateLimit() RateLimitConfig {
 	}
 }
 
-// maxRateKeys 内存上限:超过该数量时淘汰过期条目,防止恶意来源 IP 撑爆内存。
+// maxRateKeys 内存上限:超过该数量时先淘汰过期条目,仍满则按最近访问时间淘汰最旧的一批,
+// 防止恶意来源 IP 撑爆内存。
+//
+// 原实现在清理过期条目后仍满时**直接拒绝所有新 key**:攻击者只要在一个窗口内
+// 用 8192 个不同来源(一个 IPv6 /48 就有 65536 个 /64,租一台 VPS 即可)各打一次,
+// 之后所有**新**访客的登录/注册/跳转统统 429 —— 限流器自己变成了 DoS 放大器。
+// 现在改为淘汰最久未活动的条目:新客户端永远能拿到桶。
+//
+// 取舍:被淘汰的条目计数清零,理论上攻击者可借喷射新 key 冲掉自己旧桶的计数。
+// 但被淘汰的总是**最久未活动**的那批,持续打同一个 key 的来源会一直留在表里;
+// 而要冲掉自己的桶就得先喷 maxRateKeys/evictFraction 个新 key —— 每个新 key 本身
+// 就是一份独立额度,所以这并不比直接换来源更划算。配合 IPv6 按 /64 归并
+// (见 rateLimitKeyForIP),"换来源"的成本也被抬高了。
 const maxRateKeys = 8192
+
+// evictFraction 容量满时一次淘汰 1/evictFraction 的最旧条目(摊销排序成本,
+// 避免喷射新 key 时每个请求都做一次 O(n log n))。
+const evictFraction = 16
 
 type visitorBucket struct {
 	// hits 保存最近一个窗口内每一次命中时刻(unix nano),升序,长度 ≤ limit。
@@ -59,6 +76,8 @@ type rateLimiter struct {
 	window  time.Duration
 	buckets map[string]*visitorBucket
 	now     func() time.Time
+	// maxKeys 桶数量上限(默认 maxRateKeys;测试可调小)。
+	maxKeys int
 }
 
 func newRateLimiter(limit int, window time.Duration) *rateLimiter {
@@ -70,7 +89,35 @@ func newRateLimiter(limit int, window time.Duration) *rateLimiter {
 		window:  window,
 		buckets: make(map[string]*visitorBucket),
 		now:     time.Now,
+		maxKeys: maxRateKeys,
 	}
+}
+
+// AllowIP 以来源 IP 为 key 计数:先按 rateLimitKeyForIP 归一化(IPv6 归并到 /64)。
+func (l *rateLimiter) AllowIP(ip string) bool {
+	return l.Allow(rateLimitKeyForIP(ip))
+}
+
+// rateLimitKeyForIP 把来源 IP 归一化为限流 key:
+//   - IPv4(含 IPv4-mapped IPv6)按单个地址;
+//   - IPv6 按 /64 前缀。一个 /64 是分配给单个终端/家庭的最小单位(SLAAC),
+//     同一台机器在 /64 内可以随意换地址(隐私扩展会自动轮换),按完整地址计数
+//     等于每个请求换一个桶,限流形同虚设;
+//   - 无法解析的值原样返回(保持既有行为,例如 RemoteAddr 异常时)。
+func rateLimitKeyForIP(ip string) string {
+	addr, err := netip.ParseAddr(strings.Trim(strings.TrimSpace(ip), "[]"))
+	if err != nil {
+		return ip
+	}
+	addr = addr.Unmap().WithZone("")
+	if addr.Is4() {
+		return addr.String()
+	}
+	p, err := addr.Prefix(64)
+	if err != nil {
+		return ip
+	}
+	return p.String()
 }
 
 // Allow 对 key 计数;未超限返回 true,超限返回 false。
@@ -84,12 +131,17 @@ func (l *rateLimiter) Allow(key string) bool {
 
 	b, ok := l.buckets[key]
 	if !ok {
-		// 当 map 偏大时清理超过 2 个窗口未访问的条目
-		if len(l.buckets) >= maxRateKeys {
+		// 当 map 偏大时清理超过 2 个窗口未访问的条目;仍满则淘汰最久未活动的一批,
+		// 绝不因为表满而拒绝新来源(理由见 maxRateKeys 注释)。
+		capKeys := l.maxKeys
+		if capKeys <= 0 {
+			capKeys = maxRateKeys
+		}
+		if len(l.buckets) >= capKeys {
 			l.purgeExpired(now)
 		}
-		if len(l.buckets) >= maxRateKeys {
-			return false
+		if len(l.buckets) >= capKeys {
+			l.evictOldest(capKeys/evictFraction + 1)
 		}
 		b = &visitorBucket{hits: make([]int64, 0, l.limit), lastSeen: now}
 		l.buckets[key] = b
@@ -120,6 +172,28 @@ func (l *rateLimiter) purgeExpired(now time.Time) {
 		if now.Sub(b.lastSeen) >= l.window*2 {
 			delete(l.buckets, k)
 		}
+	}
+}
+
+// evictOldest 按 lastSeen 升序淘汰 n 个最久未活动的条目。调用方须持有 mu。
+func (l *rateLimiter) evictOldest(n int) {
+	if n <= 0 || len(l.buckets) == 0 {
+		return
+	}
+	type entry struct {
+		key  string
+		seen time.Time
+	}
+	all := make([]entry, 0, len(l.buckets))
+	for k, b := range l.buckets {
+		all = append(all, entry{k, b.lastSeen})
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].seen.Before(all[j].seen) })
+	if n > len(all) {
+		n = len(all)
+	}
+	for _, e := range all[:n] {
+		delete(l.buckets, e.key)
 	}
 }
 
@@ -241,7 +315,7 @@ func isTrustedProxyPeer(remote string, trusted []netip.Prefix) bool {
 
 // authRateLimit 注册端点限流:超限 429。
 func (a *API) rateLimit(c *gin.Context, l *rateLimiter) bool {
-	if !l.Allow(a.trustedClientIP(c.Request)) {
+	if !l.AllowIP(a.trustedClientIP(c.Request)) {
 		writeErr(c, http.StatusTooManyRequests, errRateLimited, "请求过于频繁,请稍后再试")
 		return false
 	}

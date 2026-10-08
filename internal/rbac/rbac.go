@@ -5,6 +5,7 @@ package rbac
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
@@ -112,4 +113,58 @@ func (en *Enforcer) Enforce(role, method, path string) bool {
 		return false
 	}
 	return ok
+}
+
+// AdminPathPrefix 是平台管理命名空间:基座的 /api/admin/* 与扩展挂在其下的路由都只对超管开放。
+const AdminPathPrefix = "/api/admin"
+
+// GrantTenantExtension 为外部注入的受保护扩展路由(janus.WithProtectedRoutes)登记租户策略。
+//
+// 默认策略(取最安全且仍可用的口径):
+//   - superadmin:已由 "p, superadmin, /api/*, *" 覆盖,无需登记;
+//   - tenant:**仅放行扩展实际注册的 (方法, 路径)**,逐条登记,而不是给一整个前缀开通配;
+//   - 扩展路由落在 /api/admin 命名空间下,或首段就是参数/通配(如 /api/:x/...、/api/*any,
+//     可以匹配到 /api/admin/...)→ 不登记租户策略,视为超管专属。扩展若要声明
+//     「仅超管可用」,把路由挂在 /api/admin/ 下即可。
+//
+// ginPath 为 Gin 路由路径(含 :param / *param),内部转换为 keyMatch3 语法。
+// 返回 true 表示已为 tenant 放行,false 表示按超管专属处理(未登记)。
+// 须在开始处理请求前调用(启动期挂载路由时)。
+func (en *Enforcer) GrantTenantExtension(method, ginPath string) (bool, error) {
+	obj := GinPathToPolicyPath(ginPath)
+	if !tenantGrantable(obj) {
+		return false, nil
+	}
+	if _, err := en.e.AddPolicy(RoleTenant, obj, method); err != nil {
+		return false, fmt.Errorf("rbac: 登记扩展路由策略失败(%s %s): %w", method, ginPath, err)
+	}
+	return true, nil
+}
+
+// tenantGrantable 判断某条策略路径能否安全地对 tenant 放行:
+// 必须在 /api/ 下,且首段是字面量、不是 admin(参数/通配首段可能命中 /api/admin/...)。
+func tenantGrantable(obj string) bool {
+	rest, ok := strings.CutPrefix(obj, "/api/")
+	if !ok {
+		return false
+	}
+	first, _, _ := strings.Cut(rest, "/")
+	if first == "" || first == "admin" || strings.ContainsAny(first, "{}*") {
+		return false
+	}
+	return true
+}
+
+// GinPathToPolicyPath 将 Gin 路由路径中的动态参数转换为 Casbin keyMatch3 语法:
+// ":param" → "{param}"(匹配单段),"*param" → "*"(匹配任意后缀)。
+func GinPathToPolicyPath(p string) string {
+	parts := strings.Split(p, "/")
+	for i, part := range parts {
+		if strings.HasPrefix(part, ":") {
+			parts[i] = "{" + strings.TrimPrefix(part, ":") + "}"
+		} else if strings.HasPrefix(part, "*") {
+			parts[i] = "*"
+		}
+	}
+	return strings.Join(parts, "/")
 }

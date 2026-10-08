@@ -222,6 +222,37 @@ func (a *API) requireCSRF(c *gin.Context, sess *store.Session) bool {
 	return true
 }
 
+// csrfGuard 是 requireCSRF 的中间件形态,用于外部扩展路由组(基座自有 handler 各自调用
+// requireCSRF)。安全方法(GET/HEAD/OPTIONS)放行;其余方法:
+//   - Bearer/JWT 认证 → 放行(header 认证天然免疫 CSRF);
+//   - 会话 cookie 认证 → 必须通过双提交校验;
+//   - 拿不到认证方式或会话(未挂 authenticate 等异常装配)→ 403,fail-closed。
+func (a *API) csrfGuard() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			c.Next()
+			return
+		}
+		if m, _ := c.Get(ctxMethodKey); m == "jwt" {
+			c.Next()
+			return
+		}
+		sv, ok := c.Get(ctxSessionKey)
+		sess, _ := sv.(*store.Session)
+		if !ok || sess == nil {
+			writeErr(c, http.StatusForbidden, errCSRF, "invalid csrf token")
+			c.Abort()
+			return
+		}
+		if !a.requireCSRF(c, sess) {
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
 // authorize 授权中间件:把 context 中的角色作为 subject 交给 Casbin,
 // 按 (role, method, path) 判权;未放行 → 403 统一 JSON 错误体。
 func (a *API) authorize() gin.HandlerFunc {
@@ -232,11 +263,6 @@ func (a *API) authorize() gin.HandlerFunc {
 			// 防御:缺少角色(未认证不应到达这里)→ 拒绝
 			writeErr(c, http.StatusForbidden, errForbidden, "permission denied")
 			c.Abort()
-			return
-		}
-		// 若为外部注入的受保护扩展路由，且已认证(tenant 或 superadmin)，直接放行
-		if v, exists := c.Get("janus.auth.is_protected_extension"); exists && v == true {
-			c.Next()
 			return
 		}
 		// gin-contrib/authz(v1.0.7)仅从 Basic Auth 取 subject(用户名),故先注入:
