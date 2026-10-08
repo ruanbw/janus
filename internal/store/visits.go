@@ -132,10 +132,9 @@ type VisitRecord struct {
 	RuleAction string
 }
 
-// InsertVisit 记录一次访问/点击动作(含访问者 IP)。
-// 统计写入失败由调用方决定是否阻断跳转,本函数只返回 error。
-func (s *Store) InsertVisit(ctx context.Context, rec VisitRecord) error {
-	v := Visit{
+// toVisit VisitRecord → 入库行(InsertVisit 与 InsertVisits 共用,避免两份字段映射漂移)。
+func (rec VisitRecord) toVisit() Visit {
+	return Visit{
 		LinkID: rec.LinkID, DomainID: rec.DomainID, IP: rec.IP,
 		UserAgent: rec.UserAgent, Referer: rec.Referer,
 		Action: rec.Action, Outcome: rec.Outcome, Reason: rec.Reason,
@@ -143,7 +142,29 @@ func (s *Store) InsertVisit(ctx context.Context, rec VisitRecord) error {
 		Country: rec.Country,
 		RuleID:  rec.RuleID, RuleAction: rec.RuleAction,
 	}
+}
+
+// InsertVisit 记录一次访问/点击动作(含访问者 IP)。
+// 统计写入失败由调用方决定是否阻断跳转,本函数只返回 error。
+func (s *Store) InsertVisit(ctx context.Context, rec VisitRecord) error {
+	v := rec.toVisit()
 	return s.db.WithContext(ctx).Create(&v).Error
+}
+
+// InsertVisits 一条多行 INSERT 批量写入访问明细(访问明细异步队列的落库入口)。
+//
+// 一批是一条语句、一次往返:跳转高峰时逐行 INSERT 的往返次数与连接占用
+// 才是瓶颈,而不是行数本身。整批要么全成要么全败(单语句天然原子),
+// 失败后是否逐行重试由调用方决定(见 httpapi.VisitQueue)。
+func (s *Store) InsertVisits(ctx context.Context, recs []VisitRecord) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	rows := make([]Visit, len(recs))
+	for i, rec := range recs {
+		rows[i] = rec.toVisit()
+	}
+	return s.db.WithContext(ctx).Create(&rows).Error
 }
 
 // CountVisitsByLink 访问计数 = 成功的访问行(action IN ('redirect','landing_view') 且 outcome='success')。

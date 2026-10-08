@@ -1,6 +1,7 @@
 package httpapi
 
-// 05 — 跳转路由:GET /{code},由 Host 决定域名;命中 → 记 Visit → 302/301(Location=轮询目标);
+// 05 — 跳转路由:GET|HEAD /{code},由 Host 决定域名;命中 → 记 Visit → 302/301(Location=轮询目标;
+// 缓存语义见 redirectToTarget);
 // 16 — 落地页型:记 Visit → 固定 302 → landingUrl 或 /{code}/。
 // 未命中(域名不解析/短码不存在)→ 404 且不记;命中但不可用(停用/逻辑删除/无目标/落地页文件缺失)
 // → 404 并记一行 outcome=failed 的明细(可归属到该短链的失败不丢)。
@@ -14,7 +15,8 @@ package httpapi
 // 三条热路径上的硬约束:
 //  1. 零 DB 查询:规则集合来自按租户缓存的内存快照(Cache.Get 只读一次 map)。
 //     多数租户没有规则,此时连访客画像都不构造。
-//  2. 零写放大:命中不 UPDATE 任何表,只多写本次访问那一行明细。
+//  2. 零写放大:命中不 UPDATE 任何表,只多写本次访问那一行明细(经异步队列批量落库,
+//     不占用请求路径,见 visit_queue.go)。
 //     「24h 命中」是列表接口从 visits 读时聚合出来的(spec D9)。
 //  3. fail-open:快照加载失败/求值 panic 一律按"未命中"继续(spec 风险章节),
 //     风控规则不该把线上短链打成 500。
@@ -313,11 +315,19 @@ func (a *API) handleRedirect(c *gin.Context) {
 			Action: action, Outcome: store.VisitOutcomeSuccess, TargetURL: landingDest,
 			RuleID: ruleID, RuleAction: ruleAction,
 		})
-		c.Redirect(http.StatusFound, landingDest)
+		redirectTemporary(c, landingDest)
 		return
 	}
-	// 跳转型:先选目标(无目标即失败,落一行明细)
-	targetURL, err := a.store.PickTarget(c.Request.Context(), link.ID)
+	// 跳转型:先选目标(无目标即失败,落一行明细)。
+	// 目标池复用 LookupLinkForVisit 已读到的 link.TargetURLs,不再查第二遍 link_targets。
+	// HEAD 只是探测:返回池中第一个目标,不推进轮询指针(多目标本就是 302 + no-store,
+	// Location 具体指向哪一个对探测方没有意义)。
+	var targetURL string
+	if c.Request.Method == http.MethodHead && len(link.TargetURLs) > 0 {
+		targetURL = link.TargetURLs[0]
+	} else {
+		targetURL, err = a.store.PickTargetFrom(c.Request.Context(), link.ID, link.TargetURLs)
+	}
 	if err != nil {
 		// 防御性分支:上面已按 len(TargetURLs)==0 判过一次,这里兜住并发改动
 		a.recordVisit(c, store.VisitRecord{
@@ -336,13 +346,36 @@ func (a *API) handleRedirect(c *gin.Context) {
 	a.redirectToTarget(c, link, targetURL)
 }
 
-// redirectToTarget 按短链配置的 301/302 重定向到目标(默认临时 302)。
+// redirectToTarget 按短链配置的 301/302 重定向到目标(默认临时 302),并给出明确的缓存语义。
+//
+// 301 在浏览器里默认可被**无限期**缓存:一旦缓存,租户改目标、停用短链、加规则,
+// 对已访问过的访客全都不再生效 —— 浏览器根本不会再来问服务端,访问明细也随之漏记。
+// 所以:
+//   - 只有"单目标 + 配置为 301"的短链才发 301,且带有界的 Cache-Control
+//     (private, max-age=JANUS_REDIRECT_301_MAX_AGE;配成 0 则 no-store)。
+//     private 防止共享缓存(CDN / 公司代理)把一个访客的跳转发给所有人。
+//   - 短链开启了规则时,301 改为 no-store:规则按访客画像裁决,结果因人而异,
+//     缓存任何一次的结果都等于让这位访客此后绕过规则求值。仍保留 301 状态码(SEO 语义不变)。
+//   - 多目标轮询的短链一律 302 + no-store:每次访问都该重新轮询,
+//     缓存的 301 会把访客永久钉在第一次命中的目标上,轮询失去意义。
+//   - 其余 302 同样带 no-store,避免中间缓存按启发式规则缓存跳转。
 func (a *API) redirectToTarget(c *gin.Context, link *store.Link, targetURL string) {
-	status := http.StatusFound // 302
-	if link.RedirectStatus == store.RedirectStatus301 {
-		status = http.StatusMovedPermanently
+	if link.RedirectStatus != store.RedirectStatus301 || len(link.TargetURLs) > 1 {
+		redirectTemporary(c, targetURL)
+		return
 	}
-	c.Redirect(status, targetURL)
+	if maxAge := a.cfg.Redirect301MaxAge; maxAge > 0 && !link.RulesEnabled {
+		c.Header("Cache-Control", "private, max-age="+strconv.Itoa(int(maxAge/time.Second)))
+	} else {
+		c.Header("Cache-Control", "no-store")
+	}
+	c.Redirect(http.StatusMovedPermanently, targetURL)
+}
+
+// redirectTemporary 302 且禁止缓存(规则改写、轮询、落地页等"每次都要重新决定"的跳转)。
+func redirectTemporary(c *gin.Context, targetURL string) {
+	c.Header("Cache-Control", "no-store")
+	c.Redirect(http.StatusFound, targetURL)
 }
 
 // ruleDecision 对本次访问求值该租户的规则快照(spec D4)。
@@ -447,7 +480,9 @@ func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domai
 			Outcome: store.VisitOutcomeSuccess, TargetURL: dec.Destination,
 			RuleID: ruleID, RuleAction: ruleAction,
 		})
-		a.redirectToTarget(c, link, dec.Destination)
+		// 规则改写一律 302 + no-store,不沿用短链自身的 301:裁决因访客画像而异、
+		// 规则随时可改,缓存住任何一次改写结果都会让该访客此后绕过规则求值。
+		redirectTemporary(c, dec.Destination)
 		return true
 	}
 	return false

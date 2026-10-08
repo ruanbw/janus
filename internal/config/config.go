@@ -65,6 +65,28 @@ type Config struct {
 
 	MigrationsDir string `env:"JANUS_MIGRATIONS_DIR" envDefault:"migrations"`
 
+	// DBMaxOpenConns 业务连接池(GORM / database/sql)的最大连接数。
+	// 原来写死 10:跳转热路径每次访问要 3~6 次 DB 往返,10 条连接在突发流量下
+	// 很快排队,排队时长直接叠加到访客的跳转延迟上。空闲连接上限取同一个值,
+	// 避免 database/sql 默认只留 2 条空闲连接导致高峰期反复建连。
+	// 0 = 使用 db.DefaultMaxOpenConns(嵌入方用 WithConfig 传零值配置时的兜底)。
+	DBMaxOpenConns int `env:"JANUS_DB_MAX_OPEN_CONNS" envDefault:"25"`
+
+	// Redirect301MaxAge 301 短链响应的 Cache-Control max-age。
+	// 301 在浏览器里默认可被无限期缓存:租户改了目标、停用了短链,已经访问过的
+	// 访客仍会被浏览器直接带走,服务端连请求都收不到(访问明细也就漏了)。
+	// 给 301 一个有界的 private max-age,把"改配置后多久对老访客生效"钉在这个窗口内。
+	// 0 = 301 也不缓存(no-store)。
+	Redirect301MaxAge time.Duration `env:"JANUS_REDIRECT_301_MAX_AGE" envDefault:"5m"`
+
+	// 访问明细异步写入队列(见 httpapi.VisitQueue)。
+	// VisitQueueSize 队列容量(条):写满时新明细被丢弃并计数,绝不阻塞跳转。
+	// VisitQueueWorkers 落库 worker 数;VisitQueueBatch 单次批量 INSERT 的最大行数。
+	// 0 = 使用 httpapi 内置默认值。
+	VisitQueueSize    int `env:"JANUS_VISIT_QUEUE_SIZE" envDefault:"10000"`
+	VisitQueueWorkers int `env:"JANUS_VISIT_QUEUE_WORKERS" envDefault:"2"`
+	VisitQueueBatch   int `env:"JANUS_VISIT_QUEUE_BATCH" envDefault:"200"`
+
 	// SMTP 邮件(可选):配置后启用真实邮件发送,否则控制台 mailer
 	PublicBaseURL string `env:"JANUS_PUBLIC_BASE_URL" envDefault:"https://app.janus.test"`
 	SMTPHost      string `env:"JANUS_SMTP_HOST"`
@@ -134,6 +156,25 @@ func (c Config) Validate() error {
 		if i.v <= 0 {
 			return fmt.Errorf("%s 必须为正数,当前为 %d", i.name, i.v)
 		}
+	}
+	// 这几项允许 0(表示"用内置默认值"/"不缓存"),只拒绝负数:
+	// 负的连接数/容量在下游会被静默当成"无限"或直接 panic(make(chan, -1))。
+	nonNegativeInts := []struct {
+		name string
+		v    int
+	}{
+		{"JANUS_DB_MAX_OPEN_CONNS", c.DBMaxOpenConns},
+		{"JANUS_VISIT_QUEUE_SIZE", c.VisitQueueSize},
+		{"JANUS_VISIT_QUEUE_WORKERS", c.VisitQueueWorkers},
+		{"JANUS_VISIT_QUEUE_BATCH", c.VisitQueueBatch},
+	}
+	for _, i := range nonNegativeInts {
+		if i.v < 0 {
+			return fmt.Errorf("%s 不能为负数,当前为 %d", i.name, i.v)
+		}
+	}
+	if c.Redirect301MaxAge < 0 {
+		return fmt.Errorf("JANUS_REDIRECT_301_MAX_AGE 不能为负数,当前为 %v", c.Redirect301MaxAge)
 	}
 	if _, err := c.TrustedProxyNets(); err != nil {
 		return fmt.Errorf("JANUS_TRUSTED_PROXY_CIDRS: %w", err)
