@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/netip"
 	"runtime/debug"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -229,12 +228,8 @@ func New(d Deps) http.Handler {
 	prot.PATCH("/admin/tenants/:id", a.handleAdminPatchTenant)
 	prot.DELETE("/admin/domains/:id", a.handleAdminDeleteDomain)
 
-	// 挂载外部受保护扩展路由
-	for _, inject := range d.ProtectedRoutes {
-		if inject != nil {
-			inject(protAuth)
-		}
-	}
+	// 挂载外部受保护扩展路由:与基座路由同一条防线(认证 → Casbin 授权 → CSRF)。
+	a.mountProtectedExtensions(r, prot, d.ProtectedRoutes)
 
 	// 跳转(公开):路径首段为短码,由 Host 决定域名(在受保护组外注册)
 	// 公开跳转路由挂访客限流:落地页型短链每次访问都要写一行访问明细,
@@ -273,17 +268,45 @@ func isPrivateAddr(remote string) bool {
 	return ip.IsLoopback() || ip.IsPrivate()
 }
 
-// ginPathToCasbinPath 将 Gin 路由路径中的动态参数(:param 或 *param)转换为 Casbin keyMatch3 支持的通配符 *
-func ginPathToCasbinPath(p string) string {
-	parts := strings.Split(p, "/")
-	for i, part := range parts {
-		if strings.HasPrefix(part, ":") {
-			parts[i] = "{" + strings.TrimPrefix(part, ":") + "}"
-		} else if strings.HasPrefix(part, "*") {
-			parts[i] = "*"
+// mountProtectedExtensions 挂载外部注入的受保护扩展路由(janus.WithProtectedRoutes)。
+//
+// 原实现把扩展挂在只有 authenticate() 的 protAuth 组上:没有 Casbin authorize(),
+// 也没有 CSRF 校验 —— 任何已登录租户都能调用扩展的"超管接口",而且浏览器会话下
+// 跨站页面就能对扩展的写接口发起 CSRF。authorize() 里那段 is_protected_extension
+// 放行分支从来没有任何代码设置该标记,是死代码,只会误导读者以为扩展走过 RBAC。
+//
+// 现在:
+//  1. 扩展挂在 prot(已含 authorize())下的子组,并追加 csrfGuard();
+//  2. 挂载完成后,对比挂载前后的路由表,把扩展**实际注册**的每条 (方法, 路径)
+//     交给 rbac.GrantTenantExtension 登记租户策略(超管已由 /api/* 通配覆盖);
+//     /api/admin 下或首段是参数/通配的扩展路由不登记,即超管专属(见该函数注释)。
+func (a *API) mountProtectedExtensions(r *gin.Engine, prot *gin.RouterGroup, injects []func(rg *gin.RouterGroup)) {
+	if len(injects) == 0 {
+		return
+	}
+	before := make(map[string]bool)
+	for _, ri := range r.Routes() {
+		before[ri.Method+" "+ri.Path] = true
+	}
+	ext := prot.Group("", a.csrfGuard())
+	for _, inject := range injects {
+		if inject != nil {
+			inject(ext)
 		}
 	}
-	return strings.Join(parts, "/")
+	for _, ri := range r.Routes() {
+		if before[ri.Method+" "+ri.Path] {
+			continue
+		}
+		granted, err := a.rbacEnforcer.GrantTenantExtension(ri.Method, ri.Path)
+		if err != nil {
+			// 启动期即失败:策略登记失败意味着租户会被全部 403,静默降级更难排查。
+			panic(err.Error())
+		}
+		if !granted {
+			log.Printf("扩展路由 %s %s 未对租户放行(管理命名空间或首段为参数/通配),仅超管可访问", ri.Method, ri.Path)
+		}
+	}
 }
 
 // randomSecret 生成 32 字节随机 hex 密钥(JANUS_JWT_SECRET 未配置时的回退,

@@ -167,7 +167,13 @@ func WithRoutes(fn func(engine *gin.Engine)) Option {
 	}
 }
 
-// WithProtectedRoutes 注入受保护的控制面路由组，外部 Handler 自动继承基座的多租户认证与 Casbin RBAC 鉴权
+// WithProtectedRoutes 注入受保护的控制面路由组(挂在基座 /api 下),外部 Handler 依次经过:
+//   - 多租户认证(会话 cookie 或 Bearer JWT;封禁、token_version 吊销同基座);
+//   - Casbin RBAC 授权:superadmin 全通;tenant 仅放行扩展**实际注册**的 (方法, 路径)。
+//     挂在 /api/admin/ 下、或首段为参数/通配(如 /api/:x、/api/*all)的扩展路由
+//     不对租户放行,即超管专属;
+//   - CSRF:会话 cookie 认证的非安全方法(POST/PUT/PATCH/DELETE 等)必须携带
+//     与会话匹配的 X-CSRF-Token 头,Bearer 认证不受影响。
 func WithProtectedRoutes(fn func(rg *gin.RouterGroup)) Option {
 	return func(o *options) error {
 		if fn != nil {

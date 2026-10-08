@@ -65,7 +65,7 @@ func (a *API) handleCaddyAuthorize(c *gin.Context) {
 	}
 	// IP 维度限流。用 TCP 对端而非 XFF:这个端点的调用方是本网络的 Caddy,
 	// 而 XFF 是客户端可伪造的头,拿它分桶等于没有分桶。
-	if !a.caddyAuthLimiter().Allow(remoteHostOnly(c.Request.RemoteAddr)) {
+	if !a.caddyAuthLimiter().AllowIP(remoteHostOnly(c.Request.RemoteAddr)) {
 		writeErr(c, http.StatusTooManyRequests, errRateLimited, "too many requests")
 		return
 	}
