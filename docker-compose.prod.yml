@@ -30,6 +30,9 @@ services:
       JANUS_PLATFORM_DOMAIN: "${JANUS_PLATFORM_DOMAIN:?JANUS_PLATFORM_DOMAIN 必须设置(裸平台域名)}"
       JANUS_SERVER_PUBLIC_IP: "${JANUS_SERVER_PUBLIC_IP:?JANUS_SERVER_PUBLIC_IP 必须设置(服务器公网 IP)}"
       JANUS_SUPERADMIN_EMAIL: "${JANUS_SUPERADMIN_EMAIL:-}"
+      # on-demand TLS ask 端点的共享密钥:必须与 caddy 容器的 CADDY_ASK_TOKEN 同值。
+      # 后端拿不到时 /internal/caddy/authorize 一律 403,Caddy 一张证书都签不出来。
+      JANUS_CADDY_ASK_TOKEN: "${JANUS_CADDY_ASK_TOKEN:?未配置 JANUS_CADDY_ASK_TOKEN,后端无法校验 on-demand TLS 的 ask 请求}"
       # 生产必须 true:HTTPS 下 Secure cookie 生效
       JANUS_COOKIE_SECURE: "true"
       JANUS_MIGRATIONS_DIR: "/app/migrations"

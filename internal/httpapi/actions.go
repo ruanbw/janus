@@ -9,6 +9,7 @@ import (
 
 	"janus/internal/rules"
 	"janus/internal/store"
+	"janus/pkg/plugin"
 )
 
 // DeliveryContext 传递给交付处理器的上下文信息。
@@ -59,7 +60,11 @@ func ExecuteActionHandler(c *gin.Context, action string, dctx DeliveryContext) (
 	// 不需要再判 handler == nil：RegisterActionHandler 是这张表的唯一写入口，
 	// 而它拒绝空 action 与 nil handler，Reset 只把表清空。
 	if !ok {
-		return false
+		// 内部表没有,再问公开 API(pkg/plugin)注册的处理器;它自带 panic 隔离。
+		return plugin.ExecuteActionHandler(c, action, plugin.DeliveryContext{
+			Target:   dctx.Target,
+			Decision: rules.ToPluginDecision(dctx.Decision),
+		})
 	}
 	defer func() {
 		if rec := recover(); rec != nil {

@@ -707,6 +707,10 @@ func (r lookupRow) domain() *Domain {
 // lookupLink 按 域名 + 短码 命中一行(ResolveLink 与 LookupLinkForVisit 共用,避免两份 SQL 漂移)。
 // strict=true 追加 "短链未删除且启用" 条件;strict=false 只要求短码命中(调用方自行判定不可用原因)。
 // 两种口径都保留 d.status='active' 与租户 active:这两种失败无法归属到具体短链,不计明细。
+//
+// 排序不变式:同一 (domain, code) 允许"一行未删除 + 任意多行已软删"并存(部分唯一索引),
+// 宽松口径必须优先命中未删除那行,其次取最新的软删行;否则复用短码后新链接会随机 404,
+// 访问明细也会记到旧链接上。
 func (s *Store) lookupLink(ctx context.Context, domainID int64, code string, strict bool) (lookupRow, error) {
 	linkCond := ""
 	if strict {
@@ -725,7 +729,9 @@ func (s *Store) lookupLink(ctx context.Context, domainID int64, code string, str
 	     JOIN domains d ON d.id = ld.domain_id
 	     JOIN tenants t ON t.id = d.tenant_id AND t.id = l.tenant_id
 	     WHERE ld.domain_id = ? AND ld.code = ? ` + linkCond + `
-	       AND d.status = 'active' AND t.status = 'active'`
+	       AND d.status = 'active' AND t.status = 'active'
+	     ORDER BY ld.link_deleted, l.id DESC
+	     LIMIT 1`
 	res := s.db.WithContext(ctx).Raw(sql, domainID, code).Scan(&row)
 	if res.Error != nil {
 		return lookupRow{}, res.Error

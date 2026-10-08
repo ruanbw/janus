@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"janus/internal/store"
+	"janus/pkg/plugin"
 )
 
 // PostVisitHook 访问日志持久化完成后的异步回调。
@@ -38,6 +39,11 @@ func ResetPostVisitHooks() {
 
 // TriggerPostVisitHooks 异步触发全部注册的后置钩子。
 func TriggerPostVisitHooks(ctx context.Context, r *http.Request, visit store.VisitRecord) {
+	// 钩子在响应结束后才跑,请求 ctx 那时已被 net/http 取消;断开取消链,保留其中的值。
+	ctx = context.WithoutCancel(ctx)
+	if plugin.HasPostVisitHooks() {
+		plugin.TriggerPostVisitHooks(ctx, r, toPluginVisit(visit))
+	}
 	postHooksLock.RLock()
 	if len(postHooks) == 0 {
 		postHooksLock.RUnlock()
@@ -53,6 +59,16 @@ func TriggerPostVisitHooks(ctx context.Context, r *http.Request, visit store.Vis
 			runHook(h, ctx, r, visit)
 		}
 	}()
+}
+
+// toPluginVisit 内部访问明细 → 公开 DTO。
+func toPluginVisit(v store.VisitRecord) plugin.VisitRecord {
+	return plugin.VisitRecord{
+		LinkID: v.LinkID, DomainID: v.DomainID, IP: v.IP, UserAgent: v.UserAgent,
+		Referer: v.Referer, Action: v.Action, Outcome: v.Outcome, Reason: v.Reason,
+		TargetURL: v.TargetURL, Lang: v.Lang, Country: v.Country,
+		RuleID: v.RuleID, RuleAction: v.RuleAction,
+	}
 }
 
 // runHook 执行单个后置钩子。

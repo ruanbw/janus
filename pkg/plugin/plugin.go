@@ -351,6 +351,32 @@ func runHook(h PostVisitHook, ctx context.Context, r *http.Request, visit VisitR
 	h(ctx, r, visit)
 }
 
+// =========================================================================
+// 基座接线辅助:基座在访客热路径上先问一句"有没有注册",没有就不做 DTO 转换,
+// 保证未启用插件时零额外分配。
+// =========================================================================
+
+// HasEnrichers 是否注册了任何画像富化器。
+func HasEnrichers() bool {
+	enrichersLock.RLock()
+	defer enrichersLock.RUnlock()
+	return len(enrichers) > 0
+}
+
+// HasInterceptors 是否注册了任何前置拦截器。
+func HasInterceptors() bool {
+	interceptorsLock.RLock()
+	defer interceptorsLock.RUnlock()
+	return len(interceptors) > 0
+}
+
+// HasPostVisitHooks 是否注册了任何后置访问钩子。
+func HasPostVisitHooks() bool {
+	postHooksLock.RLock()
+	defer postHooksLock.RUnlock()
+	return len(postHooks) > 0
+}
+
 // mutate4go-manifest-begin
 // {"version":1,"tested_at":"2026-10-06T03:55:46+08:00","module_hash":"8b8817c14170b90a317bef915c97014e3264f8f74b14666d5daf247fd4f9858f","functions":[{"id":"func/RegisterEnricher","name":"RegisterEnricher","line":82,"end_line":89,"hash":"b268daf63ed16c0301f88813e1c9017718ceeff71ba9ee95b846163cb8fa823f"},{"id":"func/ResetEnrichers","name":"ResetEnrichers","line":92,"end_line":96,"hash":"05c618acc30c3743a35a34daf75b3ca706ffeba04630d0b31ed4d24fa7a84938"},{"id":"func/enricherSnapshot","name":"enricherSnapshot","line":98,"end_line":107,"hash":"6e96134b9896167c0c675eebf03b8f62485c8ed6019ca5f6c032d4c071a71797"},{"id":"func/enrichOne","name":"enrichOne","line":109,"end_line":117,"hash":"f5f8f2170f2cd16a453782f838abc86b875cd0bd4a8f556e312a37c9df801846"},{"id":"func/ApplyEnrichers","name":"ApplyEnrichers","line":120,"end_line":124,"hash":"33da766c39463d80d87c726c2e940a66e1b505aca525598f1f11e1a9199cf472"},{"id":"func/HasASNProvider","name":"HasASNProvider","line":127,"end_line":136,"hash":"b895f047e9d30ae679a093d8ba45ba79af54be929deb104457e22f2c14fe10dc"},{"id":"func/RegisterInterceptor","name":"RegisterInterceptor","line":154,"end_line":161,"hash":"972b9f1c267da849dead05fc1319d2de5c79962fa810ccd2b2ce5679c6f95ae5"},{"id":"func/ResetInterceptors","name":"ResetInterceptors","line":164,"end_line":168,"hash":"6055c4d511392d8431fffc2ff9f04c2f0ed4389d2a09efd19301b1635f188b6b"},{"id":"func/interceptorSnapshot","name":"interceptorSnapshot","line":170,"end_line":179,"hash":"a1c5eb6aa10b35e8d172c87c633cbd3a212432a26f38c0fec1f9905dbb82e8f5"},{"id":"func/checkOne","name":"checkOne","line":181,"end_line":190,"hash":"ba5e381eaba91bf50bcbfcd7e2d746fefb09a796232b6b071831fea864ac5be8"},{"id":"func/CheckInterceptors","name":"CheckInterceptors","line":193,"end_line":200,"hash":"17f1ab7bcf7a989cb8da4122b9bf0238f1a2afc9089e65c687ac1920271e92e2"},{"id":"func/RegisterActionHandler","name":"RegisterActionHandler","line":216,"end_line":223,"hash":"f239103474e42afc540a3bbe13c753c49cd5641bd779fc18da29771dae41006a"},{"id":"func/ResetActionHandlers","name":"ResetActionHandlers","line":226,"end_line":230,"hash":"f732af033f5bc12b20e27ccd7eae5816f54ae765f74a138eafb5dcb7a4e861dc"},{"id":"func/ExecuteActionHandler","name":"ExecuteActionHandler","line":233,"end_line":248,"hash":"31a003b90e5b01c26a3dee7e83241f06f9191aea865b7d170419895c2e255b85"},{"id":"func/SetSDKInjector","name":"SetSDKInjector","line":266,"end_line":270,"hash":"657711e9f614b3835ed5b6be94aebf9e419581a0c804e0e5cef36c67a3031537"},{"id":"func/ResetSDKInjector","name":"ResetSDKInjector","line":273,"end_line":277,"hash":"d7df9207b23f4f73dbd0f39b5b076e281664b1a29cb3b7d0c5675bf8dc03f63f"},{"id":"func/WrapGeneratedSDK","name":"WrapGeneratedSDK","line":280,"end_line":295,"hash":"148c1ae8e99c188f5c6058012672bc4b8a1af256f5d3a9ff3d3283c786fd837a"},{"id":"func/RegisterPostVisitHook","name":"RegisterPostVisitHook","line":310,"end_line":317,"hash":"623a904d0ffa374c5fa4e72333510b488d1d78dd17cb95845ac8014126eaaf69"},{"id":"func/ResetPostVisitHooks","name":"ResetPostVisitHooks","line":320,"end_line":324,"hash":"a060d8bb92b379b589f8fde92fad232d707d35cf0b329178bec1aaaa34e6a068"},{"id":"func/TriggerPostVisitHooks","name":"TriggerPostVisitHooks","line":327,"end_line":342,"hash":"a438f9eb2cd6bb1066d913e044bf7f0d192669e9fd1dc083fd88f5c7dcc01f65"},{"id":"func/runHook","name":"runHook","line":344,"end_line":352,"hash":"721412eb32372137611017f4fa83d82ba6a8b3d77e45a42d09d58980233960f5"}]}
 // mutate4go-manifest-end

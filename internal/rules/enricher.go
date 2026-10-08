@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"runtime/debug"
 	"sync"
+
+	"janus/pkg/plugin"
 )
 
 // FactEnricher 用于在规则求值前，对基础访客画像进行扩展富化。
@@ -69,6 +71,7 @@ func ApplyEnrichers(ctx context.Context, r *http.Request, fact *Fact) {
 	for _, e := range enricherSnapshot() {
 		enrichOne(e, ctx, r, fact)
 	}
+	applyPluginEnrichers(ctx, r, fact)
 }
 
 // HasASNProvider 判断是否已注册了能够提供 ASN 数据的画像富化器。
@@ -80,7 +83,7 @@ func HasASNProvider() bool {
 			return true
 		}
 	}
-	return false
+	return plugin.HasASNProvider()
 }
 
 // mutate4go-manifest-begin
