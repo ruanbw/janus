@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	randv2 "math/rand/v2"
 	"net"
@@ -142,6 +143,46 @@ func IsValidSlug(s string) bool {
 	return true
 }
 
+// reservedSlugs 不允许租户注册的 slug。
+//
+// 租户默认域名是 <slug>.<平台域名>,而平台自身(以及部署者日后)需要一批约定俗成的
+// 子域:后台(app/admin/console)、邮件(mail/smtp/mx/autodiscover,邮件客户端会
+// 按约定探测)、API/状态页/文档、DNS(ns1/ns2)等。被租户先占住后,平台要么无法再
+// 使用这些名字,要么它们会以"租户短链"的身份对外服务 —— 例如 mail.<平台域名>
+// 被租户拿去做跳转,或 status.<平台域名> 显示的是租户内容,都是可被利用的钓鱼面。
+// 列表只做注册闸门(超管 slug 由系统内部生成,不受影响)。
+var reservedSlugs = map[string]struct{}{
+	"app": {}, "www": {}, "api": {}, "admin": {}, "administrator": {}, "root": {},
+	"console": {}, "dashboard": {}, "portal": {}, "panel": {}, "manage": {},
+	"mail": {}, "email": {}, "smtp": {}, "imap": {}, "pop": {}, "pop3": {}, "mx": {},
+	"webmail": {}, "autodiscover": {}, "autoconfig": {}, "postmaster": {}, "hostmaster": {},
+	"webmaster": {}, "abuse": {}, "security": {}, "noreply": {}, "no-reply": {},
+	"ns": {}, "ns1": {}, "ns2": {}, "ns3": {}, "ns4": {}, "dns": {}, "ftp": {}, "sftp": {},
+	"status": {}, "health": {}, "healthz": {}, "metrics": {}, "internal": {},
+	"auth": {}, "login": {}, "logout": {}, "signin": {}, "signup": {}, "register": {},
+	"sso": {}, "oauth": {}, "account": {}, "accounts": {}, "billing": {}, "pay": {},
+	"support": {}, "help": {}, "docs": {}, "doc": {}, "blog": {}, "news": {},
+	"static": {}, "assets": {}, "cdn": {}, "img": {}, "images": {}, "media": {}, "files": {},
+	"dev": {}, "test": {}, "staging": {}, "stage": {}, "beta": {}, "demo": {}, "sandbox": {},
+	"localhost": {}, "janus": {},
+}
+
+// IsReservedSlug slug 是否为平台保留(大小写不敏感)。
+func IsReservedSlug(slug string) bool {
+	_, ok := reservedSlugs[strings.ToLower(strings.TrimSpace(slug))]
+	return ok
+}
+
+// IsPlatformSubdomain 判断 fqdn 是否是平台域名的(任意层级)子域,不含平台域名本身。
+func IsPlatformSubdomain(fqdn, platformDomain string) bool {
+	fqdn = NormalizeFQDN(fqdn)
+	platform := NormalizeFQDN(platformDomain)
+	if platform == "" || fqdn == "" {
+		return false
+	}
+	return strings.HasSuffix(fqdn, "."+platform)
+}
+
 // VerifyStatus 一次归属校验的三态结果。区分开是为了给租户不同的下一步指引,
 // 而不是把所有失败揉成一句"校验失败"。
 type VerifyStatus string
@@ -167,6 +208,22 @@ type VerifyResult struct {
 
 // Verified 是"可以激活"的唯一判据。
 func (r VerifyResult) Verified() bool { return r.Status == VerifyVerified }
+
+// ErrDNSLookup DNS 查询本身失败(超时 / SERVFAIL / 没有可用解析器),
+// 即"这一次没能得到答案",而不是"答案是否定的"。
+//
+// 两者必须区分开:原实现把 A/AAAA 查询错误直接丢弃、把 TXT 查询错误当成
+// "没有这条记录",于是一次解析器抖动在 24h 归属复检里就等于"归属不再成立",
+// 成熟域名被降级下线。调用方看到这个错误应当**跳过本轮**(不降级、不计失败),
+// 下一轮再查;同步接口可以把它当作"暂时无法判定"。
+// NXDOMAIN / 无记录不属于此类:那是 DNS 明确给出的否定答案,照常返回 need_dns/need_txt。
+var ErrDNSLookup = errors.New("dns lookup failed")
+
+// isDNSNotFound 判断一次 TXT 查询错误是否是"明确不存在"(NXDOMAIN / 无该类型记录)。
+func isDNSNotFound(err error) bool {
+	var dnsErr *net.DNSError
+	return errors.As(err, &dnsErr) && dnsErr.IsNotFound
+}
 
 // dnsQueryTimeout 单次 DNS 查询的上限。校验会走同步 HTTP 路径(创建/重检)与后台
 // 循环,不能让一个不响应的解析器把请求挂住。
@@ -212,12 +269,18 @@ func (c *DNSChecker) Tasks() *TaskQueue {
 //
 // 判定顺序刻意是 A/AAAA → TXT:A/AAAA 失败是最常见、也最容易自查的原因,先把它分出去
 // 既能给精确指引,又省掉那些根本不会激活的域名的 TXT 查询(后台重试队列每轮都跑)。
+//
+// 查询本身失败(超时/SERVFAIL)时返回包裹 ErrDNSLookup 的错误,而不是一个否定的
+// 三态结果:"没查到"不等于"不成立",调用方据此跳过而不是降级。
 func (c *DNSChecker) Verify(ctx context.Context, fqdn, token string) (VerifyResult, error) {
 	fqdn = NormalizeFQDN(fqdn)
 	if !IsValidFQDN(fqdn) {
 		return VerifyResult{}, fmt.Errorf("域名格式非法: %q", fqdn)
 	}
-	addrs, _ := c.LookupAddrs(ctx, fqdn)
+	addrs, err := c.LookupAddrs(ctx, fqdn)
+	if err != nil {
+		return VerifyResult{}, fmt.Errorf("%w: A/AAAA %s: %v", ErrDNSLookup, fqdn, err)
+	}
 	if !c.anyMatchExpected(addrs) {
 		return VerifyResult{Status: VerifyNeedDNS}, nil
 	}
@@ -228,14 +291,19 @@ func (c *DNSChecker) Verify(ctx context.Context, fqdn, token string) (VerifyResu
 		return VerifyResult{Status: VerifyNeedTXT, PointsToServer: true}, nil
 	}
 	values, err := c.LookupTXT(ctx, VerifyRecordName(fqdn))
+	if err != nil {
+		if !isDNSNotFound(err) {
+			return VerifyResult{}, fmt.Errorf("%w: TXT %s: %v", ErrDNSLookup, VerifyRecordName(fqdn), err)
+		}
+		// NXDOMAIN / 没有 TXT:明确的否定答案,走下面的 need_txt。
+		values = nil
+	}
 	matched := false
-	if err == nil {
-		for _, v := range values {
-			// 常量时间比较:token 是一次性的,但比较耗时不该泄露前缀信息。
-			if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(v)), []byte(token)) == 1 {
-				matched = true
-				break
-			}
+	for _, v := range values {
+		// 常量时间比较:token 是一次性的,但比较耗时不该泄露前缀信息。
+		if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(v)), []byte(token)) == 1 {
+			matched = true
+			break
 		}
 	}
 	status := VerifyNeedTXT

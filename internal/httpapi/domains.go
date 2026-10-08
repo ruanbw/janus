@@ -118,19 +118,29 @@ func (a *API) handleCreateDomain(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	// 事务外预检查只为给出更友好的 409;真正的判定在事务内(见下)。
-	if exists, err := a.store.DomainFQDNExists(ctx, fqdn); err != nil {
+	// 事务外预检查只为给出更友好的 409(或进入认领通道);真正的判定在事务内(见下)。
+	existing, err := a.store.GetDomainByFQDN(ctx, fqdn)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		// 未被占用:走正常创建。
+	case err != nil:
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
-	} else if exists {
+	case store.IsDomainClaimable(existing, t.ID):
+		// 被别的租户占住、但从未证明归属的域名:凭 TXT 归属证明认领(防抢注)。
+		a.claimDomain(c, t.ID, fqdn, desc)
+		return
+	default:
 		writeErr(c, http.StatusConflict, errConflict, "域名已被占用")
 		return
 	}
 	// 归属校验放在事务之前:校验要做 DNS 查询(最长数秒),压在租户行锁里等于
 	// 一条可被慢 DNS 放大的串行化长事务。此时还没有 token,TXT 判不了,
 	// 所以只能得到"A 记录指向了没有" —— 恰好也是租户要做的第一步。
+	// DNS 查询本身失败(ErrDNSLookup)不阻止创建:这一步只是给指引,
+	// 域名照常以 pending 落库,由重试队列/手动重检完成判定(verifyNeeds 留空)。
 	res, err := a.dns.Verify(ctx, fqdn, "")
-	if err != nil {
+	if err != nil && !errors.Is(err, domain.ErrDNSLookup) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
@@ -166,6 +176,82 @@ func (a *API) handleCreateDomain(c *gin.Context) {
 		return
 	}
 	writeJSON(c, http.StatusCreated, a.domainViewOf(d, res.Status))
+}
+
+// claimDetails 认领未通过时随 409 返回的指引:租户据此发布 TXT 后重新提交即可接管。
+type claimDetails struct {
+	// Claimable 恒为 true:该域名可以凭归属证明接管(区别于普通的"已被占用")。
+	Claimable      bool                `json:"claimable"`
+	FQDN           string              `json:"fqdn"`
+	VerifyRecord   string              `json:"verifyRecord"`
+	VerifyValue    string              `json:"verifyValue"`
+	VerifyNeeds    domain.VerifyStatus `json:"verifyNeeds,omitempty"`
+	ServerIP       string              `json:"serverIp,omitempty"`
+	PlatformDomain string              `json:"platformDomain,omitempty"`
+}
+
+// claimDomain 认领一个被别的租户占住、但从未证明归属的域名。
+//
+// 背景:fqdn 全局唯一,任何租户都能先插一条 pending 行占住别人的域名并靠
+// "超期 → 复活"永久持有。这里不放宽唯一约束(读路径都依赖一个 FQDN 一行),
+// 而是让能证明归属的人接管:
+//  1. 为 (认领租户, fqdn) 签发/取回一枚认领 TXT token(未过期时保持不变);
+//  2. 同步做一次归属校验(TXT 用认领 token,A/AAAA 指向本机);
+//  3. 未通过 → 409 + details(claimable/verifyRecord/verifyValue),租户发布后重新提交;
+//  4. 通过 → 事务内复核并驱逐旧行,为认领方建行并直接激活(归属刚刚被证明)。
+//
+// 占位者看不到认领 token,也无法阻止认领;它能做的只有自己也发布 TXT 证明归属
+// —— 那它本来就是合法持有者,认领在事务内复核时会被拒绝。
+func (a *API) claimDomain(c *gin.Context, tenantID int64, fqdn, desc string) {
+	ctx := c.Request.Context()
+	token, err := domain.MintVerifyToken()
+	if err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
+	}
+	claim, err := a.store.GetOrMintDomainClaim(ctx, tenantID, fqdn, token, a.cfg.DNSMaxAge)
+	if err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
+	}
+	res, err := a.dns.Verify(ctx, fqdn, claim.VerifyToken)
+	if err != nil && !errors.Is(err, domain.ErrDNSLookup) {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
+	}
+	if err != nil || !res.Verified() {
+		writeErrDetails(c, http.StatusConflict, errConflict,
+			"域名已被其他租户添加但尚未证明归属:如果它属于你,请按 details 发布 TXT 记录(并把 A/AAAA 指向 details.serverIp)后重新提交以接管",
+			claimDetails{
+				Claimable:      true,
+				FQDN:           fqdn,
+				VerifyRecord:   domain.VerifyRecordName(fqdn),
+				VerifyValue:    claim.VerifyToken,
+				VerifyNeeds:    res.Status,
+				ServerIP:       a.cfg.ServerPublicIP,
+				PlatformDomain: a.cfg.PlatformDomain,
+			})
+		return
+	}
+	var d *store.Domain
+	err = a.store.WithQuotaInTx(ctx, tenantID, store.QuotaDomains, func(tx *gorm.DB) error {
+		claimed, err := store.ClaimDomainInTx(tx, tenantID, fqdn, claim.VerifyToken, desc)
+		if err != nil {
+			return err
+		}
+		d = claimed
+		return nil
+	})
+	if errors.Is(err, store.ErrDomainNotClaimable) {
+		writeErr(c, http.StatusConflict, errConflict, "域名已被占用")
+		return
+	}
+	if err != nil {
+		a.writeDomainCreateError(c, err)
+		return
+	}
+	a.probeDomainAsync(d.ID)
+	writeJSON(c, http.StatusCreated, a.domainViewOf(d, domain.VerifyVerified))
 }
 
 // writeDomainCreateError 把创建域名的内部错误映射成对外契约里的错误码。
@@ -304,11 +390,14 @@ func (a *API) verifyDomain(id int64, fqdn, token string) {
 		return
 	}
 	// 校验失败:未激活的域名保持当前状态(继续进重试队列);
-	// 已激活的域名意味着归属不再成立 → 降级,授权端点随即拒绝它。
+	// 已激活的域名计一次复检失败,与 worker 同一口径:连续
+	// OwnershipRecheckFailThreshold 次才降级(授权端点随即拒绝它)。
+	// 一次手动"重新校验"恰好撞上 DNS 抖动,不该让成熟域名立即下线。
+	// (DNS 查询本身失败在上面 err != nil 时已直接返回,不计失败。)
 	if d.Status == "failed" || d.Status == "pending" {
 		_ = a.store.MarkDomainDNSChecked(ctx, id)
 	} else if d.Status == "active" && d.Origin == "self" {
-		_ = a.store.DegradeDomain(ctx, id)
+		_, _, _ = a.store.RecordOwnershipRecheckFailure(ctx, id, domain.OwnershipRecheckFailThreshold)
 	}
 }
 
@@ -350,6 +439,11 @@ func (a *API) handlePatchDomain(c *gin.Context) {
 	// 平台默认域名除外(泛域名解析由部署者配置,租户无权改动平台 DNS)。
 	if req.Status == "active" && d.Status != "active" && d.Origin == "self" {
 		res, err := a.dns.Verify(c.Request.Context(), d.FQDN, d.VerifyToken)
+		if errors.Is(err, domain.ErrDNSLookup) {
+			// 查询失败不等于归属不成立,但也证明不了成立:不恢复,提示稍后重试。
+			writeErr(c, http.StatusServiceUnavailable, errInternal, "DNS 查询失败,暂时无法校验域名归属,请稍后重试")
+			return
+		}
 		if err != nil {
 			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 			return

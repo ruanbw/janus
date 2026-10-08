@@ -23,6 +23,8 @@
 | `JANUS_ACME_EMAIL` | 建议 | Let's Encrypt 账户邮箱 |
 | `JANUS_DB_USER` / `JANUS_DB_NAME` | 可选 | 默认 `janus` / `janus` |
 | `JANUS_SESSION_TTL` / `JANUS_SESSION_TTL_SHORT` | 可选 | 会话有效期,默认 30 天 / 24 小时 |
+| `JANUS_WILDCARD_TLS` | 可选 | 默认 `false`。`true` = 泛域名证书模式:授权端点拒绝平台子域(`app` 除外)的 on-demand 签发,必须配合 `Caddyfile.prod.wildcard` 使用,见第 8 节 |
+| `JANUS_CADDY_DNS_API_TOKEN` | 泛域名模式必填 | DNS 提供商 API 凭据,compose 以 `CADDY_DNS_API_TOKEN` 注入 caddy 容器(DNS-01 质询用) |
 
 其余可选变量见 `.env.example`(token 有效期、DNS 重试、访问保留时长等)。
 
@@ -81,7 +83,30 @@ compose 会把上述变量转发给后端容器。
 
 ## 7. 已知限制
 
-- 平台默认域名按子域逐个签发,受 Let's Encrypt 每注册域名每周 50 张证书限制,额度按平台域名聚合;接近上限时迁移到泛域名证书方案(ADR-0004);
+- 默认模式下平台默认域名按子域逐个签发,受 Let's Encrypt 每注册域名每周 50 张证书限制,额度按平台域名聚合(注册 spam 也会消耗它);接近上限或开放注册前,切换到泛域名证书模式(第 8 节、ADR-0004);
+- 注册时保留一批平台子域名作为 slug 禁用名单(app/www/mail/api/admin/status 等,见 `domain.IsReservedSlug`);
 - 访问记录默认保留 90 天,后台定时清理;
 - 授权端点仅内网可达(`/internal/caddy/authorize`),未激活域名拒绝签发,防止任意域名解析到本机即触发签发(spec 决策 #8)。
 
+## 8. 泛域名证书模式(可选)
+
+默认模式(`Caddyfile.prod`)为每个租户默认域名 `<slug>.<平台域名>` 各签一张 on-demand 证书。Let's Encrypt 对同一注册域有每周证书数配额(当前为每注册域名每周 50 张,含续期),租户注册量 —— 包括恶意批量注册 —— 会线性消耗它;配额耗尽后新租户、续期乃至后台域名都签不出证书。泛域名证书模式把平台侧固定为两张证书(`<平台域名>` 与 `*.<平台域名>`),与租户数量无关;租户自有域名仍走 on-demand,行为不变。
+
+启用步骤:
+
+1. **构建带 DNS 插件的 Caddy**:通配符证书只能走 DNS-01 质询,官方 `caddy:2` 镜像不含任何 DNS 提供商插件。以 Cloudflare 为例:
+
+   ```dockerfile
+   FROM caddy:2-builder AS builder
+   RUN xcaddy build --with github.com/caddy-dns/cloudflare
+   FROM caddy:2
+   COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+   ```
+
+   构建后把 `docker-compose.prod.yml` 中 caddy 服务的 `image` 换成该镜像。其他托管商(Route53、阿里云、DNSPod 等)换成对应的 `caddy-dns/*` 插件,并按插件文档修改 `Caddyfile.prod.wildcard` 中 `(wildcard_tls)` 段的 `dns ...` 一行。
+2. **DNS API 凭据**:在 `.env` 设置 `JANUS_CADDY_DNS_API_TOKEN`(Cloudflare 需 `Zone:DNS:Edit` 权限的 API Token),compose 会以 `CADDY_DNS_API_TOKEN` 注入 caddy 容器。
+3. **换用配置文件**:把 `Caddyfile.prod.wildcard` 中的 `example.com` 全部替换为平台域名,并把 compose 中 caddy 挂载的 `./Caddyfile.prod` 改为 `./Caddyfile.prod.wildcard`。该文件里 `app.<平台域名>` 与全部租户子域共用 `*.<平台域名>` 一张证书(同一站点内按 host 分流)。
+4. **后端开关**:`.env` 设置 `JANUS_WILDCARD_TLS=true`。授权端点随即拒绝 `<任意>.<平台域名>`(`app` 除外)的 on-demand 签发 —— 即使 Caddyfile 配错,也不会退回"每租户一张证书"。
+5. 重启:`docker compose -f docker-compose.prod.yml up -d --build caddy backend`,在 `logs -f caddy` 中确认 `*.<平台域名>` 通过 DNS-01 签发成功,再访问任一租户子域检查证书为通配符证书。
+
+> 只开 `JANUS_WILDCARD_TLS` 而不换 Caddyfile,租户子域会因授权端点拒绝而握手失败;反之只换 Caddyfile 不开开关也能工作,但少了一层兜底。两者应同时切换。

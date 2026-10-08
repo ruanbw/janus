@@ -26,7 +26,9 @@ type Domain struct {
 	VerifyTokenCreatedAt *time.Time `json:"verifyTokenCreatedAt,omitempty" gorm:"column:verify_token_created_at"`
 	OwnershipVerifiedAt  *time.Time `json:"ownershipVerifiedAt,omitempty" gorm:"column:ownership_verified_at"`
 	ActivatedAt          *time.Time `json:"activatedAt" gorm:"column:activated_at"`
-	CreatedAt            time.Time  `json:"createdAt" gorm:"column:created_at"`
+	// RecheckFailures active 域名归属复检的连续失败次数(达到阈值才降级,成功/降级即清零)。
+	RecheckFailures int       `json:"recheckFailures" gorm:"column:recheck_failures"`
+	CreatedAt       time.Time `json:"createdAt" gorm:"column:created_at"`
 }
 
 // ErrPlatformDomain 平台默认域名不可删除。
@@ -169,6 +171,7 @@ func (s *Store) ActivateDomainVerified(ctx context.Context, id int64) error {
 		"dns_checked_at":          gorm.Expr("now()"),
 		"activated_at":            gorm.Expr("COALESCE(activated_at, now())"),
 		"verify_token_created_at": nil,
+		"recheck_failures":        0,
 	}).Error
 }
 
@@ -209,12 +212,60 @@ func (s *Store) MarkDomainExpired(ctx context.Context, id int64) error {
 // 会自动重新激活;stopped 的语义是"租户主动暂停",系统不该替租户做这个决定。
 // cert_status 一并打回 pending:证书状态描述的是上一次探活的结果,而这次
 // 探活的对象已经不存在了;恢复后需要重新探活才谈得上 issued。
+//
+// verify_token_created_at 必须同时写成 now():激活时它被清空(挑战已消费),
+// 而重试队列的超期判定是 COALESCE(verify_token_created_at, created_at) —— 留着
+// NULL,一个三年前创建的成熟域名降级后下一轮(5 分钟)就会因为"created_at 超过
+// 72h"被直接打成 expired 终态,租户连修 DNS 的窗口都没有。从降级这一刻起算,
+// 租户有完整的 DNSMaxAge 宽限期,沿用原 token(TXT 记录不用改)就能自动恢复。
 func (s *Store) DegradeDomain(ctx context.Context, id int64) error {
 	return s.db.WithContext(ctx).Model(&Domain{}).Where("id = ?", id).Updates(map[string]any{
-		"status":         "failed",
-		"cert_status":    "pending",
-		"dns_checked_at": gorm.Expr("now()"),
+		"status":                  "failed",
+		"cert_status":             "pending",
+		"dns_checked_at":          gorm.Expr("now()"),
+		"verify_token_created_at": gorm.Expr("now()"),
+		"recheck_failures":        0,
 	}).Error
+}
+
+// RecordOwnershipRecheckFailure 记录一次 active 域名归属复检失败;连续失败达到
+// threshold 次才降级(语义同 DegradeDomain)。返回累计失败次数与是否已降级。
+//
+// 为什么不是"一次失败就降级":复检读的是公网 DNS,权威服务器抖动、TXT 被租户
+// 临时改坏又改回,都会造成一次性的失败;成熟域名因此整站下线(且 cert_status
+// 打回 pending)的代价远大于"多等几轮再判定"。真正的 DNS 查询错误(超时/SERVFAIL)
+// 在调用方就被跳过,根本不会走到这里;这里计的是"查到了,但不匹配"。
+//
+// 单条 UPDATE 完成"自增 + 判阈值 + 降级":SET 右侧引用的是旧值,
+// 所以 recheck_failures + 1 就是本次之后的计数;并发复检不会丢计数。
+func (s *Store) RecordOwnershipRecheckFailure(ctx context.Context, id int64, threshold int) (failures int, degraded bool, err error) {
+	if threshold < 1 {
+		threshold = 1
+	}
+	var row struct {
+		RecheckFailures int    `gorm:"column:recheck_failures"`
+		Status          string `gorm:"column:status"`
+	}
+	res := s.db.WithContext(ctx).Raw(`
+		UPDATE domains SET
+			recheck_failures        = CASE WHEN recheck_failures + 1 >= $2 THEN 0 ELSE recheck_failures + 1 END,
+			status                  = CASE WHEN recheck_failures + 1 >= $2 THEN 'failed' ELSE status END,
+			cert_status             = CASE WHEN recheck_failures + 1 >= $2 THEN 'pending' ELSE cert_status END,
+			verify_token_created_at = CASE WHEN recheck_failures + 1 >= $2 THEN now() ELSE verify_token_created_at END,
+			dns_checked_at          = now()
+		WHERE id = $1 AND status = 'active'
+		RETURNING recheck_failures, status`, id, threshold).Scan(&row)
+	if res.Error != nil {
+		return 0, false, res.Error
+	}
+	if res.RowsAffected == 0 {
+		// 已不是 active(被租户停用/删除/并发降级):无事可做。
+		return 0, false, nil
+	}
+	if row.Status == "failed" {
+		return threshold, true, nil
+	}
+	return row.RecheckFailures, false, nil
 }
 
 // DomainScanRow 是后台扫描用的轻量行(只取处理所需列,不载入整表)。
@@ -309,7 +360,13 @@ func (s *Store) ListDomainsForCertProbe(ctx context.Context, interval time.Durat
 // "激活"因而是一个需要持续维护的状态而不是一次性快照。存量 active 域名没有这个
 // 时间,不会被降级(升级不该让老租户的服务凭空中断;租户点一次"重新校验"即
 // 进入新规则)。
-func (s *Store) ListDomainsForOwnershipRecheck(ctx context.Context, interval time.Duration, limit int) ([]DomainScanRow, error) {
+//
+// 两种节奏:
+//   - 健康域名(recheck_failures = 0):距上次通过 interval(24h)才复检一次;
+//   - 已失败过的域名(recheck_failures > 0):距上次复检 retryInterval 就再查一次 ——
+//     连续 N 次失败才降级,如果第二、三次也要各等 24h,易主后的继续服务窗口就会
+//     从 24h 拉长到 72h。短间隔重查让"确认失败"在几小时内完成。
+func (s *Store) ListDomainsForOwnershipRecheck(ctx context.Context, interval, retryInterval time.Duration, limit int) ([]DomainScanRow, error) {
 	return s.scanDomains(ctx, `
 		SELECT d.id, d.fqdn, d.status, d.cert_status, d.verify_token,
 		       COALESCE(d.ownership_verified_at, d.created_at) AS last_at, false AS overdue
@@ -319,10 +376,13 @@ func (s *Store) ListDomainsForOwnershipRecheck(ctx context.Context, interval tim
 		  AND d.status = 'active'
 		  AND d.ownership_verified_at IS NOT NULL
 		  AND t.status = 'active'
-		  AND COALESCE(d.ownership_verified_at, d.created_at) <= now() - $1::interval
+		  AND (
+		        (d.recheck_failures = 0 AND d.ownership_verified_at <= now() - $1::interval)
+		     OR (d.recheck_failures > 0 AND COALESCE(d.dns_checked_at, d.ownership_verified_at) <= now() - $2::interval)
+		  )
 		ORDER BY COALESCE(d.ownership_verified_at, d.created_at)
-		LIMIT $2`,
-		interval.String(), limit)
+		LIMIT $3`,
+		interval.String(), retryInterval.String(), limit)
 }
 
 func (s *Store) scanDomains(ctx context.Context, query string, args ...any) ([]DomainScanRow, error) {

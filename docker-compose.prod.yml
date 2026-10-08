@@ -46,6 +46,8 @@ services:
       JANUS_JWT_TTL: "${JANUS_JWT_TTL:-24h}"
       JANUS_DNS_RETRY_INTERVAL: "${JANUS_DNS_RETRY_INTERVAL:-5m}"
       JANUS_DNS_MAX_AGE: "${JANUS_DNS_MAX_AGE:-72h}"
+      # 泛域名证书模式(默认关闭):开启时必须同时换用 Caddyfile.prod.wildcard,见 docs/deploy.md
+      JANUS_WILDCARD_TLS: "${JANUS_WILDCARD_TLS:-false}"
       JANUS_VISIT_RETENTION: "${JANUS_VISIT_RETENTION:-2160h}"
       JANUS_VISIT_CLEANUP_INTERVAL: "${JANUS_VISIT_CLEANUP_INTERVAL:-24h}"
       # 访问记录异步写入队列 / 连接池 / 301 缓存(见 .env.example)
@@ -93,6 +95,12 @@ services:
       retries: 3
 
   caddy:
+    # 泛域名证书模式需要带 DNS 插件的 Caddy 构建(官方镜像不含),例如用
+    #   FROM caddy:2-builder AS b
+    #   RUN xcaddy build --with github.com/caddy-dns/cloudflare
+    #   FROM caddy:2
+    #   COPY --from=b /usr/bin/caddy /usr/bin/caddy
+    # 构建自己的镜像并替换下面的 image,详见 docs/deploy.md「泛域名证书模式」。
     image: caddy:2
     environment:
       # 站点域名在 Caddyfile.prod 中硬编码,此处 PLATFORM_DOMAIN 仅用于 NO_PROXY 与提示
@@ -102,6 +110,8 @@ services:
       # Caddyfile.prod 用 {$CADDY_ASK_TOKEN} 在 adapt 时展开,变量缺失会展开成空 token,
       # 授权端点一律 403 —— 表现为租户域名握手失败,且 Caddy 侧看不出原因。
       CADDY_ASK_TOKEN: "${JANUS_CADDY_ASK_TOKEN:?未配置 JANUS_CADDY_ASK_TOKEN,caddy 容器拿不到 on-demand TLS 的 ask 密钥}"
+      # 泛域名证书模式:DNS-01 质询用的 DNS 提供商 API 凭据(Caddyfile.prod.wildcard 读 {env.CADDY_DNS_API_TOKEN});默认模式不使用
+      CADDY_DNS_API_TOKEN: "${JANUS_CADDY_DNS_API_TOKEN:-}"
       # 生产容器同样需绕开宿主代理,授权端点直连 backend
       NO_PROXY: "backend,localhost,127.0.0.1,.${JANUS_PLATFORM_DOMAIN:?}"
       no_proxy: "backend,localhost,127.0.0.1,.${JANUS_PLATFORM_DOMAIN:?}"
@@ -109,6 +119,7 @@ services:
       - "80:80"
       - "443:443"
     volumes:
+      # 泛域名证书模式改挂 ./Caddyfile.prod.wildcard
       - ./Caddyfile.prod:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config

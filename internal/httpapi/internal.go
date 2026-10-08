@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"janus/internal/domain"
 	"janus/internal/store"
 )
 
@@ -55,6 +56,7 @@ var missingAskTokenLogged sync.Once
 //   - 请求来自本网络(第二层,不是唯一防线);
 //   - 携带正确的共享密钥 JANUS_CADDY_ASK_TOKEN(第一层);
 //   - 平台后台域名(裸平台域名)始终放行;
+//   - 泛域名证书模式下,其余平台子域一律拒绝(由泛域名证书覆盖);
 //   - 域名记录 active 且所属租户 active(未封禁/已邮箱验证)。
 //
 // 仅内网可达;放行 200,拒绝 403。
@@ -92,6 +94,14 @@ func (a *API) handleCaddyAuthorize(c *gin.Context) {
 	// 自有域名"那条路径(见 domains.go):那里拒绝租户占住平台自己的子域。
 	if fqdn == a.cfg.PlatformDomain || fqdn == "app."+a.cfg.PlatformDomain {
 		c.Status(http.StatusOK)
+		return
+	}
+	// 泛域名证书模式(JANUS_WILDCARD_TLS):平台子域全部由 *.<平台域名> 那张
+	// DNS-01 证书覆盖,不得再逐个 on-demand 签发 —— 那正是要避免的 Let's Encrypt
+	// 配额消耗(每注册一个租户签一张)。即使 Caddyfile 配错、某个平台子域落进了
+	// on-demand 策略,这里也兜底拒绝。
+	if a.cfg.WildcardTLS && domain.IsPlatformSubdomain(fqdn, a.cfg.PlatformDomain) {
+		writeErr(c, http.StatusForbidden, errForbidden, "platform subdomain is served by the wildcard certificate")
 		return
 	}
 	auth, err := a.store.GetDomainAuth(c.Request.Context(), fqdn)

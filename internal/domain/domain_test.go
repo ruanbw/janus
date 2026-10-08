@@ -8,6 +8,7 @@ package domain
 import (
 	"context"
 	"errors"
+	"net"
 	"net/netip"
 	"testing"
 )
@@ -20,7 +21,8 @@ func fakeDNS(expectedIP string, addrs []netip.Addr, txt map[string][]string) *DN
 		lookupTXT: func(_ context.Context, name string) ([]string, error) {
 			v, ok := txt[name]
 			if !ok {
-				return nil, errors.New("no such host")
+				// 与标准库一致:NXDOMAIN / 无记录是 IsNotFound 的 *net.DNSError。
+				return nil, &net.DNSError{Err: "no such host", Name: name, IsNotFound: true}
 			}
 			return v, nil
 		},
@@ -105,7 +107,7 @@ func TestVerifyNeedsDNSFirst(t *testing.T) {
 	assertStatus(t, res.Status, VerifyNeedDNS)
 }
 
-// TXT 查询报错(NXDOMAIN / 超时)等同于"没有这条记录",不是系统错误。
+// TXT 查询返回 NXDOMAIN / 无记录,等同于"没有这条记录",不是系统错误。
 func TestVerifyTreatsTXTFailureAsNotVerified(t *testing.T) {
 	c := fakeDNS("203.0.113.7", []netip.Addr{mustAddr(t, "203.0.113.7")}, nil)
 	res, err := c.Verify(context.Background(), "shop.customer.com", "tok")
@@ -207,5 +209,85 @@ func TestMintVerifyTokenShape(t *testing.T) {
 	}
 	if len(tok) != VerifyTokenBytes*2 {
 		t.Fatalf("token length = %d, want %d", len(tok), VerifyTokenBytes*2)
+	}
+}
+
+// A/AAAA 查询本身失败(超时/SERVFAIL)必须作为 ErrDNSLookup 返回,而不是 need_dns:
+// 原实现丢弃这个错误,一次解析器抖动在归属复检里就等于"不再指向本机"→ 降级下线。
+func TestVerifySurfacesAddrLookupError(t *testing.T) {
+	c := fakeDNS("203.0.113.7", nil, nil)
+	c.lookupAddr = func(context.Context, string) ([]netip.Addr, error) {
+		return nil, errors.New("i/o timeout")
+	}
+	res, err := c.Verify(context.Background(), "shop.customer.com", "tok")
+	if !errors.Is(err, ErrDNSLookup) {
+		t.Fatalf("err = %v, want ErrDNSLookup", err)
+	}
+	if res.Verified() {
+		t.Fatal("verified = true on lookup error")
+	}
+}
+
+// TXT 查询超时/SERVFAIL(非 IsNotFound)同样是 ErrDNSLookup,不能被当成 need_txt。
+func TestVerifySurfacesTXTLookupError(t *testing.T) {
+	c := fakeDNS("203.0.113.7", []netip.Addr{mustAddr(t, "203.0.113.7")}, nil)
+	c.lookupTXT = func(_ context.Context, name string) ([]string, error) {
+		return nil, &net.DNSError{Err: "server misbehaving", Name: name, IsTemporary: true}
+	}
+	_, err := c.Verify(context.Background(), "shop.customer.com", "tok")
+	if !errors.Is(err, ErrDNSLookup) {
+		t.Fatalf("err = %v, want ErrDNSLookup", err)
+	}
+	// 普通 error(非 *net.DNSError)也按查询失败处理:判不出"不存在"就不能下否定结论。
+	c.lookupTXT = func(context.Context, string) ([]string, error) { return nil, errors.New("boom") }
+	if _, err := c.Verify(context.Background(), "shop.customer.com", "tok"); !errors.Is(err, ErrDNSLookup) {
+		t.Fatalf("err = %v, want ErrDNSLookup", err)
+	}
+}
+
+// A/AAAA 明确无记录(NXDOMAIN 在 wire 层返回 nil, nil)仍是 need_dns,不是错误。
+func TestVerifyNoAddrRecordsIsNeedDNS(t *testing.T) {
+	c := fakeDNS("203.0.113.7", nil, nil)
+	res, err := c.Verify(context.Background(), "nothing.customer.com", "tok")
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	assertStatus(t, res.Status, VerifyNeedDNS)
+}
+
+func TestIsReservedSlug(t *testing.T) {
+	for _, s := range []string{"app", "www", "mail", "api", "admin", "status", "WWW", " mail "} {
+		if !IsReservedSlug(s) {
+			t.Errorf("IsReservedSlug(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"alice", "bob", "acme", "mailbox", "apps", "app1"} {
+		if IsReservedSlug(s) {
+			t.Errorf("IsReservedSlug(%q) = true, want false", s)
+		}
+	}
+}
+
+func TestIsPlatformSubdomain(t *testing.T) {
+	cases := []struct {
+		fqdn string
+		want bool
+	}{
+		{"alice.example.com", true},
+		{"ALICE.example.com.", true},
+		{"a.b.example.com", true},
+		{"app.example.com", true},
+		{"example.com", false},
+		{"notexample.com", false},
+		{"alice.example.com.evil.net", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := IsPlatformSubdomain(tc.fqdn, "example.com"); got != tc.want {
+			t.Errorf("IsPlatformSubdomain(%q) = %v, want %v", tc.fqdn, got, tc.want)
+		}
+	}
+	if IsPlatformSubdomain("alice.example.com", "") {
+		t.Error("空平台域名不应匹配任何子域")
 	}
 }

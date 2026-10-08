@@ -118,7 +118,10 @@ func TestMigrateUpgradeFromPreSquashVersions(t *testing.T) {
 	stmts := []string{
 		`DROP INDEX IF EXISTS idx_visits_domain`,
 		`ALTER TABLE links DROP COLUMN IF EXISTS metadata`,
-		`DELETE FROM goose_db_version WHERE version_id IN (20, 21)`,
+		// 旧库只可能记录到 19 号:20 号及之后(含 0030 等后续迁移)一并撤销版本记录,
+		// 否则 goose 会因「当前版本之前缺 20/21」直接拒绝迁移。0030 起的迁移均为幂等
+		// (IF NOT EXISTS),重跑不受其残留效果影响。
+		`DELETE FROM goose_db_version WHERE version_id >= 20`,
 		`CREATE TEMP TABLE IF NOT EXISTS presquash_inserted (version_id bigint)`,
 		`WITH ins AS (
 			INSERT INTO goose_db_version (version_id, is_applied)

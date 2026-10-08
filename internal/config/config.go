@@ -46,6 +46,16 @@ type Config struct {
 	// 且能引导 Caddy 为它们签发证书。IP 判定保留为第二层,不作为唯一防线。
 	CaddyAskToken string `env:"JANUS_CADDY_ASK_TOKEN"`
 
+	// WildcardTLS 平台子域改用一张 *.<平台域名> 泛域名证书(Caddy 走 DNS-01 签发)。
+	//
+	// 默认(false)沿用 ADR-0004:每个租户默认域名 <slug>.<平台域名> 各自 on-demand
+	// 签一张证书。问题是 Let's Encrypt 对同一注册域有"每周证书数"配额,注册量
+	// (含注册 spam)直接线性消耗它,配额耗尽后新租户、续期乃至后台域名都签不出证书。
+	// 打开后:授权端点对 <任意>.<平台域名>(app 除外)一律拒绝 on-demand 签发,
+	// 这些主机名必须由 Caddyfile 里的泛域名证书覆盖(见 Caddyfile.prod.wildcard、
+	// docs/deploy.md)。租户自有域名不受影响,仍走 on-demand。
+	WildcardTLS bool `env:"JANUS_WILDCARD_TLS" envDefault:"false"`
+
 	DNSRetryInterval  time.Duration `env:"JANUS_DNS_RETRY_INTERVAL" envDefault:"5m"`
 	DNSMaxAge         time.Duration `env:"JANUS_DNS_MAX_AGE" envDefault:"72h"`
 	VisitRetention    time.Duration `env:"JANUS_VISIT_RETENTION" envDefault:"2160h"`
