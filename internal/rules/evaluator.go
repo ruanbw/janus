@@ -7,7 +7,6 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
@@ -18,7 +17,7 @@ import (
 // 表达式的编译期与运行期预算(包内常量,不加配置项)。
 //
 // 这里的每个数字都是"租户能单方面触发的最坏情况"的上界,不是调优参数:
-// 表达式的长度、节点数、可调用的函数、可求值的时长,四项全部在编译期定死。
+// 表达式的长度、节点数、可调用的函数、可用的运算符形态,全部在编译期定死。
 const (
 	// MaxExpressionLen 单条表达式的字符数上限。编译成本与节点数都随长度线性增长,
 	// 没有上限就等于把一次编译的时间与内存交给租户自己定。
@@ -29,10 +28,10 @@ const (
 	// 是我们下面"求值步数上界"的唯一依据。1024 足够写出任何有意义的条件。
 	MaxExpressionNodes = 1024
 
-	// exprBudgetTimeout 单条表达式求值的兜底时限。
-	// 正常表达式是纳秒级(见 BenchmarkEvaluateExprRule);1ms 意味着"出了事"才会触发。
-	// 这是第二道防线,不是第一道 —— 见 compileExpression 的注释。
-	exprBudgetTimeout = time.Millisecond
+	// exprMemoryBudget 单次求值的分配预算(expr 的 MemoryBudget,默认 1MB)。
+	// 表达式环境只有 13 个字符串,正常求值的分配是个位数,256KB 宽到不可能误伤,
+	// 又足以挡住任何"构造一个巨大数组/区间"的写法(超了 Run 返回 error)。
+	exprMemoryBudget = 256 << 10
 )
 
 // exprFact 是喂给 expr 的**唯一**环境类型。
@@ -140,67 +139,38 @@ func (e *exprEvaluator) Match(ctx VisitorContext) (matched bool) {
 	return ok && res
 }
 
-// runProgram 在预算内求值一条已编译的表达式。
+// runProgram 在预算内求值一条已编译的表达式:直接在调用方 goroutine 上跑 vm.Run。
 //
-// 为什么不用 vm.Step() 做步数预算:Step 只在 expr_debug 构建下有意义 ——
-// vm.go 里的取指循环是 `if debug && vm.debug { <-vm.step }`,而 debug 是编译期常量。
-// 默认构建下 Run 根本不读 vm.step,此时 Step() 会**永久阻塞**(实测)。
-// vm.Step 这条路是死的。
+// 为什么不再用 goroutine + 1ms 墙钟超时:
+//   - 它在负载下 **fail-open**:CPU 饱和、GC 停顿、调度延迟都会让一条纳秒级的正常表达式
+//     "超时",而超时按未命中处理 —— 越是被刷的时候,拦截规则越是集体失效;
+//   - vm.Run 不能被中断,超时只是"不再等它",被放弃的 goroutine 照样跑完,
+//     每次求值还要多付一个 goroutine + timer(实测 642ns/5 allocs vs 直跑 150ns/1 alloc)。
 //
-// 为什么不用 goroutine + select 做超时:vm.Run 不能被 ctx 中断,
-// 超时只能"放弃等待",那个 goroutine 仍在烧 CPU —— 攻击者可以用并发把 CPU 打满,
-// 而每个泄漏的 goroutine 还占着栈。实测开销 642ns/5 allocs(直跑 150ns/1 alloc),
-// 放在跳转热路径上不划算,换来的却只是一个"不再等它"的假象。
+// 不再需要它,是因为求值步数已经在**编译期**静态封顶(见 compileExpression):
+// expr v1.17 里只有谓词类内置函数(all/any/map/filter/reduce/…,compiler.go 的
+// BuiltinNode 分支)会经 emitLoop/emitLoopBackwards 生成 OpJumpBackward,
+// 而 exprAudit 在 AST 上把它们全部拒掉 —— 编译通过的字节码无回跳、无循环,
+// 步数 ≤ 字节码长度 ≤ O(MaxExpressionNodes)。TestExprBytecodeHasNoBackwardJump
+// 与 TestExprPredicatesListCoversEveryParserPredicate 把这条不变式钉在测试里。
+// 单步内部的成本也是有界的:字符串函数对 ≤13 个访客字段做 O(n) 计算;
+// 正则只允许常量右值(编译期预编译成 OpMatchesConst,RE2 线性时间,见 auditVisitor)。
 //
-// 所以预算的**主体在编译期**:长度上限、节点上限、禁用全部内置函数、拒绝谓词类
-// 内置函数 —— 四者合起来让字节码里**不可能出现回跳**,即不存在循环,
-// 求值步数被字节码长度静态封顶。runProgram 里的两道兜底只负责最后这一层意外:
-//
+// 剩下的兜底:
 //   - MemoryBudget:expr 自带的分配预算,超了 panic,被 Run 内部 recover 成 error;
-//   - 超时:兜住"上界估计错了"的情况(例如将来 expr 升级引入了新的循环构造)。
-//     因为字节码无回跳,被放弃的 goroutine 一定会在极短时间内自行结束,不是泄漏。
-func runProgram(prog *vm.Program, env exprFact, log *slog.Logger) (any, error) {
-	// MemoryBudget 压到远低于 expr 默认值(1MB):表达式环境只有 13 个字符串,
-	// 正常求值的分配是个位数,给 256KB 已经宽到不可能误伤,又足以挡住
-	// 任何"构造一个巨大数组/字符串"的写法。
-	machine := &vm.VM{MemoryBudget: 256 << 10}
-	done := make(chan result, 1) // 缓冲 1:超时后发送方也一定发得出去,不会卡死在发送上
-	go func() {
-		// 内层 recover:vm.Run 自己也 recover 成 error,这里再兜一层是防
-		// "panic 发生在 Run 的 defer 之外"这种边角(例如 env 访问反射失败)。
-		defer func() {
-			if rec := recover(); rec != nil {
-				done <- result{err: fmt.Errorf("expr panic: %v", rec)}
-			}
-		}()
-		v, err := machine.Run(prog, env)
-		done <- result{val: v, err: err}
+//   - recover:防"panic 发生在 Run 的 defer 之外"这种边角(例如 env 访问反射失败)。
+func runProgram(prog *vm.Program, env exprFact, _ *slog.Logger) (val any, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			val, err = nil, fmt.Errorf("expr panic: %v", rec)
+		}
 	}()
-	timer := time.NewTimer(exprBudgetTimeout)
-	defer timer.Stop()
-	select {
-	case r := <-done:
-		return r.val, r.err
-	case <-timer.C:
-		return nil, errExprBudget
-	}
+	machine := &vm.VM{MemoryBudget: exprMemoryBudget}
+	return machine.Run(prog, env)
 }
-
-// result 是 runProgram 里 goroutine 的回传信封。
-type result struct {
-	val any
-	err error
-}
-
-// errExprBudget 表示求值超出兜底时限。日志里按"引擎异常"而不是"表达式写错"归类。
-var errExprBudget = errors.New("expr 求值超出时间预算")
 
 func logExprRunError(log *slog.Logger, err error) {
 	if log == nil {
-		return
-	}
-	if errors.Is(err, errExprBudget) {
-		log.Error("expr 表达式求值超出时间预算,按未命中(fail-open)处理", "err", err)
 		return
 	}
 	log.Warn("expr 表达式运行时执行异常,按未命中(fail-open)处理", "err", err)
@@ -335,8 +305,9 @@ var exprAllowedBuiltins = []string{
 // 实测 30^4 次迭代要 3.7 秒,而这条表达式只有 810 字节,再嵌一层就是几分钟。
 //
 // 所以这里显式列出来,在 AST 上直接拒。它们同时也是"字节码里唯一会出现
-// OpJumpBackward(回跳)的地方"—— 全部拒掉之后,字节码就是一个无环的直线程序,
-// 求值步数被字节码长度静态封顶(见 runProgram 的注释)。
+// OpJumpBackward(回跳)的地方"(已对照 expr v1.17.8 compiler.go 核实:emitLoop /
+// emitLoopBackwards 只在 BuiltinNode 的这 15 个分支里被调用)—— 全部拒掉之后,
+// 字节码就是一个无环的直线程序,求值步数被字节码长度静态封顶(见 runProgram 的注释)。
 var exprPredicates = map[string]struct{}{
 	"all": {}, "none": {}, "any": {}, "one": {},
 	"filter": {}, "map": {}, "count": {}, "sum": {},
@@ -366,6 +337,9 @@ func exprAudit(code string) error {
 	}
 	bad := ""
 	ast.Walk(&tree.Node, auditVisitor{reject: &bad})
+	if bad == rejectDynamicMatches {
+		return errors.New("表达式中 matches 的右侧必须是字符串常量(不允许用字段或运算结果当正则)")
+	}
 	if bad != "" {
 		return fmt.Errorf("表达式不允许使用 %q:这类函数要遍历集合,无法给出有界的计算成本", bad)
 	}
@@ -392,18 +366,38 @@ func parseForAudit(code string) (tree *parser.Tree, err error) {
 	return parser.Parse(code)
 }
 
-// auditVisitor 找出第一个被禁的谓词类内置函数(找到就停,不用报全部)。
+// auditVisitor 找出第一个被禁的构造(找到就停,不用报全部):
+//   - 谓词类内置函数(见 exprPredicates);
+//   - 右值不是字符串常量的 `matches`。
+//
+// 为什么拒非常量正则:expr 只在右值是 *ast.StringNode 时于编译期预编译正则
+// (OpMatchesConst);否则生成 OpMatches,**每次求值**都对运行期的字符串现编译一次
+// regexp —— `ua matches path` 这种写法等于让访客通过请求路径提交任意正则,
+// 每次跳转付一次 regexp.Compile(最长可达整条 UA/路径),既慢又可被放大。
+// 规则里的正则本来就该是租户写死的常量,拒掉不损失任何正当用法。
+// 审的是 parse 后、optimizer 之前的树,所以 `ua matches ("a" + "b")` 这类
+// 要靠常量折叠才变成常量的写法也一并拒掉 —— 宁严勿宽。
 type auditVisitor struct {
 	reject *string
 }
+
+// rejectDynamicMatches 被拒时 reject 里写的标记(exprAudit 据此给出专门的报错)。
+const rejectDynamicMatches = "matches(非常量正则)"
 
 func (v auditVisitor) Visit(node *ast.Node) {
 	if *v.reject != "" {
 		return
 	}
-	if b, ok := (*node).(*ast.BuiltinNode); ok {
-		if _, bad := exprPredicates[b.Name]; bad {
-			*v.reject = b.Name
+	switch n := (*node).(type) {
+	case *ast.BuiltinNode:
+		if _, bad := exprPredicates[n.Name]; bad {
+			*v.reject = n.Name
+		}
+	case *ast.BinaryNode:
+		if n.Operator == "matches" {
+			if _, ok := n.Right.(*ast.StringNode); !ok {
+				*v.reject = rejectDynamicMatches
+			}
 		}
 	}
 }
@@ -423,7 +417,8 @@ func CompileExpression(code string) (*vm.Program, error) {
 //     非 bool 返回值全部变成编译错误(refs 闸门因此不再可能被绕过)
 //  4. DisableAllBuiltins + 白名单重开
 //
-// 前三道合起来保证:字节码里没有回跳,也就没有循环,求值成本与表达式长度成正比。
+// 前三道合起来保证:字节码里没有回跳,也就没有循环,求值成本与表达式长度成正比
+// (runProgram 因此可以不设墙钟超时、直接同步求值)。
 func compileExpression(code string) (*vm.Program, []string, error) {
 	if err := exprAudit(code); err != nil {
 		return nil, nil, err

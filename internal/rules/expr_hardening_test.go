@@ -1,7 +1,10 @@
 package rules
 
 import (
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -285,10 +288,14 @@ func TestMaliciousExpressionIsCheapToCompileAndRun(t *testing.T) {
 	}
 }
 
-// TestExprEvaluationHasWallClockBudget 运行期兜底:即便前两道闸门都被绕过
-// (例如内部代码手搓一个 program),单条表达式的求值也不能无限占用 CPU。
-func TestExprEvaluationHasWallClockBudget(t *testing.T) {
-	// 一条合法但很贵的表达式(白名单内的函数反复叠加,长度仍在上限内)
+// TestExprEvaluationIsSynchronousAndDoesNotFailOpenUnderLoad 运行期不再有墙钟超时。
+//
+// 有意更新(fix/high-rules):原测试 TestExprEvaluationHasWallClockBudget 断言"每次求值
+// 套一层 goroutine + 1ms 超时"的预算生效。那层超时在 CPU 饱和/GC 停顿时会让正常表达式
+// "超时 → 未命中",即越是被刷越 fail-open。求值成本由编译期封顶(无回跳字节码,
+// 见 TestExprBytecodeHasNoBackwardJump),现在 vm.Run 直接同步执行。
+// 这里断言:CPU 被打满时每次求值依然命中,且求值不再派生 goroutine。
+func TestExprEvaluationIsSynchronousAndDoesNotFailOpenUnderLoad(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`len(UA) > 0`)
 	for i := 0; i < 40; i++ {
@@ -304,17 +311,95 @@ func TestExprEvaluationHasWallClockBudget(t *testing.T) {
 	}
 	eval := &exprEvaluator{program: prog, refs: refs, log: discardLog}
 	fact := Fact{UA: "Mozilla/5.0 (compatible; Googlebot/2.1)"}
-	if !eval.Match(&fact) {
-		t.Fatal("这条合法表达式应当命中,否则测的不是预算而是表达式本身写错了")
+
+	// 把每个 P 都占满,制造调度延迟(旧实现下这正是 1ms 超时被误触发的场景)
+	stop := make(chan struct{})
+	var burners sync.WaitGroup
+	for i := 0; i < runtime.GOMAXPROCS(0)*4; i++ {
+		burners.Add(1)
+		go func() {
+			defer burners.Done()
+			x := 0
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					for j := 0; j < 1e5; j++ {
+						x += j
+					}
+				}
+			}
+		}()
 	}
-	// 跑 500 次,总耗时必须仍然很小(单次预算 1ms,500 次最坏 500ms;
-	// 正常是纳秒级,这条断言的松弛量已经足够大)
-	start := time.Now()
-	for i := 0; i < 500; i++ {
-		eval.Match(&fact)
+	defer func() { close(stop); burners.Wait() }()
+
+	var misses atomic.Int64
+	var wg sync.WaitGroup
+	for g := 0; g < 16; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 200; i++ {
+				if !eval.Match(&fact) {
+					misses.Add(1)
+				}
+			}
+		}()
 	}
-	if total := time.Since(start); total > 500*time.Millisecond {
-		t.Fatalf("500 次求值花了 %v,单条表达式的运行期预算没生效", total)
+	wg.Wait()
+	if n := misses.Load(); n != 0 {
+		t.Fatalf("负载下 %d 次求值未命中:合法表达式不该因为调度延迟 fail-open", n)
+	}
+
+	// 求值不派生 goroutine/timer:最简单的表达式单次求值只剩 env 装箱与 VM 本身的分配
+	// (实测 2 次;旧实现 goroutine + channel + timer 至少 5 次)。
+	simple, simpleRefs, err := compileExpression(`Country == "US"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	se := &exprEvaluator{program: simple, refs: simpleRefs, log: discardLog}
+	us := Fact{Country: "US"}
+	if allocs := testing.AllocsPerRun(200, func() { se.Match(&us) }); allocs > 3 {
+		t.Fatalf("单次求值分配 %.0f 次,疑似仍在为每次求值起 goroutine/timer", allocs)
+	}
+}
+
+// TestExprDynamicMatchesRejected `matches` 的右值必须是字符串常量。
+// 否则 expr 生成 OpMatches,每次求值都对访客可控的字符串(路径、UA、Referer……)
+// 现编译一次正则 —— 等于让访客替租户提交正则。
+func TestExprDynamicMatchesRejected(t *testing.T) {
+	rejected := []string{
+		`UA matches Path`,
+		`UA matches Ref`,
+		`Country matches lower(Path)`,
+		`UA matches ("Google" + "bot")`,
+		`not (UA matches Path)`,
+		`UA not matches Path`,
+		`DevType == "bot" && UA matches trim(Ref)`,
+	}
+	for _, code := range rejected {
+		err := ValidateExpression(code)
+		if err == nil {
+			t.Errorf("表达式 %q 应被拒(非常量正则)", code)
+			continue
+		}
+		if !strings.Contains(err.Error(), "matches") {
+			t.Errorf("表达式 %q 的报错应指明 matches: %v", code, err)
+		}
+		if _, ok := compileRule(exprRule(1, code), discardLog); ok {
+			t.Errorf("表达式 %q 不该编译成可求值的规则", code)
+		}
+	}
+	allowed := []string{
+		`UA matches "(?i)googlebot"`,
+		`UA not matches "bot"`,
+		`not (Path matches "^/api/")`,
+	}
+	for _, code := range allowed {
+		if err := ValidateExpression(code); err != nil {
+			t.Errorf("常量正则 %q 应合法: %v", code, err)
+		}
 	}
 }
 
