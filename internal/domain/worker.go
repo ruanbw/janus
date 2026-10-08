@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"runtime/debug"
@@ -22,6 +23,17 @@ const (
 	// 易主 —— 攻击者接管后,证书最长续签窗口是 Let's Encrypt 的签发时长量级,
 	// 24h 的复检把"易主到停止服务"的窗口压到可接受范围。
 	OwnershipRecheckInterval = 24 * time.Hour
+	// OwnershipRecheckRetryInterval 归属复检失败过一次之后的重查间隔。
+	//
+	// 降级要求连续 OwnershipRecheckFailThreshold 次失败(防 DNS 抖动误杀成熟域名);
+	// 若后续几次也按 24h 节奏,易主后继续服务的窗口会被拉长到 72h。失败后改为
+	// 每小时重查,"确认失败"在几小时内完成。
+	OwnershipRecheckRetryInterval = time.Hour
+	// OwnershipRecheckFailThreshold 连续多少次复检不通过才降级。
+	OwnershipRecheckFailThreshold = 3
+	// ownershipRecheckTick 归属复检循环的扫描节奏。选不选某一行由 SQL 按上面两个
+	// 间隔判定,循环本身只需要不慢于最短的那个间隔;每轮只是一次带 LIMIT 的查询。
+	ownershipRecheckTick = time.Hour
 	// certProbeInterval 证书探活节奏(与归属复检一致:一个域名一天至少探一次)。
 	certProbeInterval = 5 * time.Minute
 )
@@ -77,6 +89,8 @@ func ValidateIntervals(cfg config.Config) error {
 		{"JANUS_VISIT_CLEANUP_INTERVAL", cfg.VisitCleanupEvery},
 		{"证书探活间隔", certProbeInterval},
 		{"归属复检间隔", OwnershipRecheckInterval},
+		{"归属复检失败重查间隔", OwnershipRecheckRetryInterval},
+		{"归属复检扫描节奏", ownershipRecheckTick},
 	}
 	for _, d := range durations {
 		if d.v <= 0 {
@@ -110,7 +124,9 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 	start(func() { w.guardedLoop(ctx, w.cfg.DNSRetryInterval, w.dnsRetryPass, "dns-retry") })
 	start(func() { w.guardedLoop(ctx, certProbeInterval, w.certProbePass, "cert-probe") })
-	start(func() { w.guardedLoop(ctx, OwnershipRecheckInterval, w.ownershipRecheckPass, "ownership-recheck") })
+	start(func() { w.guardedLoop(ctx, ownershipRecheckTick, w.ownershipRecheckPass, "ownership-recheck") })
+	// 长期 expired 的占位域名与过期认领挑战的回收,与访问清理同一节奏(默认 24h)。
+	start(func() { w.guardedLoop(ctx, w.cfg.VisitCleanupEvery, w.domainGCPass, "domain-gc") })
 	start(func() { w.loop(ctx, w.cfg.VisitCleanupEvery, w.visitCleanupPass, "visit-cleanup") })
 	// 过期会话与邮箱 token 清理与访问清理同一节奏(默认 24h)。
 	// email_tokens 仅消费时惰性校验过期,需定期物理清理防表膨胀;spec 未禁止,属合理运维。
@@ -262,8 +278,12 @@ func challengeExpired(d store.DomainScanRow, maxAge time.Duration) bool {
 
 // ownershipRecheckPass 低频复检 active 自有域名的归属。
 //
-// 通过:刷新 ownership_verified_at(顺带记录本次校验时间)。
-// 不通过:降级为 failed(仍在重试队列里,租户修好 DNS 后自动恢复)。
+// 通过:刷新 ownership_verified_at(顺带记录本次校验时间),失败计数清零。
+// DNS 查询本身失败(ErrDNSLookup:超时/SERVFAIL):跳过,不计失败、不降级 ——
+// "这次没查到"不是"归属不再成立",原实现把它们混为一谈,一次解析器抖动就能
+// 把成熟域名下线。
+// 查到了但不匹配:失败计数 +1,连续 OwnershipRecheckFailThreshold 次才降级为
+// failed(仍在重试队列里,租户修好 DNS 后自动恢复)。
 //
 // 为什么是 failed 而不是 stopped:stopped 的语义是"租户主动暂停",系统不该替租户
 // 做这个决定;failed 表示"系统复检发现它不成立",并且 DNS 一修好就能自动回来。
@@ -271,7 +291,8 @@ func challengeExpired(d store.DomainScanRow, maxAge time.Duration) bool {
 // 配置"),平台唯一的控制点是授权端点 —— 状态一旦不是 active,授权端点就拒绝,
 // Caddy 便不再续签。已签发的那张证书会按其自身有效期自然过期。
 func (w *Worker) ownershipRecheckPass(ctx context.Context) {
-	rows, err := w.store.ListDomainsForOwnershipRecheck(ctx, OwnershipRecheckInterval, store.DefaultDomainScanLimit)
+	rows, err := w.store.ListDomainsForOwnershipRecheck(ctx, OwnershipRecheckInterval,
+		OwnershipRecheckRetryInterval, store.DefaultDomainScanLimit)
 	if err != nil {
 		log.Printf("worker ownership-recheck: list domains: %v", err)
 		return
@@ -283,22 +304,56 @@ func (w *Worker) ownershipRecheckPass(ctx context.Context) {
 					log.Printf("worker ownership-recheck: domain %s panic: %v\n%s", d.FQDN, rec, debug.Stack())
 				}
 			}()
-			res, err := w.dns.Verify(ctx, d.FQDN, d.VerifyToken)
-			if err != nil {
-				log.Printf("worker ownership-recheck: verify %s: %v", d.FQDN, err)
-				return
-			}
-			if res.Verified() {
-				if err := w.store.ActivateDomainVerified(ctx, d.ID); err != nil {
-					log.Printf("worker ownership-recheck: refresh %s: %v", d.FQDN, err)
-				}
-				return
-			}
-			log.Printf("worker ownership-recheck: %s 归属复检未通过(%s,TXT 未匹配),降级为 failed 并停止授权端点放行", d.FQDN, res.Status)
-			if err := w.store.DegradeDomain(ctx, d.ID); err != nil {
-				log.Printf("worker ownership-recheck: degrade %s: %v", d.FQDN, err)
-			}
+			w.recheckOwnership(ctx, d)
 		}()
+	}
+}
+
+// recheckOwnership 对单个 active 域名做一次归属复检并落地结果。
+func (w *Worker) recheckOwnership(ctx context.Context, d store.DomainScanRow) {
+	res, err := w.dns.Verify(ctx, d.FQDN, d.VerifyToken)
+	if err != nil {
+		if errors.Is(err, ErrDNSLookup) {
+			log.Printf("worker ownership-recheck: %s DNS 查询失败,本轮跳过(不计失败、不降级): %v", d.FQDN, err)
+		} else {
+			log.Printf("worker ownership-recheck: verify %s: %v", d.FQDN, err)
+		}
+		return
+	}
+	if res.Verified() {
+		if err := w.store.ActivateDomainVerified(ctx, d.ID); err != nil {
+			log.Printf("worker ownership-recheck: refresh %s: %v", d.FQDN, err)
+		}
+		return
+	}
+	failures, degraded, err := w.store.RecordOwnershipRecheckFailure(ctx, d.ID, OwnershipRecheckFailThreshold)
+	if err != nil {
+		log.Printf("worker ownership-recheck: record failure %s: %v", d.FQDN, err)
+		return
+	}
+	if degraded {
+		log.Printf("worker ownership-recheck: %s 连续 %d 次归属复检未通过(%s,TXT 未匹配),降级为 failed 并停止授权端点放行",
+			d.FQDN, OwnershipRecheckFailThreshold, res.Status)
+		return
+	}
+	log.Printf("worker ownership-recheck: %s 归属复检未通过(%s),连续失败 %d/%d 次,%v 后重查",
+		d.FQDN, res.Status, failures, OwnershipRecheckFailThreshold, OwnershipRecheckRetryInterval)
+}
+
+// domainGCPass 回收长期 expired 的自有域名占位行与过期的认领挑战。
+//
+// expired 行占着全局唯一的 fqdn 槽位;认领通道(见 store/domain_claims.go)
+// 让真正的所有者可以凭 TXT 接管,而这里保证占位不会无限累积:进入 expired
+// 超过 store.ExpiredDomainRetention 且从未挂过短链/产生过访问的行直接删除。
+func (w *Worker) domainGCPass(ctx context.Context) {
+	n, err := w.store.GCExpiredDomains(ctx, store.ExpiredDomainRetention, store.DefaultDomainScanLimit)
+	if err != nil {
+		log.Printf("worker domain-gc: expired domains: %v", err)
+	} else if n > 0 {
+		log.Printf("worker domain-gc: 回收 %d 个 expired 超过 %v 的自有域名", n, store.ExpiredDomainRetention)
+	}
+	if _, err := w.store.DeleteStaleDomainClaims(ctx, w.cfg.DNSMaxAge); err != nil {
+		log.Printf("worker domain-gc: stale claims: %v", err)
 	}
 }
 

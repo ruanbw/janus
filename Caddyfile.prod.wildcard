@@ -1,0 +1,94 @@
+# Janus 生产 Caddy 配置 —— 泛域名证书模式(可选;默认模式见 Caddyfile.prod)
+#
+# 解决什么:默认模式下每个租户默认域名 <slug>.<平台域名> 各自 on-demand 签一张证书
+# (ADR-0004)。Let's Encrypt 对同一注册域有"每周证书数"配额,注册量(包括注册 spam)
+# 会线性消耗它;配额耗尽后新租户、续期乃至后台域名都签不出证书。本模式改为:
+#   - example.com 与 *.example.com 两张证书,走 DNS-01 质询一次签好(与租户数量无关);
+#   - app.example.com 与全部租户子域都由 *.example.com 这张泛域名证书覆盖;
+#   - 租户自有域名(与平台域名无关的任意域名)仍走 on-demand + 授权端点,行为不变。
+#
+# 启用步骤(详见 docs/deploy.md「泛域名证书模式」):
+#   1. 使用带 DNS 提供商插件的 Caddy 构建(官方 caddy:2 镜像不含任何 DNS 插件),例如
+#      Cloudflare:xcaddy build --with github.com/caddy-dns/cloudflare
+#      其他托管商把下面 (wildcard_tls) 里的 `dns cloudflare ...` 换成对应插件的写法;
+#   2. caddy 容器注入 DNS API 凭据环境变量(本文件示例用 CADDY_DNS_API_TOKEN,
+#      Cloudflare 需要 Zone:DNS:Edit 权限的 API Token);
+#   3. 后端设置 JANUS_WILDCARD_TLS=true:授权端点对平台子域(app 除外)一律拒绝
+#      on-demand 签发,即使本文件被改错也不会退回"每租户一张证书";
+#   4. 把下面全部 example.com 替换为你的平台域名(Caddy 站点地址不支持环境变量占位符),
+#      并把 docker-compose.prod.yml 里 caddy 服务挂载的文件换成本文件。
+#
+# 前后端分离(ADR-0006)与授权端点的约束同 Caddyfile.prod:
+#   /api、/healthz → backend;其余 → web;/internal/* 永不经站点路由暴露。
+{
+	# email {env.ACME_EMAIL}
+
+	# 租户自有域名仍需 on-demand(说明见 Caddyfile.prod 同名段落)。
+	on_demand_tls {
+		ask http://backend:8080/internal/caddy/authorize?token={$CADDY_ASK_TOKEN}
+	}
+}
+
+(backend_proxy) {
+	reverse_proxy backend:8080 {
+		header_up X-Forwarded-For {remote_host}
+	}
+}
+
+(console) {
+	handle /api/* {
+		import backend_proxy
+	}
+	handle /healthz {
+		import backend_proxy
+	}
+	handle {
+		reverse_proxy web:80
+	}
+}
+
+# DNS-01 质询:泛域名证书只能用 DNS 质询签发(HTTP-01/TLS-ALPN-01 都不支持通配符)。
+# {env.CADDY_DNS_API_TOKEN} 在运行时读取 caddy 容器的环境变量。
+(wildcard_tls) {
+	tls {
+		dns cloudflare {env.CADDY_DNS_API_TOKEN}
+	}
+}
+
+# 裸平台域名:承载后台(泛域名证书不覆盖裸域名,单独一张,同样走 DNS-01)
+example.com {
+	import wildcard_tls
+	import console
+}
+
+# app.<平台域名> 与全部租户子域共用一张 *.example.com 证书。
+# app 不再单独写站点块:单独的站点块会让 Caddy 为它另签一张证书,而这里用
+# host 匹配在同一站点内分流,证书只有泛域名那一张。
+*.example.com {
+	import wildcard_tls
+
+	@console host app.example.com
+	handle @console {
+		import console
+	}
+	# 授权端点不暴露给公网(整站反代会让它从任意租户子域可达)
+	handle /internal/* {
+		respond 404
+	}
+	handle {
+		import backend_proxy
+	}
+}
+
+# ---------- catch-all:租户自有域名(on-demand,与 Caddyfile.prod 相同) ----------
+:443 {
+	tls {
+		on_demand
+	}
+	handle /internal/* {
+		respond 404
+	}
+	handle {
+		import backend_proxy
+	}
+}

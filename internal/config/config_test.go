@@ -221,3 +221,23 @@ func TestEmptyTrustedProxiesTrustsNothing(t *testing.T) {
 		t.Error("未配置可信代理时,私网地址也不应采信 XFF")
 	}
 }
+
+// 泛域名证书模式默认关闭(不开开关时行为与 ADR-0004 一致),可由环境变量打开。
+func TestWildcardTLSFlag(t *testing.T) {
+	os.Unsetenv("JANUS_WILDCARD_TLS")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.WildcardTLS {
+		t.Fatal("WildcardTLS 默认应为 false")
+	}
+	t.Setenv("JANUS_WILDCARD_TLS", "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if !cfg.WildcardTLS {
+		t.Fatal("JANUS_WILDCARD_TLS=true 未生效")
+	}
+}

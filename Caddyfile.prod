@@ -3,6 +3,11 @@
 #    (与 .env 的 JANUS_PLATFORM_DOMAIN 保持一致),再挂载到 Caddy 容器。
 # 开发版见 Caddyfile(本地 CA)。
 #
+# 本文件是默认模式:每个租户默认域名 <slug>.<平台域名> 各自 on-demand 签一张证书(ADR-0004),
+# 受 Let's Encrypt 每周配额约束。租户规模大或担心注册 spam 耗尽配额时,改用
+# Caddyfile.prod.wildcard(一张 *.<平台域名> 泛域名证书,DNS-01)并设置
+# JANUS_WILDCARD_TLS=true,见 docs/deploy.md「泛域名证书模式」。
+#
 # 前后端分离(ADR-0006):Caddy 只做 TLS + 按路径分流,自身不托管任何文件。
 #   /api、/internal、/healthz → backend(Go 后端)
 #   其余                    → web(nginx 静态服务,只含前端构建产物)
@@ -76,6 +81,8 @@ app.example.com {
 
 # 全部租户子域(泛域名匹配;依赖 DNS 上 *.<平台域名> → 本服务器):
 # 短链跳转与落地页是后端业务逻辑,整站反代到 Go 后端
+# 注意:这里的 on_demand 意味着每个租户子域一张证书(会消耗 Let's Encrypt 配额);
+# 泛域名证书方案见 Caddyfile.prod.wildcard。
 *.example.com {
 	tls {
 		on_demand
