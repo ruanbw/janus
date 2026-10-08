@@ -46,6 +46,10 @@ type Deps struct {
 	DomainOwnership OwnershipChecker
 	// ProtectedRoutes 外部注入的受保护控制面路由注入回调
 	ProtectedRoutes []func(rg *gin.RouterGroup)
+	// VisitQueue 访问明细异步写入队列(见 visit_queue.go)。
+	// nil 时访问明细在请求内同步落库:黑盒测试依赖"请求返回即可查到明细"。
+	// 生产(cmd/janus、pkg/janus)总是传入,并负责在 http.Server.Shutdown 之后 Close 它。
+	VisitQueue *VisitQueue
 }
 
 // OwnershipChecker 抽象域名归属校验(见 Deps.DomainOwnership)。
@@ -74,6 +78,7 @@ type API struct {
 	jwtMgr           *jwt.Manager   // Bearer JWT 校验(authenticate 中间件使用)
 	ruleCache        *rules.Cache   // 规则快照(跳转热路径求值;nil 时求值恒为"无规则")
 	geo              geo.Lookup     // IP → 国家码(跳转热路径在构造 Fact 之前查,ADR 0009)
+	visitQueue       *VisitQueue    // 访问明细异步队列(nil = 同步落库,见 recordVisit)
 }
 
 // New 构建 Gin 引擎:全局中间件(panic 恢复+访问日志、后台域名 SPA 分流)+ 全部路由。
@@ -141,6 +146,7 @@ func New(d Deps) http.Handler {
 		jwtMgr:           jwtMgr,
 		ruleCache:        ruleCache,
 		geo:              geoLookup,
+		visitQueue:       d.VisitQueue,
 	}
 	if a.dns == nil {
 		a.dns = &domain.DNSChecker{ExpectedIP: d.Cfg.ServerPublicIP}
@@ -236,6 +242,11 @@ func New(d Deps) http.Handler {
 	// 点击回传还要额外做一次地理解析,无节制的脚本刷量会同时撑大 visits 表
 	// 与吃掉 CPU。阈值按"CGNAT/公司出口下正常用户感知不到"来定。
 	r.GET("/:code", a.visitorGuard(), a.handleRedirect)
+	// HEAD 与 GET 同响应(状态码 / Location / 缓存头):链接预览器、监控探测、
+	// curl -I 都用 HEAD 判断短链是否可用。原先 HEAD 落进 NoRoute 被当成"短码/子路径"
+	// 解析失败,一律 404 —— 健康的短链在这些工具眼里是坏链。
+	// HEAD 不记明细、不推进轮询指针(见 recordVisit / handleRedirect)。
+	r.HEAD("/:code", a.visitorGuard(), a.handleRedirect)
 	// 16:落地页型短链二级路径(点击端点/每短链 SDK/上传落地页静态服务)。
 	// gin 路由树不支持 /:code 与 /:code/... 子路由并存,统一由 NoRoute 兜底分发;
 	// 关闭尾斜杠重定向,避免 gin 把 /{code}/ 重定向回 /{code} 造成环。

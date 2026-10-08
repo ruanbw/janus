@@ -253,8 +253,11 @@ type App struct {
 	workerDone            chan struct{}
 	cancelRun             context.CancelFunc
 	fallback              atomic.Pointer[http.Handler]
-	mu                    sync.Mutex
-	running               bool
+	// visitQueue 访问明细异步队列:每次组装完整业务路由(fullHandler)时创建,
+	// Shutdown 在 HTTP 停止后排空;Run 退出关闭自有数据库连接前也会再排空一次。受 mu 保护。
+	visitQueue *httpapi.VisitQueue
+	mu         sync.Mutex
+	running    bool
 }
 
 // New 基于给定的选项构建并校验 App 实例
@@ -395,11 +398,23 @@ func (a *App) fullHandler() http.Handler {
 		SMTP:    smtpCfg,
 	}, io.Discard)
 
+	// 每份完整业务路由配一条新的访问明细队列;替换下来的旧队列先排空再丢弃,
+	// 避免旧队列 worker 泄漏、已入队的明细丢失。
+	q := httpapi.NewVisitQueue(a.store, httpapi.VisitQueueConfig{
+		Size: a.cfg.VisitQueueSize, Workers: a.cfg.VisitQueueWorkers, BatchSize: a.cfg.VisitQueueBatch,
+	})
+	a.mu.Lock()
+	old := a.visitQueue
+	a.visitQueue = q
+	a.mu.Unlock()
+	closeVisitQueue(context.Background(), old)
+
 	return httpapi.New(httpapi.Deps{
 		Store:           a.store,
 		Mailer:          m,
 		Cfg:             a.cfg,
 		ProtectedRoutes: a.protectedRouteInjects,
+		VisitQueue:      q,
 	})
 }
 
@@ -478,7 +493,7 @@ func (a *App) setupDB(ctx context.Context) (owned *gorm.DB, err error) {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 
-	gdb, err := db.OpenGORM(a.cfg.DatabaseURL)
+	gdb, err := db.OpenGORMWithPool(a.cfg.DatabaseURL, a.cfg.DBMaxOpenConns)
 	if err != nil {
 		return nil, fmt.Errorf("open gorm: %w", err)
 	}
@@ -497,6 +512,16 @@ func (a *App) setupDB(ctx context.Context) (owned *gorm.DB, err error) {
 	// 组装完整业务路由(受保护路由回调在此执行一次)
 	a.setFallback(a.fullHandler())
 	return gdb, nil
+}
+
+// closeVisitQueue 排空并关闭访问明细队列(q 为 nil 时无操作;VisitQueue.Close 可重复调用)。
+func closeVisitQueue(ctx context.Context, q *httpapi.VisitQueue) {
+	if q == nil {
+		return
+	}
+	drainCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_ = q.Close(drainCtx)
 }
 
 func closeGORM(gdb *gorm.DB) {
@@ -545,6 +570,11 @@ func (a *App) Run(ctx context.Context) error {
 			case <-time.After(5 * time.Second):
 			}
 		}
+		// 关闭数据库前排空访问明细队列(Shutdown 通常已排空;监听失败等未经 Shutdown 的路径在此兜底)
+		a.mu.Lock()
+		q := a.visitQueue
+		a.mu.Unlock()
+		closeVisitQueue(context.Background(), q)
 		a.mu.Lock()
 		if owned != nil {
 			closeGORM(owned)
@@ -650,6 +680,13 @@ func (a *App) Shutdown(ctx context.Context) error {
 	if srv != nil {
 		srvErr = srv.Shutdown(ctx)
 	}
+
+	// HTTP 已停止接收请求,此后不会再有明细入队:排空访问明细队列。
+	// 关闭后 recordVisit 退回同步写入(WithDB 注入的 Store 在再次 Run 时仍可用)。
+	a.mu.Lock()
+	q := a.visitQueue
+	a.mu.Unlock()
+	closeVisitQueue(ctx, q)
 
 	if workerDone != nil {
 		select {

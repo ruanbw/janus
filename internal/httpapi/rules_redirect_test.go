@@ -89,15 +89,19 @@ func TestRuleRedirectRewritesTarget(t *testing.T) {
 		t.Fatalf("link.visits = %v, want 1", got)
 	}
 
-	// 301 型短链:规则改写同样走 301
+	// 301 型短链:规则改写**不**沿用 301,一律 302 + no-store ——
+	// 裁决因访客而异、规则随时可改,浏览器缓存住一次改写结果就等于让该访客此后绕过规则。
 	resp = c.patch("/api/links/"+strconv.FormatInt(link.ID, 10),
 		map[string]any{"redirectStatus": 301})
 	assertStatus(t, resp, http.StatusOK)
 	_ = resp.Body.Close()
 	resp = redirectGet(t, env, "localhost", "/"+link.Code)
-	assertStatus(t, resp, http.StatusMovedPermanently)
+	assertStatus(t, resp, http.StatusFound)
 	if loc := resp.Header.Get("Location"); loc != "https://campaign.example.com/promo" {
-		t.Fatalf("301 Location = %q", loc)
+		t.Fatalf("规则改写 Location = %q", loc)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("规则改写 Cache-Control = %q, want no-store", cc)
 	}
 }
 

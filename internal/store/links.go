@@ -801,6 +801,16 @@ func (s *Store) PickTarget(ctx context.Context, linkID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return s.PickTargetFrom(ctx, linkID, targets)
+}
+
+// PickTargetFrom 与 PickTarget 同语义,但目标池由调用方传入(不再查 link_targets)。
+//
+// 跳转热路径上 LookupLinkForVisit 已经把目标池读进了 link.TargetURLs,
+// 再走 PickTarget 等于同一次访问把同一张表查两遍。用本次请求已读到的那份快照选目标,
+// 结果与"同一请求内先读后选"完全一致;并发改目标池时,本次访问用的是它命中短链那一刻的池,
+// 这正是一次访问应有的语义。
+func (s *Store) PickTargetFrom(ctx context.Context, linkID int64, targets []string) (string, error) {
 	if len(targets) == 0 {
 		return "", ErrNotFound
 	}

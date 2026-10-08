@@ -160,7 +160,7 @@ func (a *API) handleLandingClick(c *gin.Context, code string) {
 		LinkID: link.ID, DomainID: d.ID,
 		Action: store.VisitActionClick, Outcome: store.VisitOutcomeSuccess, TargetURL: targetURL,
 	})
-	c.Redirect(http.StatusFound, targetURL) // 点击跳转固定 302
+	redirectTemporary(c, targetURL) // 点击跳转固定 302(轮询目标,no-store)
 }
 
 // resolveLandingLinkForVisit 按 Host+code 宽松命中短链(短码命中即返回),

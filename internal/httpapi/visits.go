@@ -8,6 +8,8 @@ package httpapi
 // 读:GET /api/visits/overview —— 总览页的一次性聚合端点(见 handleVisitsOverview)。
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -80,16 +82,40 @@ const maxLangLen = 64
 // recordVisit 记录一次访问/点击明细(IP、UA、来源页、语言、国家由请求补齐)。
 // 统计失败只吞掉错误:短链是否跳转是访问者的事,不能被写入失败牵连。
 //
+// 落库方式:
+//   - 配了访问明细队列(生产,见 Deps.VisitQueue):非阻塞入队,由队列 worker 批量落库,
+//     落库之后再触发后置访问钩子。队列满时丢弃(计数 + 限频日志),绝不阻塞跳转。
+//   - 未配队列(黑盒测试 / 直接调用 New 的嵌入方),或队列已关闭(进程退出途中):
+//     退回同步写入,保证"请求返回时明细已落库",测试可以紧接着断言明细。
+//
+// 两条路径都与请求 ctx 的取消解耦:访客拿到 302 就断开连接是常态,
+// 原先这会取消进行中的 INSERT,明细静默丢失。
+//
+// HEAD 请求不记明细:HEAD 是链接预览器/健康探测/爬虫在"看一眼",
+// 不是一次访问;计进去会虚增访问量,也会让轮询指针被探测流量推着走。
+//
 // asn / is_datacenter 不在这里填:当前没有数据源(ADR 0009),写进去的只会是空值与 false,
 // 与数据库默认值一样,反而像是"查到了但没值"。真要支持这两个值时,得先在
 // store.VisitRecord 里加字段并在这里一并填。
 func (a *API) recordVisit(c *gin.Context, rec store.VisitRecord) {
+	if c.Request.Method == http.MethodHead {
+		return
+	}
 	rec.IP = a.clientIPForVisitor(c.Request)
 	rec.UserAgent = c.Request.UserAgent()
 	rec.Referer = c.Request.Referer()
 	rec.Lang = clientLang(c.Request)
 	rec.Country = a.visitGeo(c).Country
-	_ = a.store.InsertVisit(c.Request.Context(), rec)
+	if a.visitQueue != nil {
+		err := a.visitQueue.Enqueue(c.Request.Context(), c.Request, rec)
+		if !errors.Is(err, ErrVisitQueueClosed) {
+			// 入队成功:钩子由队列在落库后触发;队列满:已计数丢弃,不触发钩子。
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(c.Request.Context()), DefaultVisitInsertTimeout)
+	_ = a.store.InsertVisit(ctx, rec)
+	cancel()
 	TriggerPostVisitHooks(c.Request.Context(), c.Request, rec)
 }
 

@@ -43,7 +43,7 @@ func main() {
 	// 此后没有任何使用者,留到进程退出等于白占 10 个连接。
 	pool.Close()
 
-	gdb, err := db.OpenGORM(cfg.DatabaseURL)
+	gdb, err := db.OpenGORMWithPool(cfg.DatabaseURL, cfg.DBMaxOpenConns)
 	if err != nil {
 		log.Fatalf("open gorm: %v", err)
 	}
@@ -71,7 +71,12 @@ func main() {
 		SMTP:    smtpCfg,
 	}, os.Stdout)
 
-	app := httpapi.New(httpapi.Deps{Store: st, Mailer: m, Cfg: cfg})
+	// 访问明细异步队列:跳转请求只入队,批量落库在后台完成(见 httpapi/visit_queue.go)。
+	// 必须在 srv.Shutdown 之后 Close,把已入队的明细排空,否则重启/发布会丢掉最后一批访问。
+	visitQueue := httpapi.NewVisitQueue(st, httpapi.VisitQueueConfig{
+		Size: cfg.VisitQueueSize, Workers: cfg.VisitQueueWorkers, BatchSize: cfg.VisitQueueBatch,
+	})
+	app := httpapi.New(httpapi.Deps{Store: st, Mailer: m, Cfg: cfg, VisitQueue: visitQueue})
 
 	// 后台任务:DNS 重试、证书预签发探活、访问/会话清理。
 	// Shutdown 后显式 cancel 并等待 worker 退出,避免进程退出时后台任务仍在写库。
@@ -105,6 +110,15 @@ func main() {
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("http shutdown: %v", err)
+	}
+	// HTTP 已停止接收请求,此后不会再有明细入队:排空队列(最多 5s)。
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := visitQueue.Close(drainCtx); err != nil {
+		log.Printf("visit queue drain: %v", err)
+	}
+	drainCancel()
+	if n := visitQueue.Dropped(); n > 0 {
+		log.Printf("visit queue: 运行期间因队列满共丢弃 %d 条访问明细", n)
 	}
 	workerCancel()
 	select {
