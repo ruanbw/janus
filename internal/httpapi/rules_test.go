@@ -304,6 +304,46 @@ func TestRuleCreateValidation(t *testing.T) {
 			}
 			return b
 		}()},
+		{"⑫ conditions 不是数组也不是对象", func() map[string]any {
+			b := baseRuleBody("条件是字符串")
+			b["conditions"] = "country=US"
+			return b
+		}()},
+		{"⑫ conditions 数组元素形状不对", func() map[string]any {
+			b := baseRuleBody("条件元素是数字")
+			b["conditions"] = []any{1, 2}
+			return b
+		}()},
+		{"⑫ conditions 树里有废节点", func() map[string]any {
+			b := baseRuleBody("废节点")
+			b["conditions"] = map[string]any{"logic": "all", "children": []any{
+				map[string]any{"field": "devtype", "operator": "eq", "values": []string{"bot"}},
+				map[string]any{"foo": 1},
+			}}
+			return b
+		}()},
+		{"⑫ ip 值混入非法 CIDR(不得静默丢值)", func() map[string]any {
+			b := baseRuleBody("坏 CIDR")
+			b["conditions"] = []map[string]any{
+				{"field": "ip", "operator": "not_in", "values": []string{"10.0.0.0/8", "10.0.0.0/33"}},
+			}
+			return b
+		}()},
+		{"⑫ 正则值编译不过(不得静默丢值)", func() map[string]any {
+			b := baseRuleBody("坏正则")
+			b["conditions"] = []map[string]any{
+				{"field": "ua", "operator": "regex", "values": []string{"Googlebot", "(unclosed"}},
+			}
+			return b
+		}()},
+		{"⑫ 阈值不是数字(不得静默丢叶子)", func() map[string]any {
+			b := baseRuleBody("坏阈值")
+			b["conditions"] = []map[string]any{
+				{"field": "devtype", "operator": "eq", "values": []string{"bot"}},
+				{"field": "ua", "operator": "gt", "values": []string{"abc"}},
+			}
+			return b
+		}()},
 		{"⑨ linkIds 跨租户", func() map[string]any {
 			b := baseRuleBody("跨租户关联")
 			b["scope"] = store.RuleScopeLinks
@@ -334,6 +374,28 @@ func TestRuleCreateValidation(t *testing.T) {
 	// 非法请求不得留下任何规则
 	if page := listRules(t, c); page.Total != 1 {
 		t.Errorf("非法创建后规则数 = %d, want 1(只有种子规则)", page.Total)
+	}
+}
+
+// TestRulePatchMalformedConditionsRejected PATCH 带格式非法的 conditions 必须 400,且规则不变。
+// 旧实现把它吞成空条件组、在 store 层因 IsZero 静默忽略,接口却回 200。
+func TestRulePatchMalformedConditionsRejected(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	r := createRule(t, c, baseRuleBody("待改"))
+	path := "/api/rules/" + strconv.FormatInt(r.ID, 10)
+	for name, conds := range map[string]any{
+		"字符串":   "oops",
+		"数字":    42,
+		"空对象":   map[string]any{},
+		"废子节点":  map[string]any{"children": []any{map[string]any{"foo": 1}}},
+		"非法 IP": []map[string]any{{"field": "ip", "operator": "in", "values": []string{"1.2.3.4", "不是IP"}}},
+	} {
+		resp := c.patch(path, map[string]any{"conditions": conds})
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", name, resp.StatusCode)
+		}
+		_ = resp.Body.Close()
 	}
 }
 

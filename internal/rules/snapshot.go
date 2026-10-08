@@ -4,8 +4,10 @@
 // 三条关键不变式:
 //  1. 快照不可变:构造完成后只读,读侧不需要再拿锁(RLock 只用来取指针);
 //     规则变更走"整体原子替换"——旧快照在被替换前仍可安全完成本次求值。
-//  2. 加载失败 fail-open:按"这个租户没有规则"放行,且不把失败结果写进缓存
-//     (否则一次数据库抖动会被缓存成"这个租户永远没有规则")。
+//  2. 加载失败沿用上一份好快照(哪怕已过期或已被 Invalidate):一次数据库抖动不该
+//     让整租户的拦截规则瞬间全部失效。失败会被短暂记住(loadFailureBackoff),
+//     期间同租户的请求直接用旧快照、不再排队重试;只有"从没加载成功过"的租户
+//     才按"没有规则"放行(fail-open),且失败结果从不当成快照写进缓存。
 //  3. 失效靠显式调用:规则/关联变更后必须 Invalidate(该租户);
 //     TTL 只是漏调 Invalidate 时的兜底,让配置改动最迟一个 TTL 生效。
 package rules
@@ -27,6 +29,14 @@ import (
 // 这个 TTL 只防"漏调 Invalidate 导致规则永远不生效"这类静默失效:
 // 代价只是每个活跃租户每分钟一次很小的整租户查询。
 const DefaultSnapshotTTL = time.Minute
+
+// loadFailureBackoff 一次加载失败之后,同租户在这段时间内不再重试,直接沿用旧快照。
+//
+// 为什么需要:旧实现失败后什么都不记,同租户的并发请求在按租户的加载锁上排成一队,
+// 拿到锁后**各自**再打一次已经挂掉的数据库 —— 每个请求都要串行等前面所有失败的往返,
+// 跳转延迟随排队长度线性变长,数据库恢复时还要先吃一波重试洪峰。
+// 几秒足够挡住惊群,又短到数据库恢复后很快就能拿到新规则。
+const loadFailureBackoff = 3 * time.Second
 
 // Snapshot 一个租户在某一时刻的规则集合,按求值顺序(priority 升序, id 升序)排好。
 // 构造后不可变,多 goroutine 可并发读。
@@ -53,6 +63,8 @@ type Cache struct {
 	loader Loader
 	ttl    time.Duration
 	log    *slog.Logger
+	// backoff 加载失败后的退避时长(默认 loadFailureBackoff;测试可改短)。
+	backoff time.Duration
 }
 
 // cacheEntry 一个租户的缓存状态。
@@ -60,9 +72,19 @@ type Cache struct {
 // gen 是这个租户的"失效代数":Invalidate 每调用一次就自增,Get 在**加载开始时**
 // 记下当时的 gen,写回前再比对一次。不一致就丢弃本次加载结果 ——
 // 见 Cache.Get 里"丢失效竞态"那段注释。
+//
+// snap 是**最近一份加载成功的快照**,过期或被 Invalidate 后也不丢:它是加载失败时的
+// 兜底(见不变式 2)。它能否直接作为"当前快照"返回由 valid + TTL 决定:
+// Invalidate 只把 valid 置 false,TTL 到期看 BuiltAt。
+//
+// failedAt/failedGen 记最近一次加载失败:同一代数下、退避期内不再重试。
+// Invalidate 会自增代数,于是"刚保存完规则"一定会立刻重试,不被退避挡住。
 type cacheEntry struct {
-	snap *Snapshot
-	gen  uint64
+	snap      *Snapshot
+	valid     bool
+	gen       uint64
+	failedAt  time.Time
+	failedGen uint64
 }
 
 // tenantLocks 按租户分片的加载锁:每租户一把,互不阻塞,且会在没人用时回收。
@@ -105,6 +127,32 @@ func (t *tenantLocks) lock(tenantID int64) func() {
 	t.mu.Unlock()
 
 	l.mu.Lock()
+	return t.unlocker(tenantID, l)
+}
+
+// tryLock 不等待地尝试锁住某个租户:锁正被别人持有时立刻返回 ok=false。
+// 手里有旧快照可用时走这条路 —— 别人正在加载,就先用旧的,不排队。
+func (t *tenantLocks) tryLock(tenantID int64) (func(), bool) {
+	t.mu.Lock()
+	if t.locks == nil {
+		t.locks = make(map[int64]*tenantLock)
+	}
+	l := t.locks[tenantID]
+	if l == nil {
+		l = &tenantLock{}
+		t.locks[tenantID] = l
+	}
+	if !l.mu.TryLock() {
+		// 锁被持有 ⇒ 持有者的 refs 还在,这条不会被回收,表里不用动。
+		t.mu.Unlock()
+		return nil, false
+	}
+	l.refs++
+	t.mu.Unlock()
+	return t.unlocker(tenantID, l), true
+}
+
+func (t *tenantLocks) unlocker(tenantID int64, l *tenantLock) func() {
 	return func() {
 		l.mu.Unlock()
 		t.mu.Lock()
@@ -143,11 +191,12 @@ func WithTTL(d time.Duration) Option {
 // NewCache 构造规则快照缓存。loader 为空时 Get 恒返回空快照(等价于"没有规则")。
 func NewCache(loader Loader, opts ...Option) *Cache {
 	c := &Cache{
-		items:  make(map[int64]*cacheEntry),
-		loads:  &tenantLocks{locks: make(map[int64]*tenantLock)},
-		loader: loader,
-		ttl:    DefaultSnapshotTTL,
-		log:    slog.Default(),
+		items:   make(map[int64]*cacheEntry),
+		loads:   &tenantLocks{locks: make(map[int64]*tenantLock)},
+		loader:  loader,
+		ttl:     DefaultSnapshotTTL,
+		log:     slog.Default(),
+		backoff: loadFailureBackoff,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -196,25 +245,45 @@ func ruleBefore(a, b *store.Rule) bool {
 }
 
 // Get 取某租户的快照:命中缓存直接返回,否则加载一份并整体原子替换(惰性加载)。
-// 加载出错时返回空快照(fail-open,放行),不写缓存。
+//
+// 加载出错(或 panic)时沿用上一份好快照(哪怕已过期/已失效);从没加载成功过的租户
+// 才返回空快照(fail-open,放行)。失败从不写成快照,只记一个短暂的退避。
 func (c *Cache) Get(ctx context.Context, tenantID int64) *Snapshot {
 	if c == nil || c.loader == nil {
 		return &Snapshot{BuiltAt: time.Now(), log: slog.Default()}
 	}
-	if snap := c.cached(tenantID); snap != nil {
-		return snap
+	st := c.lookup(tenantID)
+	if st.fresh {
+		return st.snap
 	}
+	// 退避期内:不碰数据库,有旧快照用旧的,没有就按无规则放行。
+	if st.backingOff {
+		return c.fallback(st.snap)
+	}
+	// 手里有旧快照时不排队:别人正在加载就先用旧的(stale-while-revalidate)。
+	// 没有旧快照才阻塞等锁 —— 这时排队等第一份加载结果是惊群保护本身。
+	var unlock func()
+	if st.snap != nil {
+		u, ok := c.loads.tryLock(tenantID)
+		if !ok {
+			return st.snap
+		}
+		unlock = u
+	} else {
+		unlock = c.loads.lock(tenantID)
+	}
+	defer unlock()
+
 	// 慢路径整体兜住 panic:README 承诺"快照加载失败一律按未命中继续",
-	// 而这一段原来只覆盖 loader **返回 error**;loader **panic**(比如某个
-	// 第三方 VisitorContext 实现有问题、或者将来 loader 里加了会炸的代码)
-	// 会一路冒到全局 recover 变成 500。与 Evaluate 的 recover 对称。
+	// 而这一段原来只覆盖 loader **返回 error**;loader **panic** 会一路冒到
+	// 全局 recover 变成 500。与 Evaluate 的 recover 对称。
 	snap := &Snapshot{}
 	func() {
 		defer func() {
 			if rec := recover(); rec != nil {
-				c.log.Error("加载租户规则 panic,按无规则放行(fail-open)",
+				c.log.Error("加载租户规则 panic,沿用上一份快照或按无规则放行(fail-open)",
 					"tenant", tenantID, "panic", rec, "stack", string(debug.Stack()))
-				snap = &Snapshot{BuiltAt: time.Now(), log: c.log}
+				snap = c.fallback(c.lookup(tenantID).snap)
 			}
 		}()
 		snap = c.load(ctx, tenantID)
@@ -222,26 +291,39 @@ func (c *Cache) Get(ctx context.Context, tenantID int64) *Snapshot {
 	return snap
 }
 
-// cached 读缓存:有且未过期才算命中。
-func (c *Cache) cached(tenantID int64) *Snapshot {
-	c.mu.RLock()
-	e := c.items[tenantID]
-	var snap *Snapshot
-	if e != nil {
-		// 必须在锁内把指针取出来。锁外再读 e.snap 就成了与 Invalidate
-		// (e.snap = nil)的并发读写 —— 这正是 go test -race 会抓的那一类。
-		snap = e.snap
-	}
-	c.mu.RUnlock()
-	// 锁外只碰 snap 自己:快照构造完就不再改(整体原子替换),
-	// 拿到旧指针的读者可以安全地用完它。
-	if snap == nil || c.stale(snap) {
-		return nil
-	}
-	return snap
+// cacheState 某一时刻一个租户的缓存状态(在 items 锁内一次读出)。
+type cacheState struct {
+	snap       *Snapshot // 最近一份好快照(可能已过期/已失效;可能为 nil)
+	fresh      bool      // snap 可直接当当前快照返回
+	backingOff bool      // 处于加载失败后的退避期
 }
 
-// load 慢路径:按租户加锁 → 复查缓存 → 读库 → 预编译 → 写回。
+// lookup 在锁内读出租户的缓存状态。
+func (c *Cache) lookup(tenantID int64) cacheState {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e := c.items[tenantID]
+	if e == nil {
+		return cacheState{}
+	}
+	// 必须在锁内把指针取出来。锁外再读 e.snap 就成了与 Invalidate / load 写回
+	// 的并发读写 —— 这正是 go test -race 会抓的那一类。
+	st := cacheState{snap: e.snap}
+	st.fresh = e.snap != nil && e.valid && !c.stale(e.snap)
+	st.backingOff = !e.failedAt.IsZero() && e.failedGen == e.gen &&
+		time.Since(e.failedAt) < c.backoff
+	return st
+}
+
+// fallback 加载不可用时返回的快照:有旧的用旧的,没有就是空快照(按无规则放行)。
+func (c *Cache) fallback(old *Snapshot) *Snapshot {
+	if old != nil {
+		return old
+	}
+	return &Snapshot{BuiltAt: time.Now(), log: c.log}
+}
+
+// load 慢路径(调用方已持有租户锁):复查缓存 → 读库 → 预编译 → 写回。
 //
 // 这里有两道独立的锁,各管一件事:
 //   - loads 的租户锁:惊群保护(同租户只加载一次)且跨租户并行;
@@ -249,11 +331,14 @@ func (c *Cache) cached(tenantID int64) *Snapshot {
 //
 // 两者不能互相替代 —— 租户锁不参与 Invalidate,光有它拦不住下面的丢失效竞态。
 func (c *Cache) load(ctx context.Context, tenantID int64) *Snapshot {
-	unlock := c.loads.lock(tenantID)
-	defer unlock()
-
-	if snap := c.cached(tenantID); snap != nil {
-		return snap
+	// 复查:等锁期间前一个持有者可能已经加载成功,或者刚失败进入了退避。
+	// 后者是"串行重试"的关键 —— 排在后面的请求不再把挂掉的数据库再打一遍。
+	st := c.lookup(tenantID)
+	if st.fresh {
+		return st.snap
+	}
+	if st.backingOff {
+		return c.fallback(st.snap)
 	}
 
 	// 在**碰数据库之前**就把这条租户的记录建好并记下当前代数。
@@ -269,9 +354,23 @@ func (c *Cache) load(ctx context.Context, tenantID int64) *Snapshot {
 	startGen := e.gen
 	c.mu.Unlock()
 
-	rules, err := c.loader(ctx, tenantID)
+	rules, err := c.loadRules(ctx, tenantID)
 	if err != nil {
-		c.log.Error("加载租户规则失败,按无规则放行(fail-open)", "tenant", tenantID, "err", err)
+		c.mu.Lock()
+		// 只记本代的失败:加载期间若发生过 Invalidate,下一次 Get 应当立刻重试。
+		if e.gen == startGen {
+			e.failedAt = time.Now()
+			e.failedGen = startGen
+		}
+		old := e.snap
+		c.mu.Unlock()
+		if old != nil {
+			c.log.Error("加载租户规则失败,沿用上一份快照", "tenant", tenantID,
+				"err", err, "snapshotAge", time.Since(old.BuiltAt).String())
+			return old
+		}
+		c.log.Error("加载租户规则失败且没有可沿用的快照,按无规则放行(fail-open)",
+			"tenant", tenantID, "err", err)
 		return &Snapshot{BuiltAt: time.Now(), log: c.log}
 	}
 	snap := NewSnapshot(rules, c.log)
@@ -288,7 +387,22 @@ func (c *Cache) load(ctx context.Context, tenantID int64) *Snapshot {
 		return &Snapshot{BuiltAt: time.Now(), log: c.log}
 	}
 	e.snap = snap
+	e.valid = true
+	e.failedAt = time.Time{}
 	return snap
+}
+
+// loadRules 调用 loader,把 panic 也折成 error:panic 与返回 error 走同一条
+// "沿用旧快照 + 退避"的路径,而不是 panic 时把旧快照也扔掉。
+func (c *Cache) loadRules(ctx context.Context, tenantID int64) (rules []store.Rule, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			c.log.Error("加载租户规则 panic", "tenant", tenantID, "panic", rec,
+				"stack", string(debug.Stack()))
+			rules, err = nil, fmt.Errorf("loader panic: %v", rec)
+		}
+	}()
+	return c.loader(ctx, tenantID)
 }
 
 // stale 快照是否超过兜底存活时间。
@@ -303,10 +417,10 @@ func (c *Cache) Invalidate(tenantID int64) {
 	}
 	c.mu.Lock()
 	if e := c.items[tenantID]; e != nil {
-		// 记录留着(代数留着),只丢快照:正在加载的 goroutine 靠这个代数
-		// 发现自己手里的结果是旧的。key 本身不删,否则代数会一起丢,
-		// 正在加载的 goroutine 就看不出发生过失效了。
-		e.snap = nil
+		// 记录留着(代数留着),快照只标记失效而不丢:正在加载的 goroutine 靠这个代数
+		// 发现自己手里的结果是旧的;旧快照则留作"重新加载失败"时的兜底(见不变式 2)。
+		// key 本身不删,否则代数会一起丢,正在加载的 goroutine 就看不出发生过失效了。
+		e.valid = false
 		e.gen++
 	}
 	c.mu.Unlock()
@@ -320,13 +434,14 @@ func (c *Cache) InvalidateAll() {
 	c.mu.Lock()
 	// 每个租户的代数都要自增:正在加载的 goroutine 也要看出"全局失效过"。
 	for _, e := range c.items {
-		e.snap = nil
+		e.valid = false
 		e.gen++
 	}
 	c.mu.Unlock()
 }
 
-// Len 当前缓存的租户数(测试与观测用)。
+// Len 当前持有有效(未失效)快照的租户数(测试与观测用)。
+// 失效后留作兜底的旧快照不计入。
 func (c *Cache) Len() int {
 	if c == nil {
 		return 0
@@ -335,7 +450,7 @@ func (c *Cache) Len() int {
 	defer c.mu.RUnlock()
 	n := 0
 	for _, e := range c.items {
-		if e.snap != nil {
+		if e.snap != nil && e.valid {
 			n++
 		}
 	}

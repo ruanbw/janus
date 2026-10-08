@@ -208,7 +208,12 @@ func TestLogicAllAny(t *testing.T) {
 	}
 }
 
-// 坏条件在加载期被丢弃,不影响其他规则与其他条件。
+// 坏条件在加载期让**整条规则**不参与求值,但不影响其他规则。
+//
+// 有意更新(fix/high-rules):旧断言是"一个正则坏、另一个好 → 只丢坏的那个,规则照常生效"。
+// 那正是本次修的 fail-open:值级/叶子级的静默丢弃会把规则放宽(not_in 少一个值、
+// all 少一条叶子)。现在任何一个值或一条叶子不可求值,整条规则都不参与求值,
+// 与树形态一致;落库前也由 ValidateConditions 用同一套编译拒收。
 func TestBadConditionDroppedAtLoad(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -221,25 +226,34 @@ func TestBadConditionDroppedAtLoad(t *testing.T) {
 			store.RuleCondition{Field: "region", Operator: OpEq, Values: []string{"北京"}},
 			store.RuleCondition{Field: FieldUA, Operator: "全等于", Values: []string{"x"}},
 		),
-		// 一个正则坏、另一个好 → 只丢坏的那个
+		// 一个正则坏、另一个好 → 整条规则不参与求值(旧行为:只丢坏的那个)
 		oneRule(2,
 			store.RuleCondition{Field: FieldUA, Operator: OpRegex, Values: []string{"(unclosed", "Googlebot"}},
 		),
-		// 非法 CIDR → 整条条件丢弃
+		// 非法 CIDR → 整条规则不参与求值
 		oneRule(3, store.RuleCondition{Field: FieldIP, Operator: OpIn, Values: []string{"10.0.0.0/33", "不是IP"}}),
 		// ip 条件丢弃后剩下的空条件会退化成恒命中,所以整条规则不该保留
 		oneRule(4, store.RuleCondition{Field: FieldIP, Operator: OpIn, Values: []string{"10.0.0.0/33"}}),
+		// 合法 IP 里混一个非法值 → 整条规则不参与求值(not_in 少一个值就是放宽)
+		oneRule(5, store.RuleCondition{Field: FieldIP, Operator: OpNotIn, Values: []string{"10.0.0.0/8", "不是IP"}}),
+		// 好条件 + 坏叶子(all)→ 整条规则不参与求值(旧行为:丢坏叶子,规则被放宽成"只要是爬虫")
+		oneRule(6,
+			store.RuleCondition{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}},
+			store.RuleCondition{Field: "region", Operator: OpEq, Values: []string{"北京"}},
+		),
+		// 对照:完全合法的规则不受影响
+		oneRule(7, store.RuleCondition{Field: FieldUA, Operator: OpRegex, Values: []string{"Googlebot", "bingbot"}}),
 	}
 	snap := NewSnapshot(rules, log)
-	if len(snap.Rules) != 1 || snap.Rules[0].Rule.ID != 2 {
+	if len(snap.Rules) != 1 || snap.Rules[0].Rule.ID != 7 {
 		ids := make([]int64, 0, len(snap.Rules))
 		for _, r := range snap.Rules {
 			ids = append(ids, r.Rule.ID)
 		}
-		t.Fatalf("快照里的规则 = %v, want 只剩 2", ids)
+		t.Fatalf("快照里的规则 = %v, want 只剩 7", ids)
 	}
-	if _, ok := snap.Evaluate(fact, 1); !ok {
-		t.Fatal("规则 2 里那个好正则应该命中")
+	if dec, ok := snap.Evaluate(fact, 1); !ok || dec.RuleID != 7 {
+		t.Fatalf("合法规则 7 应该命中: %+v %v", dec, ok)
 	}
 	if !strings.Contains(buf.String(), "被丢弃") || !strings.Contains(buf.String(), "无法编译") {
 		t.Fatalf("缺少丢弃告警日志:\n%s", buf.String())
@@ -708,7 +722,10 @@ func TestNestedConditionTree(t *testing.T) {
 }
 
 // 树形态下坏叶子不能只丢自己:在 and 组里丢一条等于把规则放宽(fail-open),
-// 在 any 组里丢一条等于把规则收紧。与扁平形态的"丢单个"策略故意不同。
+// 在 any 组里丢一条等于把规则收紧。
+//
+// 有意更新(fix/high-rules):扁平形态旧实现"只丢坏叶子、规则照常生效",与树形态策略不同,
+// 这里原本把它当对照断言钉住。那正是 fail-open 漏洞本身,现已改为与树形态一致。
 func TestNestedTreeBadLeafDropsWholeRule(t *testing.T) {
 	badField := store.RuleCondition{Field: "region", Operator: OpEq, Values: []string{"北京"}}
 	good := store.RuleCondition{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}}
@@ -734,14 +751,17 @@ func TestNestedTreeBadLeafDropsWholeRule(t *testing.T) {
 		})
 	}
 
-	// 对照:同样的坏叶子放在扁平条件里,只丢它自己,规则照常生效(既有行为不变)
-	flat := oneRule(8, good, badField)
-	snap := NewSnapshot([]store.Rule{flat}, discardLog)
-	if len(snap.Rules) != 1 {
-		t.Fatalf("扁平形态不该整条丢弃: %d 条", len(snap.Rules))
-	}
-	if _, ok := snap.Evaluate(&fact, 1); !ok {
-		t.Fatal("扁平形态下剩下的好条件应该命中")
+	// 同样的坏叶子放在扁平条件里(logic=all 与 any 都一样):整条规则不参与求值
+	for _, logic := range []string{store.RuleLogicAll, store.RuleLogicAny} {
+		flat := oneRule(8, good, badField)
+		flat.Logic = logic
+		snap := NewSnapshot([]store.Rule{flat}, discardLog)
+		if len(snap.Rules) != 0 {
+			t.Fatalf("扁平形态(logic=%s)含坏叶子应整条丢弃,却留下 %d 条", logic, len(snap.Rules))
+		}
+		if _, ok := snap.Evaluate(&fact, 1); ok {
+			t.Fatalf("扁平形态(logic=%s)不参与求值的规则不该命中", logic)
+		}
 	}
 }
 
@@ -1041,6 +1061,89 @@ func BenchmarkEvaluateRadixCIDR(b *testing.B) {
 		_, ok := snap.Evaluate(&fact, 1)
 		if !ok {
 			b.Fatal("expected match")
+		}
+	}
+}
+
+// ---------- 条件丢弃即整条不可编译 + 落库前校验(fix/high-rules) ----------
+
+// TestCorruptConditionsRowIsNeverMatchAll 库里一行脏 conditions 经 Scan 读回后,
+// 规则必须不可编译(永不命中),而不是被当成"无条件组"对所有访客命中。
+func TestCorruptConditionsRowIsNeverMatchAll(t *testing.T) {
+	for _, raw := range []string{`{"foo":1}`, `"x"`, `[1,2]`, `{"children":[{"bar":1}]}`} {
+		var conds store.RuleConditions
+		if err := conds.Scan([]byte(raw)); err != nil {
+			t.Fatalf("%q: Scan 不该报错: %v", raw, err)
+		}
+		r := oneRule(1)
+		r.Conditions = conds
+		snap := NewSnapshot([]store.Rule{r, oneRule(2, store.RuleCondition{
+			Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}})}, discardLog)
+		if len(snap.Rules) != 1 || snap.Rules[0].Rule.ID != 2 {
+			t.Fatalf("%q: 脏行规则应不可编译,快照里却有 %d 条", raw, len(snap.Rules))
+		}
+		if dec, ok := snap.Evaluate(Fact{UA: "Chrome"}, 1); ok {
+			t.Fatalf("%q: 脏行规则对普通访客命中了: %+v", raw, dec)
+		}
+		if err := ValidateConditions(conds); err == nil {
+			t.Fatalf("%q: 落库前校验应拒绝解析失败的条件组", raw)
+		}
+	}
+}
+
+// TestValidateConditionsRejectsAnyDrop 落库前用与加载期同一套编译校验:
+// 任何会被丢弃的叶子或值都拒收,报错带 JSON 路径。
+func TestValidateConditionsRejectsAnyDrop(t *testing.T) {
+	good := store.RuleCondition{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}}
+	cases := []struct {
+		name  string
+		conds store.RuleConditions
+		path  string
+	}{
+		{"扁平:坏 CIDR 混在好值里", store.Conditions(good,
+			store.RuleCondition{Field: FieldIP, Operator: OpNotIn, Values: []string{"10.0.0.0/8", "10.0.0.0/33"}}), "conditions[1]"},
+		{"扁平:坏正则混在好正则里", store.Conditions(
+			store.RuleCondition{Field: FieldUA, Operator: OpRegex, Values: []string{"bot", "(x"}}), "conditions[0]"},
+		{"扁平:阈值不是数字", store.Conditions(good,
+			store.RuleCondition{Field: FieldUA, Operator: OpGT, Values: []string{"abc"}}), "conditions[1]"},
+		{"扁平:values 全空白", store.Conditions(
+			store.RuleCondition{Field: FieldUA, Operator: OpContains, Values: []string{" ", ""}}), "conditions[0]"},
+		{"扁平:in_cidr 用在非 ip 字段", store.Conditions(
+			store.RuleCondition{Field: FieldUA, Operator: OpInCIDR, Values: []string{"10.0.0.0/8"}}), "conditions[0]"},
+		{"树:嵌套组里的坏 IP", store.Tree(store.Group("any", store.Leaf(good),
+			store.Group("all", store.Leaf(store.RuleCondition{Field: FieldIP, Operator: OpIn, Values: []string{"不是IP"}})))),
+			"conditions.children[1].children[0]"},
+		{"树:只剩空组", store.Tree(store.Group("any", store.Group("all"))), "conditions"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateConditions(tc.conds)
+			if err == nil {
+				t.Fatal("应拒收")
+			}
+			if !strings.Contains(err.Error(), tc.path) {
+				t.Fatalf("报错应带路径 %s: %v", tc.path, err)
+			}
+			// 与加载期一致:同样的条件编译不出规则
+			r := oneRule(1)
+			r.Conditions = tc.conds
+			if _, ok := CompileDraft(r, discardLog); ok {
+				t.Fatal("ValidateConditions 拒收的条件,CompileDraft 也必须编译失败")
+			}
+		})
+	}
+	// 合法条件(含空白值被跳过、零条件兜底)照常通过
+	for name, conds := range map[string]store.RuleConditions{
+		"零值":     {},
+		"显式空数组":  store.Conditions(),
+		"空白值被跳过": store.Conditions(store.RuleCondition{Field: FieldCountry, Operator: OpIn, Values: []string{"US", " "}}),
+		"IP 与 CIDR 混写": store.Conditions(store.RuleCondition{Field: FieldIP, Operator: OpIn,
+			Values: []string{"10.0.0.0/8", "203.0.113.7", "2001:db8::/32"}}),
+		"树": store.Tree(store.Group("all", store.Leaf(good),
+			store.Group("any", store.Leaf(store.RuleCondition{Field: FieldUA, Operator: OpRegex, Values: []string{"(?i)bot"}})))),
+	} {
+		if err := ValidateConditions(conds); err != nil {
+			t.Errorf("%s: 应合法: %v", name, err)
 		}
 	}
 }

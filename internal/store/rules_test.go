@@ -6,6 +6,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -878,18 +879,34 @@ func TestRuleConditionsJSONTree(t *testing.T) {
 	}
 }
 
-// 脏数据一律降级成"无条件组"而不是让整份规则加载失败(与 Scan 的既有约定一致)。
-func TestRuleConditionsJSONGarbageDegrades(t *testing.T) {
+// 形状不对的 conditions 一律报错(API 因此回 400)。
+//
+// 有意更新(fix/high-rules):旧断言是"脏数据一律降级成无条件组、不报错"。
+// 无条件组在求值侧等于恒命中 —— 一次写错的 PATCH 会把拦截规则变成拦所有人,且接口回 200;
+// 一行脏 JSONB 也会让规则对全部访客生效。现在 UnmarshalJSON 报错,Scan 记下 decodeErr
+// (不拖垮整份加载,但求值侧判不可编译),见 TestRuleConditionsScanGarbageIsNotMatchAll。
+func TestRuleConditionsJSONGarbageRejected(t *testing.T) {
 	// 注意:语法错误(截断的 JSON)由 encoding/json 自己挡下、根本不会进 UnmarshalJSON,
 	// 这里只覆盖"合法但形状不对"的值——那才是历史脏数据真正的样子。
-	for _, raw := range []string{`null`, `{}`, `[]`, `"条件"`, `123`, `[1,2,3]`, `{"foo":1}`, `[{"field":1}]`} {
+	for _, raw := range []string{
+		`{}`, `"条件"`, `123`, `true`, `[1,2,3]`, `{"foo":1}`, `[{"field":1}]`,
+		`{"children":[{"foo":1}]}`,
+		`{"logic":"all","children":[{"field":"country","operator":"eq","values":["CN"]},{"bar":2}]}`,
+		`{"group":{"logic":"any","children":[3]}}`,
+	} {
 		var c RuleConditions
-		if err := json.Unmarshal([]byte(raw), &c); err != nil {
-			t.Fatalf("%q 不该报错: %v", raw, err)
+		err := json.Unmarshal([]byte(raw), &c)
+		if err == nil {
+			t.Fatalf("%q 应报错,却解析成 %#v", raw, c)
 		}
-		if c.Len() != 0 {
-			t.Fatalf("%q 解析出 %d 条叶子, want 0", raw, c.Len())
+		if !errors.Is(err, ErrMalformedConditions) {
+			t.Fatalf("%q 的错误应包着 ErrMalformedConditions: %v", raw, err)
 		}
+	}
+	// 合法的空形态仍然合法
+	var empty RuleConditions
+	if err := json.Unmarshal([]byte(`[]`), &empty); err != nil || empty.Len() != 0 || empty.IsZero() {
+		t.Fatalf("[] = %#v (err=%v), want 显式空条件组", empty, err)
 	}
 	var c RuleConditions
 	if out, err := json.Marshal(c); err != nil || string(out) != "[]" {
@@ -899,6 +916,43 @@ func TestRuleConditionsJSONGarbageDegrades(t *testing.T) {
 	var zero RuleConditions
 	if err := json.Unmarshal([]byte("null"), &zero); err != nil || !zero.IsZero() {
 		t.Fatalf("null 后 = %#v (err=%v), want 零值", zero, err)
+	}
+}
+
+// 库里读回一行脏数据:Scan 不报错(不拖垮整租户加载),但条件组带 Err,
+// 既不是"零值"也不是"无条件",写回会被拒(不会被洗成 "[]")。
+func TestRuleConditionsScanGarbageIsNotMatchAll(t *testing.T) {
+	for _, raw := range []string{`{"foo":1}`, `"x"`, `[1]`, `not json at all`} {
+		var c RuleConditions
+		if err := c.Scan([]byte(raw)); err != nil {
+			t.Fatalf("%q: Scan 不该报错: %v", raw, err)
+		}
+		if c.Err() == nil {
+			t.Fatalf("%q: 应带解析错误,却是 %#v", raw, c)
+		}
+		if c.IsZero() || c.IsEmpty() {
+			t.Fatalf("%q: 解析失败的条件组不能算零值/无条件", raw)
+		}
+		if _, err := c.Value(); !errors.Is(err, ErrInvalidConditions) {
+			t.Fatalf("%q: Value() 应拒绝写回,err=%v", raw, err)
+		}
+		out, err := json.Marshal(c)
+		if err != nil {
+			t.Fatalf("%q: 读接口不该因为脏数据失败: %v", raw, err)
+		}
+		if string(out) == "[]" {
+			t.Fatalf("%q: 脏数据不能回显成无条件 []", raw)
+		}
+		if json.Valid([]byte(raw)) && string(out) != raw {
+			t.Fatalf("%q: 合法 JSON 的脏数据应原样回显,got %s", raw, out)
+		}
+	}
+	// NULL 与空串仍是"无条件"(与 DDL 默认一致)
+	for _, v := range []any{nil, []byte(""), "  "} {
+		var c RuleConditions
+		if err := c.Scan(v); err != nil || c.Err() != nil {
+			t.Fatalf("%#v: err=%v decodeErr=%v", v, err, c.Err())
+		}
 	}
 }
 

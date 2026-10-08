@@ -7,6 +7,8 @@
 package rules
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/netip"
 	"regexp"
@@ -106,8 +108,9 @@ type Compiled struct {
 	nested     bool           // 是否真的用了嵌套(用于把「为什么没命中」说成人话)
 }
 
-// compileRule 预编译一条规则。conditions 非空但全部被丢弃(字段不认识/正则非法/CIDR 非法)
-// 时返回 ok=false:一条坏条件不能拖垮整份快照,但也不能让这条规则退化成"恒命中的兜底"。
+// compileRule 预编译一条规则。任何一条条件或一个值不可求值(字段不认识/正则非法/CIDR 非法),
+// 或条件列本身解析失败,都返回 ok=false:一条坏规则不能拖垮整份快照,
+// 但也不能让这条规则被静默放宽、更不能退化成"恒命中的兜底"(见 compileConditions)。
 func compileRule(r store.Rule, log *slog.Logger) (Compiled, bool) {
 	c := Compiled{Rule: r, logicAll: true}
 	switch r.Scope {
@@ -145,37 +148,97 @@ func compileRule(r store.Rule, log *slog.Logger) (Compiled, bool) {
 		return c, true
 	}
 
-	declared := r.Conditions.Len()
-	kept := 0
-	if r.Conditions.IsTree() {
-		root, ok := compileNode(*r.Conditions.Root, r.ID, log)
-		if !ok {
-			log.Warn("规则条件树不可求值,整条规则不参与求值", "rule", r.ID, "name", r.Name)
-			return Compiled{}, false
-		}
-		c.root = root
-		c.nested = root.nestedTree()
-		kept = len(root.leaves())
-	} else {
-		// 扁平形态就是"一层 + rules.logic"的树:求值路径只有 root 一条
-		root := compiledNode{op: nodeOpFor(c.logicAll)}
-		for _, cond := range r.Conditions.Leaves {
-			cc, ok := compileCond(cond, r.ID, log)
-			if !ok {
-				continue
-			}
-			root.conds = append(root.conds, cc)
-			kept++
-		}
-		c.root = root
-	}
-	if declared > 0 && kept == 0 {
-		log.Warn("规则条件全部不可求值,整条规则不参与求值", "rule", r.ID, "name", r.Name)
+	root, nested, err := compileConditions(r.Conditions, c.logicAll, r.ID, log)
+	if err != nil {
+		log.Warn(err.Error()+",整条规则不参与求值", "rule", r.ID, "name", r.Name)
 		return Compiled{}, false
 	}
+	c.root = root
+	c.nested = nested
 	c.evaluator = &nativeVisualEvaluator{root: c.root}
 	return c, true
 }
+
+// compileConditions 把一组 visual 条件(扁平或树形)编译成求值树。
+// 落库前的校验(ValidateConditions)与加载期的编译(compileRule)共用这一个入口,
+// "存得下"与"跑得动"因此不可能是两套标准。
+//
+// 关键不变式:任何一条叶子、任何一个值被丢弃,整组条件都不可编译(返回 error)。
+// 扁平形态旧实现只丢坏叶子、剩下的照常生效 —— 在 logic=all 的规则里丢一条
+// 等于把规则放宽(fail-open:本该"美国且是爬虫"变成"所有爬虫"),
+// 在 any 规则里丢一条等于静默收窄。两者都不是用户写下的规则,所以与树形态一样整条作废。
+// 条件列解析失败(Scan 读到坏 JSON)同样不可编译,绝不退化成"无条件 = 恒命中"。
+func compileConditions(conds store.RuleConditions, logicAll bool, ruleID int64, log *slog.Logger) (compiledNode, bool, error) {
+	if err := conds.Err(); err != nil {
+		return compiledNode{}, false, fmt.Errorf("规则条件数据无法解析(%v)", err)
+	}
+	if conds.IsTree() {
+		root, ok := compileNode(*conds.Root, ruleID, log)
+		if !ok {
+			return compiledNode{}, false, errors.New("规则条件树不可求值")
+		}
+		return root, root.nestedTree(), nil
+	}
+	// 扁平形态就是"一层 + rules.logic"的树:求值路径只有 root 一条
+	root := compiledNode{op: nodeOpFor(logicAll)}
+	for _, cond := range conds.Leaves {
+		cc, ok := compileCond(cond, ruleID, log)
+		if !ok {
+			return compiledNode{}, false, errors.New("规则条件中存在不可求值的条件")
+		}
+		root.conds = append(root.conds, cc)
+	}
+	return root, false, nil
+}
+
+// ValidateConditions 落库前校验一组 visual 条件能否**无损**编译:
+// 有任何一条叶子或一个值会在加载期被丢弃,就返回带位置的错误(API 层映射成 400)。
+//
+// 与 compileRule 走同一个 compileConditions —— 先逐叶子给出可读的原因与 JSON 路径,
+// 最后再以 compileConditions 的结论为准(兜住纯结构性的不可编译,例如只剩空组的树)。
+func ValidateConditions(conds store.RuleConditions) error {
+	if err := conds.Err(); err != nil {
+		return fmt.Errorf("conditions 无法解析: %v", err)
+	}
+	if conds.IsTree() {
+		if err := validateNodeLeaves(*conds.Root, "conditions"); err != nil {
+			return err
+		}
+	} else {
+		for i, cond := range conds.Leaves {
+			if _, reason := buildCond(cond); reason != "" {
+				return fmt.Errorf("conditions[%d] 不可求值: %s", i, reason)
+			}
+		}
+	}
+	if _, _, err := compileConditions(conds, true, 0, quietLog); err != nil {
+		return fmt.Errorf("conditions 不可求值: %v", err)
+	}
+	return nil
+}
+
+// validateNodeLeaves 逐叶子找出第一条会被丢弃的条件(只为给出带路径的报错)。
+func validateNodeLeaves(n store.ConditionNode, path string) error {
+	if n.Group != nil && n.Type != store.ConditionTypeLeaf {
+		for i, child := range n.Group.Children {
+			if err := validateNodeLeaves(child, fmt.Sprintf("%s.children[%d]", path, i)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if n.Leaf == nil {
+		return fmt.Errorf("%s 不是合法条件节点(既没有 leaf 也没有 group)", path)
+	}
+	if _, reason := buildCond(*n.Leaf); reason != "" {
+		return fmt.Errorf("%s 不可求值: %s", path, reason)
+	}
+	return nil
+}
+
+// quietLog 校验路径用的静默日志器:落库前的校验失败已经以 400 告诉了调用方,
+// 不该再在服务端日志里刷一遍"规则条件被丢弃"的告警。
+var quietLog = slog.New(slog.DiscardHandler)
 
 func nodeOpFor(logicAll bool) uint8 {
 	if logicAll {
@@ -278,19 +341,31 @@ func compileNode(n store.ConditionNode, ruleID int64, log *slog.Logger) (compile
 	return compiledNode{op: nodeOpAll, conds: []compiledCond{cc}}, true
 }
 
-// compileCond 预编译单条条件;ok=false 表示这条条件被丢弃(调用方记录并继续)。
+// compileCond 预编译单条条件;ok=false 表示这条条件不可求值(已记日志),
+// 调用方据此判整条规则不可编译(见 compileConditions)。
 func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (compiledCond, bool) {
-	drop := func(reason string) (compiledCond, bool) {
+	c, reason := buildCond(cond)
+	if reason != "" {
 		log.Warn("规则条件被丢弃", "rule", ruleID, "field", cond.Field,
 			"operator", cond.Operator, "reason", reason)
 		return compiledCond{}, false
 	}
+	return c, true
+}
+
+// buildCond 预编译单条条件;reason 非空表示不可求值及其原因。
+//
+// 值级别同样"一个坏就整条坏":ip 列表里混一个非法 CIDR、正则列表里混一个编译不过的,
+// 旧实现跳过坏值继续 —— 对 not_in / not_in_cidr 这类取反运算符,少一个值就是把规则放宽。
+// 唯一的例外是纯空白值:它们在任何运算符下都不可能有意义(contains "" 反而会恒真),
+// 跳过它们只会让规则更窄、不会更宽。
+func buildCond(cond store.RuleCondition) (compiledCond, string) {
 	if !ValidField(cond.Field) {
-		// 字段不在 13 个可求值字段内 = 配了也跑不了;接数据源后重新加载即可自动生效
-		return drop("field 不可求值")
+		// 字段不在 13 个可求值字段内 = 配了也跑不了
+		return compiledCond{}, "field 不可求值"
 	}
 	if !ValidOperator(cond.Operator) {
-		return drop("operator 不在白名单")
+		return compiledCond{}, "operator 不在白名单"
 	}
 	values := make([]string, 0, len(cond.Values))
 	for _, v := range cond.Values {
@@ -301,7 +376,7 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 		values = append(values, v)
 	}
 	if len(values) == 0 {
-		return drop("values 为空")
+		return compiledCond{}, "values 为空"
 	}
 	c := compiledCond{field: cond.Field, op: cond.Operator, raw: values}
 	// ip 字段的集合比较(in/not_in/eq/neq/in_cidr)走预解析的前缀基数树:
@@ -310,7 +385,7 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 	if cond.Field == FieldIP {
 		switch cond.Operator {
 		case OpIn, OpEq, OpNeq, OpNotIn, OpInCIDR, OpNotInCIDR:
-			var prefixes []netip.Prefix
+			prefixes := make([]netip.Prefix, 0, len(values))
 			for _, v := range values {
 				if p, err := netip.ParsePrefix(v); err == nil {
 					prefixes = append(prefixes, p)
@@ -320,43 +395,35 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 					prefixes = append(prefixes, netip.PrefixFrom(a, a.BitLen()))
 					continue
 				}
-			}
-			if len(prefixes) == 0 {
-				return drop("ip 值既不是合法 IP 也不是合法 CIDR")
+				return compiledCond{}, fmt.Sprintf("ip 值 %q 既不是合法 IP 也不是合法 CIDR", v)
 			}
 			c.radix = NewIPRadixTree(prefixes)
-			return c, true
+			return c, ""
 		}
 	}
 	if cond.Operator == OpInCIDR || cond.Operator == OpNotInCIDR {
-		return drop(cond.Operator + " 运算符仅支持 ip 字段")
+		return compiledCond{}, cond.Operator + " 运算符仅支持 ip 字段"
 	}
 	switch cond.Operator {
 	case OpGT, OpLT:
 		num, err := strconv.ParseFloat(values[0], 64)
 		if err != nil {
-			return drop("阈值不是数字")
+			return compiledCond{}, "阈值不是数字"
 		}
 		c.num = num
 	case OpDuplicated:
 		n, err := strconv.Atoi(values[0])
 		if err != nil || n < 1 {
-			return drop("重复次数不是正整数")
+			return compiledCond{}, "重复次数不是正整数"
 		}
 		c.seen = n
 	case OpRegex:
 		for _, v := range values {
 			re, err := regexp.Compile(v)
 			if err != nil {
-				// 一个值坏掉不该让整条条件失效:跳过它,剩下的照常编译
-				log.Warn("规则条件的正则无法编译,该值被跳过",
-					"rule", ruleID, "field", cond.Field, "pattern", v, "err", err)
-				continue
+				return compiledCond{}, fmt.Sprintf("正则 %q 无法编译: %v", v, err)
 			}
 			c.res = append(c.res, re)
-		}
-		if len(c.res) == 0 {
-			return drop("正则全部无法编译")
 		}
 	default:
 		c.lits = make([]string, len(values))
@@ -370,7 +437,7 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 			}
 		}
 	}
-	return c, true
+	return c, ""
 }
 
 // match 单条条件是否满足。

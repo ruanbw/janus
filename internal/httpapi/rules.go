@@ -111,6 +111,10 @@ func decodeRuleBody(c *gin.Context, dst any) error {
 		if errors.As(err, &maxErr) {
 			return ruleErr("请求体超过大小上限(1MB)")
 		}
+		// conditions 写错要明确报出来:旧实现把它吞成空条件组(= 恒命中)并回 200
+		if errors.Is(err, store.ErrMalformedConditions) {
+			return ruleErr("%v", err)
+		}
 		return ruleErr("invalid JSON body")
 	}
 	return nil
@@ -263,6 +267,20 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 			return ruleWrite{}, err
 		}
 		w.conditions = *req.Conditions
+	}
+	// ⑫ visual 条件必须能**无损**编译:任何一条叶子或一个值会在加载期被丢弃(非法 CIDR、
+	// 编译不过的正则、非数字阈值……)都拒收。白名单校验只看字段/运算符,看不到值;
+	// 而求值侧丢一条就等于把 all 规则放宽。用与加载期同一个编译入口校验,
+	// "存得下"才等价于"跑得动"。
+	//
+	// 只在本次写入会改变"求值用哪份条件"时校验:带了 conditions,或从 expression 切回 visual。
+	// 一次只改 enabled/name 的 PATCH 不因现值是脏行而被拒——那样租户连停用一条坏规则都做不到;
+	// 现值本就在求值侧判不可编译(永不命中),store 也不会把解析失败的条件组写回(见 UpdateRule)。
+	switchedToVisual := cur == nil || firstNonEmpty(cur.RuleType, store.RuleTypeVisual) != store.RuleTypeVisual
+	if w.ruleType == store.RuleTypeVisual && (req.Conditions != nil || switchedToVisual) {
+		if err := rules.ValidateConditions(w.conditions); err != nil {
+			return ruleWrite{}, ruleErr("%v", err)
+		}
 	}
 	// ⑨ linkIds:只接受本租户、未逻辑删除的短链。scope=global 时不校验也不保留——
 	// 那些 id 马上会被丢弃,为一次注定不发生的写入报错只会给出误导性的失败原因。
@@ -804,6 +822,10 @@ func (a *API) writeRuleWriteErr(c *gin.Context, err error) {
 		writeErr(c, http.StatusBadRequest, errValidation, "ruleIds 中存在不存在或不属于当前租户的规则")
 		return
 	}
+	if errors.Is(err, store.ErrInvalidConditions) {
+		writeErr(c, http.StatusBadRequest, errValidation, "conditions 无法解析,请重新提交条件")
+		return
+	}
 	if store.IsUniqueViolation(err) {
 		writeErr(c, http.StatusConflict, errConflict, "同租户已存在同名规则")
 		return
@@ -1114,7 +1136,7 @@ func (a *API) simDraft(c *gin.Context, tenantID int64, d *simulateDraftRule) (*r
 		RuleType: w.ruleType, Expression: w.expression,
 	}, nil)
 	if !ok {
-		return nil, ruleErr("草稿规则的条件全部不可求值(检查字段与运算符),无法推演")
+		return nil, ruleErr("草稿规则的条件不可求值(检查字段、运算符与条件值),无法推演")
 	}
 	return draft, nil
 }

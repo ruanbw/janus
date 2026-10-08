@@ -126,9 +126,16 @@ type ConditionNode struct {
 //     求值语义与加条件树之前逐字相同。
 //
 // 两者不会同时是"权威":扁平看 Leaves,树看 Root。
+//
+// decodeErr/raw 只由 Scan 设置:库里那一行无法解析成条件组时,记下原因与原始字节,
+// 而不是把它归一成"空条件组"——空条件组在求值侧等于恒命中,一行脏数据就会把一条
+// 拦截规则变成对全部访客生效。带 decodeErr 的条件组在求值侧不可编译(见 Err)。
 type RuleConditions struct {
 	Leaves []RuleCondition
 	Root   *ConditionNode
+
+	decodeErr error
+	raw       []byte
 }
 
 // Conditions 组装一条扁平条件组(一层 all)。
@@ -153,6 +160,17 @@ func Tree(root ConditionNode) RuleConditions {
 	return c
 }
 
+// Err 条件列读回时的解析错误(nil 表示正常)。非 nil 的条件组不可编译、不可求值,
+// 也不会被写回库里(见 Value / UpdateRule)。
+func (c RuleConditions) Err() error { return c.decodeErr }
+
+// ErrMalformedConditions conditions 的 JSON 形态不合法(UnmarshalJSON 返回的错误都包着它,
+// API 层据此回 400 并指明是 conditions 写错了,而不是笼统的 invalid JSON body)。
+var ErrMalformedConditions = errors.New("conditions 格式非法")
+
+// ErrInvalidConditions 试图把一份解析失败的条件组写进库。
+var ErrInvalidConditions = errors.New("store: 规则条件组无法解析,拒绝写入")
+
 // IsTree 是否使用了条件树(否则按扁平形态求值)。
 func (c RuleConditions) IsTree() bool { return c.Root != nil }
 
@@ -160,10 +178,15 @@ func (c RuleConditions) IsTree() bool { return c.Root != nil }
 func (c RuleConditions) Len() int { return len(c.Leaves) }
 
 // IsZero 是否为零值。零值与「显式清空条件」要区分:前者表示本次更新不动这一列。
-func (c RuleConditions) IsZero() bool { return c.Root == nil && c.Leaves == nil }
+func (c RuleConditions) IsZero() bool {
+	return c.Root == nil && c.Leaves == nil && c.decodeErr == nil
+}
 
 // IsEmpty 无条件(无叶子):无条件组在求值侧等价于"恒成立的兜底规则",由调用方决定是否放行。
-func (c RuleConditions) IsEmpty() bool { return len(c.Leaves) == 0 && !c.IsTree() }
+// 解析失败的条件组不算"无条件"——它是"条件未知",绝不能当兜底规则用。
+func (c RuleConditions) IsEmpty() bool {
+	return len(c.Leaves) == 0 && !c.IsTree() && c.decodeErr == nil
+}
 
 // flattenRoot 深度优先展开树里的叶子(顺序 = 求值顺序,与短路语义一致)。
 func flattenRoot(root ConditionNode) []RuleCondition { return flattenNode(root) }
@@ -203,33 +226,37 @@ type rawNode struct {
 }
 
 // nodeFromRaw 认出它是一组还是一个叶子,并把子节点逐个归一化。
-func nodeFromRaw(raw []byte) (ConditionNode, bool) {
+// 认不出来的节点(既不是组也不是叶子)一律报错,而不是静默丢掉:
+// 丢掉 all 组里的一个子节点等于把规则放宽,丢掉 any 组里的一个等于收窄。
+func nodeFromRaw(raw []byte) (ConditionNode, error) {
 	var probe rawNode
 	if err := json.Unmarshal(raw, &probe); err != nil {
-		return ConditionNode{}, false
+		return ConditionNode{}, err
 	}
 	switch {
 	case probe.Group != nil:
-		return normalizeGroup(*probe.Group), true
+		return normalizeGroup(*probe.Group)
 	case probe.Leaf != nil:
-		return normalizeLeaf(*probe.Leaf), true
+		return normalizeLeaf(*probe.Leaf), nil
 	case probe.Type == ConditionTypeGroup || probe.Children != nil:
-		return normalizeGroup(rawGroup{Logic: probe.Logic, Children: probe.Children}), true
+		return normalizeGroup(rawGroup{Logic: probe.Logic, Children: probe.Children})
 	case probe.Field != "":
 		// 裸叶子:{field,operator,values} 直接铺在节点上
-		return normalizeLeaf(ConditionLeafNode{Field: probe.Field, Operator: probe.Operator, Values: probe.Values}), true
+		return normalizeLeaf(ConditionLeafNode{Field: probe.Field, Operator: probe.Operator, Values: probe.Values}), nil
 	}
-	return ConditionNode{}, false
+	return ConditionNode{}, errors.New("条件节点既不是 group 也不是 leaf")
 }
 
-// normalizeGroup 递归归一化子节点(丢掉既不是组也不是叶子的废节点),
+// normalizeGroup 递归归一化子节点(任一子节点认不出来即报错),
 // 并把缺失的 logic 补成 all。
-func normalizeGroup(g rawGroup) ConditionNode {
+func normalizeGroup(g rawGroup) (ConditionNode, error) {
 	kids := make([]ConditionNode, 0, len(g.Children))
-	for _, child := range g.Children {
-		if n, ok := nodeFromRaw(child); ok {
-			kids = append(kids, n)
+	for i, child := range g.Children {
+		n, err := nodeFromRaw(child)
+		if err != nil {
+			return ConditionNode{}, fmt.Errorf("children[%d]: %w", i, err)
 		}
+		kids = append(kids, n)
 	}
 	if g.Logic == "" {
 		g.Logic = "all"
@@ -237,7 +264,7 @@ func normalizeGroup(g rawGroup) ConditionNode {
 	return ConditionNode{
 		Type:  ConditionTypeGroup,
 		Group: &ConditionGroupNode{Logic: g.Logic, Children: kids},
-	}
+	}, nil
 }
 
 func normalizeLeaf(l ConditionLeafNode) ConditionNode {
@@ -245,9 +272,11 @@ func normalizeLeaf(l ConditionLeafNode) ConditionNode {
 }
 
 // UnmarshalJSON 兼容两种历史形态:扁平数组与条件树对象。
-// 解析失败一律降级为"无条件组"而不是报错:一条脏数据不该把整份规则加载拖垮
-// (与 Scan 的既有约定一致)。结构性废节点(既无 group 也无 leaf)在解析期丢掉,
-// 字段/运算符是否合法留给求值侧判定——那里才知道 13 个字段与运算符白名单。
+//
+// 解析失败一律**报错**(API 层因此回 400):旧实现吞掉错误、返回空条件组,
+// 而空条件组在求值侧等于恒命中 —— 一次写错的 PATCH 会把拦截规则变成拦所有人,
+// 且接口还回 200。结构性废节点(既无 group 也无 leaf)同样报错,不再静默丢弃。
+// 字段/运算符是否合法仍留给求值侧判定——那里才知道 13 个字段与运算符白名单。
 func (c *RuleConditions) UnmarshalJSON(b []byte) error {
 	*c = RuleConditions{}
 	trimmed := bytes.TrimSpace(b)
@@ -258,7 +287,7 @@ func (c *RuleConditions) UnmarshalJSON(b []byte) error {
 	case '[':
 		var leaves []RuleCondition
 		if err := json.Unmarshal(trimmed, &leaves); err != nil {
-			return nil
+			return fmt.Errorf("%w: %w", ErrMalformedConditions, err)
 		}
 		if leaves == nil {
 			leaves = []RuleCondition{}
@@ -266,20 +295,29 @@ func (c *RuleConditions) UnmarshalJSON(b []byte) error {
 		c.Leaves = leaves
 		return nil
 	case '{':
-		root, ok := nodeFromRaw(trimmed)
-		if !ok {
-			return nil
+		root, err := nodeFromRaw(trimmed)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrMalformedConditions, err)
 		}
 		c.Root = &root
 		c.Leaves = flattenNode(root)
 		return nil
 	}
-	return nil
+	return fmt.Errorf("%w: 必须是数组或对象", ErrMalformedConditions)
 }
 
 // MarshalJSON 写回原形态:树形态写对象,扁平形态写数组。
 // 回写扁平而非一律写成树,是为了不把存量行在一次无关更新里改写成新形态。
+//
+// 解析失败的条件组(只可能来自 Scan)原样回显库里的字节(合法 JSON 时),
+// 否则回显 null:读接口不该因为一行脏数据 500,但也绝不能把它显示成 "[]"(无条件)。
 func (c RuleConditions) MarshalJSON() ([]byte, error) {
+	if c.decodeErr != nil {
+		if json.Valid(c.raw) {
+			return c.raw, nil
+		}
+		return []byte("null"), nil
+	}
 	if c.IsTree() {
 		return json.Marshal(c.Root)
 	}
@@ -290,7 +328,11 @@ func (c RuleConditions) MarshalJSON() ([]byte, error) {
 }
 
 // Value 序列化为 JSONB 文本(空条件组写 "[]" 而不是 null)。
+// 解析失败的条件组拒绝写入(ErrInvalidConditions):把它写成 "[]" 就是把脏数据洗成恒命中。
 func (c RuleConditions) Value() (driver.Value, error) {
+	if c.decodeErr != nil {
+		return nil, ErrInvalidConditions
+	}
 	b, err := c.MarshalJSON()
 	if err != nil {
 		return nil, err
@@ -298,8 +340,9 @@ func (c RuleConditions) Value() (driver.Value, error) {
 	return string(b), nil
 }
 
-// Scan 读回条件组;NULL 与非 JSON 一律归一为"无条件"(空条件组),
-// 不让一条历史脏数据把整个规则加载拖垮。
+// Scan 读回条件组。NULL/空串归一为"无条件"(与 DDL 默认 "[]" 同义)。
+// 解析失败**不**报错(一条历史脏数据不该把整租户的规则加载拖垮),但也**不**归一成
+// 空条件组:记下 decodeErr,求值侧据此把这条规则判为不可编译(永不命中),而不是恒命中。
 func (c *RuleConditions) Scan(v any) error {
 	switch n := v.(type) {
 	case nil:
@@ -319,7 +362,7 @@ func (c *RuleConditions) decode(b []byte) error {
 		return nil
 	}
 	if err := c.UnmarshalJSON(b); err != nil {
-		*c = RuleConditions{}
+		*c = RuleConditions{decodeErr: err, raw: append([]byte(nil), b...)}
 	}
 	return nil
 }
@@ -530,6 +573,9 @@ func (s *Store) WithRuleCountCheckInTx(ctx context.Context, tenantID int64, fn f
 // 规则条数上限(MaxRulesPerTenant)在**事务内、持租户行锁**判定,见
 // WithRuleCountCheckInTx:超限返回 *RuleLimitError,不写任何数据。
 func (s *Store) CreateRule(ctx context.Context, tenantID int64, r Rule) (*Rule, error) {
+	if r.Conditions.Err() != nil {
+		return nil, ErrInvalidConditions
+	}
 	if r.Conditions.IsZero() {
 		r.Conditions = Conditions()
 	}
@@ -709,7 +755,10 @@ func (s *Store) UpdateRule(ctx context.Context, tenantID, id int64, upd RuleUpda
 	put("custom_html", upd.CustomHTML != nil, derefOr(cur.CustomHTML, upd.CustomHTML))
 	put("rule_type", upd.RuleType != nil, derefOr(orDefault(cur.RuleType, RuleTypeVisual), upd.RuleType))
 	put("expression", upd.Expression != nil, derefOr(cur.Expression, upd.Expression))
-	if upd.Conditions != nil && !upd.Conditions.IsZero() {
+	// 解析失败的条件组(现值从脏行读回、PATCH 又没带 conditions)不写回:
+	// 原样留着那一行(求值侧照旧判不可编译),而不是把它洗成 "[]" 变成恒命中。
+	// 调用方若想覆盖,必须显式传一份能解析的新条件组。
+	if upd.Conditions != nil && !upd.Conditions.IsZero() && upd.Conditions.Err() == nil {
 		fields["conditions"] = *upd.Conditions
 	}
 	newScope := orDefault(cur.Scope, RuleScopeGlobal)
