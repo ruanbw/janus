@@ -22,6 +22,8 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+
+	"janus/pkg/plugin"
 )
 
 // 条件字段(spec D5 的 13 个,库内以字符串落库)。
@@ -407,7 +409,7 @@ func remoteAddrIP(r *http.Request) netip.Addr {
 // ApplyEnrichers 依次执行已注册的富化器（遍历与 panic 隔离复用 enrichOne/enricherSnapshot）。
 func (c *LazyVisitorContext) ApplyEnrichers(ctx context.Context, r *http.Request) {
 	list := enricherSnapshot()
-	if len(list) == 0 {
+	if len(list) == 0 && !plugin.HasEnrichers() {
 		return
 	}
 
@@ -415,6 +417,7 @@ func (c *LazyVisitorContext) ApplyEnrichers(ctx context.Context, r *http.Request
 	for _, e := range list {
 		enrichOne(e, ctx, r, &fact)
 	}
+	applyPluginEnrichers(ctx, r, &fact)
 	// 回填可能被富化的字段(如 ASN、Country、IP 等)
 	c.country = fact.Country
 	c.asn = fact.ASN

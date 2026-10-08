@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"runtime/debug"
 	"sync"
+
+	"janus/pkg/plugin"
 )
 
 // SDKInjector 允许对基座原生生成的 sdk.js 进行包装与增强。
@@ -42,7 +44,8 @@ func WrapGeneratedSDK(domain, code string, rawSDK string) (out string) {
 	injector := activeSDKInjector
 	sdkInjectorLock.RUnlock()
 	if injector == nil {
-		return rawSDK
+		// 内部未设置时交给公开 API(pkg/plugin)的注入器;未设置时它原样返回。
+		return plugin.WrapGeneratedSDK(domain, code, rawSDK)
 	}
 	defer func() {
 		if rec := recover(); rec != nil {

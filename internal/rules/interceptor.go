@@ -76,7 +76,7 @@ func CheckInterceptors(ctx context.Context, r *http.Request, linkID int64, fact 
 			return d, true
 		}
 	}
-	return nil, false
+	return checkPluginInterceptors(ctx, r, linkID, fact)
 }
 
 // mutate4go-manifest-begin
