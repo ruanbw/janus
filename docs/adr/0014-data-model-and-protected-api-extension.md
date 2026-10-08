@@ -199,7 +199,7 @@ janus.WithProtectedRoutes(func(rg *gin.RouterGroup) {
   - 编写 `pkg/janus/protected_routes_test.go` 与 `pkg/janus/metadata_test.go` 测试规格；
   - **严禁编写任何业务实现代码**，运行测试套件确认呈预期的编译失败/红态（Red）。
 - **第二阶段：最小实现与防篡改 (Green)**：
-  - 新增迁移脚本 `migrations/0003_links_metadata.sql`；
+  - 新增迁移脚本 `migrations/0021_links_metadata.sql`(原编号 0003,因与合并前旧库版本号冲突改号)；
   - 在 `internal/store` 与 `pkg/janus` 中实现 `Metadata`、`WithExtraMigrations`、`WithProtectedRoutes` 与 `GetAuthContext`；
   - 跑通全部机械门禁校验（Go 黑盒测试、CRAP、变异测试、E2E）。
 - **第三阶段：重构与基座对齐 (Refactor)**：
