@@ -110,8 +110,9 @@ func TestAppBuilderContracts(t *testing.T) {
 
 		select {
 		case err := <-runErrCh:
-			if err != nil && err != context.Canceled {
-				t.Fatalf("expected nil or context.Canceled from Run, got %v", err)
+			// 请求的优雅停止应返回 nil,而不是 context.Canceled
+			if err != nil {
+				t.Fatalf("expected nil from Run on graceful shutdown, got %v", err)
 			}
 		case <-time.After(3 * time.Second):
 			t.Fatal("app.Run did not stop within 3 seconds after cancel")
