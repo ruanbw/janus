@@ -42,11 +42,14 @@ go test ./... -count=1
 
 ```bash
 ./scripts/quality.sh tests              # 每包独立库跑测试 + 合并覆盖率 (~170s)
-./scripts/quality.sh crap               # CRAP 复杂度/覆盖率门禁
+./scripts/quality.sh crap               # CRAP 复杂度/覆盖率门禁(会再跑一遍全量测试)
 ./scripts/quality.sh mutate <file.go>   # 指定文件变异测试
-./scripts/quality.sh changed            # 对 HEAD 以来变更的 .go 做变异测试
-./scripts/quality.sh all                 # tests + crap + changed
+./scripts/quality.sh changed            # 对 HEAD 以来变更的 .go 做变异测试(dry-run)
+./scripts/quality.sh changed --yes      # 同上,真正执行
 ```
+
+`changed` 默认只输出计划(dry-run),需 `--yes`(或 `MUTATE_YES=1`)才真正变异。
+**`all`(tests + crap + changed 叠加)属小时级操作,日常严禁执行。**
 
 需要 `createdb`/`dropdb`(Homebrew `libpq`,keg-only)与 CREATEDB 权限的维护库连接串
 (`JANUS_ADMIN_DATABASE_URL`,默认 `postgres://janus:janus@localhost:5432/postgres`)。
@@ -67,6 +70,7 @@ CRAP = 圈复杂度 × 未覆盖率,分数越高越危险。当前最需要处�
 
 #### 变异测试说明
 
+`changed` / `all` 默认 dry-run:先打印将变异的文件与可变异点估计,加 `--yes` 才执行。
 `mutate4go` 会把 manifest 以footer 形式写进被测源文件(用于增量只跑变更函数),
 因此跑完该文件的 git diff 会包含 manifest 段落,属于预期行为。
 `Survived`(变异后测试仍通过)= 测试没测到该行为,必须补测试;
@@ -179,5 +183,7 @@ cd web && npx vue-tsc --noEmit -p tsconfig.json
 ### 3. 离线深度审计 / 发版前门禁（耗时长，日常禁止自动执行）：
 ```bash
 ./scripts/quality.sh crap                             # CRAP 复杂度/覆盖率门禁
-./scripts/quality.sh changed                          # 变异测试（仅显式要求或发版审计时执行）
+./scripts/quality.sh changed                          # 变异测试：默认 dry-run，仅列计划
+./scripts/quality.sh changed --yes                    # 真正跑变异（仅显式要求或发版审计时）
+# ./scripts/quality.sh all                            # 禁止：tests + crap + changed，小时级
 ```

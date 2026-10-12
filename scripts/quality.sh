@@ -101,10 +101,49 @@ layer_crap() {
   crap4go --test-command "./scripts/quality.sh tests {coverprofile}"
 }
 
+# 变异测试默认 dry-run:变异体数 × 整包测试耗时,成本由调用方显式承担(--yes / MUTATE_YES=1)。
+MUTATE_YES="${MUTATE_YES:-0}"
+
+# approx_mutants 粗略估计变异体数量(可变异点计数,非 mutate4go 精确值)。
+approx_mutants() {
+  local n
+  n="$(grep -cE 'if |&&|\|\|| == | != | <= | >= |return ' "$1" 2>/dev/null)" || n=0
+  printf '%s\n' "${n:-0}"
+}
+
+# pkg_test_weight 标注该包测试是 DB 黑盒还是纯逻辑(整包耗时量级差异)。
+pkg_test_weight() {
+  if grep -ql 'testutil\.Setup' "$1"/*_test.go 2>/dev/null; then
+    printf 'DB 黑盒'
+  else
+    printf '纯逻辑'
+  fi
+}
+
+# print_mutation_plan <dry-run|execute> <file.go>...
+print_mutation_plan() {
+  local mode="$1"; shift
+  local f total=0 n pkg
+  if [ "$mode" = dry-run ]; then
+    echo "==> 变异计划(dry-run;加 --yes 或 MUTATE_YES=1 才执行):"
+  else
+    echo "==> 变异范围:"
+  fi
+  for f in "$@"; do
+    n="$(approx_mutants "$f")"
+    total=$((total + n))
+    pkg="$(dirname "$f")"
+    printf '    %-44s ~%-5s 个可变异点   %s (%s)\n' \
+      "$f" "$n" "$(pkg_test_weight "$pkg")" "$pkg"
+  done
+  echo "    合计 ~$total 个变异体,每个跑一次整包测试。"
+}
+
 layer_mutate() {
   command -v mutate4go >/dev/null || { echo "缺少 mutate4go: go install github.com/unclebob/mutate4go/cmd/mutate4go@latest" >&2; exit 1; }
   [ "$#" -eq 0 ] && { echo "用法: $0 mutate <file.go>..." >&2; exit 1; }
   local f rc=0
+  print_mutation_plan execute "$@"
   for f in "$@"; do
     echo "==> mutate $f"
     mutate4go "$f" --test-command "go test -count=1 ./$(dirname "$f")/..." || rc=1
@@ -113,10 +152,24 @@ layer_mutate() {
 }
 
 layer_mutate_changed() {
-  local base="${1:-HEAD}"
+  local base="HEAD" assume_yes=0 a
+  for a in "$@"; do
+    case "$a" in
+      --yes) assume_yes=1 ;;
+      -*) echo "未知参数: $a" >&2; return 2 ;;
+      *) base="$a" ;;
+    esac
+  done
+  [ "$MUTATE_YES" = "1" ] && assume_yes=1
+
   local files
   files="$(git diff --name-only --diff-filter=ACMR "$base" -- '*.go' | grep -v '_test\.go$' || true)"
   [ -z "$files" ] && { echo "==> 无变更的 .go 文件,跳过变异测试"; return 0; }
+
+  if [ "$assume_yes" != "1" ]; then
+    print_mutation_plan dry-run $files
+    return 0
+  fi
   # shellcheck disable=SC2086
   layer_mutate $files
 }
@@ -128,9 +181,10 @@ case "$cmd" in
   mutate) layer_mutate "$@" ;;
   changed) layer_mutate_changed "$@" ;;
   all)
+    # 小时级组合,需显式 --yes 才跑变异那一段。
     layer_tests
     layer_crap
-    layer_mutate_changed
+    layer_mutate_changed HEAD "${1:-}"
     ;;
   *) echo "未知命令: $cmd" >&2; exit 2 ;;
 esac
