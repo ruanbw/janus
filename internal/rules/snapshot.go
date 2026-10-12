@@ -720,6 +720,15 @@ func fieldLabel(field string) string {
 	case FieldDomain:
 		return "域名"
 	}
+	// 动态字段:诊断文案必须指出是哪个头 / 哪个参数——只说"某字段没有数据",用户不知道指谁。
+	if prefix, name, ok := splitDynamicField(field); ok {
+		switch prefix {
+		case fieldHeaderPrefix:
+			return "请求头 " + name
+		case fieldQueryPrefix:
+			return "URL 参数 " + name
+		}
+	}
 	return field
 }
 

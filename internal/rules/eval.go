@@ -46,14 +46,16 @@ func ValidOperator(op string) bool {
 	return false
 }
 
-// ValidField 判断字段是否在 13 个可求值字段内(API 层入参校验复用)。
+// ValidField 判断字段是否可求值(API 层入参校验复用)。
+// 除了 13 个固定字段,还接受动态字段 header:<name> / query:<name>(名字合法性见 fields.go)。
 func ValidField(field string) bool {
 	switch field {
 	case FieldIP, FieldIPAttr, FieldCountry, FieldASN, FieldLang, FieldRef, FieldUTM,
 		FieldUA, FieldDevType, FieldOS, FieldBrowser, FieldPath, FieldDomain:
 		return true
 	}
-	return false
+	prefix, name, ok := splitDynamicField(field)
+	return ok && validDynamicFieldName(prefix, name)
 }
 
 // Decision 一次求值的裁决结果(值拷贝,调用方可以安全持有)。
@@ -294,7 +296,8 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 		return compiledCond{}, false
 	}
 	if !ValidField(cond.Field) {
-		// 字段不在 13 个可求值字段内 = 配了也跑不了;接数据源后重新加载即可自动生效
+		// 字段不在可求值字段集内(固定 13 字段或动态字段)= 配了也跑不了;
+		// 接数据源后重新加载即可自动生效
 		return drop("field 不可求值")
 	}
 	if !ValidOperator(cond.Operator) {
@@ -384,12 +387,49 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 // match 单条条件是否满足。
 // 关键不变式:字段值取不到(空)时恒不命中——包括 not_in / neq / not_contains。
 // 否则"取不到数据"会变成"全部命中"的反面,把 GeoIP 未接入的规则变成对全租户流量生效的拦截。
+//
+// 多值字段(同名请求头 / 重复查询参数):正向运算符任一值命中即命中,
+// 否定运算符要求所有值都不满足正向形式(两套语义分开,见 matchOne)。
 func (c *compiledCond) match(ctx VisitorContext) bool {
 	if ctx == nil {
 		return false
 	}
-	raw, ok := ctx.Field(c.field)
-	if !ok {
+	// 固定字段恒为单值:直接走 Field 的零分配快路径,不构造切片
+	// (热路径上每次求值 1 次分配都是回归,见 TestInFallbackNoAlloc)。
+	if !isDynamicField(c.field) {
+		raw, ok := ctx.Field(c.field)
+		if !ok || raw == "" {
+			return false
+		}
+		return c.matchOne(ctx, raw)
+	}
+	vals, ok := fieldValues(ctx, c.field)
+	if !ok || len(vals) == 0 {
+		return false
+	}
+	if len(vals) == 1 {
+		return c.matchOne(ctx, vals[0])
+	}
+	switch c.op {
+	case OpNeq, OpNotIn, OpNotContains:
+		for _, v := range vals {
+			if c.matchOne(ctx, v) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, v := range vals {
+		if c.matchOne(ctx, v) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchOne 对单个字段值套用条件运算符。
+func (c *compiledCond) matchOne(ctx VisitorContext, raw string) bool {
+	if ctx == nil {
 		return false
 	}
 	switch c.op {

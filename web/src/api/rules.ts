@@ -205,6 +205,9 @@ export interface SimulateRulesReq {
   referrer?: string;
   /** 手工指定国家码:留空则由后端用离线 GeoIP 库按 ip 解析 */
   manualCountry?: string;
+  /** 自定义请求头(name → value),供 header:<name> 条件推演。
+   *  与 userAgent / acceptLanguage / referrer 同名的键以快捷输入为准(用户显式填的说了算)。 */
+  headers?: Record<string, string>;
   /** 只回放这一条存量规则 */
   onlyRuleId?: number | null;
 }

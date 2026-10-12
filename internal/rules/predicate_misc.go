@@ -20,20 +20,33 @@ func (p *RegexPredicate) Type() string { return "regex" }
 func (p *RegexPredicate) Cost() int    { return 20 } // 正则表达式计算成本较高，排在字符串之后
 
 func (p *RegexPredicate) Match(ctx VisitorContext) bool {
-	val, ok := ctx.Field(p.field)
-	if !ok || val == "" {
+	if ctx == nil {
 		return false
 	}
-	for _, re := range p.res {
-		if re.MatchString(val) {
-			return true
+	if !isDynamicField(p.field) {
+		raw, ok := ctx.Field(p.field)
+		if !ok || raw == "" {
+			return false
 		}
+		for _, re := range p.res {
+			if re.MatchString(raw) {
+				return true
+			}
+		}
+		return false
 	}
-	return false
+	return matchFieldValues(ctx, p.field, false, func(raw string) bool {
+		for _, re := range p.res {
+			if re.MatchString(raw) {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 func (p *RegexPredicate) Trace(ctx VisitorContext) ConditionTrace {
-	actual, avail := ctx.Field(p.field)
+	actual, avail := fieldValuesText(ctx, p.field)
 	matched := p.Match(ctx)
 	tr := ConditionTrace{
 		Field:     p.field,
@@ -86,11 +99,22 @@ func (p *NumericPredicate) Type() string { return "numeric" }
 func (p *NumericPredicate) Cost() int    { return 2 }
 
 func (p *NumericPredicate) Match(ctx VisitorContext) bool {
-	val, ok := ctx.Field(p.field)
-	if !ok || val == "" {
+	if ctx == nil {
 		return false
 	}
-	f, err := strconv.ParseFloat(val, 64)
+	if !isDynamicField(p.field) {
+		raw, ok := ctx.Field(p.field)
+		if !ok || raw == "" {
+			return false
+		}
+		return p.posMatch(raw)
+	}
+	return matchFieldValues(ctx, p.field, false, p.posMatch)
+}
+
+// posMatch 单个值的大小比较(非数值恒不命中)。
+func (p *NumericPredicate) posMatch(raw string) bool {
+	f, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		return false
 	}
@@ -101,7 +125,7 @@ func (p *NumericPredicate) Match(ctx VisitorContext) bool {
 }
 
 func (p *NumericPredicate) Trace(ctx VisitorContext) ConditionTrace {
-	actual, avail := ctx.Field(p.field)
+	actual, avail := fieldValuesText(ctx, p.field)
 	matched := p.Match(ctx)
 	tr := ConditionTrace{
 		Field:     p.field,
@@ -154,7 +178,7 @@ func (p *DuplicatedPredicate) Match(ctx VisitorContext) bool {
 }
 
 func (p *DuplicatedPredicate) Trace(ctx VisitorContext) ConditionTrace {
-	actual, avail := ctx.Field(p.field)
+	actual, avail := fieldValuesText(ctx, p.field)
 	matched := p.Match(ctx)
 	tr := ConditionTrace{
 		Field:     p.field,

@@ -16,6 +16,7 @@ import {
   FlaskConical,
   Globe,
   Play,
+  Plus,
   RotateCcw,
   User,
   X,
@@ -111,6 +112,31 @@ const simInput = ref<SimInput>({
   country: '',
 });
 
+/**
+ * 自定义请求头:用于推演 header:<name> 条件(如 X-Token)。
+ * 它与快捷输入(UA / 语言 / Referer)同源,后端同名时快捷输入优先(见 internal/httpapi 的 request)。
+ */
+const customHeaders = ref<{ key: string; value: string }[]>([]);
+
+function addCustomHeader() {
+  customHeaders.value.push({ key: '', value: '' });
+}
+
+function removeCustomHeader(idx: number) {
+  customHeaders.value.splice(idx, 1);
+}
+
+/** 空名字的行直接丢弃(它们不构成一个头) */
+function buildCustomHeaders(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const h of customHeaders.value) {
+    const key = h.key.trim();
+    if (!key) continue;
+    out[key] = h.value;
+  }
+  return out;
+}
+
 const fieldViews = computed(() => visitorFieldViews(profile.value));
 
 /**
@@ -160,6 +186,7 @@ async function runSimulation() {
         acceptLanguage: simInput.value.lang,
         referrer: simInput.value.ref,
         manualCountry: simInput.value.country,
+        headers: buildCustomHeaders(),
         onlyRuleId: previewRuleId.value,
       });
       profile.value = visitorFactsFromServer(res.facts);
@@ -234,6 +261,7 @@ function resetInput() {
     ref: '',
     country: '',
   };
+  customHeaders.value = [];
 }
 
 function goBack() {
@@ -306,6 +334,9 @@ onMounted(async () => {
             <div>
               <label class="mb-1.5 block text-sm font-medium text-ink">访问 URL</label>
               <AppInput v-model="simInput.url" placeholder="https://go.example.com/promo" />
+              <p class="mt-1 text-2xs leading-relaxed text-ink-faint">
+                URL 里带的查询参数（如 <span class="mono">?lang=en</span>）直接参与 query:&lt;name&gt; 条件求值。
+              </p>
             </div>
             <div>
               <label class="mb-1.5 block text-sm font-medium text-ink">访客 IP</label>
@@ -337,6 +368,38 @@ onMounted(async () => {
               <div>
                 <label class="mb-1.5 block text-sm font-medium text-ink">Referrer</label>
                 <AppInput v-model="simInput.ref" placeholder="https://www.google.com/" />
+              </div>
+            </div>
+
+            <div>
+              <div class="mb-1.5 flex items-center justify-between">
+                <label class="text-sm font-medium text-ink">自定义请求头</label>
+                <AppButton size="small" type="text" @click="addCustomHeader">
+                  <template #icon><Plus :size="14" /></template>
+                  添加
+                </AppButton>
+              </div>
+              <p class="mb-2 text-2xs leading-relaxed text-ink-faint">
+                用于推演 header:&lt;name&gt; 条件（如 X-Token）。与上方 User-Agent / Accept-Language / Referrer
+                同名时以上方快捷输入为准。
+              </p>
+              <p v-if="customHeaders.length === 0" class="text-2xs text-ink-faint">
+                未添加自定义请求头
+              </p>
+              <div v-for="(h, i) in customHeaders" :key="i" class="mb-2 flex items-center gap-2">
+                <AppInput
+                  :model-value="h.key"
+                  placeholder="X-Token"
+                  @update:model-value="(v: string) => (h.key = v)"
+                />
+                <AppInput
+                  :model-value="h.value"
+                  placeholder="vip"
+                  @update:model-value="(v: string) => (h.value = v)"
+                />
+                <AppButton size="icon" variant="ghost" aria-label="删除请求头" @click="removeCustomHeader(i)">
+                  <template #icon><X :size="14" /></template>
+                </AppButton>
               </div>
             </div>
 

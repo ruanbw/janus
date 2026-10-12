@@ -855,6 +855,9 @@ type simulateReq struct {
 	UserAgent      string `json:"userAgent"`
 	AcceptLanguage string `json:"acceptLanguage"`
 	Referrer       string `json:"referrer"`
+	// Headers 自定义请求头(name → value),供 header:<name> 字段推演。
+	// 与快捷输入(UA/语言/来源)同名的键以快捷输入为准:用户显式填在专用输入框里的值说了算。
+	Headers map[string]string `json:"headers"`
 	// ManualCountry 手工指定国家码:诊断环境常常拿不到真实 GeoIP。
 	// 只作用于本次推演,不写入任何持久数据。
 	ManualCountry string `json:"manualCountry"`
@@ -944,7 +947,7 @@ func (a *API) handleSimulateRules(c *gin.Context) {
 
 	// 假想请求走的是 LazyVisitorContext:UA/语言/来源站点的解析路径与线上跳转完全一致,
 	// 仿真不会另造一套解析(另造一套迟早会和线上分叉)。
-	simReq := target.request(req.UserAgent, req.AcceptLanguage, req.Referrer)
+	simReq := target.request(req.UserAgent, req.AcceptLanguage, req.Referrer, req.Headers)
 	vctx := rules.AcquireVisitorContext(simReq, country, asn).WithIP(ip)
 	defer rules.ReleaseVisitorContext(vctx)
 
@@ -1037,13 +1040,21 @@ func parseSimTarget(raw string) (simTarget, error) {
 }
 
 // request 把目标 URL 拼成一个"假想访问",交给访客上下文求值。
-func (t simTarget) request(ua, lang, referrer string) *http.Request {
+func (t simTarget) request(ua, lang, referrer string, headers map[string]string) *http.Request {
 	r := &http.Request{
 		Method: http.MethodGet,
 		Host:   t.host,
 		URL:    &url.URL{Path: t.path, RawQuery: t.query},
-		Header: make(http.Header, 3),
+		Header: make(http.Header, 3+len(headers)),
 	}
+	// 自定义请求头先写:它们与线上请求头同源,header:<name> 条件直接在上面求值。
+	for name, value := range headers {
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		r.Header.Set(name, value)
+	}
+	// 快捷输入后写:同名时覆盖自定义头。
 	if ua != "" {
 		r.Header.Set("User-Agent", ua)
 	}

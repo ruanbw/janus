@@ -13,7 +13,7 @@
  * 这里是纯函数模块——不碰 API、不碰路由、不碰组件状态。
  */
 import type { SimulateStep, SimulateVerdict } from '@/api/rules';
-import { actionLabel, fieldOption, operatorLabel } from '@/views/rules/ruleMeta';
+import { actionLabel, dynamicFieldPrefix, fieldOption, operatorLabel } from '@/views/rules/ruleMeta';
 import type { RuleAction, RuleCondition, RuleField } from '@/types/api';
 
 /** 模拟器左侧的输入项 */
@@ -384,12 +384,20 @@ function containsValue(value: string, pattern: string): boolean {
 }
 
 export function evalCondition(cond: RuleCondition, facts: VisitorFacts): TraceFact {
-  const actual = facts[cond.field] ?? '';
-  // 与后端 compileCond 同口径:每个值先 TrimSpace 再丢空串,
+  const label = fieldOption(cond.field)?.label ?? cond.field;
+  // 动态字段(请求头 / URL 参数)在这条历史回放链路上没有数据源:访问明细不存请求头,
+  // 这里如实说「无法复算」,而不是把空值当作实际值判成不成立。
+  if (dynamicFieldPrefix(cond.field)) {
+    return {
+      text: `${label} ${operatorLabel(cond.operator)} → 前端无法复算（本页只展示历史访问的固定字段）`,
+      hit: false,
+    };
+  }
+  const actual = (facts as unknown as Record<string, string>)[cond.field] ?? '';
+  // 与后端 compileCond 同口径:每个值先 TrimSpace 再丢空串，
   // 归一后的值才是参与比较的值(否则手写进 API 的 ' zh-CN ' 会出现模拟器不命中、线上命中)。
   const values = (cond.values || []).map((v) => v.trim()).filter(Boolean);
   const valuesText = values.join(' / ') || '（空）';
-  const label = fieldOption(cond.field)?.label ?? cond.field;
   const prefix = `${label} = ${actual || '（空）'}`;
   let note = '';
 

@@ -47,8 +47,10 @@ export type RuleAction = 'pass' | 'redirect' | 'notfound' | 'throttle';
 export type RulePageMode = 'default' | 'custom';
 /** 短链侧规则的来源:inherited 继承自 scope=global 的全局规则 / scoped 来自 rule_links 显式关联 */
 export type RuleSource = 'inherited' | 'scoped';
-/** 条件判定字段:v1 收敛到后端从请求即可真实求值的 13 个
- *  (country 由后端内嵌的离线 GeoIP 库解析;asn 仍无数据源,恒不命中) */
+/** 条件判定字段：后端能真实求值的固定 12 个 + 动态字段。
+ *  (country 由后端内嵌的离线 GeoIP 库解析;asn 仍无数据源,恒不命中)
+ *  动态字段 `header:<name>` / `query:<name>`:名字由用户填,取值与命中语义由后端
+ *  internal/rules/fields.go 定义(缺失恒不命中;多值时正向运算符任一值命中即命中)。 */
 export type RuleField =
   | 'ip'
   | 'ipattr'
@@ -62,7 +64,9 @@ export type RuleField =
   | 'os'
   | 'browser'
   | 'path'
-  | 'domain';
+  | 'domain'
+  | `header:${string}`
+  | `query:${string}`;
 /**
  * 条件运算符(后端白名单;传白名单外的值会 400)。
  *

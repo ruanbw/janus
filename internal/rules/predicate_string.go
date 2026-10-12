@@ -28,16 +28,42 @@ func (p *StringPredicate) Cost() int {
 	}
 }
 
+// Match 把字符串运算符套到字段的**全部**可用值上。
+//
+// 正向运算符(in/eq/contains/starts_with/ends_with):任一值满足即命中;
+// 否定运算符(not_in/neq/not_contains):所有值都不满足正向形式才命中;
+// 取不到任何值一律不命中(包括否定运算符)。
 func (p *StringPredicate) Match(ctx VisitorContext) bool {
-	val, ok := ctx.Field(p.field)
-	if !ok || val == "" {
-		// 关键不变式: 取不到值一律恒不命中(包括 not_in/neq/not_contains，缺失值不能当成"不等于")
+	if ctx == nil {
 		return false
 	}
-	val = strings.ToLower(val)
+	// 固定字段恒为单值:走 Field 的零分配快路径(谓词处于流水线热路径上)。
+	if !isDynamicField(p.field) {
+		raw, ok := ctx.Field(p.field)
+		if !ok || raw == "" {
+			return false
+		}
+		hit := p.posMatch(strings.ToLower(raw))
+		if p.negated() {
+			return !hit
+		}
+		return hit
+	}
+	return matchFieldValues(ctx, p.field, p.negated(), func(raw string) bool {
+		return p.posMatch(strings.ToLower(raw))
+	})
+}
 
+// negated 运算符是否为否定形式(多值语义需要看到全部值才取反,见 matchFieldValues)。
+func (p *StringPredicate) negated() bool {
+	return p.op == OpNeq || p.op == OpNotIn || p.op == OpNotContains
+}
+
+// posMatch 运算符的"肯定"形式(已小写归一的字段值是否满足)。
+// 否定运算符先算肯定形式,取反由 matchFieldValues 在多值层面统一处理。
+func (p *StringPredicate) posMatch(val string) bool {
 	switch p.op {
-	case OpIn:
+	case OpIn, OpNotIn:
 		if p.litMap != nil {
 			_, hit := p.litMap[val]
 			return hit
@@ -48,41 +74,18 @@ func (p *StringPredicate) Match(ctx VisitorContext) bool {
 			}
 		}
 		return false
-	case OpNotIn:
-		if p.litMap != nil {
-			_, hit := p.litMap[val]
-			return !hit
-		}
-		for _, lit := range p.lits {
-			if val == lit {
-				return false
-			}
-		}
-		return true
-	case OpEq:
+	case OpEq, OpNeq:
 		if len(p.lits) == 0 {
 			return false
 		}
 		return val == p.lits[0]
-	case OpNeq:
-		if len(p.lits) == 0 {
-			return false
-		}
-		return val != p.lits[0]
-	case OpContains:
+	case OpContains, OpNotContains:
 		for _, lit := range p.lits {
 			if strings.Contains(val, lit) {
 				return true
 			}
 		}
 		return false
-	case OpNotContains:
-		for _, lit := range p.lits {
-			if strings.Contains(val, lit) {
-				return false
-			}
-		}
-		return true
 	case OpStartsWith:
 		for _, lit := range p.lits {
 			if strings.HasPrefix(val, lit) {
@@ -102,7 +105,7 @@ func (p *StringPredicate) Match(ctx VisitorContext) bool {
 }
 
 func (p *StringPredicate) Trace(ctx VisitorContext) ConditionTrace {
-	actual, avail := ctx.Field(p.field)
+	actual, avail := fieldValuesText(ctx, p.field)
 	matched := p.Match(ctx)
 	tr := ConditionTrace{
 		Field:     p.field,

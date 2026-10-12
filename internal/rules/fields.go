@@ -22,6 +22,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"janus/pkg/plugin"
 )
@@ -42,6 +43,23 @@ const (
 	FieldPath    = "path"    // 请求路径,如 /abc
 	FieldDomain  = "domain"  // 请求 Host
 )
+
+// 动态字段前缀:请求头 header:<name> 与 URL 查询参数 query:<name>。
+//
+// 这两个维度不在 13 个固定字段里,而是"带名字的字段":名字由租户填。
+// 取值与命中语义的唯一规格在 dynamic_fields_test.go:
+//   - 缺失(没带这个头/参数,或值为空串)一律恒不命中,与固定字段同一不变式;
+//   - 同名头/参数出现多次时,正向运算符任一值命中即命中,否定运算符要求所有值都不满足正向形式;
+//   - 前缀必须小写:`HEADER:X` 不是合法字段;头名字大小写不敏感(HTTP 规范),
+//     查询参数名大小写敏感(URL 规范)。
+const (
+	fieldHeaderPrefix = "header:"
+	fieldQueryPrefix  = "query:"
+)
+
+// maxDynamicFieldNameLen 动态字段名(前缀之后的部分)的字节上限。
+// 超长的名字是配置错误而非能力,落库前就该被拒。
+const maxDynamicFieldNameLen = 256
 
 // IP 属性取值(ipattr 字段)。
 const (
@@ -84,6 +102,13 @@ type Fact struct {
 	// 将来接上"同一指纹最近 N 次出现次数"的滑动窗口后,调用方把计数填进来即可,
 	// 求值逻辑不需要改。
 	Seen map[string]int
+
+	// hdr / rawQuery 是动态字段(header:<name> / query:<name>)的取值来源。
+	// 跳转热路径不经过 Fact(走 LazyVisitorContext),这两个引用只服务富化器 /
+	// 前置拦截器 / 规则模拟器。查询串不在这里预解析:Fact 是值类型、会被反复拷贝,
+	// 存不了一份能共享的缓存;只有规则真的配了 query: 条件时才会按需解析。
+	hdr      http.Header
+	rawQuery string
 }
 
 // geoKey 地理值的请求上下文键(未注入时 country/asn 为空)。
@@ -105,6 +130,170 @@ func WithGeo(ctx context.Context, country, asn string) context.Context {
 
 // SeenKey 生成 Fact.Seen 的键(调用方与本包用同一份键空间)。
 func SeenKey(field, value string) string { return field + "\x00" + value }
+
+// splitDynamicField 把字段名拆成前缀与名字;不是动态字段(或前缀不是小写形态)时 ok=false。
+// 只做拆分,名字是否合法由 ValidField 判定。
+func splitDynamicField(field string) (prefix, name string, ok bool) {
+	switch {
+	case strings.HasPrefix(field, fieldHeaderPrefix):
+		return fieldHeaderPrefix, field[len(fieldHeaderPrefix):], true
+	case strings.HasPrefix(field, fieldQueryPrefix):
+		return fieldQueryPrefix, field[len(fieldQueryPrefix):], true
+	}
+	return "", "", false
+}
+
+// isHeaderNameByte RFC 7230 token 字符(tchar)。
+func isHeaderNameByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	}
+	switch b {
+	case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+		return true
+	}
+	return false
+}
+
+// validDynamicFieldName 判定动态字段名的合法性。
+//
+// 头名按 HTTP token 收窄(非 ASCII、空格、冒号一律拒)——一个能存进库却取不到值的字段
+// 就是"能配不能跑"的假能力,必须在落库前拒掉。查询参数名一律按**解码后**的形态写
+// (`query:名字` 而不是 `query:%E5%90%8D`),所以 % / + / & / = / # / ? 与空白一律拒绝:
+// 宁可报错,也不要静默不命中。
+func validDynamicFieldName(prefix, name string) bool {
+	if name == "" || len(name) > maxDynamicFieldNameLen {
+		return false
+	}
+	switch prefix {
+	case fieldHeaderPrefix:
+		for i := 0; i < len(name); i++ {
+			if !isHeaderNameByte(name[i]) {
+				return false
+			}
+		}
+		return true
+	case fieldQueryPrefix:
+		for i := 0; i < len(name); i++ {
+			b := name[i]
+			if b <= 0x20 || b == 0x7f {
+				return false // 空白与控制字符
+			}
+			switch b {
+			case '%', '+', '&', '=', '#', '?':
+				return false
+			}
+		}
+		return utf8.ValidString(name)
+	}
+	return false
+}
+
+// isDynamicField 字段名是否带动态前缀(header: / query:)。
+// 固定字段永远是单值,求值侧据此走零分配快路径。
+func isDynamicField(field string) bool {
+	_, _, ok := splitDynamicField(field)
+	return ok
+}
+
+// dynamicRequestValues 从请求头 / 查询串里取出一个动态字段的全部非空值。
+// 头名走 net/http 的 canonical 化(大小写不敏感);查询参数名大小写敏感。
+// 空串值不算数据:与固定字段的"取不到值"语义一致,空值既不是匹配也不是不匹配的反面。
+func dynamicRequestValues(prefix, key string, hdr http.Header, rawQuery string) []string {
+	switch prefix {
+	case fieldHeaderPrefix:
+		return nonEmptyValues(hdr.Values(key))
+	case fieldQueryPrefix:
+		vals, err := url.ParseQuery(rawQuery)
+		if err != nil && len(vals) == 0 {
+			return nil
+		}
+		return nonEmptyValues(vals[key])
+	}
+	return nil
+}
+
+// nonEmptyValues 过滤空串;全部为空时返回 nil(调用方按"没有数据"处理)。
+func nonEmptyValues(in []string) []string {
+	var out []string
+	for _, v := range in {
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// MultiValueVisitorContext 支持多值取值的访客画像上下文。
+//
+// 动态字段(同名请求头 / 同名查询参数)一次可以出现多个值。否定运算符(neq / not_in /
+// not_contains)必须看到**全部**值,否则 `X-Multi: alpha, beta` 上的 `neq alpha` 会错误命中。
+// 两种内置画像都实现它;只实现 VisitorContext 的外部上下文退化为单值,不会因此编译不过。
+type MultiValueVisitorContext interface {
+	VisitorContext
+	// FieldValues 返回字段的全部非空取值;ok=false 表示"没有数据"。
+	FieldValues(name string) ([]string, bool)
+}
+
+var (
+	_ MultiValueVisitorContext = (*LazyVisitorContext)(nil)
+	_ MultiValueVisitorContext = (*Fact)(nil)
+	_ MultiValueVisitorContext = Fact{}
+)
+
+// fieldValues 统一的字段取值入口:多值上下文返回全部值,单值上下文退化为一个值。
+func fieldValues(ctx VisitorContext, field string) ([]string, bool) {
+	if mv, ok := ctx.(MultiValueVisitorContext); ok {
+		return mv.FieldValues(field)
+	}
+	v, ok := ctx.Field(field)
+	if !ok || v == "" {
+		return nil, false
+	}
+	return []string{v}, true
+}
+
+// fieldValuesText 把字段的全部取值拼成诊断文案用的一个串(单值原样)。
+func fieldValuesText(ctx VisitorContext, field string) (string, bool) {
+	vals, ok := fieldValues(ctx, field)
+	if !ok || len(vals) == 0 {
+		return "", false
+	}
+	if len(vals) == 1 {
+		return vals[0], true
+	}
+	return strings.Join(vals, ", "), true
+}
+
+// matchFieldValues 把字段的全部可用值套进一次比较。
+//
+// neg=false:任一值满足即命中(正向运算符);
+// neg=true:所有值都不满足正向形式才命中(否定运算符)。
+// 取不到任何值一律不命中——本引擎最关键的"没有数据"不变式,多值字段同样适用。
+func matchFieldValues(ctx VisitorContext, field string, neg bool, match func(string) bool) bool {
+	if ctx == nil {
+		return false
+	}
+	vals, ok := fieldValues(ctx, field)
+	if !ok || len(vals) == 0 {
+		return false
+	}
+	if neg {
+		for _, v := range vals {
+			if match(v) {
+				return false
+			}
+		}
+		return true
+	}
+	for _, v := range vals {
+		if match(v) {
+			return true
+		}
+	}
+	return false
+}
 
 // value 按字段名取值(命中为 false 表示"该值不可用/不存在")。
 // 空值必须由求值侧当作"恒不命中"处理:GeoIP 之类取不到数据时,
@@ -138,7 +327,37 @@ func (f *Fact) value(field string) (string, bool) {
 	case FieldDomain:
 		return f.Domain, f.Domain != ""
 	}
+	// 动态字段(header:/query:):取第一个非空值;没有数据同样 ok=false。
+	if vals, ok := f.dynamicValues(field); ok {
+		return vals[0], true
+	}
 	return "", false
+}
+
+// dynamicValues 取动态字段的全部非空值;不是动态字段或没有数据时 ok=false。
+func (f Fact) dynamicValues(field string) ([]string, bool) {
+	prefix, key, ok := splitDynamicField(field)
+	if !ok {
+		return nil, false
+	}
+	vals := dynamicRequestValues(prefix, key, f.hdr, f.rawQuery)
+	if len(vals) == 0 {
+		return nil, false
+	}
+	return vals, true
+}
+
+// FieldValues 实现 MultiValueVisitorContext:固定字段至多一个值,
+// 动态字段(同名头 / 重复参数)返回全部非空值。
+func (f Fact) FieldValues(name string) ([]string, bool) {
+	if vals, ok := f.dynamicValues(name); ok {
+		return vals, true
+	}
+	v, ok := f.value(name)
+	if !ok || v == "" {
+		return nil, false
+	}
+	return []string{v}, true
 }
 
 // VisitorContext 访客画像上下文抽象接口。
@@ -205,6 +424,10 @@ type LazyVisitorContext struct {
 	browser  string
 	path     string
 	domain   string
+
+	// dynValues 是动态字段取值的缓存:同一条件在一次求值里可能被问到多次,
+	// 缓存避免重复解析查询串。缺失值也缓存(空切片),不会反复解析。
+	dynValues map[string][]string
 }
 
 var visitorContextPool = sync.Pool{
@@ -388,7 +611,55 @@ func (c *LazyVisitorContext) Field(name string) (string, bool) {
 		}
 		return c.domain, c.domain != ""
 	}
+	// 动态字段(header:/query:):取第一个非空值;没有数据同样 ok=false。
+	if vals, ok := c.dynamicValues(name); ok {
+		return vals[0], true
+	}
 	return "", false
+}
+
+// dynamicValues 取动态字段的全部非空值并缓存(不是动态字段 / 没有数据 → ok=false)。
+func (c *LazyVisitorContext) dynamicValues(name string) ([]string, bool) {
+	if c.dynValues != nil {
+		if vals, ok := c.dynValues[name]; ok {
+			if len(vals) == 0 {
+				return nil, false
+			}
+			return vals, true
+		}
+	}
+	prefix, key, ok := splitDynamicField(name)
+	if !ok {
+		return nil, false
+	}
+	var vals []string
+	if c.req != nil {
+		rawQuery := ""
+		if c.req.URL != nil {
+			rawQuery = c.req.URL.RawQuery
+		}
+		vals = dynamicRequestValues(prefix, key, c.req.Header, rawQuery)
+	}
+	if c.dynValues == nil {
+		c.dynValues = make(map[string][]string, 4)
+	}
+	c.dynValues[name] = vals
+	if len(vals) == 0 {
+		return nil, false
+	}
+	return vals, true
+}
+
+// FieldValues 实现 MultiValueVisitorContext。
+func (c *LazyVisitorContext) FieldValues(name string) ([]string, bool) {
+	if vals, ok := c.dynamicValues(name); ok {
+		return vals, true
+	}
+	v, ok := c.Field(name)
+	if !ok || v == "" {
+		return nil, false
+	}
+	return []string{v}, true
 }
 
 // remoteAddrIP 取 TCP 直连方地址。解析不出来就返回无效地址(调用方据此当作"取不到")。
@@ -463,6 +734,14 @@ func (c *LazyVisitorContext) ToFact() Fact {
 	}
 	if ipStr != "" {
 		f.netIP = net.ParseIP(ipStr)
+	}
+	// 动态字段的来源随画像一起带走:Fact 是富化器 / 拦截器 / 模拟器的形态,
+	// 不带这两个引用就会在"线上求值"与"诊断推演"之间产生分叉。
+	if c.req != nil {
+		f.hdr = c.req.Header
+		if c.req.URL != nil {
+			f.rawQuery = c.req.URL.RawQuery
+		}
 	}
 	return f
 }

@@ -110,7 +110,74 @@ export function logicLabel(logic: RuleLogic): string {
 }
 
 export function fieldOption(field: string): FieldOption | undefined {
-  return FIELD_OPTIONS.find((f) => f.value === field);
+  const fixed = FIELD_OPTIONS.find((f) => f.value === field);
+  if (fixed) return fixed;
+  return dynamicFieldOption(field);
+}
+
+/** 动态字段(请求头 / URL 参数)的前缀:与后端 internal/rules/fields.go 严格一致。
+ *  前缀必须小写;后端校验器只接受这一种写法,`HEADER:X` 会被 400 拒掉。 */
+export const HEADER_FIELD_PREFIX = 'header:';
+export const QUERY_FIELD_PREFIX = 'query:';
+
+/** 字段下拉里的两个「自定义」入口:选中后旁边多一个输入框填名字。 */
+export const DYNAMIC_FIELD_ENTRIES: { value: string; label: string }[] = [
+  { value: HEADER_FIELD_PREFIX, label: '自定义请求头 (header:)' },
+  { value: QUERY_FIELD_PREFIX, label: 'URL 参数 (query:)' },
+];
+
+/** 取动态字段前缀;不是动态字段时返回空串。 */
+export function dynamicFieldPrefix(field: string): string {
+  if (field.startsWith(HEADER_FIELD_PREFIX)) return HEADER_FIELD_PREFIX;
+  if (field.startsWith(QUERY_FIELD_PREFIX)) return QUERY_FIELD_PREFIX;
+  return '';
+}
+
+/** 取前缀之后的名字(不是动态字段时返回空串)。 */
+export function dynamicFieldName(field: string): string {
+  const prefix = dynamicFieldPrefix(field);
+  return prefix ? field.slice(prefix.length) : '';
+}
+
+/** 动态字段名合法性:与后端 validDynamicFieldName 同口径,落库前先本地拦一道。
+ *  一个能存进库却永远取不到值的字段就是「能配不能跑」的假能力,宁可报错也不要静默不命中。 */
+export function isValidDynamicFieldName(field: string): boolean {
+  const prefix = dynamicFieldPrefix(field);
+  const name = dynamicFieldName(field);
+  if (!prefix || !name) return false;
+  if (new TextEncoder().encode(name).length > 256) return false;
+  if (prefix === HEADER_FIELD_PREFIX) {
+    // RFC 7230 token 字符(非 ASCII、空格、冒号一律拒)
+    return /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name);
+  }
+  // 查询参数名按**解码后**形态写:空白/控制字符与 % + & = # ? 都拒绝
+  if (/[\s\u0000-\u001f\u007f]/.test(name)) return false;
+  return !/[%+&=#?]/.test(name);
+}
+
+/** 动态字段的展示元数据。名字为空时也返回(用户刚选中入口、还没填名字)。 */
+function dynamicFieldOption(field: string): FieldOption | undefined {
+  const prefix = dynamicFieldPrefix(field);
+  if (!prefix) return undefined;
+  const name = dynamicFieldName(field);
+  if (prefix === HEADER_FIELD_PREFIX) {
+    return {
+      value: field as RuleField,
+      label: name ? `请求头 ${name}` : '自定义请求头',
+      defaultOp: 'eq',
+      placeholder: 'vip, 2026',
+      hint: '头名大小写不敏感；同名头出现多次时任一值命中即成立',
+      source: '原始请求头',
+    };
+  }
+  return {
+    value: field as RuleField,
+    label: name ? `URL 参数 ${name}` : 'URL 参数',
+    defaultOp: 'eq',
+    placeholder: 'en, zh-cn',
+    hint: '参数名大小写敏感；按解码后的形态书写（中文直接写中文）',
+    source: 'URL 查询参数',
+  };
 }
 
 export function operatorLabel(operator: string): string {

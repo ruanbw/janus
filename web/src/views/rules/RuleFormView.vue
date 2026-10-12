@@ -38,7 +38,9 @@ import {
   ACTION_OPTIONS,
   BROWSER_OPTIONS,
   DEVTYPE_OPTIONS,
+  DYNAMIC_FIELD_ENTRIES,
   FIELD_OPTIONS,
+  HEADER_FIELD_PREFIX,
   IPATTR_OPTIONS,
   LANG_OPTIONS,
   LOGIC_OPTIONS,
@@ -46,7 +48,10 @@ import {
   OS_OPTIONS,
   actionLabel,
   actionTagColor,
+  dynamicFieldName,
+  dynamicFieldPrefix,
   fieldOption,
+  isValidDynamicFieldName,
   operatorLabel,
 } from './ruleMeta';
 
@@ -240,10 +245,25 @@ function resetForm() {
   initialFormJson.value = JSON.stringify(form);
 }
 
-const fieldOptions = FIELD_OPTIONS.map((f) => ({
-  value: f.value as string,
-  label: f.label,
-}));
+const fieldOptions = [
+  ...FIELD_OPTIONS.map((f) => ({
+    value: f.value as string,
+    label: f.label,
+  })),
+  // 动态字段:下拉里只放两个入口,真正的名字由旁边的输入框填,
+  // 选中后 cond.field = 'header:' / 'query:' + 名字。
+  ...DYNAMIC_FIELD_ENTRIES.map((f) => ({ value: f.value, label: f.label })),
+];
+
+/** 字段下拉的显示值:动态字段只显示入口(前缀),不显示已填的名字部分。 */
+function fieldSelectValue(cond: EditableCondition): string {
+  return dynamicFieldPrefix(cond.field) || cond.field;
+}
+
+function onFieldSelectChange(cond: EditableCondition, v: string): void {
+  cond.field = v;
+  onFieldChange(cond);
+}
 // 运算符按字段过滤：in_cidr 后端只允许 ip 字段（eval.go 会 drop 其它字段的 in_cidr，
 // 条件被丢弃 = 规则被静默收紧），ip 之外不出现在下拉里。
 const IP_ONLY_OPERATORS: RuleOperator[] = ['in_cidr', 'not_in_cidr'];
@@ -338,6 +358,13 @@ function conditionHint(cond: EditableCondition): string {
   const field = cond.field;
   const opt = fieldOption(field);
   if (!opt) return '';
+  const prefix = dynamicFieldPrefix(field);
+  if (prefix === HEADER_FIELD_PREFIX) {
+    return '头名大小写不敏感（HTTP 规范）· 没带这个头或值为空时恒不命中 · 同名头多次出现时任一值命中即成立';
+  }
+  if (prefix) {
+    return '参数名大小写敏感（URL 规范）· 按解码后的形态写（中文直接写中文）· 没带这个参数时恒不命中';
+  }
   if (cond.operator === 'regex') return '正则匹配语法支持 RE2，大小写敏感；忽略大小写可用 (?i)';
   if (field === 'country') return '从下拉里选国家 / 地区，支持搜索 · 查不到国家的 IP 恒不命中';
   if (field === 'devtype') return '从下拉里选设备类型：爬虫 (bot)、手机 (mobile)、平板 (tablet)、桌面端 (desktop)';
@@ -445,6 +472,17 @@ function buildConditions(): RuleCondition[] {
       // 不能静默丢弃条件，必须点名原始字段拒绝保存。
       throw new Error(
         `第 ${idx + 1} 条条件的字段「${cond.field}」当前控制台不支持（平台无该数据源），请改为其他字段`,
+      );
+    }
+    // 动态字段(请求头 / URL 参数):名字非法就在落库前拦下——
+    // 后端会 400,本地先报错能给出更准确的位置与原因。
+    if (dynamicFieldPrefix(cond.field) && !isValidDynamicFieldName(cond.field)) {
+      const kind = dynamicFieldPrefix(cond.field) === HEADER_FIELD_PREFIX ? '请求头' : 'URL 参数';
+      throw new Error(
+        `第 ${idx + 1} 条条件的${kind}名字非法「${dynamicFieldName(cond.field) || '（空）'}」：` +
+          (kind === '请求头'
+            ? '只能是 ASCII 字母 / 数字与 !#$%&\'*+-.^_`|~ 这些字符'
+            : '不能含空白与 % + & = # ? 这些字符（按解码后的名字写）'),
       );
     }
     const op = OPERATOR_OPTIONS.find((o) => o.value === cond.operator);
@@ -785,7 +823,8 @@ onMounted(init);
                   命中条件
                 </CardTitle>
                 <CardDescription>
-                  条件值直接写在这里：IP 支持 CIDR 网段，枚举用逗号分隔，正则选「正则匹配」。不需要额外的名单库。
+                  条件值直接写在这里：IP 支持 CIDR 网段，枚举用逗号分隔，正则选「正则匹配」。
+                  需要按请求头或 URL 参数判定时，字段选「自定义请求头」或「URL 参数」再填名字。
                 </CardDescription>
               </CardHeader>
               <CardContent class="space-y-4">
@@ -804,10 +843,10 @@ onMounted(init);
 
                   <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <AppSelect
-                      :model-value="cond.field"
+                      :model-value="fieldSelectValue(cond)"
                       :options="fieldOptions"
                       placeholder="选择字段"
-                      @change="(v: string) => { cond.field = v; onFieldChange(cond); }"
+                      @change="(v: string) => onFieldSelectChange(cond, v)"
                     />
                     <AppSelect
                       :model-value="cond.operator"
@@ -818,6 +857,17 @@ onMounted(init);
                   </div>
 
                   <div class="mt-3">
+                    <!-- 动态字段的名字:请求头 / URL 参数的具体名字由用户输入,
+                         请求头名大小写不敏感,查询参数名大小写敏感(与后端同口径) -->
+                    <AppInput
+                      v-if="dynamicFieldPrefix(cond.field)"
+                      class="mb-3"
+                      :model-value="dynamicFieldName(cond.field)"
+                      :placeholder="dynamicFieldPrefix(cond.field) === HEADER_FIELD_PREFIX
+                        ? '请求头名，如 X-Token（大小写不敏感）'
+                        : '参数名，如 utm_content（区分大小写）'"
+                      @update:model-value="(v: string) => (cond.field = dynamicFieldPrefix(cond.field) + v)"
+                    />
                     <!-- 下拉多选：支持枚举且非单值运算符（in / not_in 等） -->
                     <AppSelect
                       v-if="isSelectField(cond) && isMultipleOperator(cond)"
