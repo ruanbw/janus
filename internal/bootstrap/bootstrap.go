@@ -4,6 +4,7 @@ package bootstrap
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"janus/internal/domain"
@@ -11,7 +12,8 @@ import (
 )
 
 // Superadmin 按环境变量指定的邮箱初始化超管租户:
-// 不存在则创建(is_super_admin、active、暂无密码);已存在则确保标志位。
+// 不存在则创建(is_super_admin、active、暂无密码);已存在且是自己创建的超管行则收敛
+// 标志位与状态;已存在但不是超管行则拒绝(该邮箱已被别人的账号占用)。
 // 首次登录引导设置密码(见 spec 决策 #4、票据 08)。
 func Superadmin(ctx context.Context, st *store.Store, email string) error {
 	email = strings.ToLower(strings.TrimSpace(email))
@@ -20,18 +22,7 @@ func Superadmin(ctx context.Context, st *store.Store, email string) error {
 	}
 	t, err := st.GetTenantByEmail(ctx, email)
 	if err == nil {
-		// 已存在:标志位与状态都要确保就绪——进程可能死在 CreateTenant 与
-		// SetTenantStatus 之间,此时租户存在但 status=pending,重启应把它修复,
-		// 而不是因 IsSuperAdmin 已是 true 就当作「已是超管」直接返回。
-		if !t.IsSuperAdmin {
-			if err := st.SetTenantSuperAdmin(ctx, t.ID); err != nil {
-				return err
-			}
-		}
-		if t.Status != "active" {
-			return st.SetTenantStatus(ctx, t.ID, "active")
-		}
-		return nil
+		return convergeOwnTenant(ctx, st, t)
 	}
 	if !errors.Is(err, store.ErrNotFound) {
 		return err
@@ -67,7 +58,24 @@ func Superadmin(ctx context.Context, st *store.Store, email string) error {
 	if err != nil {
 		return err
 	}
-	return st.SetTenantStatus(ctx, nt.ID, "active")
+	return convergeOwnTenant(ctx, st, nt)
+}
+
+// convergeOwnTenant 收敛 bootstrap 自己创建的超管租户:标志位与状态都要确保就绪——
+// 进程可能死在 CreateTenant 与 SetTenantStatus 之间,此时租户存在但 status=pending,
+// 重启应把它修复,而不是因 IsSuperAdmin 已是 true 就当作「已是超管」直接返回。
+//
+// IsSuperAdmin=false 的行不是 bootstrap 创建的:该邮箱被别人的账号占用(如公开注册
+// 抢注了配置里可猜的超管邮箱)。此时必须拒绝,且不产生任何副作用——提权等于把平台
+// 交给抢注者,顺手把 status 改成 active 也是在替别人的账号激活。
+func convergeOwnTenant(ctx context.Context, st *store.Store, t *store.Tenant) error {
+	if !t.IsSuperAdmin {
+		return fmt.Errorf("superadmin email %q is already taken by a non-superadmin tenant, refusing to promote", t.Email)
+	}
+	if t.Status != "active" {
+		return st.SetTenantStatus(ctx, t.ID, "active")
+	}
+	return nil
 }
 
 func superadminSlug(email string) string {

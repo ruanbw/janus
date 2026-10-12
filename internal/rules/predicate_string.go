@@ -63,7 +63,9 @@ func (p *StringPredicate) negated() bool {
 // 否定运算符先算肯定形式,取反由 matchFieldValues 在多值层面统一处理。
 func (p *StringPredicate) posMatch(val string) bool {
 	switch p.op {
-	case OpIn, OpNotIn:
+	case OpIn, OpNotIn, OpEq, OpNeq:
+		// eq/neq 与 in/not_in 同为「取值集合」语义:任一取值命中即肯定形式成立
+		// (多值取值集合不能只看 lits[0],否则 eq/neq 会静默收窄为第一个取值)。
 		if p.litMap != nil {
 			_, hit := p.litMap[val]
 			return hit
@@ -74,11 +76,6 @@ func (p *StringPredicate) posMatch(val string) bool {
 			}
 		}
 		return false
-	case OpEq, OpNeq:
-		if len(p.lits) == 0 {
-			return false
-		}
-		return val == p.lits[0]
 	case OpContains, OpNotContains:
 		for _, lit := range p.lits {
 			if strings.Contains(val, lit) {

@@ -135,7 +135,10 @@ func WithConfig(cfg Config) Option {
 	}
 }
 
-// WithConfigFile 指定配置文件路径（支持 .env 或环境变量文件）
+// WithConfigFile 指定配置文件路径（支持 .env 或环境变量文件）。
+// 文件在 New 时被解析并合并进本实例的 Config:进程环境里已存在的同名键优先
+// (部署时可用环境变量覆盖文件),且不写回进程环境。同时传入 WithConfig 时以
+// WithConfig 为准(显式结构体是调用方的完整配置)。
 func WithConfigFile(path string) Option {
 	return func(o *options) error {
 		if path != "" {
@@ -259,14 +262,23 @@ func New(opts ...Option) (*App, error) {
 	}
 
 	var cfg Config
-	if opt.cfg != nil {
+	switch {
+	case opt.cfg != nil:
+		// 显式传入的结构体视为调用方的完整配置:不再叠加环境或配置文件,
+		// 否则调用方刻意覆盖的字段(如测试注入的测试库 DSN)会被环境变量拽回去。
 		cfg = *opt.cfg
-	} else {
-		var err error
-		cfg, err = config.Load()
+	case opt.configPath != "":
+		loaded, err := config.LoadWithEnvFile(opt.configPath)
+		if err != nil {
+			return nil, fmt.Errorf("load config file %s: %w", opt.configPath, err)
+		}
+		cfg = loaded
+	default:
+		loaded, err := config.Load()
 		if err != nil {
 			return nil, fmt.Errorf("load config: %w", err)
 		}
+		cfg = loaded
 	}
 
 	// 校验配置合规性
@@ -391,30 +403,16 @@ func (a *App) Run(ctx context.Context) error {
 	a.cancelRun = cancel
 	a.workerDone = make(chan struct{})
 
-	// 若尚未注入 DB，且配置了有效的 DatabaseURL 则尝试连接（非强制：连接失败由外层捕获）
-	if a.gdb == nil && a.cfg.DatabaseURL != "" && strings.HasPrefix(a.cfg.DatabaseURL, "postgres://") {
-		pool, err := db.Connect(runCtx, a.cfg.DatabaseURL)
-		if err == nil {
-			if a.cfg.MigrationsDir != "" || a.extraFS != nil {
-				_ = db.MigrateWithExtra(runCtx, pool, a.cfg.MigrationsDir, a.extraFS)
-			}
-			pool.Close()
+	// 数据库启动失败必须向上返回:吞掉错误只会让进程「看着健康」——实际没有数据库、
+	// 没跑迁移、没挂业务路由,却照常对外监听 HTTP。
+	if err := a.bootstrapDatabase(runCtx); err != nil {
+		cancel()
+		a.mu.Unlock()
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			// 启动途中被调用方取消属于正常收尾,不能报成启动故障。
+			return runCtx.Err()
 		}
-
-		gdb, err := db.OpenGORM(a.cfg.DatabaseURL)
-		if err == nil {
-			a.gdb = gdb
-			a.store = store.New(gdb)
-			if a.cfg.SuperadminEmail != "" {
-				_ = bootstrap.Superadmin(runCtx, a.store, a.cfg.SuperadminEmail)
-			}
-			// 组装底层完整路由
-			_ = a.initHandler()
-		}
-	} else if a.gdb != nil && a.extraFS != nil {
-		if sqlDB, err := a.gdb.DB(); err == nil {
-			_ = db.MigrateDBWithExtra(runCtx, sqlDB, "", a.extraFS)
-		}
+		return err
 	}
 
 	// 启动后台 worker
@@ -469,6 +467,56 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
+// bootstrapDatabase 按配置建立数据库连接、执行迁移、初始化超管并组装完整业务路由。
+// 启动链路上的每一步错误都向上返回:继续启动等于把启动故障伪装成健康。
+func (a *App) bootstrapDatabase(ctx context.Context) error {
+	if a.gdb == nil && isPostgresDSN(a.cfg.DatabaseURL) {
+		pool, err := db.Connect(ctx, a.cfg.DatabaseURL)
+		if err != nil {
+			return fmt.Errorf("connect database: %w", err)
+		}
+		if a.cfg.MigrationsDir != "" || a.extraFS != nil {
+			if err := db.MigrateWithExtra(ctx, pool, a.cfg.MigrationsDir, a.extraFS); err != nil {
+				pool.Close()
+				return fmt.Errorf("migrate database: %w", err)
+			}
+		}
+		// schema 初始化完成即关闭:业务数据访问全部走 GORM,这个 pgxpool 此后没有使用者。
+		pool.Close()
+
+		gdb, err := db.OpenGORM(a.cfg.DatabaseURL)
+		if err != nil {
+			return fmt.Errorf("open gorm: %w", err)
+		}
+		a.gdb = gdb
+		a.store = store.New(gdb)
+		if a.cfg.SuperadminEmail != "" {
+			if err := bootstrap.Superadmin(ctx, a.store, a.cfg.SuperadminEmail); err != nil {
+				return fmt.Errorf("init superadmin: %w", err)
+			}
+		}
+		// 组装底层完整路由
+		return a.initHandler()
+	}
+
+	if a.gdb != nil && a.extraFS != nil {
+		sqlDB, err := a.gdb.DB()
+		if err != nil {
+			return fmt.Errorf("gorm sql db: %w", err)
+		}
+		if err := db.MigrateDBWithExtra(ctx, sqlDB, "", a.extraFS); err != nil {
+			return fmt.Errorf("migrate extra: %w", err)
+		}
+	}
+	return nil
+}
+
+// isPostgresDSN 判断 DSN 是否指向 Postgres。pgx 同时接受 postgres:// 与 postgresql://,
+// 只认前者会让 postgresql:// 的配置被整段跳过:进程照常监听,却从不连库。
+func isPostgresDSN(dsn string) bool {
+	return strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")
+}
+
 // Shutdown 优雅关闭服务
 func (a *App) Shutdown(ctx context.Context) error {
 	a.mu.Lock()
@@ -496,5 +544,5 @@ func (a *App) Shutdown(ctx context.Context) error {
 }
 
 // mutate4go-manifest-begin
-// {"version":1,"tested_at":"2026-10-06T03:57:37+08:00","module_hash":"340213c02814e0eca7d0fae98f01604c45bc91917551435b39931c8ff730bbe0","functions":[{"id":"func/WithConfig","name":"WithConfig","line":42,"end_line":47,"hash":"b106c8c7b707e97fb1509bda36d7d3d8c6b25d7de30af47502ec83a9d2b3020d"},{"id":"func/WithConfigFile","name":"WithConfigFile","line":50,"end_line":60,"hash":"a14a2851c83a8e91072f6dfd591e1a281edf12c2bd9c75b95aa548f67766b4d9"},{"id":"func/WithDB","name":"WithDB","line":63,"end_line":68,"hash":"6b83114b2223d90bd2e439e3be22834d86af6d3591378fc7aff2ede30ab3470e"},{"id":"func/WithRoutes","name":"WithRoutes","line":71,"end_line":78,"hash":"21ef0f977e91769dafc799ed601bafe0252f0e48f443f429d20cdd36a2af0191"},{"id":"func/New","name":"New","line":95,"end_line":135,"hash":"42d37307e05362150f7b6eb7dcdd4faff6b83e8b0573976456978dae11a602d0"},{"id":"func/validateAppConfig","name":"validateAppConfig","line":138,"end_line":159,"hash":"dd8e87bbd6f0b9798f30efb9cf1ffff158dd46c35ea45178e7cfec2b3ddd1cfc"},{"id":"func/App.initHandler","name":"App.initHandler","line":162,"end_line":206,"hash":"ae96bde8e058bb4ea3105df0c5afea63873e6caae8e300c80056b56187bd9548"},{"id":"func/App.Handler","name":"App.Handler","line":209,"end_line":211,"hash":"c585e630f00b671d3b81479b9d33ac2a9901d086aef3417046a9848a75e3be14"},{"id":"func/App.Run","name":"App.Run","line":214,"end_line":298,"hash":"bd0a49c28fe8ebd055087416a7274930006069ca9fc31e5a9a58169b48df02ba"},{"id":"func/App.Shutdown","name":"App.Shutdown","line":301,"end_line":324,"hash":"6635f11f6ccb010bdb5f81a4b84cc18486513550eeae96971ea0fc01af410cd3"}]}
+// {"version":1,"tested_at":"2026-10-12T16:48:53+08:00","module_hash":"56fde873ed52408de179e7483073ab23b8653f8617384a7ce0d8c139706e9df1","functions":[{"id":"func/GetAuthContext","name":"GetAuthContext","line":51,"end_line":100,"hash":"33ab8303acc7bb592e2db28c5bd2a3cc8fd1c5d9160aeeaa90f42b96767270ba"},{"id":"func/toInt64","name":"toInt64","line":102,"end_line":116,"hash":"4b2a32b0286c902a8f74a0f80e068dc612ca714dda96f465752b0fd951ac9840"},{"id":"func/WithConfig","name":"WithConfig","line":131,"end_line":136,"hash":"b106c8c7b707e97fb1509bda36d7d3d8c6b25d7de30af47502ec83a9d2b3020d"},{"id":"func/WithConfigFile","name":"WithConfigFile","line":142,"end_line":152,"hash":"a14a2851c83a8e91072f6dfd591e1a281edf12c2bd9c75b95aa548f67766b4d9"},{"id":"func/WithDB","name":"WithDB","line":155,"end_line":160,"hash":"6b83114b2223d90bd2e439e3be22834d86af6d3591378fc7aff2ede30ab3470e"},{"id":"func/WithRoutes","name":"WithRoutes","line":163,"end_line":170,"hash":"21ef0f977e91769dafc799ed601bafe0252f0e48f443f429d20cdd36a2af0191"},{"id":"func/WithProtectedRoutes","name":"WithProtectedRoutes","line":173,"end_line":180,"hash":"c9098511bff5085e0f63eee74d2c83310933c6ab2c982c7312d7026589339b70"},{"id":"func/WithExtraMigrations","name":"WithExtraMigrations","line":183,"end_line":188,"hash":"831a7b598b3a118f60d0039e0d22788344f472f187ec8b0f077bee5ffa90ca83"},{"id":"func/WithExtraMigrationsDir","name":"WithExtraMigrationsDir","line":191,"end_line":201,"hash":"2de2f7f2e2c5541476a22e34b121deeb343e497c4a37ec5d6f1047e66e5679b1"},{"id":"func/WithEventListener","name":"WithEventListener","line":204,"end_line":209,"hash":"3923c09176c804f79edd79c790fca21ee49ad3006bb818288686c5a83d109401"},{"id":"func/SimpleEvent.Topic","name":"SimpleEvent.Topic","line":221,"end_line":221,"hash":"635dbbccc7a0ee52e201628f9fe6d3ec56ade0089bdcd8b6293533134ec30701"},{"id":"func/SimpleEvent.Payload","name":"SimpleEvent.Payload","line":222,"end_line":222,"hash":"afd7c73d21e8bb101c5e2db185ad2d4323206657571f6f94c7aafe6bb09e0a05"},{"id":"func/SimpleEvent.OccurredAt","name":"SimpleEvent.OccurredAt","line":223,"end_line":223,"hash":"08cdfa0afff001643dc0cc41661ce27d26507c76da9fbc5daa892a2df3e43ca6"},{"id":"func/NewSimpleEvent","name":"NewSimpleEvent","line":226,"end_line":232,"hash":"bb771800cc33b255225ff8a899dc5bece95efa42a36fa7eefcb4f539fc1aaf85"},{"id":"func/PublishEvent","name":"PublishEvent","line":235,"end_line":237,"hash":"06d1767750c05883b6e12dd0c01563d92adc56a6c8dce6cbd4fc95bd4d05c9c2"},{"id":"func/New","name":"New","line":256,"end_line":307,"hash":"c46167174033539221cd6ea88396717a91021459ef900236cc3dc2229f7be981"},{"id":"func/validateAppConfig","name":"validateAppConfig","line":310,"end_line":331,"hash":"dd8e87bbd6f0b9798f30efb9cf1ffff158dd46c35ea45178e7cfec2b3ddd1cfc"},{"id":"func/App.initHandler","name":"App.initHandler","line":334,"end_line":386,"hash":"1745b5052b4d9968b2e53b8b0271bfe72637d962a0882d99a4819a7be6258679"},{"id":"func/App.Handler","name":"App.Handler","line":389,"end_line":391,"hash":"c585e630f00b671d3b81479b9d33ac2a9901d086aef3417046a9848a75e3be14"},{"id":"func/App.Run","name":"App.Run","line":394,"end_line":468,"hash":"417a564da71cdd75a4ae6a9079f79b14af772afe39cdec463e68615038519207"},{"id":"func/App.bootstrapDatabase","name":"App.bootstrapDatabase","line":472,"end_line":512,"hash":"fb21f35ee1c24c7768a82021f86eeae3f3412f08824b42ee2a5ffcd19516e43f"},{"id":"func/isPostgresDSN","name":"isPostgresDSN","line":516,"end_line":518,"hash":"7aecce45d3e9dcfaccdf797a5d01dd0b137b4b52d2ef03416d1e633fb4b1e37e"},{"id":"func/App.Shutdown","name":"App.Shutdown","line":521,"end_line":544,"hash":"6635f11f6ccb010bdb5f81a4b84cc18486513550eeae96971ea0fc01af410cd3"}]}
 // mutate4go-manifest-end

@@ -209,11 +209,19 @@ func (s *Store) MarkDomainExpired(ctx context.Context, id int64) error {
 // 会自动重新激活;stopped 的语义是"租户主动暂停",系统不该替租户做这个决定。
 // cert_status 一并打回 pending:证书状态描述的是上一次探活的结果,而这次
 // 探活的对象已经不存在了;恢复后需要重新探活才谈得上 issued。
+//
+// verify_token_created_at 一并重置为 now:重试扫描的 overdue 判据是
+// COALESCE(verify_token_created_at, created_at),而激活时挑战已被消费、该列为
+// NULL —— 不重置的话,任何创建超过 DNSMaxAge 的域名一降级就会被判超期,worker
+// 会在发出任何 DNS 查询之前就 MarkDomainExpired(终态),「修好 DNS 自动恢复」
+// 就成了空话。重置后这一列表达的是「本次尝试从何时开始」,降级同样享有完整的
+// 重试窗口;verify_token 本身保留不动,重试仍用它比对 TXT。
 func (s *Store) DegradeDomain(ctx context.Context, id int64) error {
 	return s.db.WithContext(ctx).Model(&Domain{}).Where("id = ?", id).Updates(map[string]any{
-		"status":         "failed",
-		"cert_status":    "pending",
-		"dns_checked_at": gorm.Expr("now()"),
+		"status":                  "failed",
+		"cert_status":             "pending",
+		"dns_checked_at":          gorm.Expr("now()"),
+		"verify_token_created_at": gorm.Expr("now()"),
 	}).Error
 }
 

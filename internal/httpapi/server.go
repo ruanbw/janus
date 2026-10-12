@@ -152,6 +152,7 @@ func New(d Deps) http.Handler {
 	// 16:落地页上传托管用 /{code}/ 尾斜杠布局,关闭 gin 自动尾斜杠重定向
 	r.RedirectTrailingSlash = false
 	r.Use(a.panicRecoverAndLog())
+	r.Use(a.bodyLimit())
 
 	// 健康检查(docker compose healthcheck)
 	r.GET("/healthz", func(c *gin.Context) {
@@ -247,6 +248,47 @@ func New(d Deps) http.Handler {
 	r.NoRoute(a.handleLandingFallback)
 
 	return r
+}
+
+// maxJSONBodyBytes 未单独设限的 JSON 端点的统一请求体上限(1.5MiB)。
+//
+// 为什么必须限:json.Decoder 在任何认证/校验之前就把整份 body 读进内存,
+// 没有上限时一个匿名请求(如 POST /api/auth/login)就能用它把内存打满。
+//
+// 取值口径与 maxRuleBodyBytes / maxCreateLinkBodyBytes 一致 ——「合法最大 payload + 余量」:
+//   - 合法最大 payload 出现在 PATCH /api/me/error-pages:两个错误页各自允许
+//     maxErrorPageHTMLBytes(512KB),合起来已接近 1MB,再加 JSON 转义与字段名开销
+//     会略超 1MB —— 直接用 1MB 会把这份完全合法的请求一起打死。
+//   - 再往上(2MB 量级)余量就薄到只剩贴边,失去了「拦住整份 body 进内存」的意义。
+//
+// 自带更紧上限的端点不受影响:links / rules 的 handler 会在这一层之外再包一次
+// 更小的 MaxBytesReader,更小的那个先触发(见 handleCreateLink、decodeRuleBody)。
+const maxJSONBodyBytes = 3 << 19 // 1.5MiB
+
+// bodyLimit 全局中间件:给所有可能带请求体的方法统一加体积上限。
+//
+// 逐个 handler 手写会漏 —— 全仓 16 处 json.Decode 只有 3 处设了限,漏掉的端点
+// 在解码前对体积没有任何拦截。这里按「方法 + 路由」一次性兜底。
+func (a *API) bodyLimit() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch:
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, a.bodyLimitBytes(c.FullPath()))
+		}
+		c.Next()
+	}
+}
+
+// bodyLimitBytes 本次请求的 body 上限:默认统一值,multipart 上传端点用配置里的 zip 上限。
+//
+// 落地页上传的合法上限由 LandingMaxZipBytes 决定(默认 10MB),远大于任何 JSON 端点;
+// 套用默认值会先于 handler 把它拦掉,上传功能整体失效。
+func (a *API) bodyLimitBytes(fullPath string) int64 {
+	// 与 New() 里 prot.POST("/links/:id/landing", ...) 注册的路由同一路径。
+	if fullPath == "/api/links/:id/landing" {
+		return a.cfg.LandingMaxZipBytes + 64<<10
+	}
+	return maxJSONBodyBytes
 }
 
 // panicRecoverAndLog 全局中间件:panic 恢复为 JSON 500 + 访问日志(与原中间件行为一致)。

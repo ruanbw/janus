@@ -80,11 +80,65 @@ type Config struct {
 // 部分零值配置上线——例如把 JANUS_VISIT_RETENTION 写成 "90d"(Go duration 不认 d)
 // 就会让保留期变 0,启动后第一趟清理直接删光全部访问记录。
 func Load() (Config, error) {
+	return parseEnvFrom(env.ToMap(os.Environ()))
+}
+
+// LoadWithEnvFile 用「进程环境 + 指定配置文件(.env)」解析配置。
+// 文件只补充进程环境里没有的键(与 docker compose / godotenv / viper 的约定一致:
+// 真实环境变量优先,部署时可用环境覆盖文件);解析结果只落在返回的 Config 上,
+// 不写回进程环境——库改 os.Setenv 会串味到同进程的其它 App 与测试。
+func LoadWithEnvFile(path string) (Config, error) {
+	fileVars, err := parseEnvFile(path)
+	if err != nil {
+		return Config{}, err
+	}
+	environ := env.ToMap(os.Environ())
+	for key, value := range fileVars {
+		if _, exists := environ[key]; !exists {
+			environ[key] = value
+		}
+	}
+	return parseEnvFrom(environ)
+}
+
+func parseEnvFrom(environment map[string]string) (Config, error) {
 	var cfg Config
-	if err := env.Parse(&cfg); err != nil {
+	if err := env.ParseWithOptions(&cfg, env.Options{Environment: environment}); err != nil {
 		return cfg, fmt.Errorf("无法解析环境变量(请检查 JANUS_* 变量的格式,例如时长必须写成 30h 而不是 30d): %w", err)
 	}
 	return cfg, nil
+}
+
+// parseEnvFile 解析 .env 风格配置文件:每行 KEY=VALUE,空行与 # 注释忽略,允许 export
+// 前缀,值两侧的成对引号会被去掉。不认识的键(如给 compose 用的 JANUS_DB_*)留给别的
+// 读取方;但缺少 = 的行直接报错,不静默丢键——静默丢键的结果是「配置看起来生效了,
+// 实际没生效」。
+func parseEnvFile(path string) (map[string]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("读取配置文件失败: %w", err)
+	}
+	vars := make(map[string]string)
+	for i, rawLine := range strings.Split(string(raw), "\n") {
+		line := strings.TrimSpace(strings.TrimSuffix(rawLine, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		key, value, found := strings.Cut(line, "=")
+		key = strings.TrimSpace(key)
+		if !found || key == "" {
+			return nil, fmt.Errorf("配置文件 %s 第 %d 行不是 KEY=VALUE: %q", path, i+1, rawLine)
+		}
+		value = strings.TrimSpace(value)
+		if len(value) >= 2 {
+			if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
+				value = value[1 : len(value)-1]
+			}
+		}
+		vars[key] = value
+	}
+	return vars, nil
 }
 
 // Validate 检查那些「配错就会静默毁数据或让进程 panic」的字段。

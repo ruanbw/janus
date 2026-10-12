@@ -175,7 +175,12 @@ func compileRule(r store.Rule, log *slog.Logger) (Compiled, bool) {
 			kept++
 		}
 		c.root = root
-		if len(preds) > 0 {
+		// 只有每个被 compileCond 接受的叶子都编译出了谓词,才启用 pipeline。
+		// pipeline 一旦非空就是权威求值路径,而 compileCond 接受、CompilePredicate
+		// 编译不出的叶子(如 ip + gt/lt/duplicated)会被静默丢掉,导致扁平形态与树
+		// 形态给出不同结论。宁可整条回落到树求值,也不留两套语义。
+		// kept > 0 是必要的:kept == 0 时空 pipeline 恒真,比树求值更危险。
+		if kept > 0 && len(preds) == kept {
 			c.pipeline = NewOptimizedConditionPipeline(c.logicAll, preds)
 		}
 	}
@@ -412,8 +417,12 @@ func (c *compiledCond) match(ctx VisitorContext) bool {
 	}
 	switch c.op {
 	case OpNeq, OpNotIn, OpNotContains:
+		// matchOne 对否定运算符已自行取反,所以多值字段上的判定是「所有字段值都
+		// 满足否定形式」=「没有任何字段值命中肯定形式」——即 matchFieldValues 的
+		// 否定口径。写成「任一命中就 false」会与上面的取反叠加成双重取反,语义
+		// 扭曲为「每个字段值都必须命中集合」。
 		for _, v := range vals {
-			if c.matchOne(ctx, v) {
+			if !c.matchOne(ctx, v) {
 				return false
 			}
 		}
