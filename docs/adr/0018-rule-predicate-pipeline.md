@@ -24,12 +24,23 @@
 
 3. **条件流水线执行器（ConditionPipeline）与成本感知短路（Cost-Aware Short-Circuit）**：
    - 单条规则的多条件编译为 `ConditionPipeline`；
-   - **线上热路径**：根据 `pred.Cost()` 自动排序（便宜的常量/IP匹配先执行，昂贵的正则后执行），在 AND 遇到首个 `false`、OR 遇到首个 `true` 时立即短路中断，保证纳秒级求值与零无谓计算；
-   - **模拟器诊断**：调用 `pipeline.Trace(ctx)` 走完全量流水线（不短路），精准回显每一项的实际提取值与期望值。
+   - **线上热路径有两条路径，语义必须等价**：**扁平形态**（`rules.logic` + 一层 `conditions`）走 `ConditionPipeline`——根据 `pred.Cost()` 自动排序（便宜的常量/IP 匹配先执行，昂贵的正则后执行），AND 遇到首个 `false`、OR 遇到首个 `true` 时立即短路中断；**树形态**（`group` / `children`）走 `compiledNode` 递归求值，不做流水线排序。
+   - **模拟器留痕不走 `pipeline.Trace`**：`POST /api/rules/simulate` 的逐条留痕走统一的 `compiledCond` 路径（`traceRule` → `collectTraces` 遍历 `compiledNode` 全量叶子，不按短路停下），保证"诊断说的"与"线上判的"同源；`ConditionPredicate.Trace` 目前只是单元测试用的诊断辅助，不在模拟器链路上。
 
 4. **模拟器同源链路对齐**：
    - 在 `internal/httpapi/rules.go` 的 `handleSimulateRules` 中完整补齐 `vctx.ApplyEnrichers` 与 `rules.CheckInterceptors`；
    - 当触发前置拦截时，模拟器如实呈现熔断状态与留痕，杜绝线上与诊断分叉。
+
+### 扁平与树语义等价的验收点
+
+两条形态编译进同一个 `Compiled` 后必须对同一份画像给出完全一致的命中结论，本次统一了四处历史分叉：
+
+1. **数值空白**：数值运算符（`gt` / `lt`）的字段值与阈值两侧都按 `TrimSpace` 后的形态解析，非数值恒不命中——流水线谓词与 `compiledCond` 同一口径。
+2. **大小写折叠**：字符串运算符（`in` / `eq` / `contains` / `starts_with` / `ends_with` 等）两侧都做大小写折叠匹配，`compiledCond` 与 `StringPredicate` 不得一个折叠、一个不折叠。
+3. **`duplicated` 多值**：`duplicated` 在动态字段（同名请求头 / 重复查询参数）上的多值语义与其余运算符一致——流水线谓词与 `compiledCond` 都遍历全部取值；计数来源 `Fact.Seen` 恒为 nil 时两形态都恒不命中。
+4. **ip 谓词回落**：`ip` 字段上编译不出谓词的条件（如 `ip gt/lt/duplicated`）不得让流水线静默丢掉该叶子——只要有一条被 `compileCond` 接受、却编译不出谓词的叶子，整条规则**回落到树求值**，宁可放弃流水线也不留两套语义。
+
+契约由 `internal/rules/flat_tree_equivalence_test.go`（逐字段逐运算符比对两形态命中结果）与 `internal/rules/pipeline_contract_test.go` 固化。
 
 ## 代价与后果
 

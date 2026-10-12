@@ -158,7 +158,10 @@ Alongside it:
 Tenant-scoped **access disposition rules**: one condition set plus one action (ADR-0008).
 
 - **13 evaluable visitor fields**: `ip` (CIDR supported), `ipattr` (private / loopback / linklocal), `country`, `asn`, `lang`, `ref`, `utm`, `ua`, `devtype` (bot / mobile / tablet / desktop), `os`, `browser`, `path`, `domain`.
-- **Operators**: in / not in / equals / not equals / contains / not contains / greater than / less than / regex (RE2, case-sensitive). The `ip` field matches CIDR ranges or literals, and numeric comparisons never match a non-numeric value. No nested groups in v1; `logic` decides "all must match" vs. "any may match".
+- **Operators (14, byte-for-byte the `rules.ValidOperator` whitelist)**: `in` / `not_in` / `eq` / `neq` / `contains` / `not_contains` / `starts_with` / `ends_with` / `gt` / `lt` / `regex` (RE2, case-sensitive) / `in_cidr` (inside IP ranges, `ip` field only) / `not_in_cidr` (outside IP ranges, `ip` field only) / `duplicated` (occurrence count). The `ip` field matches CIDR ranges or literals, and numeric comparisons never match a non-numeric value.
+- **`duplicated` is not usable yet**: the backend whitelist accepts it and evaluation is wired to `Fact.Seen`, but the platform has no fingerprint / visit-counter data source, so `Fact.Seen` is always nil and the operator never matches. The console deliberately omits it from the operator dropdown (historical rules written straight through the API still render correctly). It will be exposed once a visit-counter source exists.
+- **Condition groups can nest**: the API `conditions` field accepts the tree form (`group` + `children`, `logic` of `all` / `any`, arbitrarily nested) and evaluation short-circuits per group `logic`; the console currently renders that structure read-only and offers no nested editing.
+- **`asn` requires an ASN enricher first**: the built-in data sources do not provide ASN. Only after an external project registers one through `FactEnricher` (`Name()` being `asn` or `asn_enricher`) does `asn` become an evaluable field; before that, writing a rule that references `asn` (flat / nested / expression form) returns **400** instead of storing a rule that can never match.
 - **Two authoring modes**: `visual` (condition tree, default) and `expression` (Expr language for advanced users, syntax checked by `POST /api/rules/validate-expr`).
 - **Actions (verdicts)**: pass `pass` (records the hit, then continues the original flow) / rewrite target `redirect` (the rewritten URL does not join the link's target round-robin) / return 404 `notfound` (records `outcome=failed`, `reason=rule_blocked`) / throttle `throttle` (returns 429, records `reason=rule_throttled`); the last two do not count as visits.
 - **Scope**: **global** applies to every link of the tenant; **specific links** applies only to explicitly associated links — the association is declared by the rule, and the rule is the single writer of that association (a link's "applicable rules" view is the same data). A link-scoped rule with zero associations never matches; the console marks that state explicitly.
@@ -195,7 +198,7 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
 - **Database init**: `migrations/init.sql` — the single source of truth for the schema — is applied automatically on boot (idempotent whole-file run, no version table).
 - **Background workers**: DNS retries, certificate probing, visit pruning, session and email-token cleanup.
 - **Pluggable mailer**: real SMTP when configured, otherwise a console mailer that prints messages to the backend log (handy in air-gapped environments).
-- **Pluggable geo source**: abstracted by capability (ADR-0009); the shipped implementation is the bundled ip2region offline database. `asn` and `is_datacenter` stay empty because no source provides them (a rule depending on them simply never matches — values are never guessed).
+- **Pluggable geo source**: abstracted by capability (ADR-0009); the shipped implementation is the bundled ip2region offline database. `asn` and `is_datacenter` stay empty because no source provides them (a rule depending on them simply never matches — values are never guessed). `asn` only becomes writable once an external ASN enricher is registered (see 2.6).
 
 ---
 
@@ -665,7 +668,7 @@ docker compose -f docker-compose.prod.yml ps
 
 - **Let's Encrypt quota**: platform default domains are issued per subdomain, subject to "50 certificates per registered domain per week (including renewals)", aggregated per platform domain (ADR-0004). Plan accordingly as you scale.
 - **Visits are retained for 90 days**, then pruned by a background worker; tune with `JANUS_VISIT_RETENTION`.
-- **Geo is an offline database**: `asn` and `is_datacenter` have no source, so rules depending on them never match (by design, values are never guessed). The xdb files in `internal/geo/data/` must be updated manually to recognize new IP ranges.
+- **Geo is an offline database**: the built-in sources provide neither `asn` nor `is_datacenter`; `asn` only becomes writable once an external ASN enricher is registered (writing a rule that references `asn` before that returns 400 — see 2.6), and values are never guessed. The xdb files in `internal/geo/data/` must be updated manually to recognize new IP ranges.
 - **The authorization endpoint is internal-only**: inactive domains are refused certificates. Never expose it publicly.
 - **Rule limits**: 200 rules per tenant; snapshots have a 1-minute TTL and are actively invalidated on write (forgetting to invalidate means a freshly saved rule silently does nothing).
 

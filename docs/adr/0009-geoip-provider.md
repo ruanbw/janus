@@ -1,5 +1,9 @@
 # IP 情报按能力抽象,静态 geo 数据做本地兜底
 
+## 状态
+
+**已被 ADR-0012 取代 (Superseded by ADR-0012)**:远程 SaaS geo 数据源已从基座删除——`Provider` 接口、`FallbackLookup` 兜底链路、IPinfo / IPQualityScore / IP-API 接入与 `JANUS_GEO_PROVIDER` / `JANUS_GEO_API_KEY` / `JANUS_GEO_TIMEOUT` 配置项均不再存在。基座只保留内嵌 ip2region 离线库解析国家码,ASN / 机房属性改由扩展点 `FactEnricher` 注入(见 ADR-0012)。下文关于远程实现与 mmdb 兜底链路的部分仅作历史记录。
+
 地理字段的注入通道已经存在(`rules.WithGeo` / `rules.Geo`),但全仓没有调用方,`country`/`asn` 恒空,依赖它们的规则条件恒不命中。接入数据源时,接口按**能力**定义而非按供应商定义:`Lookup(ip) → {country, asn, isDatacenter}`;静态 geo 数据(mmdb)与第三方 IP 情报 API 各实现一份,mmdb 同时充当本地兜底;数据源的选择是**平台级**配置,不是租户级;取不到值一律按空值处理,恒不命中。
 
 **已实现(2026-10-02)**: 完成了远程 SaaS 与兜底链路落地。抽象了 `Provider` 接口,提供 IPinfo / IPQualityScore / IP-API 等热门厂商接入;落地 `FallbackLookup`,优先远程 SaaS、网络抖动/报错/超时(默认 500ms)自动降级到本地内嵌离线库(ip2region xdb)兜底;外层包裹分片双代缓存并记住负结果。由 `JANUS_GEO_PROVIDER`、`JANUS_GEO_API_KEY`、`JANUS_GEO_TIMEOUT` 环境变量驱动平台级配置。
@@ -21,7 +25,7 @@
 - 任何实现都必须带进程内按 IP 的缓存,并且**必须缓存负结果**。不缓存负结果等于把每次查不到的 IP 都变成一次远程调用,足以打爆第三方配额。
 - 求值期仍是纯内存的:lookup 发生在构造 `Fact` 之前,不在 `Evaluate` 里,`Evaluate` 内部零 IO 这条不变式不能破。
 - 远程实现必须设定超时上限并在超时/错误时回落,超时预算的具体数值在实现时定,但"必须有上限"是硬要求。
-- `migrations/0008_visit_action_geo.sql` 的 `country` / `is_datacenter` / `asn` 三列已就位,实现只需在 Go 侧解析填充,不改表结构、不动前端——这是 ADR 0007 写下的计划,本条没有改变它。
+- `migrations/init.sql`(单文件初始化脚本,ADR-0017;原 `migrations/0008_visit_action_geo.sql` 已随增量迁移一并取消)的 `country` / `is_datacenter` / `asn` 三列已就位,实现只需在 Go 侧解析填充,不改表结构、不动前端——这是 ADR 0007 写下的计划,本条没有改变它。
 - `is_datacenter` 目前只落库供访问明细展示:规则侧只有 `FieldCountry` / `FieldASN`,`WithGeo` 也只接 country/asn。要支持"拦截机房 IP"得先给规则加可判定字段,那是另一条决策。
 - 用户可见的"地理数据源"选择项在平台级配置落地前不存在;界面上"地理数据源待接入"的占位提示已经在实现时换成实际数据源名(ip2region 离线库)。
 - 实现偏离了上文 mmdb 的具体选型:改用 ip2region xdb 而不是 MaxMind mmdb。理由是**可再分发**——ip2region 双许可 Apache-2.0/MIT,GeoLite2 要注册拿 key 且许可不允许再分发,而这份数据要随二进制分发。能力面也够用(精确到城市 + ISO 国家码)。代价是拿不到 ASN 与机房属性,这两个字段因此仍然是空的。

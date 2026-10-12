@@ -169,9 +169,16 @@ func ApplyEnrichers(ctx context.Context, r *http.Request, fact *Fact) {
 }
 ```
 
+- **可写字段与回填契约（本次落地）**：
+  - **13 个可求值字段全部可写**：富化器直接修改传入的 `*Fact`——`ip` / `ipattr` / `country` / `asn` / `lang` / `ref` / `utm` / `ua` / `devtype` / `os` / `browser` / `path` / `domain`。富化结束后基座按字段**整体回填**到求值上下文，不存在"只回填 country / asn / ip"的白名单；被富化器写过的任何字段都必须到达规则求值。
+  - **非空值胜出，空串视为「没写」**：富化器写下的非空值覆盖基座原值；写成空串（或压根没碰该字段）一律保留基座已解析的值，不会把画像清空。
+  - **派生字段 `ipattr`**：富化器**显式**写 `ipattr`（机房 / 代理 / 探针标记的落地路径）时以富化器的值为准；没碰 `ipattr` 而只改了 `ip` 时，按新 `ip` 重算 `ipattr`（`private` / `loopback` / `linklocal`，公网 IP 无属性即为空值）。两条规则不冲突：显式优先，未显式则跟随 IP。
+  - **不可解析的 `ip` 视为「没写」**：富化器写入的 `ip` 解析不出合法 IP 时保留基线 IP 并记一条告警，不写入非法值、也不清空画像。
+  - **两条注册路径同一语义**：`internal/rules` 内部注册表与公开 API `pkg/plugin` 走同一套 `Fact` 回填语义，执行顺序固定为**先内部注册表、后 `pkg/plugin`**；两侧各自做 panic 隔离（单次富化 panic 按"该维度没富化"处理并继续跑后面的富化器）。
+
 - **职责界限**：
   - **基座**：仅提取基础国家码（`ip2region`）、设备分类、操作系统、语言、Referrer。
-  - **Cloak 私有版**：通过 `RegisterEnricher` 接入 `GeoLite2-ASN.mmdb` 离线库，注入 `ASN`、机房标记及前端探针回传 Token。
+  - **Cloak 私有版**：通过 `RegisterEnricher` 接入 `GeoLite2-ASN.mmdb` 离线库，把 `ASN`、机房标记及前端探针回传 Token 直接写进 `Fact` 的对应字段（`ASN`→`asn`，机房标记→`ipattr`），回填语义见上。
 
 ---
 
