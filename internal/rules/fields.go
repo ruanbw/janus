@@ -16,6 +16,7 @@ package rules
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/netip"
@@ -400,6 +401,9 @@ const (
 	flagUAParsed
 	flagPath
 	flagDomain
+	// flagIPInjected 表示来源 IP 已被显式注入(WithIP 或富化器改写)。
+	// 置位后 ClientIP 不再回退到 RemoteAddr:注入值就是最终裁决依据。
+	flagIPInjected
 )
 
 // LazyVisitorContext 惰性求值的访客画像上下文。
@@ -468,8 +472,10 @@ func (c *LazyVisitorContext) reset() {
 // 两个生产调用点都显式调了 WithIP,所以这个洞没被触发;但任何忘了调的调用方
 // 都会静默恢复这条伪造通道。
 //
-// 删掉第二套实现之后,忘记调 WithIP 的后果是"取不到来源 IP"→ ip/ipattr 恒不命中
-// (fail-safe:不放行也不误拦),而不是"用一个可能是伪造的值去裁决"。
+// 删掉第二套实现之后,忘记调 WithIP 的后果不再是"取不到来源 IP",而是
+// "使用 TCP 直连方(RemoteAddr)"(见 ClientIP)。直连方不是访客能伪造的,所以
+// 这个兜底是 fail-safe 的;但它也不是真实访客 IP(内网反代后面只能看到反代地址)。
+// XFF 仍然绝不采信,可信代理口径仍然只能由调用方按白名单判定后经 WithIP 注入。
 func (c *LazyVisitorContext) WithIP(ip string) *LazyVisitorContext {
 	c.ipStr = ip
 	if addr, err := netip.ParseAddr(ip); err == nil {
@@ -478,7 +484,7 @@ func (c *LazyVisitorContext) WithIP(ip string) *LazyVisitorContext {
 		c.clientIP = netip.Addr{}
 	}
 	c.ipAttr = ipAttrFromAddr(c.clientIP)
-	c.flags |= flagIPAttr
+	c.flags |= flagIPAttr | flagIPInjected
 	return c
 }
 
@@ -509,12 +515,26 @@ func (c *LazyVisitorContext) ensureUAParsed() {
 	c.devType, c.os, c.browser = uaFacts(ua)
 }
 
-// ClientIP 返回**已注入**的来源 IP;没注入过就是无效地址。
+// ClientIP 返回请求来源 IP(netip.Addr 16 字节值类型,零堆分配)。
 //
-// 它不做任何解析:来源 IP 的可信口径由 httpapi 决定后经 WithIP 传进来
-// (见 WithIP 的注释)。求值期零解析是刻意的,热路径上不做第二次 IP 判定。
+// 取值必须与 Field(ip) 永远一致:否则同一份画像上"字符串算子(contains /
+// starts_with)"与"集合 / CIDR 算子(radix 用 ClientIP)"会看到两个不同的 IP,
+// 留痕与实际判定自相矛盾。
+//  1. 已注入(WithIP / 富化器改写)或已缓存的有效地址:直接返回,零解析;
+//  2. 否则回退到 TCP 直连方(RemoteAddr):解析成功就缓存下来(顺手填 ipStr)再返回。
+//
+// 绝不解析 X-Forwarded-For:可信代理口径只能由调用方经 WithIP 注入(见 WithIP 注释)。
 func (c *LazyVisitorContext) ClientIP() netip.Addr {
-	return c.clientIP
+	if c.flags&flagIPInjected != 0 || c.clientIP.IsValid() {
+		return c.clientIP
+	}
+	addr := remoteAddrIP(c.req)
+	if !addr.IsValid() {
+		return netip.Addr{}
+	}
+	c.clientIP = addr
+	c.ipStr = addr.String()
+	return addr
 }
 
 // Field 按字段名获取求值所需的属性值。未命中或无数据时 ok 为 false。
@@ -522,16 +542,11 @@ func (c *LazyVisitorContext) Field(name string) (string, bool) {
 	switch name {
 	case FieldIP:
 		if c.ipStr == "" {
-			ip := c.ClientIP()
-			if ip.IsValid() {
-				c.ipStr = ip.String()
-			} else if ip = remoteAddrIP(c.req); ip.IsValid() {
-				// 兜底只取 TCP 直连方(RemoteAddr),不碰 X-Forwarded-For:
-				// 直连方不是访客能伪造的,而 XFF 是。这里也不做 loopback/private
-				// 的信任判定 —— 那是调用方(已按 trusted-proxy 白名单做过)的事。
-				// 只接受能解析成 IP 的值:ip 字段的值必须是一个 IP 字符串,
-				// 解析不出来就留空(ip 恒不命中),不能塞一个 host 名去和
-				// 租户写的 `ip == "xxx"` 字面量比较。
+			// 与 ClientIP() 走同一条兜底路径(见其注释):两者取值必须永远一致。
+			// 只接受能解析成 IP 的值:ip 字段的值必须是一个 IP 字符串,解析不出来
+			// 就留空(ip 恒不命中),不能塞一个 host 名去和租户写的 `ip == "xxx"`
+			// 字面量比较。兜底只取 TCP 直连方,不碰 X-Forwarded-For。
+			if ip := c.ClientIP(); ip.IsValid() {
 				c.ipStr = ip.String()
 			}
 		}
@@ -678,27 +693,109 @@ func remoteAddrIP(r *http.Request) netip.Addr {
 }
 
 // ApplyEnrichers 依次执行已注册的富化器（遍历与 panic 隔离复用 enrichOne/enricherSnapshot）。
+//
+// 富化器是外部注入的代码,它对画像的写入必须完整到达求值侧 —— 这是 ADR-0012
+// 扩展点的全部价值:只回填 country/asn/ip 会让 devtype/os/browser/lang/ref/utm/ua/
+// path/domain 与 ipattr 的写入被静默丢弃,表现为"富化器注册了、规则也配好了,
+// 线上就是不生效",且没有任何报错。
+//
+// 回填口径(与 extension_test.go 的规格一致):
+//   - 富化后字段非空 → 覆盖 lazy 缓存并置"已解析"标志;
+//   - 富化后为空串 → 视为"这个富化器没写",保留富化前的基线值;
+//   - IP 只在能解析成 netip.Addr 时才算改写(否则保留基线并记一条 warn),
+//     避免 Field(ip)/ClientIP()/ipattr 三者分叉;
+//   - ipattr 默认随新 IP 重算,富化器显式写入的值优先。
 func (c *LazyVisitorContext) ApplyEnrichers(ctx context.Context, r *http.Request) {
 	list := enricherSnapshot()
 	if len(list) == 0 && !plugin.HasEnrichers() {
 		return
 	}
 
-	fact := c.ToFact()
+	// ToFact 会把 13 个字段全部解析进 lazy 缓存:base 既是"富化前画像",
+	// 也保证了下面"空串 = 保留基线"时缓存里已经有基线值。
+	base := c.ToFact()
+	fact := base
 	for _, e := range list {
 		enrichOne(e, ctx, r, &fact)
 	}
 	applyPluginEnrichers(ctx, r, &fact)
-	// 回填可能被富化的字段(如 ASN、Country、IP 等)
-	c.country = fact.Country
-	c.asn = fact.ASN
-	if fact.IP != "" && fact.IP != c.ipStr {
-		c.ipStr = fact.IP
-		c.clientIP = netip.Addr{}
+
+	c.backfillEnriched(fact, base)
+}
+
+// backfillEnriched 把富化后的画像写回 lazy 缓存。
+// 只处理"富化器可能写、且 Field 会从缓存读"的字段;动态字段(header:/query:)
+// 的取值来源是请求本身,富化器改不了,不在这里。
+func (c *LazyVisitorContext) backfillEnriched(fact, base Fact) {
+	// 13 个字段里的纯字符串字段:非空即覆盖并置位,空串保留基线。
+	// country/asn 没有解析标志(直读字段),ua/lang/ref/utm/path/domain 各自一标志。
+	if fact.Country != "" {
+		c.country = fact.Country
+	}
+	if fact.ASN != "" {
+		c.asn = fact.ASN
+	}
+	if fact.Lang != "" {
+		c.lang, c.flags = fact.Lang, c.flags|flagLang
+	}
+	if fact.Ref != "" {
+		c.ref, c.flags = fact.Ref, c.flags|flagRef
+	}
+	if fact.UTM != "" {
+		c.utm, c.flags = fact.UTM, c.flags|flagUTM
+	}
+	if fact.UA != "" {
+		c.ua, c.flags = fact.UA, c.flags|flagUA
+	}
+	if fact.Path != "" {
+		c.path, c.flags = fact.Path, c.flags|flagPath
+	}
+	if fact.Domain != "" {
+		c.domain, c.flags = fact.Domain, c.flags|flagDomain
+	}
+	// devtype/os/browser 共用 flagUAParsed:任一被富化器改写,Field 就必须直接
+	// 返回缓存值,不能再走一次 UA 解析把它覆盖回去。
+	if fact.DevType != "" {
+		c.devType, c.flags = fact.DevType, c.flags|flagUAParsed
+	}
+	if fact.OS != "" {
+		c.os, c.flags = fact.OS, c.flags|flagUAParsed
+	}
+	if fact.Browser != "" {
+		c.browser, c.flags = fact.Browser, c.flags|flagUAParsed
+	}
+
+	// IP 与派生字段 ipattr 必须一起处理:两者分叉会让 `ipattr eq private`
+	// 命中一个公网 IP(见 extension_test.go 的 ipattr 两条规格)。
+	ipChanged := false
+	if fact.IP != base.IP {
 		if addr, err := netip.ParseAddr(fact.IP); err == nil {
+			addr = addr.Unmap()
+			c.ipStr = addr.String()
 			c.clientIP = addr
+			c.flags |= flagIPInjected
+			ipChanged = true
+		} else {
+			// 不可解析 = 富化器没写(或写坏了):保留基线 IP,不制造分叉。
+			slog.Warn("富化器写入的 IP 无法解析,保留原来源 IP", "ip", fact.IP, "kept", c.ipStr)
 		}
 	}
+
+	switch {
+	case fact.IPAttr != "" && fact.IPAttr != base.IPAttr:
+		// 富化器显式写入(如机房标记 hosting):以它为准。
+		c.ipAttr = fact.IPAttr
+		c.flags |= flagIPAttr
+	case ipChanged:
+		// 富化器只改了 IP:ipattr 必须按新 IP 重算,哪怕重算结果为空。
+		c.ipAttr = ipAttrFromAddr(c.clientIP)
+		if c.ipAttr == "" {
+			c.flags &^= flagIPAttr
+		} else {
+			c.flags |= flagIPAttr
+		}
+	}
+	// 其余情况保留基线:c.ipAttr 与 flagIPAttr 原样不动。
 }
 
 // Fact 返回当前的 Fact 镜像（供拦截器判定）。

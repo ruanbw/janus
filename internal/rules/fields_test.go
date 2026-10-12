@@ -3,12 +3,15 @@ package rules
 // 访客画像提取的单元测试:纯字符串判定,不需要数据库。
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
+
+	"janus/internal/store"
 )
 
 // mustRequest 造一个带 UA / Referer / Host 的请求。
@@ -395,4 +398,162 @@ func TestLazyVisitorContext(t *testing.T) {
 
 		ReleaseVisitorContext(ctx2)
 	})
+}
+
+// TestLazyClientIPFallsBackToRemoteAddr 未调 WithIP 时,ip 的字符串算子与
+// 集合 / CIDR 算子必须看到同一个来源 IP:Field(ip) 与 ClientIP() 都回退到
+// TCP 直连方(RemoteAddr),而不是一边有值、一边恒不命中。
+// XFF 仍然绝不采信(即便 RemoteAddr 是内网反代)。
+func TestLazyClientIPFallsBackToRemoteAddr(t *testing.T) {
+	r := mustRequest(t, "http://x.test/p", "", "ua")
+	r.RemoteAddr = "10.1.2.3:1234"
+	r.Header.Set("X-Forwarded-For", "198.51.100.7")
+
+	v := AcquireVisitorContext(r, "", "")
+	defer ReleaseVisitorContext(v)
+
+	got, ok := v.Field(FieldIP)
+	if !ok || got != "10.1.2.3" {
+		t.Fatalf("Field(ip) = (%q, %v), want (10.1.2.3, true):未注入时应回退 TCP 直连方", got, ok)
+	}
+	if cip := v.ClientIP().String(); cip != got {
+		t.Fatalf("ClientIP() = %q 与 Field(ip) = %q 分叉:两套口径必须一致", cip, got)
+	}
+	if attr, ok := v.Field(FieldIPAttr); !ok || attr != IPAttrPrivate {
+		t.Fatalf("Field(ipattr) = (%q, %v), want (private, true)", attr, ok)
+	}
+
+	// 集合 / CIDR 算子(radix 走 ClientIP)与字符串算子必须命中同一个 IP。
+	snap := NewSnapshot([]store.Rule{oneRule(1, store.RuleCondition{
+		Field: FieldIP, Operator: OpInCIDR, Values: []string{"10.0.0.0/8"},
+	})}, discardLog)
+	if _, matched := snap.Evaluate(v, 1); !matched {
+		t.Fatal("`ip in_cidr 10.0.0.0/8` 未命中:集合算子与 Field(ip) 看到的不是同一个 IP")
+	}
+
+	// 非法 RemoteAddr:两者都取不到值(恒不命中),而不是空串"匹配一切"。
+	bad := mustRequest(t, "http://x.test/p", "", "ua")
+	bad.RemoteAddr = "not-an-ip:1234"
+	bv := AcquireVisitorContext(bad, "", "")
+	defer ReleaseVisitorContext(bv)
+	if got, ok := bv.Field(FieldIP); ok || got != "" {
+		t.Fatalf("非法 RemoteAddr 时 Field(ip) = (%q, %v), want 空(恒不命中)", got, ok)
+	}
+	if bv.ClientIP().IsValid() {
+		t.Fatalf("非法 RemoteAddr 时 ClientIP() = %v, want 无效地址", bv.ClientIP())
+	}
+	if attr, ok := bv.Field(FieldIPAttr); ok || attr != "" {
+		t.Fatalf("非法 RemoteAddr 时 Field(ipattr) = (%q, %v), want 空", attr, ok)
+	}
+}
+
+// derivedRewriteEnricher 直接改 Fact 的导出字段(IP / ipattr),
+// 模拟私有版富化器:机房标记、探针回传等。
+// setIP 用来区分"富化器没碰 IP"与"富化器把 IP 写成了某个值"。
+type derivedRewriteEnricher struct {
+	setIP bool
+	ip    string
+	attr  string
+}
+
+func (derivedRewriteEnricher) Name() string { return "derived_rewrite" }
+
+func (e derivedRewriteEnricher) Enrich(_ context.Context, _ *http.Request, fact *Fact) {
+	if e.setIP {
+		fact.IP = e.ip
+	}
+	if e.attr != "" {
+		fact.IPAttr = e.attr
+	}
+}
+
+// TestEnricherUnparseableIPKeepsBaselineConsistent 富化器写一个解析不出 IP 的值时,
+// 视为"没写":保留基线来源 IP,且 Field(ip)/ClientIP()/ipattr 三者自洽,
+// 不能出现"Field(ip) 是坏串、ClientIP() 是空、ipattr 还是旧值"这种分叉。
+func TestEnricherUnparseableIPKeepsBaselineConsistent(t *testing.T) {
+	ResetEnrichers()
+	defer ResetEnrichers()
+
+	req, _ := http.NewRequest(http.MethodGet, "http://example.com/x", nil)
+	req.RemoteAddr = "10.1.2.3:1234"
+	v := AcquireVisitorContext(req, "", "").WithIP("10.1.2.3")
+	defer ReleaseVisitorContext(v)
+
+	RegisterEnricher(derivedRewriteEnricher{setIP: true, ip: "not-an-ip"})
+	v.ApplyEnrichers(context.Background(), req)
+
+	got, ok := v.Field(FieldIP)
+	if !ok || got != "10.1.2.3" {
+		t.Fatalf("Field(ip) = (%q, %v), want (10.1.2.3, true):不可解析的写入必须当作没写", got, ok)
+	}
+	if cip := v.ClientIP().String(); cip != got {
+		t.Fatalf("ClientIP() = %q, want %q(与 Field(ip) 一致)", cip, got)
+	}
+	if attr, ok := v.Field(FieldIPAttr); !ok || attr != IPAttrPrivate {
+		t.Fatalf("Field(ipattr) = (%q, %v), want (private, true):基线 IP 未变,ipattr 也不该变", attr, ok)
+	}
+}
+
+// TestEnricherIPAndIPAttrWritesReachLazyField ip/ipattr 的正向写入与派生两向。
+// 13 个字段里其余 9 个的正向回填由 extension_test.go 的规格覆盖,这里不重复,
+// 只补 IP 派生链:
+//   - 富化器只改 IP(没碰 ipattr):ipattr 随最终 IP 重算;
+//   - 富化器显式写 ipattr:以富化器为准。
+func TestEnricherIPAndIPAttrWritesReachLazyField(t *testing.T) {
+	defer ResetEnrichers()
+
+	cases := []struct {
+		name         string
+		baseIP       string
+		setIP        bool
+		enrichedIP   string
+		enrichedAttr string
+		wantIP       string
+		wantAttr     string
+	}{
+		{"私网改公网:ipattr 重算为空", "10.1.2.3", true, "203.0.113.9", "", "203.0.113.9", ""},
+		{"公网改私网:ipattr 重算为 private", "203.0.113.9", true, "10.1.2.3", "", "10.1.2.3", IPAttrPrivate},
+		{"改回环:ipattr 重算为 loopback", "203.0.113.9", true, "127.0.0.1", "", "127.0.0.1", IPAttrLoopback},
+		{"显式写 ipattr 且不改 IP", "203.0.113.9", false, "", "hosting", "203.0.113.9", "hosting"},
+		{"显式写 ipattr 优先于 IP 重算", "10.1.2.3", true, "203.0.113.9", "hosting", "203.0.113.9", "hosting"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ResetEnrichers()
+			RegisterEnricher(derivedRewriteEnricher{setIP: tc.setIP, ip: tc.enrichedIP, attr: tc.enrichedAttr})
+
+			req, _ := http.NewRequest(http.MethodGet, "http://example.com/x", nil)
+			req.RemoteAddr = tc.baseIP + ":1234"
+			v := AcquireVisitorContext(req, "", "").WithIP(tc.baseIP)
+			defer ReleaseVisitorContext(v)
+
+			v.ApplyEnrichers(context.Background(), req)
+
+			if got, ok := v.Field(FieldIP); !ok || got != tc.wantIP {
+				t.Fatalf("Field(ip) = (%q, %v), want (%q, true)", got, ok, tc.wantIP)
+			}
+			if cip := v.ClientIP().String(); cip != tc.wantIP {
+				t.Fatalf("ClientIP() = %q, want %q", cip, tc.wantIP)
+			}
+			gotAttr, okAttr := v.Field(FieldIPAttr)
+			if tc.wantAttr == "" {
+				if okAttr || gotAttr != "" {
+					t.Fatalf("Field(ipattr) = (%q, %v), want 空(公网 IP 没有属性)", gotAttr, okAttr)
+				}
+			} else if !okAttr || gotAttr != tc.wantAttr {
+				t.Fatalf("Field(ipattr) = (%q, %v), want (%q, true)", gotAttr, okAttr, tc.wantAttr)
+			}
+
+			// 规则求值必须看到同一个结果(留痕与实际判定同源)。
+			if tc.wantAttr != "" {
+				snap := NewSnapshot([]store.Rule{oneRule(1, store.RuleCondition{
+					Field: FieldIPAttr, Operator: OpEq, Values: []string{tc.wantAttr},
+				})}, discardLog)
+				if _, matched := snap.Evaluate(v, 1); !matched {
+					t.Fatalf("`ipattr eq %s` 未命中:富化后的派生字段没有到达求值", tc.wantAttr)
+				}
+			}
+		})
+	}
 }
