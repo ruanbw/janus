@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -484,5 +485,81 @@ func TestExpressionRefsRejectsUnparseable(t *testing.T) {
 		if refs[i] != want[i] {
 			t.Fatalf("refs = %v, want %v(应按字典序)", refs, want)
 		}
+	}
+}
+
+// ---------- 03:区间运算符 `..` 与 typed-nil 防御 ----------
+
+// TestExprRangeOperatorRejected 钉住"区间运算符被 AST 审计拒绝"。
+//
+// `..` 构造的是惰性区间集合,长度与表达式字节数无关(1..262143 只有 11 字节),
+// 而 max/min/… 会把整个区间展开成实参 —— 实测 max(1..262143) > 0 每次求值
+// 约 16.5ms / 分配约 6MB,并且穿过了 256KB 的 MemoryBudget。拒掉 `..` 之后,
+// 构造无界集合的唯一写法(字面量数组)受 MaxExpressionLen=4096 限制,放大被封死。
+func TestExprRangeOperatorRejected(t *testing.T) {
+	// 任务验收点 1:in 右侧的区间(编译器会优化成区间比较,但构造仍应被拒)
+	if err := ValidateExpression(`0 in 1..262143`); err == nil {
+		t.Fatal("表达式 \"0 in 1..262143\" 必须编译失败:区间运算符会构造无界集合")
+	}
+	// 任务验收点 2:把整个区间喂给内置函数(真正的放大路径)
+	if _, err := CompileExpression(`max(1..100000) > 0`); err == nil {
+		t.Fatal("表达式 \"max(1..100000) > 0\" 必须编译失败")
+	}
+	// 其它等价形态一并锁死,防止只在某一种 AST 形态上加了判断
+	for _, code := range []string{
+		`max(1..100000) > 0`,
+		`min(1..100000) > 0`,
+		`len(1..10) > 0`,
+		`1 in 1..10`,
+		`10 in 1..262143`,
+		`(1..10)[0] == 1`,
+	} {
+		t.Run(code, func(t *testing.T) {
+			err := ValidateExpression(code)
+			if err == nil {
+				t.Fatalf("表达式 %q 应被拒绝", code)
+			}
+			if !strings.Contains(err.Error(), "区间运算符") {
+				t.Fatalf("报错应说明是区间运算符问题, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestExprBoundedFormsStillCompile 正向对照:拒掉 `..` 不能误伤有界的既有写法。
+func TestExprBoundedFormsStillCompile(t *testing.T) {
+	for _, code := range []string{
+		`1 in [1,2,3]`,
+		`ua contains "bot" || ip == "1.2.3.4"`,
+		`Country in ["US","CA"]`,
+		`max(len(UA), len(Path)) > 0`,
+	} {
+		t.Run(code, func(t *testing.T) {
+			if err := ValidateExpression(code); err != nil {
+				t.Fatalf("有界写法 %q 应仍然合法: %v", code, err)
+			}
+		})
+	}
+}
+
+// TestFactFromContextTypedNilFact 钉住 typed-nil 防御。
+//
+// `var p *Fact; var ctx VisitorContext = p` 时接口非 nil,类型断言成功但值是 nil,
+// 旧实现随后 ctx.ClientIP() 会 panic —— 这是一条纯输入驱动的崩溃路径。
+// 修正后必须返回零值 Fact 且不 panic。
+func TestFactFromContextTypedNilFact(t *testing.T) {
+	var p *Fact
+	var ctx VisitorContext = p
+	var got Fact
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				t.Fatalf("typed-nil *Fact 让 FactFromContext panic: %v", rec)
+			}
+		}()
+		got = FactFromContext(ctx)
+	}()
+	if !reflect.DeepEqual(got, Fact{}) {
+		t.Fatalf("typed-nil *Fact 应返回零值 Fact, got %+v", got)
 	}
 }

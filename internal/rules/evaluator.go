@@ -156,13 +156,16 @@ func (e *exprEvaluator) Match(ctx VisitorContext) (matched bool) {
 // 而每个泄漏的 goroutine 还占着栈。实测开销 642ns/5 allocs(直跑 150ns/1 alloc),
 // 放在跳转热路径上不划算,换来的却只是一个"不再等它"的假象。
 //
-// 所以预算的**主体在编译期**:长度上限、节点上限、禁用全部内置函数、拒绝谓词类
-// 内置函数 —— 四者合起来让字节码里**不可能出现回跳**,即不存在循环,
-// 求值步数被字节码长度静态封顶。runProgram 里的两道兜底只负责最后这一层意外:
+// 所以预算的**主体在编译期**:长度上限、节点上限、禁用全部内置函数,再由 AST 审计
+// 拒掉谓词类内置函数与区间运算符 `..`,内置函数白名单只放行有界 O(n) 的字符串/数值
+// 计算 —— 合起来让字节码里不存在循环构造,求值步数因而有上界。
+// runProgram 里的两道兜底只负责最后这一层意外:
 //
-//   - MemoryBudget:expr 自带的分配预算,超了 panic,被 Run 内部 recover 成 error;
-//   - 超时:兜住"上界估计错了"的情况(例如将来 expr 升级引入了新的循环构造)。
-//     因为字节码无回跳,被放弃的 goroutine 一定会在极短时间内自行结束,不是泄漏。
+//   - MemoryBudget:expr 自带的分配预算,超了 panic,被 Run 内部 recover 成 error。
+//     它只覆盖走了 memGrow 的操作,不是"分配有界"的完整保证 —— 白名单才是主约束;
+//   - 超时(1ms):兜住"上界估计错了"的情况(例如将来 expr 升级引入了新的循环构造)。
+//     超时只是"不再等待";因为没有循环构造,被放弃的 goroutine 一定会在极短时间内
+//     自行结束,不是泄漏。
 func runProgram(prog *vm.Program, env exprFact, log *slog.Logger) (any, error) {
 	// MemoryBudget 压到远低于 expr 默认值(1MB):表达式环境只有 13 个字符串,
 	// 正常求值的分配是个位数,给 256KB 已经宽到不可能误伤,又足以挡住
@@ -212,7 +215,13 @@ func logExprRunError(log *slog.Logger, err error) {
 
 // FactFromContext 将 VisitorContext 转换为 Fact 结构体实例。
 func FactFromContext(ctx VisitorContext) Fact {
-	if f, ok := ctx.(*Fact); ok && f != nil {
+	// *Fact 分支必须先于 ctx == nil 判断:接口里的 typed-nil(如 `var p *Fact;
+	// var ctx VisitorContext = p`)既不等于 nil,断言又会成功但拿到 f == nil,
+	// 继续往下走 ctx.ClientIP() 会 panic。这里先认类型,再认空值。
+	if f, ok := ctx.(*Fact); ok {
+		if f == nil {
+			return Fact{}
+		}
 		return *f
 	}
 	if ctx == nil {
@@ -348,11 +357,12 @@ var exprPredicates = map[string]struct{}{
 	"groupBy": {}, "sortBy": {}, "reduce": {},
 }
 
-// exprAudit 编译前审一遍 AST:拒绝谓词类内置函数。
+// exprAudit 编译前审一遍 AST:拒绝谓词类内置函数与区间运算符。
 //
 // 为什么必须单独审:见 exprPredicates 的注释 —— DisableAllBuiltins 覆盖不到它们。
 // 为什么放在 expr.Compile 之前单独 parse 一次:谓词在 AST 上是 *ast.BuiltinNode,
-// 只有拿到 AST 才认得出;而 expr.Compile 内部的报错绑定的是它自己那棵树。
+// 区间运算符在 AST 上是 *ast.BinaryNode(Operator == ".."),只有拿到 AST 才认得出;
+// 而 expr.Compile 内部的报错绑定的是它自己那棵树。
 func exprAudit(code string) error {
 	if n := len(code); n > MaxExpressionLen {
 		return fmt.Errorf("表达式长度 %d 超过上限 %d 字符", n, MaxExpressionLen)
@@ -369,7 +379,14 @@ func exprAudit(code string) error {
 		return nil
 	}
 	bad := ""
-	ast.Walk(&tree.Node, auditVisitor{reject: &bad})
+	rangeBad := false
+	ast.Walk(&tree.Node, auditVisitor{reject: &bad, rejectRange: &rangeBad})
+	if rangeBad {
+		// `..` 构造的是惰性区间集合:长度不受表达式长度约束(1..262143 只有 11 字节),
+		// 而 max/min/… 会把整个区间展开成实参,成本由区间长度而非字节码长度决定。
+		// 字面量数组受 MaxExpressionLen 限制,拒掉 `..` 之后就没有构造无界集合的写法了。
+		return fmt.Errorf("表达式不允许使用区间运算符 %q:它会构造无界集合,无法给出有界的计算成本", "..")
+	}
 	if bad != "" {
 		return fmt.Errorf("表达式不允许使用 %q:这类函数要遍历集合,无法给出有界的计算成本", bad)
 	}
@@ -396,19 +413,25 @@ func parseForAudit(code string) (tree *parser.Tree, err error) {
 	return parser.Parse(code)
 }
 
-// auditVisitor 找出第一个被禁的谓词类内置函数(找到就停,不用报全部)。
+// auditVisitor 找出第一个被禁的构造(找到就停,不用报全部):
+// 谓词类内置函数,以及区间运算符 `..`。
 type auditVisitor struct {
-	reject *string
+	reject      *string
+	rejectRange *bool
 }
 
 func (v auditVisitor) Visit(node *ast.Node) {
-	if *v.reject != "" {
+	if *v.reject != "" || *v.rejectRange {
 		return
 	}
 	if b, ok := (*node).(*ast.BuiltinNode); ok {
 		if _, bad := exprPredicates[b.Name]; bad {
 			*v.reject = b.Name
+			return
 		}
+	}
+	if bin, ok := (*node).(*ast.BinaryNode); ok && bin.Operator == ".." {
+		*v.rejectRange = true
 	}
 }
 
