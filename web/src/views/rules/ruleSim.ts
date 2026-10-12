@@ -55,7 +55,7 @@ export interface TraceStep {
   key: string;
   ruleId: number;
   ruleName: string;
-  status: 'hit' | 'block' | 'skip' | 'disabled';
+  status: 'hit' | 'block' | 'skip' | 'disabled' | 'unevaluable';
   statusText: string;
   facts: TraceFact[];
   whyText: string;
@@ -77,6 +77,10 @@ export function classifyIpAttr(ip: string): string {
     const range = parsed.range();
     if (range === 'loopback') return 'loopback';
     if (range === 'private') return 'private';
+    // ipaddr.js 对 fc00::/7 返回 uniqueLocal,而 Go 的 netip.Addr.IsPrivate()
+    // 把 RFC 4193 唯一本地地址也算 private(ipAttrFromAddr)。不映射的话
+    // 私网 IPv6 访客前端判空、后端判 private,模拟器画像与线上裁决对不上。
+    if (range === 'uniqueLocal') return 'private';
     if (range === 'linkLocal') return 'linklocal';
     return '';
   } catch {

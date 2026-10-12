@@ -9,6 +9,7 @@ import type {
   Rule,
   RuleAction,
   RuleCondition,
+  RuleConditionTree,
   RuleLogic,
   RuleOption,
   RulePageMode,
@@ -47,6 +48,20 @@ interface ItemsResult<T> {
   items: T[];
 }
 
+/**
+ * 条件归一:后端返回两种形态——扁平数组(存量)或条件树对象(复合条件)。
+ * 树形态必须原样保留:把它吞成 [] 会让详情/编辑页显示成「无任何条件」,
+ * 回放还会按「无条件即执行」误判命中,保存时更会把树压成一条扁平条件。
+ * 字段缺失(列表接口不带条件)时才回退成空数组。
+ */
+function normalizeConditions(
+  conditions: Rule['conditions'],
+): RuleCondition[] | RuleConditionTree {
+  if (Array.isArray(conditions)) return conditions;
+  if (conditions && conditions.type === 'group') return conditions;
+  return [];
+}
+
 /** 后端极端情况下可能漏回数组字段,统一给出契约默认值,页面无需再兜底 */
 function normalizeRule(rule: Rule): Rule {
   return {
@@ -60,7 +75,7 @@ function normalizeRule(rule: Rule): Rule {
     destination: rule.destination || '',
     pageMode: rule.pageMode === 'custom' ? 'custom' : 'default',
     customHtml: rule.customHtml || '',
-    conditions: Array.isArray(rule.conditions) ? rule.conditions : [],
+    conditions: normalizeConditions(rule.conditions),
     linkCount: typeof rule.linkCount === 'number' ? rule.linkCount : 0,
     linkNames: Array.isArray(rule.linkNames) ? rule.linkNames : [],
     linkIds: Array.isArray(rule.linkIds) ? rule.linkIds : [],

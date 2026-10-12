@@ -32,7 +32,14 @@ import { useDirtyGuard } from '@/composables/useDirtyGuard';
 import { z } from 'zod';
 import type { FormSchema } from '@/components/app/form';
 import { COUNTRY_OPTIONS } from '@/constants/countries';
-import type { Rule, RuleCondition, RuleOperator, RulePageMode, RuleScope } from '@/types/api';
+import type {
+  Rule,
+  RuleCondition,
+  RuleConditionTree,
+  RuleOperator,
+  RulePageMode,
+  RuleScope,
+} from '@/types/api';
 import { message } from '@/utils/toast';
 import {
   ACTION_OPTIONS,
@@ -48,9 +55,11 @@ import {
   OS_OPTIONS,
   actionLabel,
   actionTagColor,
+  describeConditionTree,
   dynamicFieldName,
   dynamicFieldPrefix,
   fieldOption,
+  isConditionTree,
   isValidDynamicFieldName,
   operatorLabel,
 } from './ruleMeta';
@@ -90,6 +99,13 @@ const form = reactive({
   linkIds: [] as number[],
   conditions: [] as EditableCondition[],
 });
+
+/**
+ * 编辑树形态规则时的原始条件树。
+ * 树只做只读展示:编辑器无法无损编辑 all / any 嵌套,一旦压平成扁平条件,
+ * 规则语义就变了(这正是本页此前静默改写树的问题)。保存时条件树原样保留。
+ */
+const treeConditions = ref<RuleConditionTree | null>(null);
 
 // 表单脏检查与离开拦截
 const initialFormJson = ref('');
@@ -242,6 +258,7 @@ function resetForm() {
   form.customHtml = '';
   form.linkIds = [];
   form.conditions = [newCondition()];
+  treeConditions.value = null;
   initialFormJson.value = JSON.stringify(form);
 }
 
@@ -300,29 +317,40 @@ function applyRule(rule: Rule) {
   form.pageMode = rule.pageMode || 'default';
   form.customHtml = rule.customHtml || '';
   form.linkIds = (rule.linkIds || []).slice();
-  form.conditions = (
-    rule.conditions && rule.conditions.length > 0
-      ? rule.conditions
-      : [{ field: 'ip', operator: 'in', values: [] } as unknown as RuleCondition]
-  ).map((c: RuleCondition) => ({
-    key: nextKey('cond'),
-    field: c.field,
-    operator: c.operator,
-    raw: (c.values || []).join(', '),
-  }));
+  const conditions = rule.conditions;
+  if (isConditionTree(conditions)) {
+    // 条件树:只读展示,不压平成一条扁平条件(压平 = 静默改变规则语义)
+    treeConditions.value = conditions;
+    form.conditions = [];
+  } else {
+    treeConditions.value = null;
+    form.conditions = (
+      conditions && conditions.length > 0
+        ? conditions
+        : [{ field: 'ip', operator: 'in', values: [] } as unknown as RuleCondition]
+    ).map((c: RuleCondition) => ({
+      key: nextKey('cond'),
+      field: c.field,
+      operator: c.operator,
+      raw: (c.values || []).join(', '),
+    }));
+  }
   initialFormJson.value = JSON.stringify(form);
 }
 
-const summaryChips = computed(() =>
-  form.conditions.map((cond) => {
+const summaryChips = computed(() => {
+  if (treeConditions.value) {
+    return [{ key: 'tree', text: describeConditionTree(treeConditions.value) }];
+  }
+  return form.conditions.map((cond) => {
     const opt = fieldOption(cond.field);
     const raw = cond.raw.trim();
     return {
       key: cond.key,
       text: `${opt?.label ?? cond.field} ${operatorLabel(cond.operator)} ${raw || '（空）'}`,
     };
-  }),
-);
+  });
+});
 
 const scopeSummaryText = computed(() =>
   form.scope === 'global' ? '本租户的全部' : `所关联的 ${form.linkIds.length} 条`,
@@ -543,7 +571,14 @@ function handleDelete() {
   });
 }
 
-async function doSave(payload: RuleCreatePayload, linkIds: number[]) {
+/**
+ * 保存载荷:树形态规则不能把树压成扁平数组,所以此时 conditions 缺席。
+ * 后端收到「未传 conditions」会保持原条件树不变(见 httpapi/rules.go 的更新语义),
+ * 这样改优先级 / 名称等字段不会连带改掉规则语义。
+ */
+type RuleSavePayload = Omit<RuleCreatePayload, 'conditions'> & { conditions?: RuleCondition[] };
+
+async function doSave(payload: RuleSavePayload, linkIds: number[]) {
   saving.value = true;
   try {
     if (isEdit.value && validRuleId.value !== undefined) {
@@ -551,7 +586,8 @@ async function doSave(payload: RuleCreatePayload, linkIds: number[]) {
       markClean();
       message.success(`规则「${payload.name}」已保存并生效`);
     } else {
-      await createRule(payload);
+      // 新建路径不可能带条件树(编辑器只能建扁平条件),conditions 必存在
+      await createRule({ ...payload, conditions: payload.conditions ?? [] });
       markClean();
       message.success(`规则「${payload.name}」已创建并生效`);
     }
@@ -593,7 +629,7 @@ async function onSubmit() {
   // 编辑器与后端状态精确一致（关联直接回填自 rule.linkIds），因此始终提交完整的 linkIds：
   // 传即整体替换，不传则不动关联；scope=global 传空数组，与后端「切回全局即清空关联」的语义一致。
   const linkIds = form.scope === 'links' ? [...form.linkIds] : [];
-  const payload: RuleCreatePayload = {
+  const payload: RuleSavePayload = {
     name,
     description: form.description.trim(),
     priority: (() => {
@@ -612,7 +648,8 @@ async function onSubmit() {
       (form.action === 'notfound' || form.action === 'throttle') && form.pageMode === 'custom'
         ? form.customHtml.trim()
         : '',
-    conditions,
+    // 条件树规则:不回传 conditions,后端保持原树不变;扁平规则照旧提交
+    conditions: treeConditions.value ? undefined : conditions,
     linkIds,
   };
 
@@ -828,6 +865,15 @@ onMounted(init);
                 </CardDescription>
               </CardHeader>
               <CardContent class="space-y-4">
+                <template v-if="treeConditions">
+                  <AppAlert type="warning" title="该规则使用条件树（all / any 嵌套），编辑器只读">
+                    控制台编辑器暂不支持无损编辑条件树。为避免把树压成一条扁平条件导致规则语义改变，这里只做只读展示；保存名称 / 优先级等字段时条件树保持原样。修改条件请通过 API，或先用规则模拟器查看后端裁决。
+                  </AppAlert>
+                  <p class="mono break-all whitespace-pre-wrap rounded-lg border border-line bg-surface-muted/40 p-3 text-xs leading-relaxed text-ink-soft">
+                    {{ describeConditionTree(treeConditions) }}
+                  </p>
+                </template>
+                <template v-else>
                 <div
                   v-for="(cond, idx) in form.conditions"
                   :key="cond.key"
@@ -902,10 +948,11 @@ onMounted(init);
                   <p class="mt-2 text-xs text-ink-faint">{{ conditionHint(cond) }}</p>
                 </div>
 
-                <AppButton @click="addCondition">
-                  <template #icon><Plus :size="15" /></template>
-                  添加条件
-                </AppButton>
+                  <AppButton @click="addCondition">
+                    <template #icon><Plus :size="15" /></template>
+                    添加条件
+                  </AppButton>
+                </template>
               </CardContent>
             </AppCard>
 
@@ -1031,7 +1078,9 @@ onMounted(init);
                       {{ form.scope === 'global' ? '全局' : `${form.linkIds.length} 条短链` }}
                     </dd>
                     <dt class="text-ink-faint">条件条数</dt>
-                    <dd class="text-right text-ink">{{ form.conditions.length }} 条</dd>
+                    <dd class="text-right text-ink">
+                      {{ treeConditions ? '条件树（只读）' : `${form.conditions.length} 条` }}
+                    </dd>
                     <dt class="text-ink-faint">状态</dt>
                     <dd class="text-right text-ink">{{ form.enabled ? '已启用' : '已停用' }}</dd>
                   </dl>

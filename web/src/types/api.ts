@@ -99,6 +99,27 @@ export interface RuleCondition {
   values: string[];
 }
 
+/**
+ * 条件树叶子节点:后端 wire 形态 `{"type":"leaf","leaf":{field,operator,values}}`。
+ * 条件树的子节点既可能是组也可能是叶子,用 type 判别。
+ */
+export interface RuleConditionLeafNode {
+  type: 'leaf';
+  leaf: RuleCondition;
+}
+
+/**
+ * 条件树组节点:后端 wire 形态 `{"type":"group","group":{logic,children}}`。
+ * 复合条件(all / any 嵌套)只用树表达;扁平数组是存量形态,语义在 rule.logic。
+ */
+export interface RuleConditionTree {
+  type: 'group';
+  group: {
+    logic: RuleLogic;
+    children: Array<RuleConditionTree | RuleConditionLeafNode>;
+  };
+}
+
 /** 规则。conditions 仅在 GET /api/rules/{id} 详情中保证完整,列表响应可能不带 */
 export interface Rule {
   id: number;
@@ -111,7 +132,8 @@ export interface Rule {
   action: RuleAction;
   /** action=redirect 时的改写目标,其余动作为空串 */
   destination: string;
-  conditions?: RuleCondition[];
+  /** 条件:扁平数组(存量,语义在 logic)或条件树(复合条件,语义在树上) */
+  conditions?: RuleCondition[] | RuleConditionTree;
   /** 错误页面模式: default 继承系统/租户全局设置 / custom 规则专属页面 */
   pageMode?: RulePageMode;
   /** 规则专属自定义 HTML(限 512KB) */

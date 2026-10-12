@@ -484,7 +484,7 @@
                       }}
                     </div>
                     <div
-                      v-else-if="selectedRow.matchedRule.conditions?.length"
+                      v-else-if="conditionSummary(selectedRow.matchedRule) !== '—'"
                       class="mono text-xs leading-relaxed text-ink-soft"
                     >
                       <span class="font-medium">规则条件：</span>{{ conditionSummary(selectedRow.matchedRule) }}
@@ -643,7 +643,13 @@ import { formatClock, formatCountry, formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 import { getDeviceTagColor, parseUserAgent } from '@/utils/userAgent';
 import type { ParsedUA } from '@/utils/userAgent';
-import { actionLabel, conditionSummary, describeCondition, isBlockingAction } from '@/views/rules/ruleMeta';
+import {
+  actionLabel,
+  conditionSummary,
+  describeCondition,
+  isBlockingAction,
+  isConditionTree,
+} from '@/views/rules/ruleMeta';
 import { buildDecisionTrace, loadAllRules, verdictOf } from '@/views/rules/ruleTrace';
 import type { DecisionTrace, Verdict } from '@/views/rules/ruleTrace';
 import { buildVisitorFacts, evalCondition } from '@/views/rules/ruleSim';
@@ -777,6 +783,8 @@ function simInputOf(rowOrVisit: Visit | VisitRow): SimInput {
  * 用户要求：“一个规则中会有多个条件 只展示命中的那个条件就可以了 不用展示全部条件”。
  */
 function getHitConditions(rule: Rule, visit: Visit): RuleCondition[] {
+  // 条件树无法在前端精确复算:不挑「命中的那条」,让调用方回退到 conditionSummary 的树摘要
+  if (isConditionTree(rule.conditions)) return [];
   if (!rule.conditions || rule.conditions.length === 0) return [];
   const facts = buildVisitorFacts(simInputOf(visit));
   return rule.conditions.filter((cond) => {
@@ -1056,6 +1064,9 @@ async function loadTrace(row: VisitRow) {
     const trace = await buildDecisionTrace(simInputOf(row), { link: link.value ?? undefined });
     if (trace.skippedForDetail > 0) {
       message.warning(`${trace.skippedForDetail} 条规则未取到条件，未参与本次回放`);
+    }
+    if (trace.treeCount > 0) {
+      message.warning(`${trace.treeCount} 条规则使用条件树，前端无法回放，请用规则模拟器查看`);
     }
     traceStates.value = {
       ...traceStates.value,

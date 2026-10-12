@@ -10,7 +10,7 @@
 import { listLinks } from '@/api/links';
 import { getRule, listLinkRules, listRules } from '@/api/rules';
 import type { Link, LinkRule, Rule } from '@/types/api';
-import { actionLabel, isBlockingAction } from './ruleMeta';
+import { actionLabel, isBlockingAction, isConditionTree } from './ruleMeta';
 import {
   buildVisitorFacts,
   evalCondition,
@@ -37,6 +37,8 @@ export interface DecisionTrace {
   skippedForDetail: number;
   /** 真正带条件、参与了求值的规则数 */
   evaluableCount: number;
+  /** 使用条件树、前端无法精确复算的规则数（>0 时链上会出现「请用规则模拟器查看」步骤） */
+  treeCount: number;
 }
 
 /** 拉全量规则（租户上限 200 条），避免「只能预览列表当前页」这种半吊子预览 */
@@ -116,7 +118,9 @@ export async function buildDecisionTrace(
     ordered.filter((r) => r.enabled),
     8,
     async (r) => {
-      if (r.conditions && r.conditions.length > 0) return r;
+      // 条件树与已带条件的扁平规则都无需再取详情
+      if (isConditionTree(r.conditions)) return r;
+      if (Array.isArray(r.conditions) && r.conditions.length > 0) return r;
       try {
         return await getRule(r.id);
       } catch {
@@ -125,11 +129,17 @@ export async function buildDecisionTrace(
     },
   );
   const detailOf = new Map(detailed.map((r) => [r.id, r]));
-  const skippedForDetail = detailed.filter((r) => (r.conditions?.length ?? 0) === 0).length;
-  const evaluableCount = detailed.length - skippedForDetail;
+  const treeCount = detailed.filter((r) => isConditionTree(r.conditions)).length;
+  const skippedForDetail = detailed.filter(
+    (r) => !isConditionTree(r.conditions) && (r.conditions?.length ?? 0) === 0,
+  ).length;
+  const evaluableCount = detailed.length - skippedForDetail - treeCount;
 
   const steps: TraceStep[] = [];
   let matched: Rule | null = null;
+  // 条件树无法在前端精确复算:遇到它之后不再推断后续规则是否命中,
+  // 否则会把「树规则可能已拦截」误报成「后面某条规则命中」。
+  let chainUncertain = false;
 
   for (const listed of ordered) {
     const rule = detailOf.get(listed.id) ?? listed;
@@ -175,6 +185,34 @@ export async function buildDecisionTrace(
       });
       continue;
     }
+    if (chainUncertain) {
+      steps.push({
+        key,
+        ruleId: rule.id,
+        ruleName: rule.name,
+        status: 'skip',
+        statusText: '已跳过',
+        facts: [],
+        whyText: '前序规则使用条件树，前端无法判定它是否命中，后续规则不再推断',
+      });
+      continue;
+    }
+    if (isConditionTree(rule.conditions)) {
+      // 树形态条件在前端无法精确复算(all/any 嵌套 + 各字段近似实现)。
+      // 不猜命中:如实标出「请用规则模拟器查看」,由后端裁决/留痕说话。
+      steps.push({
+        key,
+        ruleId: rule.id,
+        ruleName: rule.name,
+        status: 'unevaluable',
+        statusText: '条件树规则 · 请用规则模拟器查看',
+        facts: [],
+        whyText:
+          '该规则使用条件树（all / any 嵌套），前端无法精确复算，本回放不对它下命中 / 未命中结论；请在规则模拟器中查看后端裁决。',
+      });
+      chainUncertain = true;
+      continue;
+    }
 
     const factsOfConds = (rule.conditions ?? []).map((c) => evalCondition(c, facts));
     // 空条件组后端视为「无条件即执行」(eval.go matchAll: len(conds)==0 → true),
@@ -216,7 +254,7 @@ export async function buildDecisionTrace(
     }
   }
 
-  return { facts, steps, matched, scopeNote, skippedForDetail, evaluableCount };
+  return { facts, steps, matched, scopeNote, skippedForDetail, evaluableCount, treeCount };
 }
 
 export interface Verdict {
@@ -231,7 +269,7 @@ export interface Verdict {
 
 /** 把回放结论整理成一句话裁决，模拟器与访问明细页共用同一套措辞 */
 export function verdictOf(trace: DecisionTrace): Verdict {
-  const { evaluableCount } = trace;
+  const { evaluableCount, treeCount } = trace;
   const matched = trace.matched;
   if (matched) {
     const blocking = isBlockingAction(matched.action);
@@ -246,6 +284,18 @@ export function verdictOf(trace: DecisionTrace): Verdict {
           ? `${actionLabel(matched.action)} → ${matched.destination || '（未填写目标）'}`
           : actionLabel(matched.action),
       detailText: `依据规则「${matched.name}」（优先级 ${matched.priority}）判定；命中只计 visits，动作不灌水访问量。`,
+    };
+  }
+  if (treeCount > 0) {
+    // 有适用规则用了条件树,前端算不出它是否命中:不拿「无规则命中」当结论
+    return {
+      title: '回放不确定 · 请用规则模拟器',
+      action: 'pass',
+      matched: false,
+      blocking: false,
+      matchedRule: null,
+      actionText: '含条件树规则，前端无法精确回放',
+      detailText: `${treeCount} 条适用规则使用条件树，前端无法精确复算是否命中；请在规则模拟器中查看后端裁决。`,
     };
   }
   return {

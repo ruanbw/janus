@@ -5,7 +5,15 @@
  * 各处自己拼,同一个 `devtype` 会在列表里叫「设备类型」、在决策链里叫「UA 类型」,
  * 排障时对不上号。
  */
-import type { Rule, RuleAction, RuleCondition, RuleField, RuleLogic, RuleOperator } from '@/types/api';
+import type {
+  Rule,
+  RuleAction,
+  RuleCondition,
+  RuleConditionTree,
+  RuleField,
+  RuleLogic,
+  RuleOperator,
+} from '@/types/api';
 
 export interface FieldOption {
   value: RuleField;
@@ -192,10 +200,32 @@ export function describeCondition(cond: RuleCondition): string {
   return `${label} ${op} ${values}`;
 }
 
-/** 列表接口不回传 conditions,没有条件就不编造摘要 */
+/** conditions 是否为条件树(对象形态);扁平数组与字段缺失都返回 false */
+export function isConditionTree(
+  conditions: Rule['conditions'],
+): conditions is RuleConditionTree {
+  return !!conditions && !Array.isArray(conditions) && conditions.type === 'group';
+}
+
+/**
+ * 条件树的只读摘要:保留分组逻辑,不把树压平。
+ * 压平后「(A 且 B) 或 C」会变成「A 且 B 且 C」这类另一个规则,用户照着摘要改条件必然配错。
+ */
+export function describeConditionTree(tree: RuleConditionTree): string {
+  const logic = tree.group.logic === 'any' ? '任一' : '全部';
+  const parts = tree.group.children.map((child) =>
+    child.type === 'group' ? `(${describeConditionTree(child)})` : describeCondition(child.leaf),
+  );
+  return `${logic}满足 [${parts.join(' ; ')}]`;
+}
+
+/** 列表/回放的条件摘要:扁平数组逐条拼接,条件树保留分组逻辑;没有条件就不编造摘要 */
 export function conditionSummary(rule: Rule): string {
-  if (!rule.conditions || rule.conditions.length === 0) return '—';
-  return rule.conditions.map(describeCondition).join(' · ');
+  const conditions = rule.conditions;
+  if (!conditions) return '—';
+  if (isConditionTree(conditions)) return describeConditionTree(conditions);
+  if (conditions.length === 0) return '—';
+  return conditions.map(describeCondition).join(' · ');
 }
 
 /** 设备类型预设选项（与后端 internal/rules/fields.go 保持严格一致） */
