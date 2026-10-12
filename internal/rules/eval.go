@@ -18,11 +18,14 @@ import (
 
 // 条件运算符白名单(spec D5)。落库时只接受白名单内的运算符,
 // 其余一律在加载期被丢弃并记日志——不认识的运算符绝不能退化成"恒真"。
+//
+// eq / neq 是集合成员语义,不是"只比 values[0]":任一取值相等即肯定形式成立
+// (实现见 matchSet / matchLitMap;谓词侧 StringPredicate.posMatch 同一套口径)。
 const (
 	OpIn          = "in"           // 字段值 ∈ values
 	OpNotIn       = "not_in"       // 字段值 ∉ values
-	OpEq          = "eq"           // 字段值 = values[0]
-	OpNeq         = "neq"          // 字段值 ≠ values[0]
+	OpEq          = "eq"           // 集合成员:字段值等于 values 中任一取值(任一相等即肯定形式成立)
+	OpNeq         = "neq"          // 集合成员的否定:字段值不等于 values 中任一取值
 	OpContains    = "contains"     // 字段值包含任一 values(子串,忽略大小写)
 	OpNotContains = "not_contains" // 字段值不包含任一 values
 	OpStartsWith  = "starts_with"  // 字段值以任一 values 开头(前缀匹配,忽略大小写)
@@ -199,12 +202,15 @@ func nodeOpFor(logicAll bool) uint8 {
 	return nodeOpAny
 }
 
-// leaves 树里的叶子总数(用于"声明了 N 条却一条都不可求值"的判定)。
+// leaves 树里的叶子(用于"声明了 N 条却一条都不可求值"的判定)。
+// 顺序与求值顺序一致:先本节点内联的 conds,再按 children 递归。
+// 只递归 children 会漏掉同时挂着 conds 与 children 的节点,让 kept 小于 declared。
 func (n compiledNode) leaves() []compiledCond {
 	if len(n.children) == 0 {
 		return n.conds
 	}
-	var out []compiledCond
+	out := make([]compiledCond, 0, n.leafCount())
+	out = append(out, n.conds...)
 	for i := range n.children {
 		out = append(out, n.children[i].leaves()...)
 	}
@@ -212,20 +218,10 @@ func (n compiledNode) leaves() []compiledCond {
 }
 
 // nestedTree 树里是否出现了子组(一层 all/any 不算嵌套)。
-func (n compiledNode) nestedTree() bool {
-	if len(n.children) == 0 {
-		return false
-	}
-	if len(n.conds) > 0 {
-		return true
-	}
-	for i := range n.children {
-		if len(n.children[i].children) > 0 || n.children[i].nestedTree() {
-			return true
-		}
-	}
-	return false
-}
+// compileNode 已把单叶子内联进父节点的 conds,所以只要 children 非空就一定是真嵌套:
+// any{all[A,B]} 的根节点只有 children、没有内联叶子,旧判定会漏掉它,
+// 于是未命中理由退化成按 rules.logic 措辞的「任一条件成立即可」,与裁决自相矛盾。
+func (n compiledNode) nestedTree() bool { return len(n.children) > 0 }
 
 // leafCount 叶子总数,不给 leaves() 分配一个临时切片。
 func (n compiledNode) leafCount() int {
@@ -327,18 +323,30 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 		switch cond.Operator {
 		case OpIn, OpEq, OpNeq, OpNotIn, OpInCIDR, OpNotInCIDR:
 			var prefixes []netip.Prefix
+			kept := make([]string, 0, len(values))
 			for _, v := range values {
 				if p, err := netip.ParsePrefix(v); err == nil {
 					prefixes = append(prefixes, p)
+					kept = append(kept, v)
 					continue
 				}
 				if a, err := netip.ParseAddr(v); err == nil {
 					prefixes = append(prefixes, netip.PrefixFrom(a, a.BitLen()))
+					kept = append(kept, v)
 					continue
 				}
 			}
 			if len(prefixes) == 0 {
 				return drop("ip 值既不是合法 IP 也不是合法 CIDR")
+			}
+			if len(kept) < len(values) {
+				// 部分值非法时旧实现静默收窄集合,而 raw 仍把非法值当 Expected 回显。
+				// 这里记一条告警并让 Expected 只回显真正参与匹配的值,仿真文案才自洽。
+				// 只记租户配置,不记访客数据。
+				log.Warn("规则条件的 ip 值部分非法,非法值被忽略",
+					"rule", ruleID, "field", cond.Field,
+					"ignored", len(values)-len(kept), "values", values)
+				c.raw = kept
 			}
 			c.radix = NewIPRadixTree(prefixes)
 			return c, true
@@ -468,6 +476,8 @@ func (c *compiledCond) matchOne(ctx VisitorContext, raw string) bool {
 }
 
 // matchSet 处理 in / eq / neq / not_in / in_cidr:values 里任一相等即满足(大小写不敏感)。
+// eq / neq 与 in / not_in 同属集合成员语义(不是只比 values[0]),
+// 与 predicate 侧 StringPredicate.posMatch 保持一致。
 // ip 字段特殊:比对的是预解析在 IPRadixTree 里的前缀与单 IP,求值期零分配且 O(1)。
 // 多个运算符只共用一个 hit("访客 IP 落没落在集合/网段内"),再由 c.op 决定取反不取反——
 // 在 ip 分支里各写各的返回值会漏掉 neq,把它整体判反。
@@ -666,6 +676,9 @@ func (c *Compiled) applies(linkID int64) bool {
 // 先按首字节筛候选位置,再用 equalFoldASCII 确认,避免退化到 O(n*m)。
 func containsFold(s, sub string) bool {
 	if sub == "" {
+		// 不可达:编译期已过滤空 literal(c.lits 只收非空值),调用方 matchContains 传的 lit 恒非空。
+		// 保留"空子串被任何串包含"的数学语义而不是改成 return false:本 lane 不改匹配语义,
+		// 且此分支不参与任何实际判定。
 		return true
 	}
 	first := lowerASCII(sub[0])

@@ -382,6 +382,56 @@ func TestIPSetEmptyValueNeverMatches(t *testing.T) {
 	}
 }
 
+// ip 集合里部分值非法时:记一条告警、合法值照常参与匹配、Expected 只回显参与匹配的值。
+// 旧实现静默收窄集合,且把非法值当 Expected 回显,仿真文案与判定口径不一致。
+func TestIPCondPartialInvalidValuesWarnAndNarrow(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	cond := store.RuleCondition{
+		Field: FieldIP, Operator: OpIn,
+		Values: []string{"10.0.0.0/8", "垃圾", "203.0.113.7"},
+	}
+	c, ok := compileCond(cond, 42, log)
+	if !ok {
+		t.Fatal("部分值非法不该让整条条件失效")
+	}
+	logged := buf.String()
+	if !strings.Contains(logged, "部分非法") {
+		t.Fatalf("缺少部分非法的告警日志:\n%s", logged)
+	}
+	if !strings.Contains(logged, "rule=42") || !strings.Contains(logged, "ignored=1") {
+		t.Fatalf("告警缺少 rule/ignored 字段:\n%s", logged)
+	}
+	// 合法值仍参与匹配
+	for _, ip := range []string{"10.1.2.3", "203.0.113.7"} {
+		if !c.match(&Fact{IP: ip}) {
+			t.Fatalf("合法值 %s 应命中", ip)
+		}
+	}
+	if c.match(&Fact{IP: "8.8.8.8"}) {
+		t.Fatal("集合外的 IP 不该命中")
+	}
+	// Expected 只回显参与匹配的值
+	if len(c.raw) != 2 || c.raw[0] != "10.0.0.0/8" || c.raw[1] != "203.0.113.7" {
+		t.Fatalf("raw = %v, want [10.0.0.0/8 203.0.113.7]", c.raw)
+	}
+	// 仿真文案自洽:树形态留痕的 Expected 与判定同源
+	treeSnap := NewSnapshot([]store.Rule{
+		oneTreeRule(7, store.Group("all", store.Leaf(cond))),
+	}, discardLog)
+	res := treeSnap.Simulate(&Fact{IP: "10.1.2.3", Domain: "s.test"}, 1, nil, nil)
+	if !res.Matched {
+		t.Fatalf("合法值应让规则命中: %+v", res.Verdict)
+	}
+	exp := res.Steps[0].Conditions[0].Expected
+	if len(exp) != 2 || exp[0] != "10.0.0.0/8" || exp[1] != "203.0.113.7" {
+		t.Fatalf("仿真 Expected = %v, want 只含参与匹配的合法值", exp)
+	}
+	if strings.Contains(res.Steps[0].Conditions[0].Description, "垃圾") {
+		t.Fatalf("仿真描述不该回显非法值: %q", res.Steps[0].Conditions[0].Description)
+	}
+}
+
 func TestDecisionCarriesCustomHTML(t *testing.T) {
 	rule := store.Rule{
 		ID:         1,
@@ -822,6 +872,56 @@ func TestNestedTreeSimulateTracesEveryLeaf(t *testing.T) {
 	}
 	if !strings.Contains(step.Reason, "条件树求值未通过") || !strings.Contains(step.Reason, "0/3") {
 		t.Fatalf("未命中理由 = %q, want 提到条件树与 0/3", step.Reason)
+	}
+}
+
+// 叶子计数口径必须一致:leaves() 与 leafCount() 都要算上节点自身内联的 conds。
+// Given: all[ Leaf(A), all[B,C] ](根既有内联叶子,也有子组)。
+// When:  编译。
+// Then:  len(root.leaves()) == root.leafCount() == 3。
+func TestTreeLeavesAgreeWithLeafCount(t *testing.T) {
+	root := store.Group("all",
+		store.Leaf(store.RuleCondition{Field: FieldCountry, Operator: OpEq, Values: []string{"US"}}),
+		store.Group("all",
+			store.Leaf(store.RuleCondition{Field: FieldPath, Operator: OpEq, Values: []string{"/x"}}),
+			store.Leaf(store.RuleCondition{Field: FieldDevType, Operator: OpEq, Values: []string{"bot"}}),
+		),
+	)
+	c, ok := compileRule(oneTreeRule(1, root), discardLog)
+	if !ok {
+		t.Fatal("规则应能编译")
+	}
+	if got := len(c.root.leaves()); got != 3 {
+		t.Fatalf("leaves() 条数 = %d, want 3", got)
+	}
+	if got := c.root.leafCount(); got != 3 {
+		t.Fatalf("leafCount() = %d, want 3", got)
+	}
+}
+
+// 两层树 any{all[A,B]} 的根只有 children、没有内联叶子:未命中理由必须说"条件树",
+// 不能退化成按 rules.logic 措辞的「任一条件成立即可」——那与 any 裁决自相矛盾。
+// Given: any{ all[ country eq US, path eq /x ] },画像 country=US、path=/y。
+// When:  Simulate。
+// Then:  未命中,且理由不含「任一条件成立即可」。
+func TestNestedTreeTwoLevelMissReasonUsesTreeWording(t *testing.T) {
+	root := store.Group("any", store.Group("all",
+		store.Leaf(store.RuleCondition{Field: FieldCountry, Operator: OpEq, Values: []string{"US"}}),
+		store.Leaf(store.RuleCondition{Field: FieldPath, Operator: OpEq, Values: []string{"/x"}}),
+	))
+	rule := oneTreeRule(1, root)
+	// rules.logic 故意写 any:旧实现会据此措辞,树形态下必须改口。
+	rule.Logic = store.RuleLogicAny
+	fact := Fact{Country: "US", Path: "/y", Domain: "s.test"}
+	res := NewSnapshot([]store.Rule{rule}, discardLog).Simulate(&fact, 1, nil, nil)
+	if res.Matched {
+		t.Fatalf("any 下唯一分支 all[US,/x] 不成立,不该命中: %+v", res.Verdict)
+	}
+	if strings.Contains(res.Steps[0].Reason, "任一条件成立即可") {
+		t.Fatalf("两层树的未命中理由退化成 rules.logic 措辞: %q", res.Steps[0].Reason)
+	}
+	if !strings.Contains(res.Steps[0].Reason, "条件树求值未通过") {
+		t.Fatalf("未命中理由 = %q, want 提到条件树", res.Steps[0].Reason)
 	}
 }
 
