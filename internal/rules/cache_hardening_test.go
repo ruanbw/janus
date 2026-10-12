@@ -304,3 +304,121 @@ func TestCacheErrorAndPanicBothLeaveCacheEmpty(t *testing.T) {
 		})
 	}
 }
+
+// ---------- 08:加载失败回退上一份可用快照 + 重试退避 ----------
+
+// flakyRules 一个可控故障的 loader:calls 是调用计数,fail 为真时返错,
+// count 是"库里当前有多少条规则"(id 从 1 起,规则数变化用来证明真的重载了)。
+type flakyRules struct {
+	calls atomic.Int64
+	fail  atomic.Bool
+	count atomic.Int64
+}
+
+func (f *flakyRules) load(_ context.Context, _ int64) ([]store.Rule, error) {
+	f.calls.Add(1)
+	if f.fail.Load() {
+		return nil, errors.New("db down")
+	}
+	out := make([]store.Rule, 0, f.count.Load())
+	for id := int64(1); id <= f.count.Load(); id++ {
+		out = append(out, globalRule(id, 10))
+	}
+	return out, nil
+}
+
+// newFlakyCache 造一个"先成功后失败"的缓存:库里 1 条规则,TTL 20ms
+// (短 TTL 便于用一次 sleep 让快照过期,从而真的走到加载路径)。
+func newFlakyCache(t *testing.T) (*Cache, *flakyRules) {
+	t.Helper()
+	f := &flakyRules{}
+	f.count.Store(1)
+	log, _ := logBuf()
+	return NewCache(f.load, WithLogger(log), WithTTL(20*time.Millisecond)), f
+}
+
+// TestCacheLoaderFailureFallsBackToLastUsableSnapshot 一次 DB 抖动不能让整租户的规则失效。
+//
+// 旧实现:TTL 过期后 cached() 拒收过期快照,loader 返错又只返回空快照、不留任何标记 ——
+// 于是故障期间每个请求都重新查库,而且每次拿到 0 条规则(全量放行)。
+//
+// Given: loader 首次成功返回 1 条规则
+// When:  快照 TTL 过期后 loader 开始返错,再 Get
+// Then:  必须拿到上一份可用快照(1 条规则),而不是 0 条
+func TestCacheLoaderFailureFallsBackToLastUsableSnapshot(t *testing.T) {
+	c, f := newFlakyCache(t)
+	ctx := context.Background()
+
+	if got := len(c.Get(ctx, 1).Rules); got != 1 {
+		t.Fatalf("首次加载规则数 = %d, want 1", got)
+	}
+	f.fail.Store(true)
+	time.Sleep(30 * time.Millisecond) // 快照过期,不再算缓存命中
+
+	if got := len(c.Get(ctx, 1).Rules); got != 1 {
+		t.Fatalf("加载失败后规则数 = %d, want 1(应回退上一份可用快照,不能退回 0 条)", got)
+	}
+	if got := f.calls.Load(); got != 2 {
+		t.Fatalf("loader 调用次数 = %d, want 2(失败那次确实回库了)", got)
+	}
+}
+
+// TestCacheLoaderFailureBackoffSkipsReload 退避窗口内不重打 DB。
+//
+// Given: 上述失败状态(已有上一份可用快照 + 失败标记)
+// When:  在 loadFailureBackoff 窗口内连续 Get 多次
+// Then:  loader 调用次数不增加(每个请求都只吃上一份可用快照)
+func TestCacheLoaderFailureBackoffSkipsReload(t *testing.T) {
+	c, f := newFlakyCache(t)
+	ctx := context.Background()
+
+	c.Get(ctx, 1)
+	f.fail.Store(true)
+	time.Sleep(30 * time.Millisecond)
+	if got := len(c.Get(ctx, 1).Rules); got != 1 {
+		t.Fatalf("故障期间规则数 = %d, want 1", got)
+	}
+	afterFailure := f.calls.Load()
+
+	for i := 0; i < 20; i++ {
+		if got := len(c.Get(ctx, 1).Rules); got != 1 {
+			t.Fatalf("退避窗口内第 %d 次 Get 规则数 = %d, want 1", i, got)
+		}
+	}
+	if got := f.calls.Load(); got != afterFailure {
+		t.Fatalf("退避窗口内 loader 调用次数 = %d, want %d(不该重试)", got, afterFailure)
+	}
+}
+
+// TestCacheLoaderFailureBackoffExpiresAndReloads 退避只是拖延重试,不是把故障缓存住。
+//
+// Given: 上述失败状态
+// When:  loadFailureBackoff 过后 loader 恢复,再 Get
+// Then:  返回新快照(规则数变成 2)且失败标记被清空
+func TestCacheLoaderFailureBackoffExpiresAndReloads(t *testing.T) {
+	c, f := newFlakyCache(t)
+	ctx := context.Background()
+
+	c.Get(ctx, 1)
+	f.fail.Store(true)
+	time.Sleep(30 * time.Millisecond)
+	if got := len(c.Get(ctx, 1).Rules); got != 1 {
+		t.Fatalf("故障期间规则数 = %d, want 1", got)
+	}
+
+	// 库恢复了,而且内容变了(1 条 → 2 条):只靠 Len() 分不出"新快照"和"旧快照"
+	f.fail.Store(false)
+	f.count.Store(2)
+	time.Sleep(loadFailureBackoff + 20*time.Millisecond)
+
+	if got := len(c.Get(ctx, 1).Rules); got != 2 {
+		t.Fatalf("退避窗口过后规则数 = %d, want 2(必须重新加载)", got)
+	}
+	if got := c.Len(); got != 1 {
+		t.Fatalf("缓存租户数 = %d, want 1", got)
+	}
+	e := c.items[1]
+	if e == nil || !e.failedAt.IsZero() {
+		t.Fatalf("加载成功后失败标记没清空: %+v", e)
+	}
+}

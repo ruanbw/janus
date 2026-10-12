@@ -5,7 +5,9 @@
 //  1. 快照不可变:构造完成后只读,读侧不需要再拿锁(RLock 只用来取指针);
 //     规则变更走"整体原子替换"——旧快照在被替换前仍可安全完成本次求值。
 //  2. 加载失败 fail-open:按"这个租户没有规则"放行,且不把失败结果写进缓存
-//     (否则一次数据库抖动会被缓存成"这个租户永远没有规则")。
+//     (否则一次数据库抖动会被缓存成"这个租户永远没有规则");
+//     但有历史快照时先顶上那份(可能已过期),并在 loadFailureBackoff 窗口内
+//     不再重试 loader —— 一次抖动不该退化成每请求一次整租户查询。
 //  3. 失效靠显式调用:规则/关联变更后必须 Invalidate(该租户);
 //     TTL 只是漏调 Invalidate 时的兜底,让配置改动最迟一个 TTL 生效。
 package rules
@@ -27,6 +29,14 @@ import (
 // 这个 TTL 只防"漏调 Invalidate 导致规则永远不生效"这类静默失效:
 // 代价只是每个活跃租户每分钟一次很小的整租户查询。
 const DefaultSnapshotTTL = time.Minute
+
+// loadFailureBackoff 加载失败后的重试退避窗口。
+//
+// 理由:一次 DB 抖动不该退化成每请求一次整租户查询。load() 加载失败时既不写快照
+// 也不留任何失败标记,于是该租户的每个请求都重新查一次库(规则全量放行)——
+// 故障期间把 DB 往死里打。窗口内直接用上一份可用快照(可能已过期),
+// 窗口过后才重试 loader。
+const loadFailureBackoff = time.Second
 
 // Snapshot 一个租户在某一时刻的规则集合,按求值顺序(priority 升序, id 升序)排好。
 // 构造后不可变,多 goroutine 可并发读。
@@ -63,6 +73,9 @@ type Cache struct {
 type cacheEntry struct {
 	snap *Snapshot
 	gen  uint64
+	// failedAt 上一次加载失败的时刻(零值 = 没失败过)。
+	// 只服务 loadFailureBackoff 的退避判定,不进快照、不影响 gen 语义。
+	failedAt time.Time
 }
 
 // tenantLocks 按租户分片的加载锁:每租户一把,互不阻塞,且会在没人用时回收。
@@ -196,7 +209,8 @@ func ruleBefore(a, b *store.Rule) bool {
 }
 
 // Get 取某租户的快照:命中缓存直接返回,否则加载一份并整体原子替换(惰性加载)。
-// 加载出错时返回空快照(fail-open,放行),不写缓存。
+// 加载出错时 fail-open:有历史快照就顶上那份(可能已过期),没有才返回空快照;
+// 失败结果不写缓存,但退避窗口(loadFailureBackoff)内不再重试 loader。
 func (c *Cache) Get(ctx context.Context, tenantID int64) *Snapshot {
 	if c == nil || c.loader == nil {
 		return &Snapshot{BuiltAt: time.Now(), log: slog.Default()}
@@ -214,7 +228,9 @@ func (c *Cache) Get(ctx context.Context, tenantID int64) *Snapshot {
 			if rec := recover(); rec != nil {
 				c.log.Error("加载租户规则 panic,按无规则放行(fail-open)",
 					"tenant", tenantID, "panic", rec, "stack", string(debug.Stack()))
-				snap = &Snapshot{BuiltAt: time.Now(), log: c.log}
+				// panic 路径照旧不写缓存(不记 failedAt:退避窗口只针对 loader 明确返错),
+				// 但同样先顶上上一份可用快照,而不是直接退回"没有规则"。
+				snap = c.fallbackSnapshot(tenantID)
 			}
 		}()
 		snap = c.load(ctx, tenantID)
@@ -255,6 +271,10 @@ func (c *Cache) load(ctx context.Context, tenantID int64) *Snapshot {
 	if snap := c.cached(tenantID); snap != nil {
 		return snap
 	}
+	// 退避窗口内直接顶上上一份可用快照,不碰 loader(见 loadFailureBackoff)。
+	if snap, backoff := c.backoffSnapshot(tenantID); backoff {
+		return snap
+	}
 
 	// 在**碰数据库之前**就把这条租户的记录建好并记下当前代数。
 	// 这一步是丢失效竞态能被看见的前提:记录先存在,后面到达的 Invalidate
@@ -272,6 +292,17 @@ func (c *Cache) load(ctx context.Context, tenantID int64) *Snapshot {
 	rules, err := c.loader(ctx, tenantID)
 	if err != nil {
 		c.log.Error("加载租户规则失败,按无规则放行(fail-open)", "tenant", tenantID, "err", err)
+		// 失败标记与"读上一份可用快照"在同一把 items 锁内完成:
+		// Invalidate 会并发把 e.snap 置 nil,锁外读就是一次竞态。
+		c.mu.Lock()
+		e.failedAt = time.Now()
+		prev := e.snap
+		c.mu.Unlock()
+		// 有历史快照就用它(可能已过期):退回"这个租户没有规则"
+		// 会让整租户的规则在故障期间全部失效,比用一份略旧的配置危险得多。
+		if prev != nil {
+			return prev
+		}
 		return &Snapshot{BuiltAt: time.Now(), log: c.log}
 	}
 	snap := NewSnapshot(rules, c.log)
@@ -288,7 +319,35 @@ func (c *Cache) load(ctx context.Context, tenantID int64) *Snapshot {
 		return &Snapshot{BuiltAt: time.Now(), log: c.log}
 	}
 	e.snap = snap
+	e.failedAt = time.Time{}
 	return snap
+}
+
+// backoffSnapshot 退避窗口内的兜底:上一次加载刚失败过,窗口内不再碰 loader,
+// 直接返回上一份可用快照(可能已过期);没有历史快照就返回空快照(fail-open)。
+// 第二个返回值表示"确实处于退避窗口内",调用方不必再加载。
+func (c *Cache) backoffSnapshot(tenantID int64) (*Snapshot, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e := c.items[tenantID]
+	if e == nil || e.failedAt.IsZero() || time.Since(e.failedAt) >= loadFailureBackoff {
+		return nil, false
+	}
+	if e.snap != nil {
+		return e.snap, true
+	}
+	return &Snapshot{BuiltAt: time.Now(), log: c.log}, true
+}
+
+// fallbackSnapshot 加载失败(含 panic)时的兜底快照:有历史快照就顶上它
+// (可能已过期),没有才退回空快照 —— "这个租户没有规则"是最后的兜底,不是第一选择。
+func (c *Cache) fallbackSnapshot(tenantID int64) *Snapshot {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if e := c.items[tenantID]; e != nil && e.snap != nil {
+		return e.snap
+	}
+	return &Snapshot{BuiltAt: time.Now(), log: c.log}
 }
 
 // stale 快照是否超过兜底存活时间。
@@ -591,9 +650,13 @@ func collectTraces(n compiledNode, ctx VisitorContext, out *[]ConditionTrace) {
 	for i := range n.conds {
 		cc := &n.conds[i]
 		tr := ConditionTrace{Field: cc.field, Operator: cc.op, Expected: cc.raw}
-		tr.Actual, tr.Available = ctx.Field(cc.field)
+		// 与谓词侧 Trace(StringPredicate 等)同一口径:多值字段回显**全部**取值。
+		// 这里原来取 ctx.Field(只给第一个非空值),而 tr.Matched 来自 cc.match
+		// (遍历全部取值),于是 `header:X-Multi eq beta` 在 X-Multi: alpha, beta 上
+		// 会输出「实际为「alpha」,满足条件(等于 beta)」——一句自相矛盾的诊断。
+		tr.Actual, tr.Available = fieldValuesText(ctx, cc.field)
 		if cc.op == OpDuplicated {
-			tr.Seen = seenCount(ctx, cc.field, tr.Actual)
+			tr.Seen = maxSeenCount(ctx, cc.field)
 		}
 		tr.Matched = cc.match(ctx)
 		tr.Description = describeCond(&tr)
@@ -730,6 +793,23 @@ func fieldLabel(field string) string {
 		}
 	}
 	return field
+}
+
+// maxSeenCount 多值字段上"重复出现"的计数:取全部取值里最大的那个。
+// 判定是 any-of(任取值的计数达标即命中,见 (*compiledCond).match),
+// 留痕也必须报最大值,否则会出现「出现 3 次,未达到阈值 3 次」这种自相矛盾。
+func maxSeenCount(ctx VisitorContext, field string) int {
+	vals, ok := fieldValues(ctx, field)
+	if !ok {
+		return 0
+	}
+	max := 0
+	for _, v := range vals {
+		if n := seenCount(ctx, field, v); n > max {
+			max = n
+		}
+	}
+	return max
 }
 
 // seenCount 读"重复出现"计数,与 (*compiledCond).match 的 duplicated 分支同一份键空间。
