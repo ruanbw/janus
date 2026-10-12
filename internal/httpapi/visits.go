@@ -8,6 +8,7 @@ package httpapi
 // 读:GET /api/visits/overview —— 总览页的一次性聚合端点(见 handleVisitsOverview)。
 
 import (
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -164,7 +165,21 @@ func (a *API) recordVisit(c *gin.Context, rec store.VisitRecord) {
 	rec.Referer = c.Request.Referer()
 	rec.Lang = clientLang(c.Request)
 	rec.Country = a.visitGeo(c).Country
-	_ = a.store.InsertVisit(c.Request.Context(), rec)
+	if err := a.store.InsertVisit(c.Request.Context(), rec); err != nil {
+		if rec.RuleID == nil {
+			slog.Error("写入访问明细失败", "err", err, "linkId", rec.LinkID)
+		} else {
+			// 规则 id 不存在(插件拦截器返回了一个已删除的 id)会外键违约:
+			// 丢的是整行明细,比丢一个 rule_id 严重得多 —— 降级为"无规则裁决"再写一次。
+			ruleID := *rec.RuleID
+			rec.RuleID = nil
+			if err2 := a.store.InsertVisit(c.Request.Context(), rec); err2 != nil {
+				slog.Error("写入访问明细失败", "err", err2, "linkId", rec.LinkID)
+			} else {
+				slog.Warn("规则裁决指向不存在的规则,明细已按无规则裁决落库", "ruleId", ruleID, "err", err)
+			}
+		}
+	}
 	TriggerPostVisitHooks(c.Request.Context(), c.Request, rec)
 }
 

@@ -317,6 +317,99 @@ func TestInterceptorStillAppliesWhenLinkRulesDisabled(t *testing.T) {
 	}
 }
 
+// fixedIDInterceptor 返回一个指定 RuleID / Action 的拦截器裁决,
+// 用于验证「非法规则 id 不得把整行明细带走」。
+type fixedIDInterceptor struct {
+	id     int64
+	action string
+}
+
+func (fixedIDInterceptor) Name() string { return "fixed_id" }
+func (i fixedIDInterceptor) Intercept(context.Context, *http.Request, int64, *rules.Fact) (*rules.Decision, bool) {
+	return &rules.Decision{RuleID: i.id, Action: i.action}, true
+}
+
+// TestInterceptorInvalidRuleIDStillRecordsVisit 拦截器裁决带非法/不存在的 rule_id 时,
+// 明细行不得因为外键或 CHECK 违约而整行丢失。
+//
+// 三种失效形态各跑一次:
+//   - 负数 id:rules(id) 从 1 起,写进去就是 FK 违约;
+//   - 不存在的正数 id(插件指向一条已删除的规则):同样 FK 违约;
+//   - 自定义 action(如 proxy):visits.rule_action 的 CHECK 只允许四个内置值,
+//     直接落库就是 CHECK 违约。
+//
+// 三者旧行为都是 recordVisit 吞错 -> 访问列表里看不到这次拦截,
+// 而「拦截器到底拦没拦」恰恰只能从明细里回答。
+func TestInterceptorInvalidRuleIDStillRecordsVisit(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "badrid", "targetUrls": []string{"https://t1.example.com"}, "domainIds": []int64{lid}})
+
+	cases := []struct {
+		name   string
+		id     int64
+		action string
+	}{
+		{"负数 id", -1, store.RuleActionNotfound},
+		{"不存在的正数 id", 999999, store.RuleActionNotfound},
+		{"自定义 action", 0, "proxy"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rules.RegisterInterceptor(fixedIDInterceptor{id: tc.id, action: tc.action})
+			t.Cleanup(rules.ResetInterceptors)
+			// 自定义 action 没有注册处理器 -> 按原跳转继续(302);notfound -> 404。
+			// 两者都不该 500,也不该丢明细。
+			resp := redirectGet(t, env, "localhost", "/"+link.Code)
+			if resp.StatusCode != http.StatusFound && resp.StatusCode != http.StatusNotFound {
+				t.Fatalf("status = %d, want 302/404", resp.StatusCode)
+			}
+			_ = resp.Body.Close()
+		})
+	}
+
+	page := listVisits(t, c, link.ID, "")
+	if len(page.Items) != len(cases) {
+		t.Fatalf("访问明细 = %d 行, want %d(非法 rule_id / 自定义 action 不能把整行带走)",
+			len(page.Items), len(cases))
+	}
+	for _, it := range page.Items {
+		if it.RuleID != nil {
+			t.Fatalf("列表里的 rule_id = %v, want NULL(非法/不存在的 id 不得落库)", *it.RuleID)
+		}
+	}
+}
+
+// TestSimulateRunsInterceptorsLikeProduction 模拟器必须与线上一致地执行前置拦截器(ADR-0018 §4)。
+//
+// 线上 ruleDecision 先跑 CheckInterceptors,命中就短路;模拟器若不跑,
+// 租户看到的推演与线上行为就是两套。这里注册一个恒命中的 notfound 拦截器,
+// 断言 simulate 响应里给出「[前置拦截器拦截]」这一步且 verdict.blocked=true。
+func TestSimulateRunsInterceptorsLikeProduction(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "simicpt", "targetUrls": []string{"https://t1.example.com"}, "domainIds": []int64{lid}})
+
+	rules.RegisterInterceptor(notfoundInterceptor{})
+	t.Cleanup(rules.ResetInterceptors)
+
+	got := simulate(t, c, map[string]any{
+		"url": "https://localhost/" + link.Code, "ip": "203.0.113.7",
+	})
+	if len(got.Steps) != 1 || got.Steps[0].RuleName != "[前置拦截器拦截]" {
+		t.Fatalf("steps = %+v, want 一步 [前置拦截器拦截]", got.Steps)
+	}
+	if !got.Verdict.Blocked || got.Verdict.Action != store.RuleActionNotfound {
+		t.Fatalf("verdict = %+v, want blocked notfound", got.Verdict)
+	}
+}
+
 // TestRegisterActionHandlerRejectsUnusableRegistration 注册入口必须挡住
 // 空 action 与 nil handler：前者会让"没注册任何处理器"与"注册在空名字上"
 // 变得无法区分，后者一旦被取出调用就是一次当场 panic。

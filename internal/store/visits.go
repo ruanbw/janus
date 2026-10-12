@@ -53,7 +53,8 @@ const (
 	VisitReasonLinkDeleted    = "link_deleted"    // 短码命中但短链已逻辑删除
 	VisitReasonNoTarget       = "no_target"       // PickTarget 失败(目标 URL 列表为空)
 	VisitReasonLandingMissing = "landing_missing" // landing+upload 来源但托管文件缺失
-	// 规则裁决导致的失败(spec D4):这两种失败一定带 rule_id / rule_action。
+	// 规则裁决导致的失败(spec D4):这两种失败一定带 rule_action;
+	// rule_id 只有"存量规则裁决"才有,拦截器裁决(没有规则行)为 NULL。
 	// 与上面四种"短链自身不可用"分开——后者排在规则之前,明细里没有规则字段。
 	VisitReasonRuleBlocked   = "rule_blocked"   // 规则裁决 notfound → 404
 	VisitReasonRuleThrottled = "rule_throttled" // 规则裁决 throttle → 429

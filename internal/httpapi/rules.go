@@ -1097,6 +1097,15 @@ func (a *API) handleSimulateRules(c *gin.Context) {
 	}
 
 	res := a.ruleCache.Get(c.Request.Context(), t.ID).Simulate(vctx, linkID, onlyID, draft)
+	// 上面为了给停用规则一步 disabled 说明,把它编译成草稿喂给了 Simulate;
+	// 它不是"未落库的草稿",响应里必须把 Draft 标志改回去(前端据此显示草稿角标)。
+	if onlyRule != nil && !onlyRule.Enabled {
+		for i := range res.Steps {
+			if res.Steps[i].RuleID == onlyRule.ID {
+				res.Steps[i].Draft = false
+			}
+		}
+	}
 	steps := res.Steps
 	if steps == nil {
 		steps = []rules.StepTrace{}

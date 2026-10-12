@@ -410,11 +410,24 @@ func visitRuleFields(dec rules.Decision) (*int64, string) {
 	if dec.Action == "" {
 		return nil, ""
 	}
-	if dec.RuleID == 0 {
-		return nil, dec.Action
+	// visits.rule_action 有 CHECK 白名单(见 migrations/init.sql):插件拦截器可以返回
+	// 自定义动作(如 proxy),直接落库会 CHECK 违约 -> recordVisit 吞错 -> 整行明细丢失。
+	// 归一为空串保住明细行并留日志;动作本身仍然生效,只是不进明细枚举。
+	action := dec.Action
+	switch action {
+	case store.RuleActionPass, store.RuleActionRedirect, store.RuleActionNotfound, store.RuleActionThrottle:
+	default:
+		slog.Warn("规则裁决动作不在 visits 白名单内,明细按无动作落库", "action", action, "ruleId", dec.RuleID)
+		action = ""
+	}
+	// 非正数一律视作「没有规则行」:拦截器裁决的 RuleID 可以是 0 或 -1,
+	// 而 visits.rule_id 是 REFERENCES rules(id)(id 从 1 起),写进去就是 FK 违约。
+	// rule_action 仍要保留(拦截/放行可观测)。
+	if dec.RuleID <= 0 {
+		return nil, action
 	}
 	id := dec.RuleID
-	return &id, dec.Action
+	return &id, action
 }
 
 // applyRuleDecision 按裁决改变本次访问的结果;返回 true 表示已终结本次请求。

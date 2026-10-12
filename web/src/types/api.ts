@@ -25,7 +25,8 @@ export type VisitOutcome = 'success' | 'failed';
  *  no_target 无可用目标 / landing_missing 落地页文件缺失 */
 /** 访问失败原因。两类分开：短链自身不可用（link_* / no_target / landing_missing，
  *  排在规则求值之前，明细里没有规则字段）；rule_blocked / rule_throttled 是规则裁决
- *  导致的拦截（notfound→404 / throttle→429），后端保证这两类一定带 ruleId / ruleAction，
+ *  导致的拦截（notfound→404 / throttle→429），后端保证这两类一定带 ruleAction；
+ *  ruleId 只有存量规则裁决才有，拦截器裁决（无规则行）为 null，
  *  见 internal/store/visits.go 的 VisitReason*。 */
 export type VisitReason =
   | 'link_disabled'
