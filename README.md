@@ -455,7 +455,7 @@ pnpm dev         # http://localhost:5173,/api 代理到 http://localhost:8080
 | `JANUS_DATABASE_URL` | `postgres://janus:janus@localhost:5432/janus?sslmode=disable` | 后端直连 Postgres |
 | `JANUS_TEST_DATABASE_URL` | `…/janus_test…` | 测试库连接串(与开发库分离) |
 | `JANUS_MIGRATIONS_DIR` | `migrations` | 初始化脚本目录(内含 `init.sql`;生产容器内为 `/app/migrations`) |
-| `JANUS_SUPERADMIN_EMAIL` | 空 | 超管邮箱,启动时初始化(留空则无超管) |
+| `JANUS_SUPERADMIN_EMAIL` | 空 | 超管邮箱,启动时初始化(留空则无超管)。该邮箱若已被普通租户占用,启动**硬失败**(拒绝提权),修正邮箱后重启 |
 | `JANUS_COOKIE_SECURE` | `false` | 会话 cookie Secure 标记;开发 http 必须 false |
 | `JANUS_SESSION_TTL` / `JANUS_SESSION_TTL_SHORT` | `720h` / `24h` | 记住我 / 普通会话 |
 | `JANUS_VERIFY_TOKEN_TTL` / `JANUS_RESET_TOKEN_TTL` | `24h` / `1h` | 验证 / 重置 token 有效期 |

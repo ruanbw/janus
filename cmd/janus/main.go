@@ -51,6 +51,10 @@ func main() {
 
 	if cfg.SuperadminEmail != "" {
 		if err := bootstrap.Superadmin(ctx, st, cfg.SuperadminEmail); err != nil {
+			// 刻意硬失败(不降级为「跳过超管初始化 + 告警」):该邮箱被普通租户占用,
+			// 意味着配置里可猜的超管邮箱被抢注 —— 继续启动等于让平台以「没有超管」
+			// 的状态对外服务,而这比启动失败更难被发现。运维修正邮箱后重启即可。
+			// 拒绝提权的理由与幂等收敛见 internal/bootstrap/convergeOwnTenant。
 			log.Fatalf("init superadmin: %v", err)
 		}
 	}

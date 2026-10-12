@@ -19,7 +19,7 @@
 | `JANUS_SERVER_PUBLIC_IP` | ✅ | 服务器公网 IP,DNS 激活校验比对地址 |
 | `JANUS_DB_PASSWORD` | ✅ | Postgres 密码 |
 | `JANUS_CADDY_ASK_TOKEN` | ✅ | Caddy on-demand TLS 授权端点 `/internal/caddy/authorize` 的共享密钥,建议 `openssl rand -hex 32`。compose 以 `${JANUS_CADDY_ASK_TOKEN:?}` 同时注入 backend 与 caddy 两个容器;留空则 `docker compose up -d` 直接报错退出 |
-| `JANUS_SUPERADMIN_EMAIL` | 建议 | 平台管理员邮箱(环境变量初始化,首次登录引导设置密码) |
+| `JANUS_SUPERADMIN_EMAIL` | 建议 | 平台管理员邮箱(环境变量初始化,首次登录引导设置密码)。邮箱已被普通租户占用时启动**硬失败**(拒绝提权),修正后重启 |
 | `JANUS_ACME_EMAIL` | 建议 | Let's Encrypt 账户邮箱 |
 | `JANUS_DB_USER` / `JANUS_DB_NAME` | 可选 | 默认 `janus` / `janus` |
 | `JANUS_SESSION_TTL` / `JANUS_SESSION_TTL_SHORT` | 可选 | 会话有效期,默认 30 天 / 24 小时 |

@@ -447,7 +447,7 @@ Development defaults work out of the box; `cp .env.example .env` when you need t
 | `JANUS_DATABASE_URL` | `postgres://janus:janus@localhost:5432/janus?sslmode=disable` | Backend connection string |
 | `JANUS_TEST_DATABASE_URL` | `…/janus_test…` | Test database (separate from the dev database) |
 | `JANUS_MIGRATIONS_DIR` | `migrations` | Init script directory holding `init.sql` (`/app/migrations` in the container) |
-| `JANUS_SUPERADMIN_EMAIL` | empty | Super admin email, initialized on boot (no super admin when empty) |
+| `JANUS_SUPERADMIN_EMAIL` | empty | Super admin email, initialized on boot (no super admin when empty). If a normal tenant already owns the address, startup **fails hard** (promotion is refused); fix the email and restart |
 | `JANUS_COOKIE_SECURE` | `false` | Session cookie `Secure` flag; must be false for dev HTTP |
 | `JANUS_SESSION_TTL` / `JANUS_SESSION_TTL_SHORT` | `720h` / `24h` | Remember-me / regular session |
 | `JANUS_VERIFY_TOKEN_TTL` / `JANUS_RESET_TOKEN_TTL` | `24h` / `1h` | Verification / reset token lifetime |
