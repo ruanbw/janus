@@ -119,7 +119,7 @@ func TestSimulateResolvesDynamicFields(t *testing.T) {
 	addDomain(t, c, "localhost")
 	lid := localhostDomainID(t, c)
 	createLink(t, c, map[string]any{
-		"code":       "dynfld",
+		"code":       "dynfd",
 		"targetUrls": []string{"https://t1.example.com"},
 		"domainIds":  []int64{lid},
 	})
@@ -131,7 +131,7 @@ func TestSimulateResolvesDynamicFields(t *testing.T) {
 			{"field": "query:lang", "operator": "eq", "values": []string{"en"}},
 		},
 	})
-	url := "https://localhost/dynfld?lang=en"
+	url := "https://localhost/dynfd?lang=en"
 
 	// 1. 带上请求头 + URL 参数 → 命中
 	hit := simulate(t, c, map[string]any{"url": url, "headers": map[string]string{"X-Token": "vip"}})
