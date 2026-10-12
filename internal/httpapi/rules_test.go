@@ -1491,3 +1491,143 @@ func TestRuleIPWhitelistNotInCIDR(t *testing.T) {
 	})
 	assertStatus(t, resp, http.StatusBadRequest)
 }
+
+// ---------- 条件 values 的落库前校验与资源上限 ----------
+
+// condTreeLeaves 造一棵 logic=all 的树,children 全是叶子(用于测树形态的叶子计数)。
+func condTreeLeaves(n int) map[string]any {
+	kids := make([]any, n)
+	for i := range kids {
+		kids[i] = map[string]any{"field": "path", "operator": "eq", "values": []string{fmt.Sprintf("/p%d", i)}}
+	}
+	return map[string]any{"type": "group", "logic": "all", "children": kids}
+}
+
+// condDeepTree 造一条单链嵌套树:最深处那个叶子位于第 depth 层(根为第 1 层)。
+func condDeepTree(depth int) map[string]any {
+	var node any = map[string]any{"field": "path", "operator": "eq", "values": []string{"/x"}}
+	for i := 1; i < depth; i++ {
+		node = map[string]any{"type": "group", "logic": "all", "children": []any{node}}
+	}
+	return node.(map[string]any)
+}
+
+// TestRuleConditionValuesValidatedOnWrite 落库前必须按引擎 compileCond 的接受规则校验
+// values:引擎会丢弃的条件(空 values、非数字 gt 阈值、非正整数 duplicated、坏正则、
+// 非法 ip 值)必须在 201 之前拒掉,否则就是"能配不能跑"——加载期静默丢弃条件甚至整条规则。
+// POST / PATCH / simulate 草稿三条路径口径必须一致(草稿走 CompileDraft 本就会 400)。
+func TestRuleConditionValuesValidatedOnWrite(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	seed := createRule(t, c, baseRuleBody("种子规则"))
+	patchPath := "/api/rules/" + strconv.FormatInt(seed.ID, 10)
+
+	cases := []struct {
+		name string
+		cond map[string]any
+	}{
+		{"values 为空", map[string]any{"field": "ua", "operator": "contains", "values": []string{}}},
+		{"values 全空白", map[string]any{"field": "ua", "operator": "contains", "values": []string{"  ", ""}}},
+		{"gt 阈值非数字", map[string]any{"field": "ip", "operator": "gt", "values": []string{"abc"}}},
+		{"duplicated 非正整数", map[string]any{"field": "ip", "operator": "duplicated", "values": []string{"0"}}},
+		{"regex 含坏模式", map[string]any{"field": "ua", "operator": "regex", "values": []string{"^ok$", "("}}},
+		{"ip 值非法", map[string]any{"field": "ip", "operator": "eq", "values": []string{"不是 IP"}}},
+		{"ip 网段含非法值", map[string]any{"field": "ip", "operator": "in_cidr",
+			"values": []string{"10.0.0.0/8", "999.0.0.1"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			post := c.post("/api/rules", map[string]any{
+				"name": "坏值-" + tc.name, "action": store.RuleActionNotfound,
+				"conditions": []map[string]any{tc.cond},
+			})
+			assertStatus(t, post, http.StatusBadRequest)
+			_ = post.Body.Close()
+
+			patch := c.patch(patchPath, map[string]any{"conditions": []map[string]any{tc.cond}})
+			assertStatus(t, patch, http.StatusBadRequest)
+			_ = patch.Body.Close()
+
+			sim := c.post("/api/rules/simulate", map[string]any{
+				"url": "https://localhost/x", "ip": "203.0.113.7",
+				"draftRule": map[string]any{
+					"name": "坏草稿-" + tc.name, "action": store.RuleActionNotfound,
+					"conditions": []map[string]any{tc.cond},
+				},
+			})
+			assertStatus(t, sim, http.StatusBadRequest)
+			_ = sim.Body.Close()
+		})
+	}
+}
+
+// TestRuleConditionResourceLimits 条件资源的硬上界:超限 400,恰好到界仍可落库。
+// 租户可控配置没有上界时,加载期在跳转路径上会被放大 CPU/内存。
+func TestRuleConditionResourceLimits(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	seed := createRule(t, c, baseRuleBody("种子规则"))
+	patchPath := "/api/rules/" + strconv.FormatInt(seed.ID, 10)
+
+	values := func(n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("v%d", i)
+		}
+		return out
+	}
+	flatLeaves := func(n int) []map[string]any {
+		out := make([]map[string]any, n)
+		for i := range out {
+			out[i] = map[string]any{"field": "path", "operator": "eq", "values": []string{fmt.Sprintf("/p%d", i)}}
+		}
+		return out
+	}
+
+	over := []struct {
+		name  string
+		conds any
+	}{
+		{"101 个 values", []map[string]any{{"field": "ua", "operator": "contains", "values": values(101)}}},
+		{"65 个扁平叶子", flatLeaves(65)},
+		{"65 个树叶子", condTreeLeaves(65)},
+		{"深度 9", condDeepTree(9)},
+		{"值 1025 字节", []map[string]any{{"field": "ua", "operator": "eq", "values": []string{strings.Repeat("x", 1025)}}}},
+	}
+	for i, tc := range over {
+		t.Run(tc.name, func(t *testing.T) {
+			post := c.post("/api/rules", map[string]any{
+				"name": fmt.Sprintf("超限-%d", i), "action": store.RuleActionNotfound,
+				"conditions": tc.conds,
+			})
+			assertStatus(t, post, http.StatusBadRequest)
+			_ = post.Body.Close()
+
+			patch := c.patch(patchPath, map[string]any{"conditions": tc.conds})
+			assertStatus(t, patch, http.StatusBadRequest)
+			_ = patch.Body.Close()
+		})
+	}
+
+	// 边界绿灯:恰好在上限内的配置必须仍能落库(别把上限定得过紧)
+	within := []struct {
+		name  string
+		conds any
+	}{
+		{"100 个 values", []map[string]any{{"field": "ua", "operator": "contains", "values": values(100)}}},
+		{"64 个扁平叶子", flatLeaves(64)},
+		{"64 个树叶子", condTreeLeaves(64)},
+		{"深度 8", condDeepTree(8)},
+		{"值 1024 字节", []map[string]any{{"field": "ua", "operator": "eq", "values": []string{strings.Repeat("x", 1024)}}}},
+	}
+	for i, tc := range within {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := c.post("/api/rules", map[string]any{
+				"name": fmt.Sprintf("边界-%d", i), "action": store.RuleActionNotfound,
+				"conditions": tc.conds,
+			})
+			assertStatus(t, resp, http.StatusCreated)
+			_ = resp.Body.Close()
+		})
+	}
+}

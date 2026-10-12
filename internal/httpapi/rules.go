@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -50,6 +51,23 @@ const defaultRulePriority = 100
 // 1MB 远大于任何合法规则(最坏情况 = 512KB customHtml + 条件树 + 表达式),
 // 又小到即使被撑爆也只是一次请求的内存。
 const maxRuleBodyBytes = 1 << 20
+
+// 条件资源上限(租户可控配置必须有硬上界)。
+//
+// 为什么必须限:conditions 是租户可单方面写入的任意结构,加载期会把它编译进
+// 常驻内存的规则快照,并在跳转热路径上逐条求值。没有上界时,一条规则就能用
+// 几万个值 / 几十层嵌套把编译成本与单次求值成本放大到不可控——而这条路径在
+// 跳转热路径上,任何放大都是对全租户流量的惩罚。
+const (
+	// maxConditionValues 单条条件的 values 条数上限。
+	maxConditionValues = 100
+	// maxConditionValueLen 单个值的字节数上限(正则/CIDR 的解析成本随长度增长)。
+	maxConditionValueLen = 1024
+	// maxConditionLeaves 单规则的叶子条件总数上限(扁平与树形态统一按叶子计数)。
+	maxConditionLeaves = 64
+	// maxConditionTreeDepth 条件树深度上限(根节点记为第 1 层)。
+	maxConditionTreeDepth = 8
+)
 
 // ---------- 请求体 ----------
 
@@ -294,6 +312,9 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 // 写错的意图,而一条被静默丢弃的条件意味着规则行为和用户以为的不一样。
 func validateConditionTree(conds store.RuleConditions) error {
 	if !conds.IsTree() {
+		if len(conds.Leaves) > maxConditionLeaves {
+			return ruleErr("conditions 叶子条件数 %d 超过上限 %d", len(conds.Leaves), maxConditionLeaves)
+		}
 		for i, cond := range conds.Leaves {
 			if err := validateConditionLeaf(cond, fmt.Sprintf("conditions[%d]", i)); err != nil {
 				return err
@@ -301,30 +322,67 @@ func validateConditionTree(conds store.RuleConditions) error {
 		}
 		return nil
 	}
-	return validateConditionNode(*conds.Root, "conditions")
+	_, err := validateConditionNode(*conds.Root, "conditions", 1)
+	return err
 }
 
-func validateConditionNode(n store.ConditionNode, path string) error {
+// validateConditionNode 递归校验条件树的一个节点,返回该子树的叶子数。
+// depth 是节点层数(根为 1):树越深,加载期的编译递归与求值递归也越深,必须封顶。
+func validateConditionNode(n store.ConditionNode, path string, depth int) (int, error) {
+	if depth > maxConditionTreeDepth {
+		return 0, ruleErr("%s 条件树深度超过上限 %d", path, maxConditionTreeDepth)
+	}
 	if n.Leaf != nil {
-		return validateConditionLeaf(*n.Leaf, path)
+		return 1, validateConditionLeaf(*n.Leaf, path)
 	}
 	if n.Group == nil {
-		return ruleErr("%s 不是合法条件节点(既没有 leaf 也没有 group)", path)
+		return 0, ruleErr("%s 不是合法条件节点(既没有 leaf 也没有 group)", path)
 	}
 	if n.Group.Logic != store.RuleLogicAll && n.Group.Logic != store.RuleLogicAny {
-		return ruleErr("%s.logic 只能是 all 或 any:%s", path, n.Group.Logic)
+		return 0, ruleErr("%s.logic 只能是 all 或 any:%s", path, n.Group.Logic)
 	}
 	if len(n.Group.Children) == 0 {
-		return ruleErr("%s 是空条件组", path)
+		return 0, ruleErr("%s 是空条件组", path)
 	}
+	total := 0
 	for i, child := range n.Group.Children {
-		if err := validateConditionNode(child, fmt.Sprintf("%s.children[%d]", path, i)); err != nil {
-			return err
+		got, err := validateConditionNode(child, fmt.Sprintf("%s.children[%d]", path, i), depth+1)
+		if err != nil {
+			return 0, err
+		}
+		total += got
+		if total > maxConditionLeaves {
+			return 0, ruleErr("%s 叶子条件数超过上限 %d", path, maxConditionLeaves)
 		}
 	}
-	return nil
+	return total, nil
 }
 
+// condValue 去空白后的条件值。idx 保留它在原始 values 数组里的下标——
+// 报错必须指到用户实际写的那个位置,否则「第几个值错了」无从查起。
+// 之所以先去空白:引擎(compileCond)先 TrimSpace 再丢弃空值,校验必须同口径,
+// 否则「首值前带空格」「混入空值」两条会与引擎判定分叉。
+func condValues(raw []string) []condValue {
+	out := make([]condValue, 0, len(raw))
+	for i, v := range raw {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		out = append(out, condValue{idx: i, val: v})
+	}
+	return out
+}
+
+type condValue struct {
+	idx int
+	val string
+}
+
+// validateConditionLeaf 校验单个叶子:字段/运算符白名单之外,还按引擎 compileCond
+// 的接受规则校验 values。不校验 values 时,ip eq "不是 IP"、空 values、非数字 gt 阈值、
+// 坏正则都能 201 落库,而加载期引擎会静默丢弃条件甚至整条规则——simulate 草稿路径
+// 走 CompileDraft 会 400,两条路径口径相反。这里做对称校验:引擎会丢弃的,落库前就拒。
 func validateConditionLeaf(cond store.RuleCondition, path string) error {
 	if !rules.ValidField(cond.Field) {
 		return ruleErr("%s.field 不在可求值字段集内:%s", path, cond.Field)
@@ -337,6 +395,51 @@ func validateConditionLeaf(cond store.RuleCondition, path string) error {
 	}
 	if (cond.Operator == rules.OpInCIDR || cond.Operator == rules.OpNotInCIDR) && cond.Field != rules.FieldIP {
 		return ruleErr("%s.operator:%s 仅支持 ip 字段", path, cond.Operator)
+	}
+	if len(cond.Values) > maxConditionValues {
+		return ruleErr("%s.values 条数 %d 超过上限 %d", path, len(cond.Values), maxConditionValues)
+	}
+	for i, v := range cond.Values {
+		if len(v) > maxConditionValueLen {
+			return ruleErr("%s.values[%d] 长度 %d 超过上限 %d 字节", path, i, len(v), maxConditionValueLen)
+		}
+	}
+	values := condValues(cond.Values)
+	if len(values) == 0 {
+		return ruleErr("%s.values 去空白后为空,引擎会丢弃这条条件", path)
+	}
+	switch cond.Operator {
+	case rules.OpGT, rules.OpLT:
+		if _, err := strconv.ParseFloat(values[0].val, 64); err != nil {
+			return ruleErr("%s.values[%d] 不是数字:%s", path, values[0].idx, values[0].val)
+		}
+	case rules.OpDuplicated:
+		n, err := strconv.Atoi(values[0].val)
+		if err != nil || n < 1 {
+			return ruleErr("%s.values[%d] 必须是 >=1 的整数:%s", path, values[0].idx, values[0].val)
+		}
+	case rules.OpRegex:
+		for _, cv := range values {
+			if _, err := regexp.Compile(cv.val); err != nil {
+				return ruleErr("%s.values[%d] 不是合法正则:%v", path, cv.idx, err)
+			}
+		}
+	}
+	// ip 的集合比较(in/eq/neq/not_in/in_cidr/not_in_cidr)走预解析的 CIDR/IP 前缀树;
+	// 非法值会被引擎静默丢弃,只剩空集合时整条条件被 drop。这里逐个校验。
+	if cond.Field == rules.FieldIP {
+		switch cond.Operator {
+		case rules.OpIn, rules.OpEq, rules.OpNeq, rules.OpNotIn, rules.OpInCIDR, rules.OpNotInCIDR:
+			for _, cv := range values {
+				if _, err := netip.ParsePrefix(cv.val); err == nil {
+					continue
+				}
+				if _, err := netip.ParseAddr(cv.val); err == nil {
+					continue
+				}
+				return ruleErr("%s.values[%d] 不是合法 IP 或 CIDR:%s", path, cv.idx, cv.val)
+			}
+		}
 	}
 	return nil
 }
@@ -929,7 +1032,7 @@ func (a *API) handleSimulateRules(c *gin.Context) {
 		info := a.geo.Lookup(ip)
 		country, asn = info.Country, info.ASN
 	}
-	onlyID, err := a.simOnlyRuleID(c, t.ID, req.OnlyRuleID)
+	onlyID, onlyRule, err := a.simOnlyRuleID(c, t.ID, req.OnlyRuleID)
 	if err != nil {
 		writeAPIError(c, err)
 		return
@@ -938,6 +1041,15 @@ func (a *API) handleSimulateRules(c *gin.Context) {
 	if err != nil {
 		writeAPIError(c, err)
 		return
+	}
+	// 停用规则不进快照(NewSnapshot 过滤掉 !Enabled),只回放它时决策链会是空的,
+	// 诊断只能回答"不命中任何规则"——而真相是"这条规则已停用"。把它编译成草稿
+	// 喂给 Simulate(草稿按同 id 占一步并标 disabled),与草稿路径口径一致。
+	// 编译不出来时保持 draft 为 nil:不改变既有行为,也不新增 500。
+	if draft == nil && onlyRule != nil && !onlyRule.Enabled {
+		if compiled, ok := rules.CompileDraft(*onlyRule, nil); ok {
+			draft = compiled
+		}
 	}
 	link, note := a.simResolveLink(c.Request.Context(), t.ID, target)
 	var linkID int64
@@ -1110,20 +1222,22 @@ func isAlpha(s string) bool {
 }
 
 // simOnlyRuleID 校验 onlyRuleId:只允许回放本租户自己的规则。
-func (a *API) simOnlyRuleID(c *gin.Context, tenantID int64, id *int64) (*int64, error) {
+// 同时把查到的规则一并返回:停用规则不进快照,调用方要靠它补一条"已停用"的说明。
+func (a *API) simOnlyRuleID(c *gin.Context, tenantID int64, id *int64) (*int64, *store.Rule, error) {
 	if id == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if *id <= 0 {
-		return nil, ruleErr("onlyRuleId 必须是正整数")
+		return nil, nil, ruleErr("onlyRuleId 必须是正整数")
 	}
-	if _, err := a.store.GetRule(c.Request.Context(), tenantID, *id); err != nil {
+	r, err := a.store.GetRule(c.Request.Context(), tenantID, *id)
+	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, apiErr{status: http.StatusNotFound, code: errNotFound, message: "rule not found"}
+			return nil, nil, apiErr{status: http.StatusNotFound, code: errNotFound, message: "rule not found"}
 		}
-		return nil, err
+		return nil, nil, err
 	}
-	return id, nil
+	return id, r, nil
 }
 
 // simDraft 把草稿合成为完整规则并预编译。校验与落库走同一个 resolveRule:
