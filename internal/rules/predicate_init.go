@@ -14,8 +14,17 @@ func init() {
 		if pred, ok := compileIPRadix(cond, log); ok {
 			return pred, true
 		}
-		// 如果是 ip 的 regex，转入 regex 编译器
+		// 其他运算符按顺序依次尝试：正则 → 数值(gt/lt) → 重复(duplicated) → 通用字符串。
+		// 不能直接 return false：registry 命中精确编译器后不再回落兜底编译器，
+		// 而 compileCond 是接受 ip + gt/lt/duplicated 的。一旦这里返回 false，
+		// 整条规则会静默关闭 pipeline、回落到树求值，两种形态结论分叉。
 		if pred, ok := compileRegex(cond, log); ok {
+			return pred, true
+		}
+		if pred, ok := compileNumeric(cond, log); ok {
+			return pred, true
+		}
+		if pred, ok := compileDuplicated(cond, log); ok {
 			return pred, true
 		}
 		// 其他情况走通用字符串匹配

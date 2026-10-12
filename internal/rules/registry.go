@@ -68,12 +68,21 @@ func CompilePredicate(cond store.ConditionLeafNode, log *slog.Logger) (Condition
 		return c(cond, log)
 	}
 
-	// 2. 前缀匹配
-	for prefix, c := range prefixCompilers {
-		if strings.HasPrefix(cond.Field, prefix) {
-			compilerMu.RUnlock()
-			return c(cond, log)
+	// 2. 前缀匹配：map 迭代顺序随机，多个前缀命中同一字段时必须选出确定的一个。
+	// 取最长前缀（更具体者胜）；等长取字典序最小者，保证多次编译结果一致。
+	best, found := "", false
+	for prefix := range prefixCompilers {
+		if !strings.HasPrefix(cond.Field, prefix) {
+			continue
 		}
+		if !found || len(prefix) > len(best) || (len(prefix) == len(best) && prefix < best) {
+			best, found = prefix, true
+		}
+	}
+	if found {
+		c := prefixCompilers[best]
+		compilerMu.RUnlock()
+		return c(cond, log)
 	}
 
 	// 3. 兜底编译器

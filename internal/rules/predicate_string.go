@@ -43,15 +43,13 @@ func (p *StringPredicate) Match(ctx VisitorContext) bool {
 		if !ok || raw == "" {
 			return false
 		}
-		hit := p.posMatch(strings.ToLower(raw))
+		hit := p.posMatch(raw)
 		if p.negated() {
 			return !hit
 		}
 		return hit
 	}
-	return matchFieldValues(ctx, p.field, p.negated(), func(raw string) bool {
-		return p.posMatch(strings.ToLower(raw))
-	})
+	return matchFieldValues(ctx, p.field, p.negated(), p.posMatch)
 }
 
 // negated 运算符是否为否定形式(多值语义需要看到全部值才取反,见 matchFieldValues)。
@@ -59,40 +57,47 @@ func (p *StringPredicate) negated() bool {
 	return p.op == OpNeq || p.op == OpNotIn || p.op == OpNotContains
 }
 
-// posMatch 运算符的"肯定"形式(已小写归一的字段值是否满足)。
+// posMatch 运算符的"肯定"形式(raw 未做小写归一,折叠与 compiledCond 同一套 helper)。
 // 否定运算符先算肯定形式,取反由 matchFieldValues 在多值层面统一处理。
-func (p *StringPredicate) posMatch(val string) bool {
+//
+// 折叠语义必须与 compiledCond 逐字一致:旧实现用 strings.ToLower(raw) + == / Contains /
+// HasPrefix / HasSuffix,那会把非 ASCII 字符折叠成 ASCII(如 KELVIN SIGN → k),
+// 而 compiledCond 只在 ASCII 上折叠、非 ASCII 回退 strings.EqualFold,两者结论不同;
+// 且每次求值都为整串分配一份副本(扁平规则每次求值一次堆分配)。
+func (p *StringPredicate) posMatch(raw string) bool {
 	switch p.op {
 	case OpIn, OpNotIn, OpEq, OpNeq:
 		// eq/neq 与 in/not_in 同为「取值集合」语义:任一取值命中即肯定形式成立
 		// (多值取值集合不能只看 lits[0],否则 eq/neq 会静默收窄为第一个取值)。
+		// litMap 是小写归一后的精确命中快路径;未命中再按折叠语义线性比对。
 		if p.litMap != nil {
-			_, hit := p.litMap[val]
-			return hit
+			if _, hit := p.litMap[raw]; hit {
+				return true
+			}
 		}
 		for _, lit := range p.lits {
-			if val == lit {
+			if equalFoldASCII(raw, lit) {
 				return true
 			}
 		}
 		return false
 	case OpContains, OpNotContains:
 		for _, lit := range p.lits {
-			if strings.Contains(val, lit) {
+			if containsFold(raw, lit) {
 				return true
 			}
 		}
 		return false
 	case OpStartsWith:
 		for _, lit := range p.lits {
-			if strings.HasPrefix(val, lit) {
+			if hasPrefixFold(raw, lit) {
 				return true
 			}
 		}
 		return false
 	case OpEndsWith:
 		for _, lit := range p.lits {
-			if strings.HasSuffix(val, lit) {
+			if hasSuffixFold(raw, lit) {
 				return true
 			}
 		}

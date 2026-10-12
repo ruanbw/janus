@@ -113,8 +113,10 @@ func (p *NumericPredicate) Match(ctx VisitorContext) bool {
 }
 
 // posMatch 单个值的大小比较(非数值恒不命中)。
+// 两侧都先去空白:与 compiledCond 的 matchNumber 同一口径,
+// 否则 `utm gt 10` 在字段值 " 42" 上会一条命中、一条不命中。
 func (p *NumericPredicate) posMatch(raw string) bool {
-	f, err := strconv.ParseFloat(raw, 64)
+	f, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil {
 		return false
 	}
@@ -170,16 +172,37 @@ func (p *DuplicatedPredicate) Type() string { return "duplicated" }
 func (p *DuplicatedPredicate) Cost() int    { return 5 }
 
 func (p *DuplicatedPredicate) Match(ctx VisitorContext) bool {
-	val, ok := ctx.Field(p.field)
-	if !ok || val == "" {
+	if ctx == nil {
 		return false
 	}
-	return seenCount(ctx, p.field, val) >= p.seen
+	// 多值字段与 compiledCond 同一口径:任一取值的 Seen 计数达标即命中。
+	// 旧实现只取 ctx.Field 的首值,`header:X-Multi: alpha,beta` 上把计数
+	// 落在 beta 的画像判成不命中,与树形态分叉。
+	vals, ok := fieldValues(ctx, p.field)
+	if !ok || len(vals) == 0 {
+		return false
+	}
+	for _, v := range vals {
+		if seenCount(ctx, p.field, v) >= p.seen {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *DuplicatedPredicate) Trace(ctx VisitorContext) ConditionTrace {
 	actual, avail := fieldValuesText(ctx, p.field)
 	matched := p.Match(ctx)
+	// Seen 取全部取值里的最大计数:Matched 已是「任一取值达标」,
+	// 留痕必须与之一致(否则会出现「出现 0 次,已达到阈值」这种自相矛盾的诊断)。
+	seen := 0
+	if vals, ok := fieldValues(ctx, p.field); ok {
+		for _, v := range vals {
+			if n := seenCount(ctx, p.field, v); n > seen {
+				seen = n
+			}
+		}
+	}
 	tr := ConditionTrace{
 		Field:     p.field,
 		Operator:  OpDuplicated,
@@ -187,7 +210,7 @@ func (p *DuplicatedPredicate) Trace(ctx VisitorContext) ConditionTrace {
 		Actual:    actual,
 		Available: avail,
 		Matched:   matched,
-		Seen:      seenCount(ctx, p.field, actual),
+		Seen:      seen,
 	}
 	tr.Description = describeCond(&tr)
 	return tr

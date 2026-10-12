@@ -22,7 +22,13 @@ func NewConditionPipeline(logicAll bool, predicates []ConditionPredicate) *Condi
 }
 
 // NewOptimizedConditionPipeline 构造按执行成本（Cost）升序排序的优化流水线。
-// 在 AND 模式下将低开销算子排在前面，以最大化短路收益。
+//
+// 按 Cost 升序是 AND 模式的最优启发式：低开销算子排在前面，短路失败越早，
+// 总代价越低。OR 模式并非如此——OR 在首个 true 时短路，最优排序应让**最可能命中**
+// 的算子先跑（按命中率降序），而不是按 Cost 升序；这里只做排序启发式，
+// 不改变裁决结果（AND 全真才真、OR 任一真即真，与顺序无关）。
+//
+// 排序会改变 Predicates() 返回的顺序（供诊断/测试观察），但不会改变 Match 的结论。
 func NewOptimizedConditionPipeline(logicAll bool, predicates []ConditionPredicate) *ConditionPipeline {
 	preds := make([]ConditionPredicate, len(predicates))
 	copy(preds, predicates)
