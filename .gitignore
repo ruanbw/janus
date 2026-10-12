@@ -15,3 +15,7 @@ specs/
 target/
 # 本地私有文档，严禁推送到远程仓库
 private_docs/
+
+# 本地 agent skills（由 skills 安装器按 skills-lock.json 的 GitHub 源生成，可再生）
+.agents/
+skills-lock.json
