@@ -106,10 +106,45 @@ func TestRadixMappedIPv4Prefix(t *testing.T) {
 		t.Fatal("v4 网段没有命中映射形态的访客地址")
 	}
 
-	// 掩码短到吃进 ::ffff: 段的退化写法:整条前缀作废,不能变成"匹配一切"
-	degenerate := NewIPRadixTree([]netip.Prefix{mustPrefix(t, "::/64")})
-	if degenerate.Contains(mustAddr(t, "2001:db8::1")) {
-		t.Fatal("v6 的 /64 命中了不相关的网段")
+	// v6 的 ::/64 是货真价实的 v6 前缀(不是 v4-in-v6 的退化写法):
+	// 只覆盖 ::/64 这一段 v6 地址,不会变成"匹配一切"。
+	v6Zero := NewIPRadixTree([]netip.Prefix{mustPrefix(t, "::/64")})
+	if v6Zero.Contains(mustAddr(t, "2001:db8::1")) {
+		t.Fatal("v6 的 ::/64 命中了不相关的网段")
+	}
+	if !v6Zero.Contains(mustAddr(t, "::1")) {
+		t.Fatal("v6 的 ::/64 没命中段内的 ::1")
+	}
+}
+
+// TestRadixShortMappedPrefixIsPlainV6 掩码短于 96 位的映射前缀按普通 v6 前缀处理。
+//
+// ::ffff:1.2.3.4/95 Masked 后是 ::fffe:0:0/95 —— 那 16 位 0xffff 被掩掉了,
+// 它不再是 v4-in-v6 映射地址(掩码不短于 96 位才算"v4 网段的另一种写法")。
+// 因此它覆盖的是 v6 的 ::fffe:0:0 – ::ffff:ffff:ffff 这一段,
+// 与任何 IPv4 网段无关:Contains 会把映射形态的访客地址先 Unmap 成 v4 去查 v4 树,
+// 而这条前缀登记在 v6 树里,两者不会相遇。
+func TestRadixShortMappedPrefixIsPlainV6(t *testing.T) {
+	addr, bits := prefixAddr(mustPrefix(t, "::ffff:1.2.3.4/95"))
+	if addr != mustAddr(t, "::fffe:0:0") || bits != 95 {
+		t.Fatalf("prefixAddr = (%s, %d), want (::fffe:0:0, 95):Masked 后不再是映射前缀", addr, bits)
+	}
+
+	tr := NewIPRadixTree([]netip.Prefix{mustPrefix(t, "::ffff:1.2.3.4/95")})
+	if !tr.Contains(mustAddr(t, "::fffe:0:1")) {
+		t.Fatal("v6 /95 前缀没命中段内的 v6 地址")
+	}
+	if tr.Contains(mustAddr(t, "::fffd:0:0")) {
+		t.Fatal("v6 /95 前缀命中了段外的 v6 地址")
+	}
+	if tr.Contains(mustAddr(t, "2001:db8::1")) {
+		t.Fatal("v6 /95 前缀命中了无关网段")
+	}
+	if tr.Contains(mustAddr(t, "1.2.3.4")) {
+		t.Fatal("v6 /95 前缀命中了 v4 地址")
+	}
+	if tr.Contains(mustAddr(t, "::ffff:1.2.3.4")) {
+		t.Fatal("映射形态的访客地址被 Unmap 后按 v4 查,不该被这条 v6 前缀命中")
 	}
 }
 

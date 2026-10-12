@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"runtime/debug"
 	"sync"
+
+	"janus/pkg/plugin"
 )
 
 // RuleInterceptor 允许在遍历规则快照之前短路求值逻辑，直接给出最终决议。
@@ -77,6 +79,21 @@ func CheckInterceptors(ctx context.Context, r *http.Request, linkID int64, fact 
 		}
 	}
 	return checkPluginInterceptors(ctx, r, linkID, fact)
+}
+
+// HasInterceptors 判断是否注册过任何前置拦截器(基座内部注册表或 pkg/plugin 注册表)。
+//
+// 跳转链路用它判断"既没有规则、也没有拦截器"这条零成本快路径:
+// 只要有一侧注册了拦截器,就必须构造画像并执行拦截器 —— 外部状态驱动的
+// 全局阻断/放行(一键熔断、维护窗口)与短链的 RulesEnabled 开关、
+// 租户有没有规则都无关,不能因为"没开规则"被一起跳过。
+//
+// 只看长度、不拷贝切片:这个判断在每次访问的热路径上执行。
+func HasInterceptors() bool {
+	interceptorsLock.RLock()
+	n := len(interceptors)
+	interceptorsLock.RUnlock()
+	return n > 0 || plugin.HasInterceptors()
 }
 
 // mutate4go-manifest-begin

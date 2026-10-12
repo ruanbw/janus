@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -44,6 +45,15 @@ type panicInterceptor struct{}
 func (panicInterceptor) Name() string { return "panic_interceptor" }
 func (panicInterceptor) Intercept(context.Context, *http.Request, int64, *rules.Fact) (*rules.Decision, bool) {
 	panic("interceptor boom")
+}
+
+// notfoundInterceptor 外部状态驱动的全局熔断:任何访问都判 notfound。
+// 它不带规则 id(RuleID==0),所以裁决落进明细时 rule_id 必须是 NULL。
+type notfoundInterceptor struct{}
+
+func (notfoundInterceptor) Name() string { return "global_kill_switch" }
+func (notfoundInterceptor) Intercept(context.Context, *http.Request, int64, *rules.Fact) (*rules.Decision, bool) {
+	return &rules.Decision{Action: store.RuleActionNotfound}, true
 }
 
 type panicInjector struct{}
@@ -258,6 +268,52 @@ func TestPostVisitHookPanicKeepsServing(t *testing.T) {
 	})
 	if got := linkStats(t, c, link.ID)["visits"].(float64); got != 1 {
 		t.Fatalf("link.visits = %v, want 1(钩子 panic 不影响记账)", got)
+	}
+}
+
+// TestInterceptorStillAppliesWhenLinkRulesDisabled 一键熔断与短链的规则开关无关。
+//
+// ruleDecision 原来在 !link.RulesEnabled 时直接早退,于是"外部状态驱动的全局阻断"
+// 对未启用规则的短链(以及零规则租户)完全失效 —— 熔断开关拨了,流量照走。
+//
+// 同一条用例钉住拦截裁决的记账:拦截器没有规则 id(RuleID==0),
+// visits.rule_id 必须为 NULL。写 0 会撞 rules(id) 的外键(id 从 1 起),
+// recordVisit 吞掉错误后整行访问明细静默丢失,租户在访问列表里看不到这次拦截。
+func TestInterceptorStillAppliesWhenLinkRulesDisabled(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "icptoff", "targetUrls": []string{"https://t1.example.com"}, "domainIds": []int64{lid}})
+
+	resp := c.patch("/api/links/"+strconv.FormatInt(link.ID, 10), map[string]any{"rulesEnabled": false})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	rules.RegisterInterceptor(notfoundInterceptor{})
+	t.Cleanup(rules.ResetInterceptors)
+
+	// 拦截器生效:访客拿到 404,而不是直接跳走
+	assertStatus(t, redirectGet(t, env, "localhost", "/"+link.Code), http.StatusNotFound)
+
+	// 裁决落进明细:rule_id 为 NULL(拦截器没有规则 id),rule_action 保留
+	action, outcome, reason, ruleID, ruleAction := ruleVisit(t, env, link.ID)
+	if action != store.VisitActionRedirect || outcome != store.VisitOutcomeFailed ||
+		reason != store.VisitReasonRuleBlocked {
+		t.Fatalf("明细 = %q/%q/%q, want redirect/failed/rule_blocked", action, outcome, reason)
+	}
+	if ruleID != nil || ruleAction != store.RuleActionNotfound {
+		t.Fatalf("拦截裁决 = %v/%q, want NULL/notfound", ruleID, ruleAction)
+	}
+
+	// 访问列表接口能看到这一行:整行没丢,而不是"记了个 NULL 但行不见了"
+	page := listVisits(t, c, link.ID, "")
+	if len(page.Items) != 1 {
+		t.Fatalf("访问明细 = %d 行, want 1(拦截裁决不能丢行)", len(page.Items))
+	}
+	if page.Items[0].RuleID != nil || page.Items[0].RuleAction != store.RuleActionNotfound {
+		t.Fatalf("列表里的裁决 = %v/%q, want NULL/notfound", page.Items[0].RuleID, page.Items[0].RuleAction)
 	}
 }
 

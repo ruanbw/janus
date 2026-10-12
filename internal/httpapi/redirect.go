@@ -345,17 +345,25 @@ func (a *API) redirectToTarget(c *gin.Context, link *store.Link, targetURL strin
 	c.Redirect(status, targetURL)
 }
 
-// ruleDecision 对本次访问求值该租户的规则快照(spec D4)。
+// ruleDecision 对本次访问求值该租户的规则快照(spec D4),并在此之前执行前置拦截器。
 //
-// 无规则(空快照)时连访客画像都不构造:多数租户没有规则,这条链路不该为它付代价。
+// 两条早退口径分开看:
+//   - 无规则(空快照)且**无拦截器**时连访客画像都不构造:多数租户没有规则,
+//     这条链路不该为它付代价。
+//   - 短链的 RulesEnabled 只关掉"规则求值",不该关掉拦截器:拦截器是外部状态
+//     驱动的全局阻断/放行(一键熔断、维护窗口),对未启用规则的短链与零规则租户
+//     同样必须生效。
+//
 // 快照加载失败与求值 panic 都在 rules 包内 fail-open(记日志后按未命中返回),
 // 这里不需要也不能"重试一次"——重试只是把同一份故障再打一遍。
 func (a *API) ruleDecision(c *gin.Context, link *store.Link) rules.Decision {
-	if !link.RulesEnabled {
-		return rules.Decision{}
+	// 短链没开规则求值就不取快照;开了才取。
+	var snap *rules.Snapshot
+	if link.RulesEnabled {
+		snap = a.ruleCache.Get(c.Request.Context(), link.TenantID)
 	}
-	snap := a.ruleCache.Get(c.Request.Context(), link.TenantID)
-	if snap == nil || len(snap.Rules) == 0 {
+	hasRules := link.RulesEnabled && snap != nil && len(snap.Rules) > 0
+	if !hasRules && !rules.HasInterceptors() {
 		return rules.Decision{}
 	}
 	// 用与访问明细同一个来源 IP 构造画像,保证"明细里记的 IP"与"规则看到的 IP"一致,
@@ -380,6 +388,9 @@ func (a *API) ruleDecision(c *gin.Context, link *store.Link) rules.Decision {
 		return *intercepted
 	}
 
+	if !hasRules {
+		return rules.Decision{}
+	}
 	dec, matched := snap.Evaluate(vCtx, link.ID)
 	if !matched {
 		return rules.Decision{}
@@ -390,9 +401,17 @@ func (a *API) ruleDecision(c *gin.Context, link *store.Link) rules.Decision {
 // visitRuleFields 把裁决折成访问明细的两个字段:命中(含 pass)时非空,未命中时为空。
 // pass 也要记:契约里 ruleId/ruleAction 记的是"本次访问的规则裁决结果",
 // 放行同样是一次裁决,租户要能看出"这次访问被哪条规则看过"。
+//
+// 拦截器裁决没有规则 id(RuleID==0):rule_id 必须写 NULL。
+// visits.rule_id 是 rules(id) 的外键,而 rules.id 从 1 起 —— 写 0 会外键违约,
+// recordVisit 吞掉错误后整行访问明细静默丢失(拦截裁决反而变得不可观测)。
+// rule_action 照常保留:没有规则 id 不等于没有裁决。
 func visitRuleFields(dec rules.Decision) (*int64, string) {
 	if dec.Action == "" {
 		return nil, ""
+	}
+	if dec.RuleID == 0 {
+		return nil, dec.Action
 	}
 	id := dec.RuleID
 	return &id, dec.Action
