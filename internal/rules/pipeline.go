@@ -65,7 +65,9 @@ func (p *ConditionPipeline) Match(ctx VisitorContext) bool {
 	return false
 }
 
-// Trace 供规则模拟器使用，遍历整条流水线（不短路）并收集所有算子的诊断轨迹。
+// Trace 遍历整条流水线（不短路）并收集所有算子的诊断轨迹，供单测与诊断工具使用。
+// 线上规则模拟器走的是 compiledCond 的统一留痕(snapshot.go 的 collectTraces),
+// 不经过这里 —— 单一留痕实现,避免两套语义分叉。
 func (p *ConditionPipeline) Trace(ctx VisitorContext) []ConditionTrace {
 	traces := make([]ConditionTrace, 0, len(p.predicates))
 	for _, pred := range p.predicates {

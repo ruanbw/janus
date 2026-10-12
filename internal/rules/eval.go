@@ -317,7 +317,8 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 	}
 	c := compiledCond{field: cond.Field, op: cond.Operator, raw: values}
 	// ip 字段的集合比较(in/not_in/eq/neq/in_cidr)走预解析的前缀基数树:
-	// 单 IP 与网段都预编译进 IPRadixTree,求值期 O(1) 逐位下钻,零分配。
+	// 单 IP 与网段都预编译进 IPRadixTree,求值期 O(1) 逐位下钻。
+	// 注意:这条路径不是零分配(cidranger 每次查询 2 次小分配,实测口径见 radix.go)。
 	// 其余运算符(ip contains / ip regex 等)对 ip 按普通字符串处理。
 	if cond.Field == FieldIP {
 		switch cond.Operator {
@@ -478,7 +479,7 @@ func (c *compiledCond) matchOne(ctx VisitorContext, raw string) bool {
 // matchSet 处理 in / eq / neq / not_in / in_cidr:values 里任一相等即满足(大小写不敏感)。
 // eq / neq 与 in / not_in 同属集合成员语义(不是只比 values[0]),
 // 与 predicate 侧 StringPredicate.posMatch 保持一致。
-// ip 字段特殊:比对的是预解析在 IPRadixTree 里的前缀与单 IP,求值期零分配且 O(1)。
+// ip 字段特殊:比对的是预解析在 IPRadixTree 里的前缀与单 IP,求值期 O(1)(非零分配,见 radix.go)。
 // 多个运算符只共用一个 hit("访客 IP 落没落在集合/网段内"),再由 c.op 决定取反不取反——
 // 在 ip 分支里各写各的返回值会漏掉 neq,把它整体判反。
 func (c *compiledCond) matchSet(ctx VisitorContext, raw string) bool {

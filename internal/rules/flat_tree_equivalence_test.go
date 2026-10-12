@@ -11,17 +11,17 @@ package rules
 //     就走 pipeline —— 编译不出谓词的那条叶子在这里被**静默丢掉**。
 //   - 树形态:compileNode 递归求值 root,根本没有 pipeline 这条旁路。
 //
-// 于是"同一份条件 + 同一份画像",两种写法可以给出相反的命中结果。
+// 于是"同一份条件 + 同一份画像",两种写法可能给出相反的命中结果。
 //
-// 现状的分叉点(本文件钉住它):ip 字段注册了 exact compiler(predicate_init.go),
-// 它对 gt / lt / duplicated 直接 return false,且**不回落到** fallback 通用编译器
-// ——而 compileCond 是接受这三个组合的。结果:
+// 历史分叉点(已修复,本文件继续钉住):ip 字段曾注册一个 exact compiler,
+// 它对 gt / lt / duplicated 直接 return false 且不回落 fallback,而 compileCond
+// 接受这三个组合 —— 于是 pipeline 只收下部分叶子:
 //
 //	flat [country==US, ip gt 1]    → pipeline 里只剩 country    → 命中
 //	tree all[country==US, ip gt 1] → ip 那一条恒不成立          → 不命中
 //
-// 既有测试看不见它:TestOperators 只走 compiledCond(树形态),
-// TestSnapshotSimulateAgreesWithEvaluate 只比较 verdict(两边都来自 pipeline)。
+// 现在 predicate_init.go 会让 ip 的 gt/lt/duplicated 也编译出谓词,
+// 全运算符等价另由 predicate_equivalence_test.go 钉住。
 
 import (
 	"regexp"
@@ -213,8 +213,8 @@ func TestSimulateTraceAgreesWithVerdict(t *testing.T) {
 			}, discardLog)
 			assertTraceAgreesWithVerdict(t, treeSnap, &fact)
 
-			// 扁平形态:ip 叶子编译不出谓词,整条规则回落到树求值 —— 与上面的树形态
-			// 同一条路径,因此两者必须给出同一个结论。
+			// 扁平形态:ip 叶子现在也会编译出谓词(数值 / duplicated 谓词),两形态
+			// 走不同实现,但必须给出同一个结论。
 			//
 			// 而 ip + gt/lt/duplicated 在 ip 字段上是「能配不能跑」的假能力:matchNumber
 			// 对 "203.0.113.7" 解析失败恒不命中,duplicated 因 Fact.Seen 恒为 nil 也恒

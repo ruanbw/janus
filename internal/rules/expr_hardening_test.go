@@ -1,6 +1,7 @@
 package rules
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -523,6 +524,43 @@ func TestExprRangeOperatorRejected(t *testing.T) {
 				t.Fatalf("报错应说明是区间运算符问题, got: %v", err)
 			}
 		})
+	}
+}
+
+// TestExprLetBindingRejected 钉住"let 变量绑定被 AST 审计拒绝"。
+//
+// let 能把中间结果按层级放大:let t = s+s; let u = t+t; … 每层只需 O(1) 个字符。
+// 实测(expr v1.17.8,与生产同一套选项)一个 2790 字符的 16 层拼接表达式,
+// 单次求值分配约 312MB / 耗时约 235ms;expr 的 memGrow 预算只覆盖
+// OpRange/OpArray/OpMap/OpCallSafe,字符串 + 走的是不设预算的 x+y。
+// 长度上限(4096)拦不住它 —— 拒掉 let 之后,拼接规模由字面量长度线性封顶。
+func TestExprLetBindingRejected(t *testing.T) {
+	for _, code := range []string{
+		`let x = 1 in x == 1`,
+		`let s = "a" in s == "a"`,
+	} {
+		t.Run(code, func(t *testing.T) {
+			err := ValidateExpression(code)
+			if err == nil {
+				t.Fatalf("表达式 %q 应被拒绝:let 变量绑定能把中间结果按层级放大", code)
+			}
+			if !strings.Contains(err.Error(), "let") {
+				t.Fatalf("报错应说明是 let 绑定问题, got: %v", err)
+			}
+		})
+	}
+	// 真实放大载荷(16 层字符串倍增)必须被拒。
+	var sb strings.Builder
+	sb.WriteString(`let s = "` + strings.Repeat("A", 2500) + `"; `)
+	prev := "s"
+	for i := 0; i < 16; i++ {
+		next := fmt.Sprintf("t%d", i)
+		sb.WriteString("let " + next + " = " + prev + "+" + prev + "; ")
+		prev = next
+	}
+	sb.WriteString(prev + " == s")
+	if err := ValidateExpression(sb.String()); err == nil {
+		t.Fatal("字符串倍增载荷必须编译失败")
 	}
 }
 

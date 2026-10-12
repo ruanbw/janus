@@ -357,7 +357,7 @@ var exprPredicates = map[string]struct{}{
 	"groupBy": {}, "sortBy": {}, "reduce": {},
 }
 
-// exprAudit 编译前审一遍 AST:拒绝谓词类内置函数与区间运算符。
+// exprAudit 编译前审一遍 AST:拒绝谓词类内置函数、区间运算符与 let 变量绑定。
 //
 // 为什么必须单独审:见 exprPredicates 的注释 —— DisableAllBuiltins 覆盖不到它们。
 // 为什么放在 expr.Compile 之前单独 parse 一次:谓词在 AST 上是 *ast.BuiltinNode,
@@ -380,12 +380,20 @@ func exprAudit(code string) error {
 	}
 	bad := ""
 	rangeBad := false
-	ast.Walk(&tree.Node, auditVisitor{reject: &bad, rejectRange: &rangeBad})
+	letBad := false
+	ast.Walk(&tree.Node, auditVisitor{reject: &bad, rejectRange: &rangeBad, rejectLet: &letBad})
 	if rangeBad {
 		// `..` 构造的是惰性区间集合:长度不受表达式长度约束(1..262143 只有 11 字节),
 		// 而 max/min/… 会把整个区间展开成实参,成本由区间长度而非字节码长度决定。
-		// 字面量数组受 MaxExpressionLen 限制,拒掉 `..` 之后就没有构造无界集合的写法了。
+		// 字面量数组受 MaxExpressionLen 限制。
 		return fmt.Errorf("表达式不允许使用区间运算符 %q:它会构造无界集合,无法给出有界的计算成本", "..")
+	}
+	if letBad {
+		// let 绑定能把中间结果按层级放大:let t = s+s; let u = t+t; … 每层只需 O(1)
+		// 个字符,实测 2790 字符的表达式一次求值就构造 ~312MB 字符串/235ms。
+		// 长度上限拦不住它,而 expr 的 memGrow 预算只覆盖 OpRange/OpArray/OpMap/OpCallSafe,
+		// 字符串 + 走的是不设预算的 x+y。拒掉 let 之后,拼接规模由字面量长度线性封顶。
+		return fmt.Errorf("表达式不允许使用 let 变量绑定:它能把中间结果按层级放大,无法给出有界的计算成本")
 	}
 	if bad != "" {
 		return fmt.Errorf("表达式不允许使用 %q:这类函数要遍历集合,无法给出有界的计算成本", bad)
@@ -414,14 +422,19 @@ func parseForAudit(code string) (tree *parser.Tree, err error) {
 }
 
 // auditVisitor 找出第一个被禁的构造(找到就停,不用报全部):
-// 谓词类内置函数,以及区间运算符 `..`。
+// 谓词类内置函数、区间运算符 `..`,以及 let 变量绑定。
 type auditVisitor struct {
 	reject      *string
 	rejectRange *bool
+	rejectLet   *bool
 }
 
 func (v auditVisitor) Visit(node *ast.Node) {
-	if *v.reject != "" || *v.rejectRange {
+	if *v.reject != "" || *v.rejectRange || *v.rejectLet {
+		return
+	}
+	if _, ok := (*node).(*ast.VariableDeclaratorNode); ok {
+		*v.rejectLet = true
 		return
 	}
 	if b, ok := (*node).(*ast.BuiltinNode); ok {

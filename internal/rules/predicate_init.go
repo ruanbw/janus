@@ -14,6 +14,13 @@ func init() {
 		if pred, ok := compileIPRadix(cond, log); ok {
 			return pred, true
 		}
+		// 集合运算符的值全非法时,compileCond(eval.go)会整条丢弃这个叶子;
+		// 这里绝不能回落到字符串比较 —— CompilePredicate 是导出函数,插件/衍生
+		// 工程可以直接调用,回落到字符串会让同一个叶子出现两套语义。
+		switch cond.Operator {
+		case OpIn, OpEq, OpNeq, OpNotIn, OpInCIDR, OpNotInCIDR:
+			return nil, false
+		}
 		// 其他运算符按顺序依次尝试：正则 → 数值(gt/lt) → 重复(duplicated) → 通用字符串。
 		// 不能直接 return false：registry 命中精确编译器后不再回落兜底编译器，
 		// 而 compileCond 是接受 ip + gt/lt/duplicated 的。一旦这里返回 false，

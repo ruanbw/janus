@@ -768,7 +768,7 @@ func (c *LazyVisitorContext) backfillEnriched(fact, base Fact) {
 	// IP 与派生字段 ipattr 必须一起处理:两者分叉会让 `ipattr eq private`
 	// 命中一个公网 IP(见 extension_test.go 的 ipattr 两条规格)。
 	ipChanged := false
-	if fact.IP != base.IP {
+	if fact.IP != base.IP && fact.IP != "" {
 		if addr, err := netip.ParseAddr(fact.IP); err == nil {
 			addr = addr.Unmap()
 			c.ipStr = addr.String()
@@ -776,7 +776,8 @@ func (c *LazyVisitorContext) backfillEnriched(fact, base Fact) {
 			c.flags |= flagIPInjected
 			ipChanged = true
 		} else {
-			// 不可解析 = 富化器没写(或写坏了):保留基线 IP,不制造分叉。
+			// 非空但不可解析 = 富化器写坏了:保留基线 IP,不制造分叉。
+			// 空串走的是「没写」语义(上面的条件已排除),不发日志 —— 热路径不刷噪声。
 			slog.Warn("富化器写入的 IP 无法解析,保留原来源 IP", "ip", fact.IP, "kept", c.ipStr)
 		}
 	}

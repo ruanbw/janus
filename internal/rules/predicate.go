@@ -12,6 +12,7 @@ type ConditionPredicate interface {
 	// Match 线上热路径执行匹配（纯内存、零锁、fail-open）
 	Match(ctx VisitorContext) bool
 
-	// Trace 供规则模拟器使用，返回该条件在当前访客下的诊断推演数据
+	// Trace 返回该条件在当前访客下的诊断推演数据(单测与诊断工具用;
+	// 线上模拟器的留痕由 snapshot.go 的 collectTraces 统一产出)
 	Trace(ctx VisitorContext) ConditionTrace
 }

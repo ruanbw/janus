@@ -40,7 +40,8 @@ func mergePluginFact(dst *Fact, p plugin.Fact) {
 	dst.Ref, dst.UTM, dst.UA, dst.DevType, dst.OS = p.Ref, p.UTM, p.UA, p.DevType, p.OS
 	dst.Browser, dst.Path, dst.Domain = p.Browser, p.Path, p.Domain
 
-	if p.IP == baseIP {
+	if p.IP == baseIP || p.IP == "" {
+		// 空串 = 插件没写 IP(清空不是改写):保留基线,也不打日志。
 		return
 	}
 	addr, err := netip.ParseAddr(p.IP)

@@ -1122,7 +1122,8 @@ func TestExtendedOperators(t *testing.T) {
 	})
 }
 
-// BenchmarkEvaluateRadixCIDR 性能基准测试:验证 IPRadixTree 挂载到 Snapshot 求值链路后的大规模网段 0 分配性能
+// BenchmarkEvaluateRadixCIDR 性能基准测试:观察 IPRadixTree 挂载到 Snapshot 求值链路的成本。
+// 注意:这条路径不是零分配(cidranger 每次查询 2 次小分配,见 radix.go 的注释与 -benchmem 实测)。
 func BenchmarkEvaluateRadixCIDR(b *testing.B) {
 	var cidrs []string
 	for i := 0; i < 256; i++ {

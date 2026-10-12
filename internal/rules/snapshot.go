@@ -367,6 +367,9 @@ func (c *Cache) Invalidate(tenantID int64) {
 		// 正在加载的 goroutine 就看不出发生过失效了。
 		e.snap = nil
 		e.gen++
+		// 显式失效是「配置变了,立刻重载」:清掉加载失败退避,
+		// 否则一次 DB 抖动会让刚保存的规则在退避窗口内不被读取。
+		e.failedAt = time.Time{}
 	}
 	c.mu.Unlock()
 }
@@ -381,6 +384,7 @@ func (c *Cache) InvalidateAll() {
 	for _, e := range c.items {
 		e.snap = nil
 		e.gen++
+		e.failedAt = time.Time{}
 	}
 	c.mu.Unlock()
 }
