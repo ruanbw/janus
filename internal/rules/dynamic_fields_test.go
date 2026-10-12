@@ -394,3 +394,81 @@ func TestDynamicFieldNotAvailableInExpressions(t *testing.T) {
 		}
 	}
 }
+
+// TestSimulateMultiValueTraceShowsEveryValue 多值字段的诊断留痕必须呈现**全部**取值。
+//
+// 留痕的 Actual 来自 ctx.Field(多值字段只给第一个非空值),而 Matched 来自
+// (*compiledCond).match(遍历全部取值)—— 同一个条件会各说各话:
+// `header:X-Multi eq beta` 在 X-Multi: alpha, beta 上会输出
+// 「实际为「alpha」,满足条件(等于 beta)」,一句自相矛盾的诊断。
+// 而同一个条件的谓词留痕(StringPredicate.Trace)用的是 fieldValuesText,拼成
+// 「alpha, beta」—— 两条留痕实现各写各的(见 TestDynamicFieldTrace 钉的是后者)。
+//
+// 契约:Simulate 的 Actual 必须与 fieldValuesText 逐字一致,且与 Matched 自洽。
+//
+// Given: X-Multi 同时带 alpha 与 beta 的画像 + 一条多值字段条件
+// When:  分别以扁平形态(裁决走谓词流水线)与等价树形态(裁决走 compiledCond)推演
+// Then:  两种形态的 Actual 都必须是全部取值,Matched 都必须符合 any-of 语义。
+func TestSimulateMultiValueTraceShowsEveryValue(t *testing.T) {
+	fact := FromRequest(dynRequest(t)) // X-Multi: alpha, beta
+
+	cases := []struct {
+		name     string
+		operator string
+		values   []string
+		want     bool
+	}{
+		{"eq 命中其中一个取值", OpEq, []string{"beta"}, true},
+		{"eq 都不命中", OpEq, []string{"gamma"}, false},
+		{"neq 有一个取值相等即不成立", OpNeq, []string{"beta"}, false},
+		{"not_in 有一个取值在集合内即不成立", OpNotIn, []string{"alpha"}, false},
+		{"not_contains 有一个取值被包含即不成立", OpNotContains, []string{"alph"}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cond := store.RuleCondition{Field: "header:X-Multi", Operator: tc.operator, Values: tc.values}
+			shapes := []struct {
+				name string
+				rule store.Rule
+			}{
+				{"扁平形态(谓词流水线)", oneRule(1, cond)},
+				{"树形态(compiledCond)", oneTreeRule(1, store.Group("all", store.Leaf(cond)))},
+			}
+			for _, shape := range shapes {
+				snap := NewSnapshot([]store.Rule{shape.rule}, discardLog)
+				if len(snap.Rules) != 1 {
+					t.Fatalf("[%s] 规则被整条丢弃,测试范围与实现不一致", shape.name)
+				}
+				res := snap.Simulate(&fact, 1, nil, nil)
+				if res.Error != "" {
+					t.Fatalf("[%s] 仿真报错: %s", shape.name, res.Error)
+				}
+				if len(res.Steps) != 1 || len(res.Steps[0].Conditions) != 1 {
+					t.Fatalf("[%s] 留痕结构 = %+v, want 1 步 1 条件", shape.name, res.Steps)
+				}
+				tr := res.Steps[0].Conditions[0]
+
+				wantActual, ok := fieldValuesText(&fact, cond.Field)
+				if !ok {
+					t.Fatalf("前置条件不成立:fieldValuesText 取不到 %s", cond.Field)
+				}
+				if tr.Actual != wantActual {
+					t.Errorf("[%s] 留痕 Actual = %q, want %q(必须呈现全部取值,不能只给第一个)",
+						shape.name, tr.Actual, wantActual)
+				}
+				if tr.Matched != tc.want {
+					t.Errorf("[%s] 留痕 Matched = %v, want %v", shape.name, tr.Matched, tc.want)
+				}
+				// 自洽:报"满足"的留痕不得写出"不满足条件"的文案,反之亦然。
+				if tr.Matched && strings.Contains(tr.Description, "不满足条件") {
+					t.Errorf("[%s] 留痕自相矛盾(Matched=true 却写着不满足): %q", shape.name, tr.Description)
+				}
+				if !tr.Matched && strings.Contains(tr.Description, "满足条件") &&
+					!strings.Contains(tr.Description, "不满足条件") {
+					t.Errorf("[%s] 留痕自相矛盾(Matched=false 却写着满足): %q", shape.name, tr.Description)
+				}
+			}
+		})
+	}
+}

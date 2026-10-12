@@ -1187,6 +1187,53 @@ func TestSimulateRulesDraftAndOnlyRule(t *testing.T) {
 	}
 }
 
+// TestSimulateOnlyRuleIdOnDisabledRuleExplainsWhy 只回放一条**已停用**的规则时,
+// 诊断必须说明"该规则已停用、不参与裁决",而不是"不命中任何规则"。
+//
+// 停用规则不进快照(NewSnapshot 过滤掉 !Enabled),而 onlyRuleId 只校验规则存在与归属,
+// 于是决策链为空、simVerdict 落到"该访客不命中任何规则,按原目标正常跳转"。
+// 租户问"这条规则现在还拦人吗",得到的回答是"没有规则命中" —— 而同一个事实
+// 在草稿路径上是解释清楚的(StepStatusDisabled + "规则已停用:线上求值时停用规则
+// 不进快照,不参与裁决")。存量规则不该比草稿更含糊。
+//
+// Given: 一条 enabled=false 的存量规则
+// When:  POST /api/rules/simulate 带 onlyRuleId=该规则
+// Then:  决策链必须包含它这一步,状态为 disabled 且理由提到「停用」
+func TestSimulateOnlyRuleIdOnDisabledRuleExplainsWhy(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "alice")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+	link := createLink(t, c, map[string]any{
+		"code": "simdis", "targetUrls": []string{"https://t1.example.com"}, "domainIds": []int64{lid}})
+	r := createRule(t, c, map[string]any{
+		"name": "已停用", "priority": 50, "enabled": false, "action": store.RuleActionNotfound,
+		"conditions": []map[string]any{{"field": "path", "operator": "eq", "values": []string{"/" + link.Code}}},
+	})
+
+	got := simulate(t, c, map[string]any{
+		"url": "https://localhost/" + link.Code, "ip": "203.0.113.7", "onlyRuleId": r.ID,
+	})
+
+	if got.Verdict.Matched {
+		t.Fatalf("停用规则不该命中: %+v", got.Verdict)
+	}
+	if len(got.Steps) != 1 {
+		t.Fatalf("steps = %d 条(%+v), want 1:只回放这一条时必须给出它为什么不参与裁决",
+			len(got.Steps), got.Steps)
+	}
+	if got.Steps[0].RuleID != r.ID {
+		t.Fatalf("step.RuleID = %d, want %d", got.Steps[0].RuleID, r.ID)
+	}
+	if got.Steps[0].Status != rules.StepStatusDisabled {
+		t.Fatalf("step.Status = %q, want %q(与停用草稿同一套状态)",
+			got.Steps[0].Status, rules.StepStatusDisabled)
+	}
+	if !strings.Contains(got.Steps[0].Reason, "停用") {
+		t.Fatalf("step.Reason = %q, want 提到「停用」", got.Steps[0].Reason)
+	}
+}
+
 // TestSimulateRulesDisabledLinkBypass 短链关掉规则求值时,线上不会应用任何规则,
 // 诊断也不能报一个线上不会发生的拦截。
 func TestSimulateRulesDisabledLinkBypass(t *testing.T) {
