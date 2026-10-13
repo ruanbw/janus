@@ -527,6 +527,8 @@ section { padding-block: var(--section-y-desktop); scroll-margin-top: calc(var(-
   .scene, .fcard { transform: none !important; }
 }
 </style>
+<!-- 无 JS 时不做滚动揭示：所有 .reveal / .step 直接呈现，内容不会因脚本失效而消失。 -->
+<noscript><style>.reveal, .step { opacity: 1 !important; transform: none !important; }</style></noscript>
 </head>
 <body>
 
