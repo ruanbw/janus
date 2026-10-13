@@ -11,8 +11,9 @@
 [![pnpm](https://img.shields.io/badge/pnpm-10-F69220?logo=pnpm&logoColor=white)](web/package.json)
 [![postgres](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](docker-compose.yml)
 [![caddy](https://img.shields.io/badge/Caddy-2-2B6CB?logo=caddy&logoColor=white)](Caddyfile.prod)
+[![site](https://img.shields.io/website?url=https%3A%2F%2Fruanbw.github.io%2Fjanus%2F&label=site&up_message=live&down_message=offline&color=0071e3)](https://ruanbw.github.io/janus/)
 
-[中文](README.md) · [English](README.en.md)
+[中文](README.md) · [English](README.en.md) · [Product page](https://ruanbw.github.io/janus/)
 
 </div>
 
@@ -315,6 +316,7 @@ Tenant-scoped **access disposition rules**: one condition set plus one action (A
 ├── docker/
 │   ├── Dockerfile              # Multi-stage: independent backend (Go) and web (nginx) targets
 │   └── nginx.conf              # SPA fallback + long-lived asset caching
+├── site/                       # Product landing page (self-contained static HTML, published by GitHub Pages)
 ├── docker-compose.yml          # Development orchestration (Postgres + Caddy)
 ├── docker-compose.prod.yml     # Production orchestration (Postgres + backend + web + caddy)
 ├── Caddyfile / Caddyfile.prod  # Development (local CA) / production (Let's Encrypt)

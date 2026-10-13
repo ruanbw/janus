@@ -11,8 +11,9 @@
 [![pnpm](https://img.shields.io/badge/pnpm-10-F69220?logo=pnpm&logoColor=white)](web/package.json)
 [![postgres](https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white)](docker-compose.yml)
 [![caddy](https://img.shields.io/badge/Caddy-2-2B6CB?logo=caddy&logoColor=white)](Caddyfile.prod)
+[![site](https://img.shields.io/website?url=https%3A%2F%2Fruanbw.github.io%2Fjanus%2F&label=site&up_message=live&down_message=offline&color=0071e3)](https://ruanbw.github.io/janus/)
 
-[中文](README.md) · [English](README.en.md)
+[中文](README.md) · [English](README.en.md) · [产品介绍页](https://ruanbw.github.io/janus/)
 
 </div>
 
@@ -314,6 +315,7 @@ Janus 是一个自托管的**多租户短链服务**:租户注册后管理自己
 ├── docker/
 │   ├── Dockerfile              # 多阶段:backend(Go)与 web(nginx)两个独立目标
 │   └── nginx.conf              # SPA 回退 + 静态资源强缓存
+├── site/                       # 产品介绍页(自包含静态 HTML,由 GitHub Pages 发布)
 ├── docker-compose.yml          # 开发编排(Postgres + Caddy)
 ├── docker-compose.prod.yml     # 生产编排(Postgres + backend + web + caddy)
 ├── Caddyfile / Caddyfile.prod  # 开发(本地 CA)/ 生产(Let's Encrypt)

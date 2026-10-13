@@ -85,3 +85,12 @@ compose 会把上述变量转发给后端容器。
 - 访问记录默认保留 90 天,后台定时清理;
 - 授权端点仅内网可达(`/internal/caddy/authorize`),未激活域名拒绝签发,防止任意域名解析到本机即触发签发(spec 决策 #8)。
 
+
+## 8. 产品介绍页(GitHub Pages)
+
+`site/` 是一份自包含的静态产品介绍页(单文件 HTML,无构建步骤、无外部依赖),由 `.github/workflows/pages.yml` 发布到 GitHub Pages:
+
+- 线上地址:<https://ruanbw.github.io/janus/>
+- 触发条件:`main` 分支上 `site/**` 或该 workflow 自身发生变化;也可在 Actions 页面手动 `Run workflow`;
+- 首次启用需在仓库 Settings → Pages 把 Source 设为 **GitHub Actions**(仅靠 workflow 内 `configure-pages` 的 `enablement` 自动开启,可能因 `GITHUB_TOKEN` 权限不足而失败);
+- 与运行时完全解耦:改 `site/` 不会重建任何服务镜像,产物也不经过后端或 nginx。
