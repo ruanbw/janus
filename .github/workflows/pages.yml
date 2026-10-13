@@ -1,0 +1,50 @@
+# 产品介绍页 → GitHub Pages。
+#
+# 站点是 site/ 下的一份自包含静态 HTML（无构建步骤、无外部依赖），
+# 所以这里直接把它作为 Pages artifact 上传，不引入任何打包环节。
+# 部署地址：https://ruanbw.github.io/janus/
+#
+# 首次启用需要仓库 Pages 的 Source 设为 "GitHub Actions"
+# （本 workflow 的 configure-pages 也会尝试自动启用一次）。
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    # 只有站点文件变化时才重新发布，避免每次后端/前端改动都触发一次部署。
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时刻只允许一个部署；等待中的部署不打断进行中的部署。
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: 发布产品介绍页
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+        with:
+          # 仓库尚未开启 Pages 时，这一步直接把它切到 "GitHub Actions" 构建。
+          enablement: true
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
