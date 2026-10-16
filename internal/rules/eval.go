@@ -125,6 +125,15 @@ const (
 	maxConditionTreeDepth = 8
 	// maxConditionLeaves 单规则的叶子条件总数上限(扁平与树形态统一按叶子计数)。
 	maxConditionLeaves = 64
+
+	// maxRegexPatterns 单条 regex 条件的 pattern 条数上限,与 httpapi 的
+	// maxConditionValues 同值。RE2 免疫 ReDoS,但编译成本随 pattern 长度增长、
+	// 单次匹配成本随 pattern 条数线性增长,而直写库通道进来的条件同样会在
+	// 跳转热路径上逐条求值。
+	maxRegexPatterns = 100
+	// maxRegexPatternLen 单个 regex pattern 的字节数上限,与 httpapi 的
+	// maxConditionValueLen 同值(解析/编译成本随 pattern 长度增长)。
+	maxRegexPatternLen = 1024
 )
 
 // checkConditionShape 判定条件树的深度与叶子数是否在引擎上限内。
@@ -433,7 +442,16 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 		}
 		c.seen = n
 	case OpRegex:
+		// 规模上限(第二道防线,防直写库 / 导入通道):超限按整条条件不可求值处理。
+		// 不"跳过超限的那条 pattern 继续编译"—— 那会在 any-of 语义下静默收窄集合,
+		// 规则行为与用户以为的不一样;API 层对同样输入是直接 400。
+		if len(values) > maxRegexPatterns {
+			return drop("正则 pattern 数量超过引擎上限")
+		}
 		for _, v := range values {
+			if len(v) > maxRegexPatternLen {
+				return drop("正则 pattern 长度超过引擎上限")
+			}
 			re, err := regexp.Compile(v)
 			if err != nil {
 				// 一个值坏掉不该让整条条件失效:跳过它,剩下的照常编译
