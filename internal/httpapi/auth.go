@@ -458,6 +458,24 @@ type changePasswordReq struct {
 	NewPassword string `json:"newPassword"`
 }
 
+// checkOldPassword 校验旧密码,并把"密码不对"与"查不动库"分开:
+// ok=true 表示旧密码正确;dbErr=true 表示查询本身失败(调用方应回 500 + 记日志)。
+//
+// 原先三种情况(err != nil、pwHash == nil、bcrypt 比较失败)被 || 混为一谈,
+// 数据库故障会被当成"旧密码错误"回 400 —— 用户看到的是"我密码打错了",
+// 排障却看不到任何库侧线索。
+func checkOldPassword(pwHash *string, err error, oldPassword string) (ok, dbErr bool) {
+	if err != nil {
+		return false, true
+	}
+	if pwHash == nil {
+		// 无密码哈希(超管首登)正常不会走到这里(调用方已按 FirstLoginSetup 短路);
+		// 保守按"旧密码错误"处理,不泄露内部状态。
+		return false, false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(*pwHash), []byte(oldPassword)) == nil, false
+}
+
 // handleChangePassword 修改密码;超管首次登录(无密码)可省略旧密码。
 func (a *API) handleChangePassword(c *gin.Context) {
 	t, sess, ok := a.requireSession(c)
@@ -477,11 +495,27 @@ func (a *API) handleChangePassword(c *gin.Context) {
 		return
 	}
 	if !t.FirstLoginSetup {
+		// 旧密码猜测限流:复用登录的账号级退避机制,但用独立命名空间 ——
+		// 改密失败不该把同一账号的登录一起锁死(反之亦然)。
+		key := "chpw:" + domain.NormalizeEmail(t.Email)
+		failures := a.accountFailures()
+		if allowed, retryAfter := failures.Allow(key); !allowed {
+			writeAccountThrottled(c, retryAfter)
+			return
+		}
 		pwHash, err := a.store.TenantPasswordHash(c.Request.Context(), t.ID)
-		if err != nil || pwHash == nil || bcrypt.CompareHashAndPassword([]byte(*pwHash), []byte(req.OldPassword)) != nil {
+		oldOK, dbErr := checkOldPassword(pwHash, err, req.OldPassword)
+		if dbErr {
+			slog.Error("change-password: 读取密码哈希失败", "tenantId", t.ID, "err", err)
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+			return
+		}
+		if !oldOK {
+			failures.Fail(key)
 			writeErr(c, http.StatusBadRequest, errValidation, "旧密码错误")
 			return
 		}
+		failures.Succeed(key)
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
