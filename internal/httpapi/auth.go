@@ -148,6 +148,14 @@ func (a *API) handleRegister(c *gin.Context) {
 		return
 	}
 	if _, err := a.store.CreatePlatformDomain(ctx, tenant.ID, slug+"."+a.cfg.PlatformDomain); err != nil {
+		// TOCTOU:上面的 DomainFQDNExists 预检与这里的插入之间有窗口,并发的另一路
+		// 注册可能刚把同名默认域名落库。此时唯一索引是唯一裁决者,撞车是"冲突"
+		// 而不是"服务器错误" —— 漏成 500 会让用户看到"服务器错误",重试又被
+		// "邮箱已被注册"挡成 409,彻底卡死。
+		if store.IsUniqueViolation(err) {
+			writeErr(c, http.StatusConflict, errConflict, "slug 与既有域名冲突")
+			return
+		}
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
