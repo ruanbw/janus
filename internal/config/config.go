@@ -226,6 +226,11 @@ func (c Config) Validate() error {
 		// 为空时 httpapi 会退回每次重启随机的临时密钥(已签发 token 全部失效),
 		// 生产环境必须显式配置——这里大声告警,不再静默。
 		fmt.Fprintln(os.Stderr, "WARN: JANUS_JWT_SECRET 未配置,将使用每次重启随机的临时密钥,生产环境必须配置")
+	} else if len(c.JWTSecret) < 32 {
+		// 非空密钥必须够长:HS256 密钥强度直接决定 token 可被离线爆破的难度,
+		// 短密钥(如猜得到的口令)会让签名形同虚设。空密钥的处置(生产模式拒绝启动)
+		// 由另一条工作流负责,这里只校验"已配置的密钥"长度。
+		return fmt.Errorf("JANUS_JWT_SECRET 至少需要 32 字节(HS256 密钥强度要求),当前为 %d 字节", len(c.JWTSecret))
 	}
 	if c.SMTPHost == "" {
 		// 控制台 mailer 会把 token 打印到日志,生产环境不可用。

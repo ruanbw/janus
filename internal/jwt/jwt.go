@@ -36,6 +36,9 @@ type Manager struct {
 }
 
 // NewManager 以给定密钥与有效期构建 Manager。
+//
+// 密钥强度由调用方保证:生产口径要求 HS256 密钥非空且至少 32 字节(见
+// config.Config.Validate 的校验)。本函数不返回错误,故无法在此兜底拒绝。
 func NewManager(secret string, ttl time.Duration) *Manager {
 	return &Manager{secret: []byte(secret), ttl: ttl}
 }
