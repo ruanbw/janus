@@ -72,6 +72,11 @@ var ErrInvalidAction = errors.New("invalid visit action")
 // 与 ErrInvalidAction 同理:它是参数错误(400),不是数据缺失。
 var ErrInvalidOutcome = errors.New("invalid visit outcome")
 
+// ErrInvalidReason 写入侧的失败原因不在 VisitReason* 白名单内。
+// 单独定义(而不是复用 ErrInvalidOutcome):原因是与结果正交的一列,
+// 混用会让"写错了哪个字段"这件事在错误信息里看不出来。
+var ErrInvalidReason = errors.New("invalid visit reason")
+
 // ValidVisitAction 判断 action 过滤值是否合法(空串 = 不过滤,视为合法)。
 // 上层用它提前回 400,ListVisitsByLink 内部仍会再校验一次作为兜底。
 func ValidVisitAction(action string) bool {
@@ -110,6 +115,67 @@ func validVisitOutcome(outcome string) error {
 	return nil
 }
 
+// 写入侧字段上限(按 rune 计)。
+//
+// 为什么在 store 入口统一截断:ua/referer 是任意长度的客户端可控请求头,
+// target_url 由租户/规则写入,而 visits 按条保留 90 天 —— 一行被单个超长值撑爆会
+// 同时放大存储、备份与聚合扫描的成本。lang/country 有天然上限,一并收敛。
+//
+// 按 rune 而不是按 byte 截断:按字节切会把多字节字符切成半个,落库即无效 UTF-8
+// (历史上"语言标签按字节截断切坏 UTF-8"就是这么来的)。
+const (
+	maxVisitUserAgentLen = 512
+	maxVisitRefererLen   = 2048
+	maxVisitTargetURLLen = 2048
+	maxVisitLangLen      = 64
+	maxVisitCountryLen   = 2
+)
+
+// validVisitReason 写入侧失败原因白名单:空串(成功行)或 VisitReason* 全集。
+//
+// 与 action/outcome 一样,新增一种失败原因必须同时加进这里 —— 否则该原因的行会被
+// 入口拦下(表现为明细莫名少一行),而库侧对 reason 没有 CHECK 兜底。
+func validVisitReason(reason string) bool {
+	switch reason {
+	case "", VisitReasonLinkDisabled, VisitReasonLinkDeleted, VisitReasonNoTarget,
+		VisitReasonLandingMissing, VisitReasonRuleBlocked, VisitReasonRuleThrottled:
+		return true
+	}
+	return false
+}
+
+// validateVisitInsert 写入侧白名单校验。
+//
+// 空 action 在这里是**非法**的:空串只在"过滤值"语义下表示不过滤
+// (见 ValidVisitAction),写入必须给出具体动作。
+func validateVisitInsert(action, outcome, reason string) error {
+	if action == "" || !ValidVisitAction(action) {
+		return ErrInvalidAction
+	}
+	if outcome == "" || !ValidVisitOutcome(outcome) {
+		return ErrInvalidOutcome
+	}
+	if !validVisitReason(reason) {
+		return ErrInvalidReason
+	}
+	return nil
+}
+
+// truncateRunes 把 s 截到最多 max 个 rune;不超限时原样返回(不额外分配)。
+func truncateRunes(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	n := 0
+	for i := range s {
+		if n == max {
+			return s[:i]
+		}
+		n++
+	}
+	return s
+}
+
 // VisitRecord 一次访问/点击的入库字段(Action/Outcome/Reason/TargetURL/Lang/Country 由调用方填写;
 // Country 来自离线 ip2region 库,查不到时为空。IsDatacenter/ASN 仍无数据源,不在此列)。
 type VisitRecord struct {
@@ -135,14 +201,26 @@ type VisitRecord struct {
 
 // InsertVisit 记录一次访问/点击动作(含访问者 IP)。
 // 统计写入失败由调用方决定是否阻断跳转,本函数只返回 error。
+//
+// 入口统一做两件事(见各自的常量/校验注释):
+//   - 按 rune 截断客户端可控的超长字段(UA/Referer/TargetURL/Lang/Country);
+//   - action/outcome/reason 白名单校验,非法值返回 ErrInvalidAction/ErrInvalidOutcome/
+//     ErrInvalidReason —— 而不是让库的 CHECK 约束在热路径上抛 SQLSTATE。
+//
+// 语义不变:合法入参的落库结果与修复前逐字节一致(截断只作用于超限值)。
 func (s *Store) InsertVisit(ctx context.Context, rec VisitRecord) error {
+	if err := validateVisitInsert(rec.Action, rec.Outcome, rec.Reason); err != nil {
+		return err
+	}
 	v := Visit{
 		LinkID: rec.LinkID, DomainID: rec.DomainID, IP: rec.IP,
-		UserAgent: rec.UserAgent, Referer: rec.Referer,
-		Action: rec.Action, Outcome: rec.Outcome, Reason: rec.Reason,
-		TargetURL: rec.TargetURL, Lang: rec.Lang,
-		Country: rec.Country,
-		RuleID:  rec.RuleID, RuleAction: rec.RuleAction,
+		UserAgent: truncateRunes(rec.UserAgent, maxVisitUserAgentLen),
+		Referer:   truncateRunes(rec.Referer, maxVisitRefererLen),
+		Action:    rec.Action, Outcome: rec.Outcome, Reason: rec.Reason,
+		TargetURL: truncateRunes(rec.TargetURL, maxVisitTargetURLLen),
+		Lang:      truncateRunes(rec.Lang, maxVisitLangLen),
+		Country:   truncateRunes(rec.Country, maxVisitCountryLen),
+		RuleID:    rec.RuleID, RuleAction: rec.RuleAction,
 	}
 	return s.db.WithContext(ctx).Create(&v).Error
 }
