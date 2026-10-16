@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -199,10 +200,12 @@ func (a *API) handleResendVerification(c *gin.Context) {
 		// 同一邮箱 5 分钟最多一封:挡掉"拿已知邮箱轰炸"的滥用。
 		if a.resendVerifyRate.Allow("verify:" + email) {
 			token, tokenHash := newToken()
-			if cerr := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "verify", a.cfg.VerifyTokenTTL); cerr == nil {
-				if serr := a.mailer.SendVerifyEmail(email, token); serr != nil {
-					log.Printf("resend verify email: %v", serr)
-				}
+			// 写 token 失败原先被静默吞掉(整个 if 直接短路),线上表现为"resend 恒 202
+			// 但永远收不到新邮件",没有任何线索。两条失败路径都要留痕。
+			if cerr := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "verify", a.cfg.VerifyTokenTTL); cerr != nil {
+				slog.Error("resend-verification: 写入验证 token 失败", "tenantId", tenant.ID, "err", cerr)
+			} else if serr := a.mailer.SendVerifyEmail(email, token); serr != nil {
+				slog.Error("resend-verification: 发送验证邮件失败", "tenantId", tenant.ID, "err", serr)
 			}
 		}
 	}
@@ -492,8 +495,12 @@ func (a *API) handleForgotPassword(c *gin.Context) {
 		// 等时化:账号存在与否都执行一次 bcrypt 比较,避免存在性被时序区分
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(email))
 		token, tokenHash := newToken()
-		if err := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "reset", a.cfg.ResetTokenTTL); err == nil {
-			_ = a.mailer.SendResetEmail(email, token)
+		// 两条失败路径都必须留痕:写 token 失败原先被静默吞掉,发信失败原先 `_ =`。
+		// 对外响应仍是 202(不泄露邮箱是否存在),但运维必须能从日志里看出"没发出去"。
+		if err := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "reset", a.cfg.ResetTokenTTL); err != nil {
+			slog.Error("forgot-password: 写入重置 token 失败", "tenantId", tenant.ID, "err", err)
+		} else if err := a.mailer.SendResetEmail(email, token); err != nil {
+			slog.Error("forgot-password: 发送重置邮件失败", "tenantId", tenant.ID, "err", err)
 		}
 	} else {
 		// 等时化:邮箱不存在也执行一次 bcrypt 比较
