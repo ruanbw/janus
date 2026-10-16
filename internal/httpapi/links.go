@@ -368,18 +368,48 @@ func (a *API) validateLinkDomains(c *gin.Context, tenantID int64, ids []int64) (
 	return out, nil
 }
 
-func pageParams(c *gin.Context) (page, pageSize int) {
-	page, _ = strconv.Atoi(c.Request.URL.Query().Get("page"))
-	if page < 1 {
-		page = 1
-	}
-	pageSize, _ = strconv.Atoi(c.Request.URL.Query().Get("pageSize"))
+// maxPage 分页页码上限。
+//
+// 页码会被换算成 OFFSET = (page-1)*pageSize。不设上界时,一个超大 page 会让
+// 乘法溢出得到非法 OFFSET,Postgres 直接报错 → 500 —— 把"参数非法"伪装成
+// 服务端故障,还浪费一次全表语义的扫描。1e7 远大于任何真实分页需求。
+const maxPage = 10_000_000
+
+// parsePageParams 严格解析分页参数:page 非整数或超过 maxPage 返回 error(调用方回 400)。
+// page 缺省或 < 1 按第 1 页;pageSize 缺省 20,上限 100(与前端契约一致)。
+func parsePageParams(c *gin.Context) (page, pageSize int, err error) {
+	q := c.Request.URL.Query()
+	// pageSize 的解析沿用既有宽松语义(非法/缺省 → 20),因为它不参与 OFFSET 乘法,
+	// 不会造成溢出,收紧它对既有客户端只有破坏性。
+	pageSize, _ = strconv.Atoi(q.Get("pageSize"))
 	if pageSize < 1 {
 		pageSize = 20
 	}
 	if pageSize > 100 {
 		pageSize = 100
 	}
+
+	page = 1
+	if raw := q.Get("page"); raw != "" {
+		v, e := strconv.Atoi(raw)
+		if e != nil {
+			return page, pageSize, errors.New("page 必须为整数")
+		}
+		if v < 1 {
+			v = 1
+		}
+		if v > maxPage {
+			return page, pageSize, fmt.Errorf("page 超过上限(最大 %d)", maxPage)
+		}
+		page = v
+	}
+	return page, pageSize, nil
+}
+
+// pageParams 宽松版分页解析:非法页码回落到第 1 页,不返回错误。
+// 供 handleListRules 等既有调用点复用;links/visits 列表用 parsePageParams 显式回 400。
+func pageParams(c *gin.Context) (page, pageSize int) {
+	page, pageSize, _ = parsePageParams(c)
 	return page, pageSize
 }
 
@@ -388,7 +418,11 @@ func (a *API) handleListLinks(c *gin.Context) {
 	if !ok {
 		return
 	}
-	page, pageSize := pageParams(c)
+	page, pageSize, err := parsePageParams(c)
+	if err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
+		return
+	}
 	// includeDeleted(默认 false)打开回收站视图:列出已逻辑删除的短链。
 	// 省略该参数时行为与从前完全一致,既有客户端不受影响。
 	includeDeleted, err := parseBoolQuery(c, "includeDeleted")
@@ -898,7 +932,11 @@ func (a *API) handleListVisits(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "outcome 必须为 success / failed")
 		return
 	}
-	page, pageSize := pageParams(c)
+	page, pageSize, err := parsePageParams(c)
+	if err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
+		return
+	}
 	items, total, err := a.store.ListVisitsByLinkFiltered(c.Request.Context(), id,
 		store.VisitFilter{Action: action, Outcome: outcome}, page, pageSize)
 	if err != nil {

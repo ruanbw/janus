@@ -22,6 +22,33 @@ func bizCreateLink(t *testing.T, c *testClient, code string, body map[string]any
 	createLink(t, c, body)
 }
 
+// BIZ7: page 参数非法(非整数/超上界)回 400,而不是溢出后 500 或静默当第 1 页。
+func TestPageParamsValidation(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "bizpage")
+	addDomain(t, c, "localhost")
+	link := createLink(t, c, map[string]any{
+		"code":       "bizp",
+		"targetUrls": []string{"https://example.com/"},
+		"domainIds":  []int64{localhostDomainID(t, c)},
+	})
+
+	for _, q := range []string{"?page=abc", "?page=99999999999999999999", "?page=20000000"} {
+		resp := c.get("/api/links" + q)
+		assertStatus(t, resp, http.StatusBadRequest)
+		_ = resp.Body.Close()
+	}
+	// 仍合法的分页照常 200
+	resp := c.get("/api/links?page=1&pageSize=10")
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	// 访问列表同样走严格分页
+	resp = c.get("/api/links/" + strconv.FormatInt(link.ID, 10) + "/visits?page=abc")
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
+}
+
 // BIZ6: 删除/彻底删除短链区分"不存在"(404)与"内部错误"(500 + 日志)。
 // 这里断言正常路径语义不变:存在 → 204;不存在/已删 → 404。
 func TestDeleteLinkStatusSemantics(t *testing.T) {
