@@ -287,9 +287,16 @@ func (a *API) verifyCredentials(c *gin.Context, email, password, setupToken stri
 	ctx := c.Request.Context()
 	tenant, err := a.store.GetTenantByEmail(ctx, email)
 	if err != nil {
-		// 等时化:账号不存在也执行一次 bcrypt 比较
+		// 等时化:账号不存在也执行一次 bcrypt 比较(bcrypt 先于分类,两条路径同价)。
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(password))
-		writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
+		} else {
+			// 数据库故障绝不能伪装成"账号不存在":那样一次连库抖动会表现成
+			// "全员密码错误",既误导用户也让排障无从下手。
+			slog.Error("verifyCredentials: 查询租户失败", "err", err)
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		}
 		return nil, false
 	}
 
