@@ -99,3 +99,60 @@ func usageWithDB(ctx context.Context, db *gorm.DB, t *Tenant) (*Usage, error) {
 	u.MaxDomains = t.Tier.MaxDomains
 	return u, nil
 }
+
+// FillUsages 为一批租户填充 usage(管理端列表用)。
+//
+// 为什么需要批量版:逐个调 Usage 是 2N+1 次查询 —— Usage 内部会先
+// GetTenantByID 一次(而 ListTenantsPaged 已经把实体取回来了),再算两次 count。
+// 租户数上千时,一个管理列表接口就能打出几千次查询。这里对 links/domains 各做
+// 一次 GROUP BY,查询数与租户数无关。
+//
+// Tier 的 MaxLinks/MaxDomains 直接取自调用方已加载的实体(与 usageWithDB 同口径,
+// 不重查 Tier)。
+func (s *Store) FillUsages(ctx context.Context, tenants []*Tenant) error {
+	if len(tenants) == 0 {
+		return nil
+	}
+	ids := make([]int64, 0, len(tenants))
+	byID := make(map[int64]*Tenant, len(tenants))
+	for _, t := range tenants {
+		ids = append(ids, t.ID)
+		byID[t.ID] = t
+	}
+
+	type row struct {
+		TenantID int64
+		Cnt      int64
+	}
+	counts := map[string]map[int64]int64{"links": {}, "domains": {}}
+
+	var linkRows []row
+	if err := s.db.WithContext(ctx).Model(&Link{}).
+		Select("tenant_id, COUNT(*) AS cnt").Where("tenant_id IN ?", ids).
+		Group("tenant_id").Scan(&linkRows).Error; err != nil {
+		return err
+	}
+	for _, r := range linkRows {
+		counts["links"][r.TenantID] = r.Cnt
+	}
+
+	var domainRows []row
+	if err := s.db.WithContext(ctx).Model(&Domain{}).
+		Select("tenant_id, COUNT(*) AS cnt").Where("tenant_id IN ? AND origin = 'self'", ids).
+		Group("tenant_id").Scan(&domainRows).Error; err != nil {
+		return err
+	}
+	for _, r := range domainRows {
+		counts["domains"][r.TenantID] = r.Cnt
+	}
+
+	for _, t := range tenants {
+		t.Usage = &Usage{
+			Links:      int(counts["links"][t.ID]),
+			Domains:    int(counts["domains"][t.ID]),
+			MaxLinks:   t.Tier.MaxLinks,
+			MaxDomains: t.Tier.MaxDomains,
+		}
+	}
+	return nil
+}

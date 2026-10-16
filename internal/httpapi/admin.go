@@ -6,6 +6,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -53,12 +54,20 @@ func (a *API) handleAdminListTenants(c *gin.Context) {
 	if tenants == nil {
 		tenants = []*store.Tenant{}
 	}
-	for _, t := range tenants {
-		u, err := a.store.Usage(c.Request.Context(), t.ID)
-		if err != nil {
-			continue
+	// 一次批量填充 usage,而不是逐个调 Usage:逐个调是 2N+1 次查询(Usage 内部还会
+	// 再查一次租户,而这里实体已经取回)。租户数上千时,一个管理列表接口就能打出
+	// 几千次查询。
+	//
+	// 失败仍按旧语义处理(不中断):usage 只是展示信息,缺了不该让整个列表 500。
+	if err := a.store.FillUsages(c.Request.Context(), tenants); err != nil {
+		log.Printf("批量填充租户 usage 失败: %v", err)
+		for _, t := range tenants {
+			u, err := a.store.Usage(c.Request.Context(), t.ID)
+			if err != nil {
+				continue
+			}
+			t.Usage = u
 		}
-		t.Usage = u
 	}
 	writeJSON(c, http.StatusOK, tenants)
 }
