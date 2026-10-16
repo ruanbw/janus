@@ -34,6 +34,15 @@ type cached struct {
 	inner    Lookup
 	perShard int
 	shards   [cacheShards]shard
+	// flights 合并同一 IP 的并发回源(缓存击穿):一个冷 IP 在高并发下若每个请求都
+	// 各自回源,底层会被同一地址打满。这里只让首个请求回源,其余等待其结果。
+	flights sync.Map // ip -> *flight
+}
+
+// flight 一次进行中的回源。
+type flight struct {
+	done chan struct{}
+	val  Info
 }
 
 // shard 一片缓存。两代 map:cur 写满后整体丢弃换新,old 留一代兜住老条目。
@@ -86,9 +95,25 @@ func (c *cached) Lookup(ip string) Info {
 		}
 		return v
 	}
-	v := c.inner.Lookup(ip)
+	v := c.load(ip)
 	sh.put(ip, v, c.perShard)
 	return v
+}
+
+// load 回源,并按 IP 合并并发的未命中(同一 IP 同时只允许一次底层查询)。
+func (c *cached) load(ip string) Info {
+	f := &flight{done: make(chan struct{})}
+	actual, loaded := c.flights.LoadOrStore(ip, f)
+	if loaded {
+		existing := actual.(*flight)
+		// 等待首个请求的结果;done 关闭与 val 写入之间有 happens-before。
+		<-existing.done
+		return existing.val
+	}
+	f.val = c.inner.Lookup(ip)
+	close(f.done)
+	c.flights.Delete(ip)
+	return f.val
 }
 
 // get 返回 (值, 是否命中, 命中的是哪一代)。
