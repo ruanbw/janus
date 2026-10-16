@@ -295,16 +295,42 @@ func (a *API) handleLandingFile(c *gin.Context, code, rel string) {
 // resolveLandingFilePath 把相对路径清洗成短链目录内的绝对路径。
 // 越界(路径穿越)返回 ok=false。清洗只在这里做一次,调用方拿到的就是最终路径,
 // 不需要在"先 stat 看看"与"真正要读"之间保持两份一致的清洗逻辑。
+//
+// 只用 filepath.Abs + 词法前缀是不够的:短链目录内若存在指向外部的符号链接
+// (root/evil -> /etc),root/evil/passwd 在词法上仍以 root 为前缀,却会读到 /etc/passwd。
+// 因此对 absRoot 与 absFp 的父目录各做一次 EvalSymlinks 后再比对。目标文件本身
+// 可能尚不存在(要 404),所以不能对整条 absFp 调 EvalSymlinks。
 func (a *API) resolveLandingFilePath(linkID int64, rel string) (abs string, cleanRel string, ok bool) {
 	root := a.landingLinkDir(linkID)
 	clean := path.Clean("/" + rel)
 	fp := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(clean, "/")))
 	absRoot, err1 := filepath.Abs(root)
 	absFp, err2 := filepath.Abs(fp)
-	if err1 != nil || err2 != nil || !strings.HasPrefix(absFp, absRoot+string(filepath.Separator)) {
+	if err1 != nil || err2 != nil {
+		return "", "", false
+	}
+	// 解析失败(目录尚不存在等)时保留词法结果:这种情况读不到文件,后续自会 404,
+	// 不会因为"两个都保留词法值"而放过穿越。
+	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = resolved
+	}
+	if resolved, err := evalSymlinksParent(absFp); err == nil {
+		absFp = resolved
+	}
+	if !strings.HasPrefix(absFp, absRoot+string(filepath.Separator)) {
 		return "", "", false
 	}
 	return absFp, strings.TrimPrefix(clean, "/"), true
+}
+
+// evalSymlinksParent 解析 p 的父目录中的符号链接,再与文件名拼回。
+// p 本身可能不存在,但父目录在"要读的文件确实存在"时必然存在。
+func evalSymlinksParent(p string) (string, error) {
+	dir, err := filepath.EvalSymlinks(filepath.Dir(p))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, filepath.Base(p)), nil
 }
 
 // serveLandingFile 服务上传落地页中的单个文件(禁目录列表)。
