@@ -1092,7 +1092,9 @@ function exportCsv() {
   a.href = url;
   a.download = `links-export-${dayjs().format('YYYYMMDD-HHmmss')}.csv`;
   a.click();
-  URL.revokeObjectURL(a.href);
+  // click 后同步 revoke 会在下载真正开始前撤销 blob URL，部分浏览器(Firefox)
+  // 会因此取消下载；延迟释放，给下载器留出接管 URL 的时间。
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   message.success(`已导出 ${rows.length} 条短链记录`);
 }
 
