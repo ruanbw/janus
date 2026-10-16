@@ -3,13 +3,16 @@ package httpapi_test
 // httpapi 业务接口层审查项(BIZ*)的黑盒回归测试。见 .workbuddy 审查报告对应条目。
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"testing"
 
+	"janus/internal/store"
 	"janus/internal/testutil"
+	"janus/pkg/plugin"
 )
 
 // bizCreateLink 建一条跳转型短链,返回短码。
@@ -108,6 +111,60 @@ func TestPageParamsValidation(t *testing.T) {
 	resp = c.get("/api/links/" + strconv.FormatInt(link.ID, 10) + "/visits?page=abc")
 	assertStatus(t, resp, http.StatusBadRequest)
 	_ = resp.Body.Close()
+}
+
+// bizEvilInterceptor 模拟"插件前置拦截器注入 javascript: 目标"——它绕过创建期的
+// 校验,只能靠 applyRuleDecision 出口的统一校验拦住。
+type bizEvilInterceptor struct{ dest string }
+
+func (bizEvilInterceptor) Name() string { return "biz-evil-destination" }
+
+func (b bizEvilInterceptor) Intercept(_ context.Context, _ *http.Request, _ int64, _ *plugin.Fact) (*plugin.Decision, bool) {
+	return &plugin.Decision{Action: "redirect", Destination: b.dest}, true
+}
+
+// BIZ5: 目标 URL 协议白名单——创建/规则写入拒绝可执行协议;插件注入的非法目标
+// 在跳转出口被拦下(走原跳转,而不是把 javascript: 写进 Location)。
+func TestTargetURLProtocolWhitelist(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "bizproto")
+	addDomain(t, c, "localhost")
+	lid := localhostDomainID(t, c)
+
+	// 创建短链:javascript:/data:/file: 一律 400
+	for _, bad := range []string{"javascript:alert(1)", "data:text/html,<script>x</script>", "vbscript:msgbox(1)", "file:///etc/passwd"} {
+		resp := c.post("/api/links", map[string]any{
+			"targetUrls": []string{bad},
+			"domainIds":  []int64{lid},
+		})
+		assertStatus(t, resp, http.StatusBadRequest)
+		_ = resp.Body.Close()
+	}
+	// 合法 https 不受影响
+	bizCreateLink(t, c, "bizprotok", map[string]any{
+		"targetUrls": []string{"https://example.com/ok"},
+	})
+
+	// 规则写入同样拒绝(复用同一个 validTargetURL)
+	resp := c.post("/api/rules", map[string]any{
+		"name":        "bad-dest",
+		"action":      store.RuleActionRedirect,
+		"destination": "javascript:alert(1)",
+		"conditions":  ruleOnPath("bizprotok"),
+	})
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
+
+	// 插件注入非法目标 → 出口拦下,回落到短链原目标
+	plugin.ResetInterceptors()
+	t.Cleanup(plugin.ResetInterceptors)
+	plugin.RegisterInterceptor(bizEvilInterceptor{dest: "javascript:alert(1)"})
+
+	resp = redirectGet(t, env, "localhost", "/bizprotok")
+	assertStatus(t, resp, http.StatusFound)
+	if loc := resp.Header.Get("Location"); loc != "https://example.com/ok" {
+		t.Fatalf("Location = %q, want 原目标(非法 destination 应被出口拦下)", loc)
+	}
 }
 
 // BIZ15: validateLinkDomains 改为一次批量取回,既有判定语义(归属/激活/去重)不变。

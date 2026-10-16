@@ -449,6 +449,18 @@ func visitRuleFields(dec rules.Decision) (*int64, string) {
 // 每命中一次写一次库就是写放大,而"24h 命中"由规则列表从明细读时聚合(spec D9)。
 func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domain, action string, dec rules.Decision) bool {
 	ruleID, ruleAction := visitRuleFields(dec)
+	// 统一出口校验(必须先于 ExecuteActionHandler):action=redirect 时 Destination
+	// 一律要过 validTargetURL(协议仅 http/https)。三条写入/注入路径在此汇合 ——
+	//   · 规则落库:httpapi/rules.go 写入时已用同一个 validTargetURL 校验;
+	//   · 插件前置拦截器:Decision 由外部插件给出,零校验透传;
+	//   · 外部 ActionHandler:通过 DeliveryContext.Target 拿到未校验的 Destination。
+	// 只有在这个出口拦下,后两条才不会把 javascript:/data: 之类写进 Location 头或
+	// 交给处理器。非法时按"未命中"放行(走原跳转),而不是把访客送到坏地址。
+	if dec.Action == store.RuleActionRedirect && !validTargetURL(dec.Destination) {
+		slog.Error("规则裁决为改写目标但 destination 非法,按未命中处理",
+			"rule", dec.RuleID, "link", link.ID, "destination", dec.Destination)
+		return false
+	}
 	// 先尝试外部注册的交付动作处理器（例如 proxy 服务端反代）
 	if ExecuteActionHandler(c, dec.Action, DeliveryContext{
 		Link:     link,
@@ -479,13 +491,9 @@ func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domai
 	case store.RuleActionRedirect:
 		// 规则改写的目标不参与轮询(spec 风险章节):轮询是"在目标池里选一条",
 		// 规则改写是"换一条路",语义不同,拿它去 PickTarget 会把改写目标轮询没了。
-		if dec.Destination == "" {
-			// 理论上写入时已校验过;真出现空目标时按"未命中"放行并记日志,
-			// 而不是把访问者重定向到一个空地址。
-			slog.Error("规则裁决为改写目标但 destination 为空,按未命中处理",
-				"rule", dec.RuleID, "link", link.ID)
-			return false
-		}
+		//
+		// dec.Destination 在此必然非空且合法:函数体顶部的统一出口校验已经把
+		// "空/非 http(s)" 的目标拦成"按未命中放行"。
 		a.recordVisit(c, store.VisitRecord{
 			LinkID: link.ID, DomainID: d.ID, Action: action,
 			Outcome: store.VisitOutcomeSuccess, TargetURL: dec.Destination,

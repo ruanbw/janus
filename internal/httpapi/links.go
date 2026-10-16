@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +22,11 @@ import (
 	"janus/internal/store"
 )
 
-// validTargetURL 目标 URL 任意协议(开放重定向),但拒绝控制字符(CRLF header 注入防护)。
+// validTargetURL 目标 URL 准入:协议白名单仅 http/https,并拒绝控制字符(CRLF 注入)。
+//
+// 保留"任意 host"的开放重定向语义(短链本就允许指向任意站点),但 scheme 必须显式
+// 限定。否则 javascript:/data:/vbscript:/file: 会被原样写进 Location 头:
+// 一条短链就变成了在"短链自己的域名"下执行脚本或读本地文件的载荷。
 func validTargetURL(s string) bool {
 	if s == "" || len(s) > 4096 {
 		return false
@@ -31,7 +36,16 @@ func validTargetURL(s string) bool {
 			return false
 		}
 	}
-	return true
+	u, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return true
+	default:
+		return false
+	}
 }
 
 // dedupeTargetURLs 按首次出现顺序去重(保持轮询顺序稳定)。
