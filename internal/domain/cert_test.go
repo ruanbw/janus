@@ -10,6 +10,7 @@ package domain
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -60,5 +61,26 @@ func TestProbeClientKeepsTimeoutAndNoRedirect(t *testing.T) {
 	}
 	if c.CheckRedirect == nil {
 		t.Fatal("probeClient() 缺少 CheckRedirect:跟随跳转会把别处的证书算到目标域名头上")
+	}
+}
+
+// 探活客户端不得连到内网/回环地址(DNS rebinding 型 SSRF)。
+//
+// 攻击形态:域名通过归属校验后改指内网(169.254.169.254 云元数据、10.x 内网服务、
+// 127.0.0.1 本机管理口)。探活的解析发生在请求时刻,默认拨号器会照直连过去 ——
+// 探活于是变成一条对内网的请求,而"握手成功/出示了什么证书"还会回写 cert_status,
+// 给攻击者一条盲注信道。
+//
+// 这里用真实 loopback HTTPS 服务器验证:探活客户端必须连不上它。
+func TestProbeClientRefusesLoopbackTarget(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	url := "https://" + srv.Listener.Addr().String() + "/"
+	resp, err := probeClient().Get(url)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatalf("探活客户端成功连到 loopback(%s):域名通过校验后改指内网就能把探活变成对内网的 SSRF 请求", url)
 	}
 }

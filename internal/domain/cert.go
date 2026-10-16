@@ -3,8 +3,11 @@ package domain
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/netip"
 	"sync"
 	"time"
 )
@@ -49,8 +52,73 @@ func newProbeClient() *http.Client {
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // 见上
 			// 探活是一次性短连接:不复用连接,也就不会留下 idle 连接等待超时。
 			DisableKeepAlives: true,
+			// 自定义拨号:拒绝把探活打到内网地址上去(见 probeDialContext)。
+			DialContext: probeDialContext,
 		},
 	}
+}
+
+// cgnatPrefix RFC 6598 的运营商级 NAT 段:IsPrivate 不覆盖它,而云上内网与
+// 元数据服务(如 100.100.100.200)常落在这里。
+var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
+
+// probeIPAllowed 探活是否允许连到这个地址:只允许公网单播地址。
+//
+// 为什么必须在这里挡:域名归属校验证明的是**提交时**"这个域名的 A/AAAA 指向本机"
+// 加上"其权威 DNS 里有我们的 TXT"。提交者随后可以把域名改指到内网 IP
+// (169.254.169.254 云元数据、10.x 内网服务、127.0.0.1 本机管理口)—— 探活用的是
+// http.Client,解析发生在**请求时刻**,默认拨号器会照直连过去。一次探活就变成对
+// 内网的 SSRF 请求,而且"握手成功/出示了什么证书"还会回写到 cert_status,给攻击者
+// 提供一条盲注信道。所以判定必须落在真正要连的那个 IP 上,而不是域名文本上。
+//
+// 代价说清楚:loopback 与私网地址一律拒绝,所以本地开发环境
+// (JANUS_SERVER_PUBLIC_IP=127.0.0.1 + hosts 把域名指到 127.0.0.1)的证书探活会
+// 失败 —— 这是刻意的取舍:探活的安全边界按生产口径定,本地若要验证 on-demand
+// 签发请直接在浏览器里访问域名。更严格的替代方案是"必须等于 ServerPublicIP",
+// 需要把 IP 传进探活客户端(持有者在 httpapi),属跨包装配。
+func probeIPAllowed(addr netip.Addr) bool {
+	a := addr.Unmap()
+	if !a.IsValid() || !a.IsGlobalUnicast() {
+		return false
+	}
+	if a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsMulticast() || a.IsUnspecified() {
+		return false
+	}
+	if cgnatPrefix.Contains(a) {
+		return false
+	}
+	return true
+}
+
+// probeDialContext 探活专用的拨号器:解析域名 → 逐个校验地址 → 只连公网单播。
+//
+// 校验与连接之间没有二次解析(连接用的是校验过的那个 IP 字面量),所以不存在
+// "校验时是公网、连接时变内网"的 DNS rebinding 窗口。
+func probeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	addrs, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for _, ip := range addrs {
+		if !probeIPAllowed(ip) {
+			lastErr = fmt.Errorf("探活拒绝连接: %s 解析到非公网地址 %s", host, ip)
+			continue
+		}
+		conn, err := (&net.Dialer{Timeout: 10 * time.Second}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("探活目标 %s 没有可用地址", host)
+	}
+	return nil, lastErr
 }
 
 // probeCert 是可注入 client 的实现,便于单测用 TLS 测试服务器验证"证书是否覆盖 FQDN"。
