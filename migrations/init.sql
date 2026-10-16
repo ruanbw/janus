@@ -251,6 +251,10 @@ CREATE TABLE IF NOT EXISTS email_tokens (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_email_tokens_expires ON email_tokens(expires_at);
+-- 租户维度的 token 管理(按租户列出/作废某类 token、pending 租户超期清理)
+-- 需要 (tenant_id, kind);此前只有 expires_at 与 token_hash 两个索引,
+-- 这类查询只能全表扫。消费路径仍走 token_hash 的 UNIQUE 索引,不受影响。
+CREATE INDEX IF NOT EXISTS idx_email_tokens_tenant_kind ON email_tokens(tenant_id, kind);
 
 -- 初始种子数据
 INSERT INTO tiers (name, max_links, max_domains) VALUES ('free', 100, 10)

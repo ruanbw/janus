@@ -147,3 +147,27 @@ func TestTiersQuotaNonNegativeConstraint(t *testing.T) {
 func uniqueTierName(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
+
+// TestEmailTokensTenantKindIndexExists 固化 email_tokens 的租户维度索引。
+//
+// 契约:email_tokens 上必须存在 (tenant_id, kind) 索引。
+//
+// 现状与用途:目前唯一的按 token_hash 过滤(已有 UNIQUE 索引),因此这条索引不是
+// 为消费路径服务的 —— 它是为"租户维度的 token 管理"准备的:按租户列出/作废某类
+// token(如重置密码时作废该租户全部未用 verify token、pending 租户超期清理),
+// 这些查询此前只能走 tenant_id 单列(无索引)或全表扫。
+func TestEmailTokensTenantKindIndexExists(t *testing.T) {
+	s := setupStore(t)
+
+	// Given 已应用初始化脚本的库
+	// When 查询 idx_email_tokens_tenant_kind
+	def := indexDef(t, s, "idx_email_tokens_tenant_kind")
+
+	// Then 索引存在且键列含 tenant_id / kind
+	if def == "" {
+		t.Fatalf("email_tokens 上缺少 idx_email_tokens_tenant_kind")
+	}
+	if !strings.Contains(def, "tenant_id") || !strings.Contains(def, "kind") {
+		t.Fatalf("idx_email_tokens_tenant_kind 定义不符: %s", def)
+	}
+}
