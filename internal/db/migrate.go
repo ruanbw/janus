@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -65,20 +66,42 @@ func MigrateDBWithExtra(ctx context.Context, db *sql.DB, dir string, extraFS fs.
 
 	// 第二轨：外部专有迁移(外部表需要增量演进,故保留 goose 版本表)
 	if extraFS != nil {
-		if err := goose.SetDialect("postgres"); err != nil {
-			return fmt.Errorf("goose set dialect: %w", err)
-		}
-		origTable := goose.TableName()
-		goose.SetTableName(ExtraMigrationsTableName)
-		goose.SetBaseFS(extraFS)
-		err := goose.UpContext(ctx, db, ".")
-		goose.SetBaseFS(nil)
-		goose.SetTableName(origTable)
-		if err != nil && !errors.Is(err, goose.ErrNoMigrations) && !errors.Is(err, goose.ErrNoMigrationFiles) {
-			return fmt.Errorf("goose extra up: %w", err)
+		if err := applyExtraMigrations(ctx, db, extraFS); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// gooseMu 串行化对 goose 包级全局状态的读写(方言名/版本表名/BaseFS)。
+//
+// 为什么需要:goose.SetTableName/SetBaseFS 直接写包级变量,goose 自身不加锁。
+// 进程内同时存在多个迁移入口时(SDK 多实例、内置初始化与外部专有迁移并存),
+// 两个 goroutine 会互相覆盖版本表名与 BaseFS —— 迁移被记到错误的版本表,
+// 或读到另一个 FS 的文件,表现为随机 "file does not exist" 与重复执行。
+// 数据库侧的 advisory lock 只解决跨进程互斥,挡不住同进程内的并发。
+var gooseMu sync.Mutex
+
+// applyExtraMigrations 在互斥保护下执行 goose 外部迁移,并保证全局状态被还原。
+func applyExtraMigrations(ctx context.Context, db *sql.DB, extraFS fs.FS) error {
+	gooseMu.Lock()
+	defer gooseMu.Unlock()
+
+	if err := goose.SetDialect("postgres"); err != nil {
+		return fmt.Errorf("goose set dialect: %w", err)
+	}
+	origTable := goose.TableName()
+	// defer 还原:UpContext 中途返回/panic 也不能把全局状态留在别人的设置上。
+	defer goose.SetTableName(origTable)
+	goose.SetTableName(ExtraMigrationsTableName)
+	defer goose.SetBaseFS(nil)
+	goose.SetBaseFS(extraFS)
+
+	err := goose.UpContext(ctx, db, ".")
+	if err != nil && !errors.Is(err, goose.ErrNoMigrations) && !errors.Is(err, goose.ErrNoMigrationFiles) {
+		return fmt.Errorf("goose extra up: %w", err)
+	}
 	return nil
 }
 
