@@ -117,6 +117,10 @@ func (w *Worker) Run(ctx context.Context) {
 	// 过期会话与邮箱 token 清理与访问清理同一节奏(默认 24h)。
 	// email_tokens 仅消费时惰性校验过期,需定期物理清理防表膨胀;spec 未禁止,属合理运维。
 	start(func() { w.guardedLoop(ctx, w.cfg.VisitCleanupEvery, w.sessionCleanupPass, "session-cleanup") })
+	// 超期未验证的 pending 租户回收(释放 slug 与默认域名),同一节奏。
+	start(func() {
+		w.guardedLoop(ctx, w.cfg.VisitCleanupEvery, w.pendingTenantCleanupPass, "pending-tenant-cleanup")
+	})
 	<-ctx.Done()
 	wg.Wait()
 }
@@ -404,5 +408,24 @@ func (w *Worker) sessionCleanupPass(ctx context.Context) {
 	}
 	if err := w.store.DeleteExpiredEmailTokens(ctx); err != nil {
 		log.Printf("worker session-cleanup: %v", err)
+	}
+}
+
+// pendingTenantCleanupPass 回收超期未验证邮箱的 pending 租户。
+//
+// 这些行占着 UNIQUE 的 slug 与默认域名 <slug>.<平台域名>:注册写错邮箱、或机器人
+// 批量注册留下的租户会永久堵住这些名字,真实注册者只会看到 slug 已被占用。保留期
+// (7 天,store.StalePendingTenantRetention)留给"验证邮件过几天才点"的正常人。
+//
+// 与访问清理同一节奏(默认 24h):它是运维清理,不追求时效;删除是分批的,单批
+// 行数有界,不会因为积压而变成一条长事务。
+func (w *Worker) pendingTenantCleanupPass(ctx context.Context) {
+	n, err := w.store.DeleteStalePendingTenants(ctx, store.StalePendingTenantRetention)
+	if err != nil {
+		log.Printf("worker pending-tenant-cleanup: %v", err)
+		return
+	}
+	if n > 0 {
+		log.Printf("worker pending-tenant-cleanup: removed %d 个超过保留期(%v)仍未验证的 pending 租户", n, store.StalePendingTenantRetention)
 	}
 }
