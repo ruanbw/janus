@@ -283,7 +283,27 @@ func (a *API) probeTenantDefaultDomain(tenantID int64) {
 // 必须提供一次性 setup token。token 正确才继续;不正确则按冷却补发一枚 ——
 // 知道超管邮箱的人只能反复触发"发到超管邮箱的邮件"(由 a.setupRate 限流),
 // 拿不到 token,进不来。
+//
+// 另外这里是**账号级失败退避**的统一入口(见 auth_limit.go):每 IP 限流挡不住
+// "换 IP 打同一个账号"的撞库,所以先把"该邮箱已被退避"挡在 bcrypt 之前,再按
+// 校验结果记账(成功清零、失败累加)。login 与 token 共用本函数,不会出现
+// "换个端点绕过退避"。
 func (a *API) verifyCredentials(c *gin.Context, email, password, setupToken string) (*store.Tenant, bool) {
+	failures := a.accountFailures()
+	if ok, retryAfter := failures.Allow(email); !ok {
+		writeAccountThrottled(c, retryAfter)
+		return nil, false
+	}
+	tenant, ok := a.verifyCredentialsChecked(c, email, password, setupToken)
+	if !ok {
+		failures.Fail(email)
+		return nil, false
+	}
+	failures.Succeed(email)
+	return tenant, true
+}
+
+func (a *API) verifyCredentialsChecked(c *gin.Context, email, password, setupToken string) (*store.Tenant, bool) {
 	ctx := c.Request.Context()
 	tenant, err := a.store.GetTenantByEmail(ctx, email)
 	if err != nil {
