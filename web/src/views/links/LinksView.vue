@@ -574,6 +574,7 @@ import { confirm } from '@/components/app/confirm';
 
 import { ApiError } from '@/types/api';
 import type { Domain, Link, LinkStatus } from '@/types/api';
+import { toCsvRow } from '@/utils/csv';
 import { formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 
@@ -1080,10 +1081,10 @@ function exportCsv() {
     formatDateTime(l.createdAt),
   ]);
 
-  const csvContent = [
-    headers.join(','),
-    ...rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')),
-  ].join('\n');
+  // 逐单元格转义并做公式注入防护:短码/目标 URL 由租户输入控制,
+  // 直接拼接的话 `=HYPERLINK(...)` 这类内容会在打开表格的同事机器上被 Excel 求值。
+  // 表头是固定字面量,保持原样不加引号。
+  const csvContent = [headers.join(','), ...rows.map((r) => toCsvRow(r))].join('\n');
 
   const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
