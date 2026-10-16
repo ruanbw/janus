@@ -152,7 +152,14 @@ func (a *API) handleAdminPatchTenant(c *gin.Context) {
 		return
 	}
 	if err := a.store.UpdateTenantAdmin(c.Request.Context(), id, req.Status, req.TierID); err != nil {
-		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		// 并发场景:上面的存在性检查通过之后、写入之前租户被删,此时 store 返回
+		// ErrNotFound(见 store.UpdateTenantAdmin 的 RowsAffected 检查)。那不是
+		// 服务端故障,回 500 会让超管以为平台出错而反复重试。
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(c, http.StatusNotFound, errNotFound, "tenant not found")
+		} else {
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		}
 		return
 	}
 	t, err := a.store.GetTenantByID(c.Request.Context(), id)
