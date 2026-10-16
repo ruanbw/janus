@@ -43,10 +43,11 @@ func NewOptimizedConditionPipeline(logicAll bool, predicates []ConditionPredicat
 }
 
 // Match 执行热路径求值（带短路特性）。
+//
+// 空谓词切片的语义必须与树求值 (compiledNode.match) 完全一致,否则同一份
+// "空条件组"在两条路径上给出相反结论:all([]) = true(无条件即命中的兜底规则),
+// any([]) = false。这里不写特判 —— 直接让两个循环各自落到末尾的返回值即可。
 func (p *ConditionPipeline) Match(ctx VisitorContext) bool {
-	if len(p.predicates) == 0 {
-		return true
-	}
 	if p.logicAll {
 		// AND 模式：首个 false 即退出
 		for _, pred := range p.predicates {
