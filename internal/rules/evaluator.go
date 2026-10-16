@@ -7,7 +7,7 @@ import (
 	"net/netip"
 	"sort"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/ast"
@@ -18,7 +18,8 @@ import (
 // 表达式的编译期与运行期预算(包内常量,不加配置项)。
 //
 // 这里的每个数字都是"租户能单方面触发的最坏情况"的上界,不是调优参数:
-// 表达式的长度、节点数、可调用的函数、可求值的时长,四项全部在编译期定死。
+// 表达式的长度、节点数、可调用的函数,三项全部在编译期定死;
+// 运行期只剩 expr 自带的 MemoryBudget 一道分配上限。
 const (
 	// MaxExpressionLen 单条表达式的字符数上限。编译成本与节点数都随长度线性增长,
 	// 没有上限就等于把一次编译的时间与内存交给租户自己定。
@@ -29,10 +30,11 @@ const (
 	// 是我们下面"求值步数上界"的唯一依据。1024 足够写出任何有意义的条件。
 	MaxExpressionNodes = 1024
 
-	// exprBudgetTimeout 单条表达式求值的兜底时限。
-	// 正常表达式是纳秒级(见 BenchmarkEvaluateExprRule);1ms 意味着"出了事"才会触发。
-	// 这是第二道防线,不是第一道 —— 见 compileExpression 的注释。
-	exprBudgetTimeout = time.Millisecond
+	// exprMemoryBudget 单条表达式求值的分配预算(expr 的 vm.VM.MemoryBudget)。
+	// 压到远低于 expr 默认值(1MB):表达式环境只有 13 个字符串,正常求值的分配
+	// 是个位数,给 256KB 已经宽到不可能误伤,又足以挡住任何"构造一个巨大数组/字符串"
+	// 的写法。超预算时 expr 内部 panic 并被 Run 回收成 error。
+	exprMemoryBudget = 256 << 10
 )
 
 // exprFact 是喂给 expr 的**唯一**环境类型。
@@ -135,7 +137,7 @@ func (e *exprEvaluator) Match(ctx VisitorContext) (matched bool) {
 	}
 
 	env := factToExprEnv(FactFromContext(ctx))
-	out, err := runProgram(e.program, env, e.log)
+	out, err := runProgram(e.program, env)
 	if err != nil {
 		logExprRunError(e.log, err)
 		return false
@@ -144,70 +146,41 @@ func (e *exprEvaluator) Match(ctx VisitorContext) (matched bool) {
 	return ok && res
 }
 
-// runProgram 在预算内求值一条已编译的表达式。
+// runProgram 同步求值一条已编译的表达式。
 //
 // 为什么不用 vm.Step() 做步数预算:Step 只在 expr_debug 构建下有意义 ——
 // vm.go 里的取指循环是 `if debug && vm.debug { <-vm.step }`,而 debug 是编译期常量。
 // 默认构建下 Run 根本不读 vm.step,此时 Step() 会**永久阻塞**(实测)。
 // vm.Step 这条路是死的。
 //
-// 为什么不用 goroutine + select 做超时:vm.Run 不能被 ctx 中断,
-// 超时只能"放弃等待",那个 goroutine 仍在烧 CPU —— 攻击者可以用并发把 CPU 打满,
-// 而每个泄漏的 goroutine 还占着栈。实测开销 642ns/5 allocs(直跑 150ns/1 alloc),
-// 放在跳转热路径上不划算,换来的却只是一个"不再等它"的假象。
+// 为什么不用 goroutine + select 做超时:vm.Run 不能被 ctx 中断,超时只能"放弃等待",
+// 那个 goroutine 仍在烧 CPU —— 攻击者可以用并发把 CPU 打满,而每个被放弃的 goroutine
+// 还占着栈。实测开销 642ns/5 allocs(直跑 150ns/1 alloc),放在跳转热路径上不划算,
+// 换来的却只是一个"不再等它"的假象。所以这里同步直跑,预算全部落在编译期与
+// MemoryBudget 上:
 //
-// 所以预算的**主体在编译期**:长度上限、节点上限、禁用全部内置函数,再由 AST 审计
-// 拒掉谓词类内置函数与区间运算符 `..`,内置函数白名单只放行有界 O(n) 的字符串/数值
-// 计算 —— 合起来让字节码里不存在循环构造,求值步数因而有上界。
-// runProgram 里的两道兜底只负责最后这一层意外:
-//
+//   - 编译期:长度上限、节点上限、禁用全部内置函数,再由 AST 审计拒掉谓词类内置函数、
+//     区间运算符 `..`、let 绑定与 `$env`,内置函数白名单只放行有界 O(n) 的字符串/数值
+//     计算 —— 合起来让字节码里不存在回跳,求值步数因而被字节码长度静态封顶;
 //   - MemoryBudget:expr 自带的分配预算,超了 panic,被 Run 内部 recover 成 error。
-//     它只覆盖走了 memGrow 的操作,不是"分配有界"的完整保证 —— 白名单才是主约束;
-//   - 超时(1ms):兜住"上界估计错了"的情况(例如将来 expr 升级引入了新的循环构造)。
-//     超时只是"不再等待";因为没有循环构造,被放弃的 goroutine 一定会在极短时间内
-//     自行结束,不是泄漏。
-func runProgram(prog *vm.Program, env exprFact, log *slog.Logger) (any, error) {
-	// MemoryBudget 压到远低于 expr 默认值(1MB):表达式环境只有 13 个字符串,
-	// 正常求值的分配是个位数,给 256KB 已经宽到不可能误伤,又足以挡住
-	// 任何"构造一个巨大数组/字符串"的写法。
-	machine := &vm.VM{MemoryBudget: 256 << 10}
-	done := make(chan result, 1) // 缓冲 1:超时后发送方也一定发得出去,不会卡死在发送上
-	go func() {
-		// 内层 recover:vm.Run 自己也 recover 成 error,这里再兜一层是防
-		// "panic 发生在 Run 的 defer 之外"这种边角(例如 env 访问反射失败)。
-		defer func() {
-			if rec := recover(); rec != nil {
-				done <- result{err: fmt.Errorf("expr panic: %v", rec)}
-			}
-		}()
-		v, err := machine.Run(prog, env)
-		done <- result{val: v, err: err}
-	}()
-	timer := time.NewTimer(exprBudgetTimeout)
-	defer timer.Stop()
-	select {
-	case r := <-done:
-		return r.val, r.err
-	case <-timer.C:
-		return nil, errExprBudget
-	}
+//     它只覆盖走了 memGrow 的操作,不是"分配有界"的完整保证 —— 白名单才是主约束。
+func runProgram(prog *vm.Program, env exprFact) (any, error) {
+	machine := exprVMPool.Get().(*vm.VM)
+	defer exprVMPool.Put(machine)
+	machine.MemoryBudget = exprMemoryBudget
+	return machine.Run(prog, env)
 }
 
-// result 是 runProgram 里 goroutine 的回传信封。
-type result struct {
-	val any
-	err error
+// exprVMPool 复用求值机,省掉每次求值分配一个 vm.VM(及其内部切片)的开销。
+//
+// 复用是安全的:vm.Run 在开头就重置 Stack/Scopes/Variables 与内存计数,
+// 同一个 VM 串行复用不会把上一条表达式的状态带过来;并发安全由 sync.Pool 保证。
+var exprVMPool = sync.Pool{
+	New: func() any { return &vm.VM{MemoryBudget: exprMemoryBudget} },
 }
-
-// errExprBudget 表示求值超出兜底时限。日志里按"引擎异常"而不是"表达式写错"归类。
-var errExprBudget = errors.New("expr 求值超出时间预算")
 
 func logExprRunError(log *slog.Logger, err error) {
 	if log == nil {
-		return
-	}
-	if errors.Is(err, errExprBudget) {
-		log.Error("expr 表达式求值超出时间预算,按未命中(fail-open)处理", "err", err)
 		return
 	}
 	log.Warn("expr 表达式运行时执行异常,按未命中(fail-open)处理", "err", err)
