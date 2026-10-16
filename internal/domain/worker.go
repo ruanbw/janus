@@ -232,6 +232,12 @@ func (w *Worker) verifyAndActivate(ctx context.Context, d store.DomainScanRow) {
 		log.Printf("worker dns-retry: verify %s: %v", d.FQDN, err)
 		return
 	}
+	if res.Status == VerifyDNSUnavailable {
+		// DNS 通道故障:"查不到"与"没配好"必须分开 —— 这一轮不下任何结论,
+		// 也不刷新 dns_checked_at(别把这次失败算进重试节奏),下一轮再问。
+		log.Printf("worker dns-retry: %s DNS 查询失败,归属无法判定,本轮不改状态", d.FQDN)
+		return
+	}
 	if !res.Verified() {
 		if err := w.store.MarkDomainDNSChecked(ctx, d.ID); err != nil {
 			log.Printf("worker dns-retry: mark checked %s: %v", d.FQDN, err)
@@ -263,7 +269,8 @@ func challengeExpired(d store.DomainScanRow, maxAge time.Duration) bool {
 // ownershipRecheckPass 低频复检 active 自有域名的归属。
 //
 // 通过:刷新 ownership_verified_at(顺带记录本次校验时间)。
-// 不通过:降级为 failed(仍在重试队列里,租户修好 DNS 后自动恢复)。
+// 不通过(确实查到、但归属不成立):降级为 failed(仍在重试队列里,租户修好 DNS 后自动恢复)。
+// 查不到(DNS 通道故障):本轮跳过,状态不变 —— 详见下面 VerifyDNSUnavailable 分支。
 //
 // 为什么是 failed 而不是 stopped:stopped 的语义是"租户主动暂停",系统不该替租户
 // 做这个决定;failed 表示"系统复检发现它不成立",并且 DNS 一修好就能自动回来。
@@ -286,6 +293,13 @@ func (w *Worker) ownershipRecheckPass(ctx context.Context) {
 			res, err := w.dns.Verify(ctx, d.FQDN, d.VerifyToken)
 			if err != nil {
 				log.Printf("worker ownership-recheck: verify %s: %v", d.FQDN, err)
+				return
+			}
+			if res.Status == VerifyDNSUnavailable {
+				// 关键分支:上游 DNS 抖动不能让域名被降级。降级的后果是 Caddy
+				// 授权端点立刻拒绝,该租户所有短链一起 404 —— 用一次查询失败
+				// 换全站停服是不可接受的。只记日志,状态一个字节都不动。
+				log.Printf("worker ownership-recheck: %s DNS 查询失败,归属无法判定,本轮不改状态(不降级)", d.FQDN)
 				return
 			}
 			if res.Verified() {

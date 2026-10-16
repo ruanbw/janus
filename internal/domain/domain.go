@@ -154,6 +154,16 @@ const (
 	VerifyNeedTXT VerifyStatus = "need_txt"
 	// VerifyVerified TXT 挑战通过(且 A/AAAA 指向本机):可以激活。
 	VerifyVerified VerifyStatus = "verified"
+	// VerifyDNSUnavailable DNS 查询本身失败(解析器不可达、/etc/resolv.conf 不可读、
+	// 应答异常):既证明不了 A/AAAA 指向本机,也证明不了它没指向本机 —— 归属仍然
+	// 悬而未决。调用方必须按"本轮没有结论"处理:不改域名状态、不当作校验失败,
+	// 等下一轮再问。
+	//
+	// 为什么必须与 VerifyNeedDNS 分开:原先解析失败也返回 (VerifyNeedDNS, nil),
+	// 于是"上游 DNS 抖了一下"与"租户没配 A 记录"在下游完全同形 ——
+	// ownershipRecheckPass 据此把 active 域名降级成 failed,Caddy 授权端点随即
+	// 拒绝,该租户全部短链立刻 404。触发条件极常见(见 C3)。
+	VerifyDNSUnavailable VerifyStatus = "dns_unavailable"
 )
 
 // VerifyResult 归属校验结果。TXTValues 是该域名当前发布的挑战记录值,只用于后台
@@ -208,16 +218,25 @@ func (c *DNSChecker) Tasks() *TaskQueue {
 	return c.tasks
 }
 
-// Verify 校验域名归属,返回三态结果。
+// Verify 校验域名归属,返回三态结果(外加"本轮无法判定"的 VerifyDNSUnavailable)。
 //
 // 判定顺序刻意是 A/AAAA → TXT:A/AAAA 失败是最常见、也最容易自查的原因,先把它分出去
 // 既能给精确指引,又省掉那些根本不会激活的域名的 TXT 查询(后台重试队列每轮都跑)。
+// 但"查询失败"与"查到了、只是没指向本机"必须分开报:前者是 VerifyDNSUnavailable
+// (本轮无结论),后者才是 VerifyNeedDNS。
 func (c *DNSChecker) Verify(ctx context.Context, fqdn, token string) (VerifyResult, error) {
 	fqdn = NormalizeFQDN(fqdn)
 	if !IsValidFQDN(fqdn) {
 		return VerifyResult{}, fmt.Errorf("域名格式非法: %q", fqdn)
 	}
-	addrs, _ := c.LookupAddrs(ctx, fqdn)
+	addrs, err := c.LookupAddrs(ctx, fqdn)
+	if err != nil {
+		// 查询失败 ≠ 归属不成立。显式翻成"不确定"态,而不是让它退化成
+		// VerifyNeedDNS("A 记录没指向本机")——后者会被复检当成"归属已不成立"。
+		// err 本身不上抛:Verify 对 DNS 通道故障的既有契约就是"不把它当系统错误",
+		// 同步路径(创建/恢复)靠返回值给出租户可读的指引。
+		return VerifyResult{Status: VerifyDNSUnavailable}, nil
+	}
 	if !c.anyMatchExpected(addrs) {
 		return VerifyResult{Status: VerifyNeedDNS}, nil
 	}
