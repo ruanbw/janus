@@ -63,13 +63,16 @@ func interceptorSnapshot() []RuleInterceptor {
 // 而「插件失灵」的正确定义是「它这一票不算」，不是「整次访问失败」。
 func checkOne(i RuleInterceptor, ctx context.Context, r *http.Request, linkID int64, fact *Fact) (d *Decision, ok bool) {
 	start := time.Now()
+	// 名字在调用插件之前取(理由见 safePluginName):recover 路径上再 panic
+	// 会从这个 deferred 函数里直接冒到访客热路径,隔离层等于失效。
+	name := safePluginName(i)
 	defer func() {
 		if rec := recover(); rec != nil {
 			d, ok = nil, false
 			slog.Error("规则拦截器 panic,按未拦截处理(fail-open)",
-				"interceptor", i.Name(), "panic", rec, "stack", string(debug.Stack()))
+				"interceptor", name, "panic", rec, "stack", string(debug.Stack()))
 		}
-		watchPluginCall("interceptor", i.Name(), start)
+		watchPluginCall("interceptor", name, start)
 	}()
 	return i.Intercept(ctx, r, linkID, fact)
 }
