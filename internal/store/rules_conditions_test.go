@@ -108,3 +108,42 @@ func TestUpdateRuleConditionsPointerIsExplicit(t *testing.T) {
 
 // strPtr 取字符串指针(store 包内测试小工具)。
 func strPtr(s string) *string { return &s }
+
+// TestCreateRuleWithoutConditionsStoresEmptyArray 审查项 COND7:钉住现状。
+//
+// CreateRule 里 `if r.Conditions.IsZero() { r.Conditions = Conditions() }` 是无效死代码
+// ——Conditions() 无参时 Leaves 仍为 nil(还是零值),赋值前后完全一致。
+// 真正的兜底来自 MarshalJSON(`Leaves == nil → "[]"`)。删除该死代码前后:
+//   - 未提供 conditions 与显式传零值 Conditions() 都必须落库 `[]`;
+//   - 读回都是空条件组(求值侧 = 恒命中兜底),语义不变。
+func TestCreateRuleWithoutConditionsStoresEmptyArray(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+	tenantID := newTenant(t, s, "cond-create@test.io")
+
+	created := []*Rule{}
+	a, err := s.CreateRule(ctx, tenantID, Rule{Name: "未提供", Action: RuleActionPass})
+	if err != nil {
+		t.Fatalf("create rule (未提供): %v", err)
+	}
+	created = append(created, a)
+
+	b, err := s.CreateRule(ctx, tenantID, Rule{Name: "显式零值", Action: RuleActionPass, Conditions: Conditions()})
+	if err != nil {
+		t.Fatalf("create rule (显式零值): %v", err)
+	}
+	created = append(created, b)
+
+	for _, r := range created {
+		if raw := rawColumn(t, s, r.ID, "conditions"); raw != "[]" {
+			t.Fatalf("%s: 库内 conditions = %s, want []", r.Name, raw)
+		}
+		got, err := s.GetRule(ctx, tenantID, r.ID)
+		if err != nil {
+			t.Fatalf("%s: get rule: %v", r.Name, err)
+		}
+		if got.Conditions.Len() != 0 || !got.Conditions.IsEmpty() || got.Conditions.IsTree() {
+			t.Fatalf("%s: 读回条件 = %#v, want 空条件组(恒命中兜底)", r.Name, got.Conditions)
+		}
+	}
+}

@@ -615,9 +615,10 @@ func (s *Store) WithRuleCountCheckInTx(ctx context.Context, tenantID int64, fn f
 // 规则条数上限(MaxRulesPerTenant)在**事务内、持租户行锁**判定,见
 // WithRuleCountCheckInTx:超限返回 *RuleLimitError,不写任何数据。
 func (s *Store) CreateRule(ctx context.Context, tenantID int64, r Rule) (*Rule, error) {
-	if r.Conditions.IsZero() {
-		r.Conditions = Conditions()
-	}
+	// conditions 不需要补默认值:零值经 RuleConditions.MarshalJSON 就写 "[]"
+	// (Leaves == nil → "[]"),空条件组在求值侧本就是恒命中的兜底规则。
+	// (旧代码 `if r.Conditions.IsZero() { r.Conditions = Conditions() }` 是死代码——
+	// 无参 Conditions() 的 Leaves 仍是 nil,赋值前后零值不变。)
 	// DDL 有默认值但 GORM 会把零值一并 INSERT,CHECK 约束不接受空串,这里补上默认值
 	if r.Scope == "" {
 		r.Scope = RuleScopeGlobal
