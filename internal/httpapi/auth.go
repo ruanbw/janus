@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -137,31 +138,29 @@ func (a *API) handleRegister(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	tenant, err := a.store.CreateTenant(ctx, email, string(hash), slug, false)
+	// 建租户、建默认域名、签发验证 token 三步必须原子:中间失败若留下租户行,
+	// 用户重试注册只会拿到 409,而默认域名/token 都不存在,无法自助恢复。
+	// 三步同事务后,任一失败整组回滚(见 store.RegisterTenant)。
+	token, tokenHash := newToken()
+	tenant, err := a.store.RegisterTenant(ctx, email, string(hash), slug,
+		slug+"."+a.cfg.PlatformDomain, tokenHash, a.cfg.VerifyTokenTTL, false)
 	if err != nil {
+		// TOCTOU:预检(DomainFQDNExists / GetTenantBySlug)与事务内插入之间有窗口,
+		// 并发的另一路注册可能抢先占位邮箱、slug 或默认域名。此时唯一索引是最终
+		// 裁决者,撞车是"冲突"而不是"服务器错误" —— 漏成 500 会让用户看到"服务器
+		// 错误",重试又被 409 挡死。
 		if store.IsUniqueViolation(err) {
-			writeErr(c, http.StatusConflict, errConflict, "邮箱或 slug 已被占用")
+			writeErr(c, http.StatusConflict, errConflict, "邮箱、slug 或默认域名已被占用")
 			return
 		}
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	if _, err := a.store.CreatePlatformDomain(ctx, tenant.ID, slug+"."+a.cfg.PlatformDomain); err != nil {
-		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
-		return
-	}
-	// 重新获取租户(含默认域名)
-	if tenant, err = a.store.GetTenantByID(ctx, tenant.ID); err != nil {
-		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
-		return
-	}
-	// 验证邮件(控制台 mailer)
-	token, tokenHash := newToken()
-	if err := a.store.CreateEmailToken(ctx, tenant.ID, tokenHash, "verify", a.cfg.VerifyTokenTTL); err != nil {
-		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
-		return
-	}
+	// 发信仍在响应路径上(注册的 409 语义不承担等时化职责,见 AUTH1 说明);
+	// 但此时租户/域名/token 都已落库,发信失败不再留半成品,用户可走
+	// resend-verification 自助恢复。
 	if err := a.mailer.SendVerifyEmail(email, token); err != nil {
+		slog.Error("register: 发送验证邮件失败", "tenantId", tenant.ID, "err", err)
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
@@ -199,10 +198,14 @@ func (a *API) handleResendVerification(c *gin.Context) {
 		// 同一邮箱 5 分钟最多一封:挡掉"拿已知邮箱轰炸"的滥用。
 		if a.resendVerifyRate.Allow("verify:" + email) {
 			token, tokenHash := newToken()
-			if cerr := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "verify", a.cfg.VerifyTokenTTL); cerr == nil {
-				if serr := a.mailer.SendVerifyEmail(email, token); serr != nil {
-					log.Printf("resend verify email: %v", serr)
-				}
+			// 写 token 失败原先被静默吞掉(整个 if 直接短路),线上表现为"resend 恒 202
+			// 但永远收不到新邮件",没有任何线索。两条失败路径都要留痕。
+			if cerr := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "verify", a.cfg.VerifyTokenTTL); cerr != nil {
+				slog.Error("resend-verification: 写入验证 token 失败", "tenantId", tenant.ID, "err", cerr)
+			} else {
+				// 同 forgot-password:发信不得阻塞响应路径,否则 pending 分支的响应时间
+				// 与"邮箱不存在"分支可被区分。
+				dispatchMail("resend-verification: 发送验证邮件失败", tenant.ID, func() error { return a.mailer.SendVerifyEmail(email, token) })
 			}
 		}
 	}
@@ -280,13 +283,40 @@ func (a *API) probeTenantDefaultDomain(tenantID int64) {
 // 必须提供一次性 setup token。token 正确才继续;不正确则按冷却补发一枚 ——
 // 知道超管邮箱的人只能反复触发"发到超管邮箱的邮件"(由 a.setupRate 限流),
 // 拿不到 token,进不来。
+//
+// 另外这里是**账号级失败退避**的统一入口(见 auth_limit.go):每 IP 限流挡不住
+// "换 IP 打同一个账号"的撞库,所以先把"该邮箱已被退避"挡在 bcrypt 之前,再按
+// 校验结果记账(成功清零、失败累加)。login 与 token 共用本函数,不会出现
+// "换个端点绕过退避"。
 func (a *API) verifyCredentials(c *gin.Context, email, password, setupToken string) (*store.Tenant, bool) {
+	failures := a.loginFailures
+	if ok, retryAfter := failures.Allow(email); !ok {
+		writeAccountThrottled(c, retryAfter)
+		return nil, false
+	}
+	tenant, ok := a.verifyCredentialsChecked(c, email, password, setupToken)
+	if !ok {
+		failures.Fail(email)
+		return nil, false
+	}
+	failures.Succeed(email)
+	return tenant, true
+}
+
+func (a *API) verifyCredentialsChecked(c *gin.Context, email, password, setupToken string) (*store.Tenant, bool) {
 	ctx := c.Request.Context()
 	tenant, err := a.store.GetTenantByEmail(ctx, email)
 	if err != nil {
-		// 等时化:账号不存在也执行一次 bcrypt 比较
+		// 等时化:账号不存在也执行一次 bcrypt 比较(bcrypt 先于分类,两条路径同价)。
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(password))
-		writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
+		if errors.Is(err, store.ErrNotFound) {
+			writeErr(c, http.StatusUnauthorized, errUnauth, "邮箱或密码错误")
+		} else {
+			// 数据库故障绝不能伪装成"账号不存在":那样一次连库抖动会表现成
+			// "全员密码错误",既误导用户也让排障无从下手。
+			slog.Error("verifyCredentials: 查询租户失败", "err", err)
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		}
 		return nil, false
 	}
 
@@ -428,6 +458,24 @@ type changePasswordReq struct {
 	NewPassword string `json:"newPassword"`
 }
 
+// checkOldPassword 校验旧密码,并把"密码不对"与"查不动库"分开:
+// ok=true 表示旧密码正确;dbErr=true 表示查询本身失败(调用方应回 500 + 记日志)。
+//
+// 原先三种情况(err != nil、pwHash == nil、bcrypt 比较失败)被 || 混为一谈,
+// 数据库故障会被当成"旧密码错误"回 400 —— 用户看到的是"我密码打错了",
+// 排障却看不到任何库侧线索。
+func checkOldPassword(pwHash *string, err error, oldPassword string) (ok, dbErr bool) {
+	if err != nil {
+		return false, true
+	}
+	if pwHash == nil {
+		// 无密码哈希(超管首登)正常不会走到这里(调用方已按 FirstLoginSetup 短路);
+		// 保守按"旧密码错误"处理,不泄露内部状态。
+		return false, false
+	}
+	return bcrypt.CompareHashAndPassword([]byte(*pwHash), []byte(oldPassword)) == nil, false
+}
+
 // handleChangePassword 修改密码;超管首次登录(无密码)可省略旧密码。
 func (a *API) handleChangePassword(c *gin.Context) {
 	t, sess, ok := a.requireSession(c)
@@ -447,11 +495,27 @@ func (a *API) handleChangePassword(c *gin.Context) {
 		return
 	}
 	if !t.FirstLoginSetup {
+		// 旧密码猜测限流:复用登录的账号级退避机制,但用独立命名空间 ——
+		// 改密失败不该把同一账号的登录一起锁死(反之亦然)。
+		key := "chpw:" + domain.NormalizeEmail(t.Email)
+		failures := a.loginFailures
+		if allowed, retryAfter := failures.Allow(key); !allowed {
+			writeAccountThrottled(c, retryAfter)
+			return
+		}
 		pwHash, err := a.store.TenantPasswordHash(c.Request.Context(), t.ID)
-		if err != nil || pwHash == nil || bcrypt.CompareHashAndPassword([]byte(*pwHash), []byte(req.OldPassword)) != nil {
+		oldOK, dbErr := checkOldPassword(pwHash, err, req.OldPassword)
+		if dbErr {
+			slog.Error("change-password: 读取密码哈希失败", "tenantId", t.ID, "err", err)
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+			return
+		}
+		if !oldOK {
+			failures.Fail(key)
 			writeErr(c, http.StatusBadRequest, errValidation, "旧密码错误")
 			return
 		}
+		failures.Succeed(key)
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
 	if err != nil {
@@ -492,8 +556,14 @@ func (a *API) handleForgotPassword(c *gin.Context) {
 		// 等时化:账号存在与否都执行一次 bcrypt 比较,避免存在性被时序区分
 		_ = bcrypt.CompareHashAndPassword(dummyPasswordHash, []byte(email))
 		token, tokenHash := newToken()
-		if err := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "reset", a.cfg.ResetTokenTTL); err == nil {
-			_ = a.mailer.SendResetEmail(email, token)
+		// 两条失败路径都必须留痕:写 token 失败原先被静默吞掉,发信失败原先 `_ =`。
+		// 对外响应仍是 202(不泄露邮箱是否存在),但运维必须能从日志里看出"没发出去"。
+		if err := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "reset", a.cfg.ResetTokenTTL); err != nil {
+			slog.Error("forgot-password: 写入重置 token 失败", "tenantId", tenant.ID, "err", err)
+		} else {
+			// 发信异步化:真实 SMTP 的 DialAndSend 是秒级网络 I/O,留在响应路径上会
+			// 让"邮箱存在(真发信,慢)/不存在(不发信,快)"被时序区分,等时化失效。
+			dispatchMail("forgot-password: 发送重置邮件失败", tenant.ID, func() error { return a.mailer.SendResetEmail(email, token) })
 		}
 	} else {
 		// 等时化:邮箱不存在也执行一次 bcrypt 比较
