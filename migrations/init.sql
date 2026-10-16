@@ -108,6 +108,15 @@ CREATE INDEX IF NOT EXISTS idx_link_targets_link ON link_targets(link_id);
 
 -- 6. 短链-域名关联表 (Link Domains)
 -- 唯一性约束采用部分唯一索引：只对未删除短链生效 (WHERE NOT link_deleted)
+--
+-- 不变式(库内无触发器/外键可保证,靠写入侧契约 + 本条注释钉住):
+--   link_domains.code 必须恒等于 links.code —— 它是 links.code 的冗余副本,
+--   存在的唯一理由是让"同一域名下未删除短链的短码唯一"这个约束落在
+--   link_domains 上(部分唯一索引 link_domains_live_code_uniq 只能建在这里)。
+--   写入点只有两处且都在事务内(store/links.go 的 CreateLink 与还原短码路径),
+--   两者都用该短链自己的 code;短码一经创建不可修改(spec),因此不会漂移。
+--   新增任何写 link_domains 的路径都必须遵守这条;一旦两者不一致,热路径
+--   lookupLink 会按 ld.code 命中失败(表现为短链 404),而索引仍以为未占用。
 CREATE TABLE IF NOT EXISTS link_domains (
     id           BIGSERIAL PRIMARY KEY,
     link_id      BIGINT NOT NULL REFERENCES links(id) ON DELETE CASCADE,
