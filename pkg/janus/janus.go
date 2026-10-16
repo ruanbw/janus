@@ -405,6 +405,15 @@ func (a *App) Run(ctx context.Context) error {
 	a.cancelRun = cancel
 	a.workerDone = make(chan struct{})
 
+	// 任何返回路径都必须复位 running:否则一次启动失败(bootstrap/监听失败/服务异常)
+	// 就让 App 永久停在 running=true,后续 Run 只会返回 "already running",只能重建
+	// 实例。正常收尾路径(ctx 取消 → Shutdown)里 Shutdown 也会复位,重复复位幂等。
+	defer func() {
+		a.mu.Lock()
+		a.running = false
+		a.mu.Unlock()
+	}()
+
 	// 数据库启动失败必须向上返回:吞掉错误只会让进程「看着健康」——实际没有数据库、
 	// 没跑迁移、没挂业务路由,却照常对外监听 HTTP。
 	if err := a.bootstrapDatabase(runCtx); err != nil {
