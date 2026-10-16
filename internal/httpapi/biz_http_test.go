@@ -110,6 +110,44 @@ func TestPageParamsValidation(t *testing.T) {
 	_ = resp.Body.Close()
 }
 
+// BIZ15: validateLinkDomains 改为一次批量取回,既有判定语义(归属/激活/去重)不变。
+func TestValidateLinkDomainsBatchSemantics(t *testing.T) {
+	env := testutil.Setup(t)
+	alice := loggedInTenant(t, env, "bizowna")
+	bob := loggedInTenant(t, env, "bizownb")
+
+	addDomain(t, alice, "localhost")
+	aliceLid := localhostDomainID(t, alice)
+	bobDom := addDomain(t, bob, "bobhost.localhost")
+	bobLid := bobDom.ID
+	// 未激活(pending)域名:.invalid 解析不到,停在 pending
+	pending := addDomain(t, alice, "pending.invalid")
+
+	base := func(ids []int64) map[string]any {
+		return map[string]any{
+			"targetUrls": []string{"https://example.com/"},
+			"domainIds":  ids,
+		}
+	}
+
+	// 合法:alice 自己的 active 域名
+	resp := alice.post("/api/links", base([]int64{aliceLid, aliceLid}))
+	assertStatus(t, resp, http.StatusCreated)
+	_ = resp.Body.Close()
+
+	// 不存在 / 属于他人 → 400 "域名不存在或不属于当前租户"
+	for _, ids := range [][]int64{{999999}, {bobLid}} {
+		resp = alice.post("/api/links", base(ids))
+		assertStatus(t, resp, http.StatusBadRequest)
+		_ = resp.Body.Close()
+	}
+
+	// 未激活 → 400
+	resp = alice.post("/api/links", base([]int64{pending.ID}))
+	assertStatus(t, resp, http.StatusBadRequest)
+	_ = resp.Body.Close()
+}
+
 // BIZ6: 删除/彻底删除短链区分"不存在"(404)与"内部错误"(500 + 日志)。
 // 这里断言正常路径语义不变:存在 → 204;不存在/已删 → 404。
 func TestDeleteLinkStatusSemantics(t *testing.T) {

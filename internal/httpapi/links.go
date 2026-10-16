@@ -345,9 +345,22 @@ func quotaAPIError(err error) error {
 
 // validateLinkDomains 校验域名归属与激活状态,返回去重后的 domainID 列表。
 // 创建与编辑都要求至少保留一个关联域名;传空数组意味着短链将无法通过任何域名访问。
+//
+// 一次取回本租户全部域名做判定,而不是每个 id 一次 GetDomainByID:后者在关联
+// N 个域名时就是 N 次数据库往返(且发生在创建事务之外,纯放大)。租户域名总数被
+// max_domains 约束(免费档 10),一次列表的代价远低于 N 次点查。
 func (a *API) validateLinkDomains(c *gin.Context, tenantID int64, ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
 		return nil, apiErr{http.StatusBadRequest, errValidation, "至少关联一个域名", nil}
+	}
+	domains, err := a.store.ListDomainsByTenant(c.Request.Context(), tenantID)
+	if err != nil {
+		slog.Error("读取租户域名列表失败", "tenantId", tenantID, "err", err)
+		return nil, apiErr{http.StatusInternalServerError, errInternal, "internal error", nil}
+	}
+	status := make(map[int64]string, len(domains))
+	for _, d := range domains {
+		status[d.ID] = d.Status
 	}
 	seen := map[int64]bool{}
 	var out []int64
@@ -356,11 +369,12 @@ func (a *API) validateLinkDomains(c *gin.Context, tenantID int64, ids []int64) (
 			continue
 		}
 		seen[id] = true
-		d, err := a.store.GetDomainByID(c.Request.Context(), id)
-		if err != nil || d.TenantID != tenantID {
+		// 不在本租户域名集合中 = 不存在或不属于当前租户(错误文案与逐条点查时一致)。
+		st, ok := status[id]
+		if !ok {
 			return nil, apiErr{http.StatusBadRequest, errValidation, "域名不存在或不属于当前租户", nil}
 		}
-		if d.Status != "active" {
+		if st != "active" {
 			return nil, apiErr{http.StatusBadRequest, errValidation, "域名未激活,无法关联短链", nil}
 		}
 		out = append(out, id)
