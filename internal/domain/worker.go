@@ -111,10 +111,12 @@ func (w *Worker) Run(ctx context.Context) {
 	start(func() { w.guardedLoop(ctx, w.cfg.DNSRetryInterval, w.dnsRetryPass, "dns-retry") })
 	start(func() { w.guardedLoop(ctx, certProbeInterval, w.certProbePass, "cert-probe") })
 	start(func() { w.guardedLoop(ctx, OwnershipRecheckInterval, w.ownershipRecheckPass, "ownership-recheck") })
-	start(func() { w.loop(ctx, w.cfg.VisitCleanupEvery, w.visitCleanupPass, "visit-cleanup") })
+	// 两个清理循环同样要走咨询锁:它们不发出网请求,但**写库**,多副本下会重复执行
+	// 同一批删除(白做一遍、还多占一份行锁与 WAL),与上面三个循环的取舍一致。
+	start(func() { w.guardedLoop(ctx, w.cfg.VisitCleanupEvery, w.visitCleanupPass, "visit-cleanup") })
 	// 过期会话与邮箱 token 清理与访问清理同一节奏(默认 24h)。
 	// email_tokens 仅消费时惰性校验过期,需定期物理清理防表膨胀;spec 未禁止,属合理运维。
-	start(func() { w.loop(ctx, w.cfg.VisitCleanupEvery, w.sessionCleanupPass, "session-cleanup") })
+	start(func() { w.guardedLoop(ctx, w.cfg.VisitCleanupEvery, w.sessionCleanupPass, "session-cleanup") })
 	<-ctx.Done()
 	wg.Wait()
 }

@@ -20,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"janus/internal/config"
 	"janus/internal/db"
 	"janus/internal/store"
 )
@@ -113,7 +114,11 @@ func dnsErrorChecker() *DNSChecker {
 }
 
 func workerWith(st *store.Store, checker *DNSChecker) *Worker {
-	return &Worker{store: st, cfg: testCfg(), dns: checker}
+	return workerWithCfg(st, testCfg(), checker)
+}
+
+func workerWithCfg(st *store.Store, cfg config.Config, checker *DNSChecker) *Worker {
+	return &Worker{store: st, cfg: cfg, dns: checker}
 }
 
 func findScanRowByID(rows []store.DomainScanRow, id int64) *store.DomainScanRow {
