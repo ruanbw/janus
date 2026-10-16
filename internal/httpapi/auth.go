@@ -138,39 +138,29 @@ func (a *API) handleRegister(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	tenant, err := a.store.CreateTenant(ctx, email, string(hash), slug, false)
-	if err != nil {
-		if store.IsUniqueViolation(err) {
-			writeErr(c, http.StatusConflict, errConflict, "邮箱或 slug 已被占用")
-			return
-		}
-		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
-		return
-	}
-	if _, err := a.store.CreatePlatformDomain(ctx, tenant.ID, slug+"."+a.cfg.PlatformDomain); err != nil {
-		// TOCTOU:上面的 DomainFQDNExists 预检与这里的插入之间有窗口,并发的另一路
-		// 注册可能刚把同名默认域名落库。此时唯一索引是唯一裁决者,撞车是"冲突"
-		// 而不是"服务器错误" —— 漏成 500 会让用户看到"服务器错误",重试又被
-		// "邮箱已被注册"挡成 409,彻底卡死。
-		if store.IsUniqueViolation(err) {
-			writeErr(c, http.StatusConflict, errConflict, "slug 与既有域名冲突")
-			return
-		}
-		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
-		return
-	}
-	// 重新获取租户(含默认域名)
-	if tenant, err = a.store.GetTenantByID(ctx, tenant.ID); err != nil {
-		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
-		return
-	}
-	// 验证邮件(控制台 mailer)
+	// 建租户、建默认域名、签发验证 token 三步必须原子:中间失败若留下租户行,
+	// 用户重试注册只会拿到 409,而默认域名/token 都不存在,无法自助恢复。
+	// 三步同事务后,任一失败整组回滚(见 store.RegisterTenant)。
 	token, tokenHash := newToken()
-	if err := a.store.CreateEmailToken(ctx, tenant.ID, tokenHash, "verify", a.cfg.VerifyTokenTTL); err != nil {
+	tenant, err := a.store.RegisterTenant(ctx, email, string(hash), slug,
+		slug+"."+a.cfg.PlatformDomain, tokenHash, a.cfg.VerifyTokenTTL, false)
+	if err != nil {
+		// TOCTOU:预检(DomainFQDNExists / GetTenantBySlug)与事务内插入之间有窗口,
+		// 并发的另一路注册可能抢先占位邮箱、slug 或默认域名。此时唯一索引是最终
+		// 裁决者,撞车是"冲突"而不是"服务器错误" —— 漏成 500 会让用户看到"服务器
+		// 错误",重试又被 409 挡死。
+		if store.IsUniqueViolation(err) {
+			writeErr(c, http.StatusConflict, errConflict, "邮箱、slug 或默认域名已被占用")
+			return
+		}
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
+	// 发信仍在响应路径上(注册的 409 语义不承担等时化职责,见 AUTH1 说明);
+	// 但此时租户/域名/token 都已落库,发信失败不再留半成品,用户可走
+	// resend-verification 自助恢复。
 	if err := a.mailer.SendVerifyEmail(email, token); err != nil {
+		slog.Error("register: 发送验证邮件失败", "tenantId", tenant.ID, "err", err)
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}

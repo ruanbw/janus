@@ -9,10 +9,12 @@ package httpapi_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
 
+	"janus/internal/store"
 	"janus/internal/testutil"
 )
 
@@ -88,5 +90,39 @@ func TestRegisterDomainConflictRaceReturns409(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("注册请求未返回")
+	}
+}
+
+// TestRegisterDomainConflictLeavesNoPartialTenant 撞车失败后不得留半成品:
+// 若租户行先落库再在默认域名上失败,用户重试注册只会拿到 409(邮箱已被注册),
+// 而默认域名/验证 token 都不存在 —— 没有任何自助恢复入口。
+func TestRegisterDomainConflictLeavesNoPartialTenant(t *testing.T) {
+	env := testutil.Setup(t)
+	commitHolder := holdPlatformDomainTx(t, env, "race.janus.test")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		resp := newClient(env).post("/api/auth/register", map[string]string{
+			"email": "racer@example.com", "password": "password123", "slug": "race",
+		})
+		_ = resp.Body.Close()
+	}()
+
+	waitForBlockedDomainsInsert(t, env, 10*time.Second)
+	commitHolder()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("注册请求未返回")
+	}
+
+	ctx := testutil.Ctx()
+	if _, err := env.Store.GetTenantByEmail(ctx, "racer@example.com"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("残留半成品租户(邮箱): err = %v", err)
+	}
+	if _, err := env.Store.GetTenantBySlug(ctx, "race"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("残留半成品租户(slug 占位): err = %v", err)
 	}
 }
