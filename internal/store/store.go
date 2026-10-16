@@ -204,6 +204,10 @@ func (s *Store) GetTenantErrorPages(ctx context.Context, tenantID int64) (page40
 
 // UpdateTenantAdmin 平台管理端更新租户状态与/或等级;两个字段在同一事务中生效,
 // 避免其中一个写入失败时出现半更新状态。调用方须先完成权限与业务校验。
+//
+// 目标租户不存在时返回 ErrNotFound:UPDATE ... WHERE id=? 命中 0 行时 GORM 不报错,
+// 不检查 RowsAffected 就会对不存在的租户"封禁成功"(打错 id、租户已被删都这样),
+// 调用方拿到 200 而目标毫无变化。两个字段各自都必须命中,任一为 0 即整体回滚。
 func (s *Store) UpdateTenantAdmin(ctx context.Context, id int64, status *string, tierID *int64) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if status != nil {
@@ -211,13 +215,21 @@ func (s *Store) UpdateTenantAdmin(ctx context.Context, id int64, status *string,
 			if *status == "banned" {
 				updates["token_version"] = gorm.Expr("token_version + 1")
 			}
-			if err := tx.Model(&Tenant{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-				return err
+			res := tx.Model(&Tenant{}).Where("id = ?", id).Updates(updates)
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return ErrNotFound
 			}
 		}
 		if tierID != nil {
-			if err := tx.Model(&Tenant{}).Where("id = ?", id).Update("tier_id", *tierID).Error; err != nil {
-				return err
+			res := tx.Model(&Tenant{}).Where("id = ?", id).Update("tier_id", *tierID)
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return ErrNotFound
 			}
 		}
 		return nil
@@ -230,32 +242,106 @@ func (s *Store) SetTenantSuperAdmin(ctx context.Context, id int64) error {
 }
 
 // ListTenants 平台管理:全部租户(按创建时间倒序)。
+//
+// 无分页、无上限,租户数上千后单次响应与内存都不可控 —— 分页版本见
+// ListTenantsPaged。保留本方法是为了不动现有调用方(admin 端切换由另一工作流负责)。
 func (s *Store) ListTenants(ctx context.Context) ([]*Tenant, error) {
 	var out []*Tenant
 	if err := s.db.WithContext(ctx).Preload("Tier").Order("id DESC").Find(&out).Error; err != nil {
 		return nil, err
 	}
-	// 一次查询所有平台默认域名,避免 N+1
-	type defDomain struct {
-		TenantID int64
-		FQDN     string
-	}
-	var defs []defDomain
-	if err := s.db.WithContext(ctx).Model(&Domain{}).
-		Select("tenant_id, fqdn").Where("origin = 'platform'").Order("id").Scan(&defs).Error; err != nil {
+	defs, err := s.platformDefaultDomains(ctx, nil)
+	if err != nil {
 		return nil, err
 	}
-	defMap := map[int64]string{}
+	fillTenantMeta(out, defs)
+	return out, nil
+}
+
+// DefaultTenantPageSize 未指定每页条数时的默认值。
+const DefaultTenantPageSize = 20
+
+// MaxTenantPageSize 单页条数上限:分页的意义就是给响应规模封顶,
+// 调用方传个 100000 不该等于取消分页。
+const MaxTenantPageSize = 200
+
+// ListTenantsPaged 平台管理:分页返回租户(按 id 倒序)与总数。
+//
+// 与 ListTenants 的两点差别:
+//   - 只取本页行(LIMIT/OFFSET),并单独返回总数供界面分页;
+//   - 平台默认域名的查询收敛到本页的 tenant_id 集合,不再每次拉全表 defs。
+//
+// page < 1 归一到 1,pageSize <= 0 取 DefaultTenantPageSize,超过
+// MaxTenantPageSize 截到上限;越界页码返回空切片(不报错)。
+func (s *Store) ListTenantsPaged(ctx context.Context, page, pageSize int) ([]*Tenant, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = DefaultTenantPageSize
+	}
+	if pageSize > MaxTenantPageSize {
+		pageSize = MaxTenantPageSize
+	}
+	var total int64
+	if err := s.db.WithContext(ctx).Model(&Tenant{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var out []*Tenant
+	if err := s.db.WithContext(ctx).Preload("Tier").Order("id DESC").
+		Limit(pageSize).Offset((page - 1) * pageSize).Find(&out).Error; err != nil {
+		return nil, 0, err
+	}
+	if len(out) == 0 {
+		return out, total, nil
+	}
+	ids := make([]int64, 0, len(out))
+	for _, t := range out {
+		ids = append(ids, t.ID)
+	}
+	defs, err := s.platformDefaultDomains(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	fillTenantMeta(out, defs)
+	return out, total, nil
+}
+
+// tenantDefaultDomain 平台默认域名的投影行。
+type tenantDefaultDomain struct {
+	TenantID int64
+	FQDN     string
+}
+
+// platformDefaultDomains 取平台默认域名的租户映射(每租户保留最早一条)。
+// tenantIDs 为 nil/空表示不过滤(全量,供 ListTenants 使用)。
+func (s *Store) platformDefaultDomains(ctx context.Context, tenantIDs []int64) (map[int64]string, error) {
+	q := s.db.WithContext(ctx).Model(&Domain{}).
+		Select("tenant_id, fqdn").Where("origin = 'platform'")
+	if len(tenantIDs) > 0 {
+		q = q.Where("tenant_id IN ?", tenantIDs)
+	}
+	var defs []tenantDefaultDomain
+	if err := q.Order("id").Scan(&defs).Error; err != nil {
+		return nil, err
+	}
+	m := make(map[int64]string, len(defs))
 	for _, d := range defs {
-		if _, ok := defMap[d.TenantID]; !ok {
-			defMap[d.TenantID] = d.FQDN
+		if _, ok := m[d.TenantID]; !ok {
+			m[d.TenantID] = d.FQDN
 		}
 	}
-	for _, t := range out {
-		t.DefaultDomain = defMap[t.ID]
+	return m, nil
+}
+
+// fillTenantMeta 用平台默认域名与引导态填充租户列表。
+// ListTenants 与 ListTenantsPaged 共用一份实现:两处各写一遍就会对同一租户
+// 给出矛盾结论(与 needsFirstLoginSetup 抽出来的理由是同一个)。
+func fillTenantMeta(tenants []*Tenant, defs map[int64]string) {
+	for _, t := range tenants {
+		t.DefaultDomain = defs[t.ID]
 		t.FirstLoginSetup = t.needsFirstLoginSetup()
 	}
-	return out, nil
 }
 
 // needsFirstLoginSetup 判断该租户是否处于"超管尚未设置密码"的引导态。
@@ -276,13 +362,20 @@ type Session struct {
 }
 
 // CreateSession 创建会话并返回会话记录。token 由调用方生成,此处仅存哈希。
+//
+// expires_at 交给数据库算(now() + make_interval),而不是 Go 侧 time.Now().Add(ttl):
+// 校验侧 GetSessionByTokenHash 用的是 `expires_at > now()`,即 PG 时钟。两边各用
+// 自己的时钟时,漂移会让会话提前失效或超期存活;同一语句内计算则天然同源。
+// RETURNING 把库算出的值回读进结构体,调用方拿到的与库里存的逐微秒一致。
 func (s *Store) CreateSession(ctx context.Context, tenantID int64, tokenHash, csrfToken string, ttl time.Duration) (*Session, error) {
-	sess := Session{
-		TenantID: tenantID, TokenHash: tokenHash, CSRFToken: csrfToken,
-		ExpiresAt: time.Now().Add(ttl),
-	}
-	if err := s.db.WithContext(ctx).Create(&sess).Error; err != nil {
-		return nil, err
+	sess := Session{TenantID: tenantID, TokenHash: tokenHash, CSRFToken: csrfToken}
+	res := s.db.WithContext(ctx).Raw(`
+		INSERT INTO sessions (tenant_id, token_hash, csrf_token, expires_at)
+		VALUES (?, ?, ?, now() + make_interval(secs => ?))
+		RETURNING id, tenant_id, token_hash, csrf_token, expires_at`,
+		tenantID, tokenHash, csrfToken, ttl.Seconds()).Scan(&sess)
+	if res.Error != nil {
+		return nil, res.Error
 	}
 	return &sess, nil
 }
@@ -315,14 +408,75 @@ func (s *Store) DeleteSessionsByTenantExcept(ctx context.Context, tenantID int64
 		Delete(&Session{}).Error
 }
 
-// DeleteExpiredSessions 惰性清理过期会话。
+// DefaultExpiredCleanupBatch 未显式指定时的单批清理行数(与访问明细清理同量级)。
+const DefaultExpiredCleanupBatch = 10000
+
+// DeleteExpiredSessions 惰性清理过期会话(分批独立提交,见 deleteExpiredBatched)。
 func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
-	return s.db.WithContext(ctx).Where("expires_at <= now()").Delete(&Session{}).Error
+	_, err := s.DeleteExpiredSessionsBatched(ctx, DefaultExpiredCleanupBatch)
+	return err
+}
+
+// DeleteExpiredSessionsBatched 分批删除过期会话,返回累计删除行数(batch<=0 取默认值)。
+func (s *Store) DeleteExpiredSessionsBatched(ctx context.Context, batch int) (int64, error) {
+	return s.deleteExpiredBatched(ctx, "sessions", batch)
 }
 
 // DeleteExpiredEmailTokens 惰性清理过期邮箱 token(验证/重置)。
 func (s *Store) DeleteExpiredEmailTokens(ctx context.Context) error {
-	return s.db.WithContext(ctx).Where("expires_at <= now()").Delete(&EmailToken{}).Error
+	_, err := s.DeleteExpiredEmailTokensBatched(ctx, DefaultExpiredCleanupBatch)
+	return err
+}
+
+// DeleteExpiredEmailTokensBatched 分批删除过期邮箱 token,返回累计删除行数。
+func (s *Store) DeleteExpiredEmailTokensBatched(ctx context.Context, batch int) (int64, error) {
+	return s.deleteExpiredBatched(ctx, "email_tokens", batch)
+}
+
+// deleteExpiredBatched 分批删除某张表里已过期的行,每批独立事务,返回累计行数。
+//
+// 为什么必须分批:一条 `DELETE FROM sessions WHERE expires_at <= now()` 会把全部
+// 过期行锁到事务提交 —— 长期不清理的库上可能几十万行,长事务、WAL 暴涨,还与
+// 登录热路径的 INSERT 争同一批行锁。分批后单批的锁持有时间与影响面都有界
+// (与 CleanupVisitsBeforeBatched 同一套理由与写法)。
+//
+// 每批只删当前仍满足条件的前 N 行(不推进游标):这样并发清理之间不会漏行,
+// 而 n < batch 即说明已无剩余,可以直接收口。
+//
+// table 只由本文件的两个调用点传常量,不接受外部输入(不做标识符拼接的防御)。
+func (s *Store) deleteExpiredBatched(ctx context.Context, table string, batch int) (int64, error) {
+	if batch <= 0 {
+		batch = DefaultExpiredCleanupBatch
+	}
+	var total int64
+	for {
+		var n int64
+		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			// Postgres 的 DELETE 没有 LIMIT 语法,用子查询按主键取前 N 行再删。
+			res := tx.Exec(`DELETE FROM `+table+`
+				WHERE id IN (
+					SELECT id FROM `+table+` WHERE expires_at <= now() ORDER BY id LIMIT ?
+				)`, batch)
+			if res.Error != nil {
+				return res.Error
+			}
+			n = res.RowsAffected
+			return nil
+		})
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < int64(batch) {
+			return total, nil
+		}
+		// 批间让出,给热路径的 INSERT 留出窗口
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // ---------- 邮箱 token(验证/重置) ----------

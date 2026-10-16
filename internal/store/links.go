@@ -588,7 +588,6 @@ func (s *Store) RestoreLinks(ctx context.Context, tenantID int64, ids []int64) (
 	return n, nil
 }
 
-// PurgeLink 物理删除短链(连同关联与访问记录)。
 // PurgeLink 物理删除短链(关联、目标、访问明细随库内 CASCADE 消失)。
 //
 // 这里**刻意不**失效租户的规则快照:快照里残留的 linkID 永远不会被命中
