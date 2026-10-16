@@ -36,7 +36,10 @@ func (a *API) handleLandingFallback(c *gin.Context) {
 		tenantID = d.TenantID
 	}
 	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
-		a.renderVisitorError(c, http.StatusNotFound, tenantID, nil)
+		// 这些二级路径是存在的资源,只是不接受该方法:语义应为 405 + Allow,
+		// 而不是 404 —— 404 会被客户端/CDN 读成"这个路径不存在"并可能缓存该判断。
+		c.Header("Allow", "GET, HEAD")
+		a.renderVisitorError(c, http.StatusMethodNotAllowed, tenantID, nil)
 		return
 	}
 	p := strings.TrimPrefix(c.Request.URL.Path, "/")

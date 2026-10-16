@@ -22,6 +22,34 @@ func bizCreateLink(t *testing.T, c *testClient, code string, body map[string]any
 	createLink(t, c, body)
 }
 
+// BIZ12: 落地页二级路径对非 GET/HEAD 应回 405 + Allow,而不是 404。
+func TestLandingFallbackMethodNotAllowed(t *testing.T) {
+	env := testutil.Setup(t)
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		req, err := http.NewRequest(method, env.Server.URL+"/foo/bar", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = "localhost"
+		resp, err := env.Server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("%s /foo/bar: %v", method, err)
+		}
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Fatalf("%s status = %d, want 405", method, resp.StatusCode)
+		}
+		if got := resp.Header.Get("Allow"); got != "GET, HEAD" {
+			t.Fatalf("%s Allow = %q, want %q", method, got, "GET, HEAD")
+		}
+		_ = resp.Body.Close()
+	}
+
+	// GET 不受影响(无域名/无短码 → 仍是 404)
+	resp := redirectGet(t, env, "localhost", "/foo/bar")
+	assertStatus(t, resp, http.StatusNotFound)
+}
+
 // BIZ7: page 参数非法(非整数/超上界)回 400,而不是溢出后 500 或静默当第 1 页。
 func TestPageParamsValidation(t *testing.T) {
 	env := testutil.Setup(t)
