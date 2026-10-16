@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -397,6 +398,11 @@ func (a *App) initHandler() error {
 				Password: a.cfg.SMTPPassword,
 				From:     a.cfg.SMTPFrom,
 			}
+		}
+		// 未配置 SMTP 时为控制台 mailer。SDK 场景没有可用日志出口:writer 传
+		// io.Discard 会让验证/重置链接静默丢失,这里保留丢弃行为但显式告警一次。
+		if smtpCfg == nil {
+			slog.Warn("未配置 SMTP,邮件(含验证/重置链接)将被静默丢弃;生产/SDK 场景请配置 SMTP")
 		}
 		m := mailer.NewMailer(mailer.Config{
 			BaseURL: a.cfg.PublicBaseURL,
