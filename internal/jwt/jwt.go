@@ -87,6 +87,12 @@ func (m *Manager) Parse(tokenString string) (*Claims, error) {
 	if claims.Subject == "" || claims.Role == "" {
 		return nil, errors.New("token missing subject or role")
 	}
+	// Subject 是租户 ID(十进制 int64)。不校验的话,畸形/伪造 Subject(如 "abc")
+	// 会穿透到认证层,在那里被当作 0 或解析失败静默降级,与"无租户"混淆。
+	tenantID, err := strconv.ParseInt(claims.Subject, 10, 64)
+	if err != nil || tenantID <= 0 {
+		return nil, fmt.Errorf("token subject %q is not a valid tenant id", claims.Subject)
+	}
 	return claims, nil
 }
 
