@@ -204,6 +204,10 @@ func (s *Store) GetTenantErrorPages(ctx context.Context, tenantID int64) (page40
 
 // UpdateTenantAdmin 平台管理端更新租户状态与/或等级;两个字段在同一事务中生效,
 // 避免其中一个写入失败时出现半更新状态。调用方须先完成权限与业务校验。
+//
+// 目标租户不存在时返回 ErrNotFound:UPDATE ... WHERE id=? 命中 0 行时 GORM 不报错,
+// 不检查 RowsAffected 就会对不存在的租户"封禁成功"(打错 id、租户已被删都这样),
+// 调用方拿到 200 而目标毫无变化。两个字段各自都必须命中,任一为 0 即整体回滚。
 func (s *Store) UpdateTenantAdmin(ctx context.Context, id int64, status *string, tierID *int64) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if status != nil {
@@ -211,13 +215,21 @@ func (s *Store) UpdateTenantAdmin(ctx context.Context, id int64, status *string,
 			if *status == "banned" {
 				updates["token_version"] = gorm.Expr("token_version + 1")
 			}
-			if err := tx.Model(&Tenant{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-				return err
+			res := tx.Model(&Tenant{}).Where("id = ?", id).Updates(updates)
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return ErrNotFound
 			}
 		}
 		if tierID != nil {
-			if err := tx.Model(&Tenant{}).Where("id = ?", id).Update("tier_id", *tierID).Error; err != nil {
-				return err
+			res := tx.Model(&Tenant{}).Where("id = ?", id).Update("tier_id", *tierID)
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				return ErrNotFound
 			}
 		}
 		return nil
