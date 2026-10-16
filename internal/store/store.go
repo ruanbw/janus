@@ -242,32 +242,106 @@ func (s *Store) SetTenantSuperAdmin(ctx context.Context, id int64) error {
 }
 
 // ListTenants 平台管理:全部租户(按创建时间倒序)。
+//
+// 无分页、无上限,租户数上千后单次响应与内存都不可控 —— 分页版本见
+// ListTenantsPaged。保留本方法是为了不动现有调用方(admin 端切换由另一工作流负责)。
 func (s *Store) ListTenants(ctx context.Context) ([]*Tenant, error) {
 	var out []*Tenant
 	if err := s.db.WithContext(ctx).Preload("Tier").Order("id DESC").Find(&out).Error; err != nil {
 		return nil, err
 	}
-	// 一次查询所有平台默认域名,避免 N+1
-	type defDomain struct {
-		TenantID int64
-		FQDN     string
-	}
-	var defs []defDomain
-	if err := s.db.WithContext(ctx).Model(&Domain{}).
-		Select("tenant_id, fqdn").Where("origin = 'platform'").Order("id").Scan(&defs).Error; err != nil {
+	defs, err := s.platformDefaultDomains(ctx, nil)
+	if err != nil {
 		return nil, err
 	}
-	defMap := map[int64]string{}
+	fillTenantMeta(out, defs)
+	return out, nil
+}
+
+// DefaultTenantPageSize 未指定每页条数时的默认值。
+const DefaultTenantPageSize = 20
+
+// MaxTenantPageSize 单页条数上限:分页的意义就是给响应规模封顶,
+// 调用方传个 100000 不该等于取消分页。
+const MaxTenantPageSize = 200
+
+// ListTenantsPaged 平台管理:分页返回租户(按 id 倒序)与总数。
+//
+// 与 ListTenants 的两点差别:
+//   - 只取本页行(LIMIT/OFFSET),并单独返回总数供界面分页;
+//   - 平台默认域名的查询收敛到本页的 tenant_id 集合,不再每次拉全表 defs。
+//
+// page < 1 归一到 1,pageSize <= 0 取 DefaultTenantPageSize,超过
+// MaxTenantPageSize 截到上限;越界页码返回空切片(不报错)。
+func (s *Store) ListTenantsPaged(ctx context.Context, page, pageSize int) ([]*Tenant, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = DefaultTenantPageSize
+	}
+	if pageSize > MaxTenantPageSize {
+		pageSize = MaxTenantPageSize
+	}
+	var total int64
+	if err := s.db.WithContext(ctx).Model(&Tenant{}).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var out []*Tenant
+	if err := s.db.WithContext(ctx).Preload("Tier").Order("id DESC").
+		Limit(pageSize).Offset((page - 1) * pageSize).Find(&out).Error; err != nil {
+		return nil, 0, err
+	}
+	if len(out) == 0 {
+		return out, total, nil
+	}
+	ids := make([]int64, 0, len(out))
+	for _, t := range out {
+		ids = append(ids, t.ID)
+	}
+	defs, err := s.platformDefaultDomains(ctx, ids)
+	if err != nil {
+		return nil, 0, err
+	}
+	fillTenantMeta(out, defs)
+	return out, total, nil
+}
+
+// tenantDefaultDomain 平台默认域名的投影行。
+type tenantDefaultDomain struct {
+	TenantID int64
+	FQDN     string
+}
+
+// platformDefaultDomains 取平台默认域名的租户映射(每租户保留最早一条)。
+// tenantIDs 为 nil/空表示不过滤(全量,供 ListTenants 使用)。
+func (s *Store) platformDefaultDomains(ctx context.Context, tenantIDs []int64) (map[int64]string, error) {
+	q := s.db.WithContext(ctx).Model(&Domain{}).
+		Select("tenant_id, fqdn").Where("origin = 'platform'")
+	if len(tenantIDs) > 0 {
+		q = q.Where("tenant_id IN ?", tenantIDs)
+	}
+	var defs []tenantDefaultDomain
+	if err := q.Order("id").Scan(&defs).Error; err != nil {
+		return nil, err
+	}
+	m := make(map[int64]string, len(defs))
 	for _, d := range defs {
-		if _, ok := defMap[d.TenantID]; !ok {
-			defMap[d.TenantID] = d.FQDN
+		if _, ok := m[d.TenantID]; !ok {
+			m[d.TenantID] = d.FQDN
 		}
 	}
-	for _, t := range out {
-		t.DefaultDomain = defMap[t.ID]
+	return m, nil
+}
+
+// fillTenantMeta 用平台默认域名与引导态填充租户列表。
+// ListTenants 与 ListTenantsPaged 共用一份实现:两处各写一遍就会对同一租户
+// 给出矛盾结论(与 needsFirstLoginSetup 抽出来的理由是同一个)。
+func fillTenantMeta(tenants []*Tenant, defs map[int64]string) {
+	for _, t := range tenants {
+		t.DefaultDomain = defs[t.ID]
 		t.FirstLoginSetup = t.needsFirstLoginSetup()
 	}
-	return out, nil
 }
 
 // needsFirstLoginSetup 判断该租户是否处于"超管尚未设置密码"的引导态。

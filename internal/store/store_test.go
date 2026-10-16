@@ -220,3 +220,78 @@ func TestCreateSessionExpiryComputedByDatabase(t *testing.T) {
 		t.Fatalf("已过期会话仍能取到(err=%v),want ErrNotFound", err)
 	}
 }
+
+// TestListTenantsPaged 固化平台管理租户列表的分页契约。
+//
+// 契约:按 id 倒序分页返回,同时给出总数;每页仍要带上各自的平台默认域名与
+// 超管引导态(域名查询必须收敛到本页的 tenant_id 集合,而不是每次拉全表);
+// page/pageSize 越界要有确定行为(页码从 1 起,非法值取默认,超大页仍返回空而非报错)。
+func TestListTenantsPaged(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+
+	// Given 3 个租户,最早的第一个带平台默认域名
+	first := newTenant(t, s, "page-a@test.io")
+	second := newTenant(t, s, "page-b@test.io")
+	third := newTenant(t, s, "page-c@test.io")
+	if _, err := s.CreatePlatformDomain(ctx, first, "paged-a.platform.test"); err != nil {
+		t.Fatalf("create platform domain: %v", err)
+	}
+
+	// When 取第一页(每页 2 条)
+	items, total, err := s.ListTenantsPaged(ctx, 1, 2)
+	if err != nil {
+		t.Fatalf("list page 1: %v", err)
+	}
+
+	// Then 总数是 3、本页按 id 倒序是 [third, second],且不越界带出别人的域名
+	if total != 3 {
+		t.Errorf("total = %d, want 3", total)
+	}
+	if len(items) != 2 {
+		t.Fatalf("page 1 size = %d, want 2", len(items))
+	}
+	if items[0].ID != third || items[1].ID != second {
+		t.Errorf("page 1 ids = [%d %d], want [%d %d](按 id 倒序)", items[0].ID, items[1].ID, third, second)
+	}
+	for _, it := range items {
+		if it.DefaultDomain != "" {
+			t.Errorf("租户 %d 不应有平台默认域名,实际 %q", it.ID, it.DefaultDomain)
+		}
+	}
+
+	// When 取第二页
+	items, total, err = s.ListTenantsPaged(ctx, 2, 2)
+	if err != nil {
+		t.Fatalf("list page 2: %v", err)
+	}
+
+	// Then 只剩 1 条(第一个租户),且它的平台默认域名仍被正确填充
+	if total != 3 {
+		t.Errorf("page 2 total = %d, want 3", total)
+	}
+	if len(items) != 1 || items[0].ID != first {
+		t.Fatalf("page 2 = %+v, want 单条租户 %d", items, first)
+	}
+	if items[0].DefaultDomain != "paged-a.platform.test" {
+		t.Errorf("第二页没带出平台默认域名: %q(域名查询必须覆盖本页 tenant_id)", items[0].DefaultDomain)
+	}
+
+	// 越界页码:空页而不是报错
+	items, total, err = s.ListTenantsPaged(ctx, 99, 2)
+	if err != nil {
+		t.Fatalf("list far page: %v", err)
+	}
+	if len(items) != 0 || total != 3 {
+		t.Errorf("越界页返回 %d 条(total=%d),want 0 条/total=3", len(items), total)
+	}
+
+	// 非法分页参数:page < 1 归一到 1,pageSize <= 0 取默认值
+	items, _, err = s.ListTenantsPaged(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("list with defaults: %v", err)
+	}
+	if len(items) != 3 {
+		t.Errorf("page=0/pageSize=0 返回 %d 条, want 3(归一为第 1 页 + 默认每页条数)", len(items))
+	}
+}
