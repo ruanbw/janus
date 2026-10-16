@@ -327,14 +327,75 @@ func (s *Store) DeleteSessionsByTenantExcept(ctx context.Context, tenantID int64
 		Delete(&Session{}).Error
 }
 
-// DeleteExpiredSessions 惰性清理过期会话。
+// DefaultExpiredCleanupBatch 未显式指定时的单批清理行数(与访问明细清理同量级)。
+const DefaultExpiredCleanupBatch = 10000
+
+// DeleteExpiredSessions 惰性清理过期会话(分批独立提交,见 deleteExpiredBatched)。
 func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
-	return s.db.WithContext(ctx).Where("expires_at <= now()").Delete(&Session{}).Error
+	_, err := s.DeleteExpiredSessionsBatched(ctx, DefaultExpiredCleanupBatch)
+	return err
+}
+
+// DeleteExpiredSessionsBatched 分批删除过期会话,返回累计删除行数(batch<=0 取默认值)。
+func (s *Store) DeleteExpiredSessionsBatched(ctx context.Context, batch int) (int64, error) {
+	return s.deleteExpiredBatched(ctx, "sessions", batch)
 }
 
 // DeleteExpiredEmailTokens 惰性清理过期邮箱 token(验证/重置)。
 func (s *Store) DeleteExpiredEmailTokens(ctx context.Context) error {
-	return s.db.WithContext(ctx).Where("expires_at <= now()").Delete(&EmailToken{}).Error
+	_, err := s.DeleteExpiredEmailTokensBatched(ctx, DefaultExpiredCleanupBatch)
+	return err
+}
+
+// DeleteExpiredEmailTokensBatched 分批删除过期邮箱 token,返回累计删除行数。
+func (s *Store) DeleteExpiredEmailTokensBatched(ctx context.Context, batch int) (int64, error) {
+	return s.deleteExpiredBatched(ctx, "email_tokens", batch)
+}
+
+// deleteExpiredBatched 分批删除某张表里已过期的行,每批独立事务,返回累计行数。
+//
+// 为什么必须分批:一条 `DELETE FROM sessions WHERE expires_at <= now()` 会把全部
+// 过期行锁到事务提交 —— 长期不清理的库上可能几十万行,长事务、WAL 暴涨,还与
+// 登录热路径的 INSERT 争同一批行锁。分批后单批的锁持有时间与影响面都有界
+// (与 CleanupVisitsBeforeBatched 同一套理由与写法)。
+//
+// 每批只删当前仍满足条件的前 N 行(不推进游标):这样并发清理之间不会漏行,
+// 而 n < batch 即说明已无剩余,可以直接收口。
+//
+// table 只由本文件的两个调用点传常量,不接受外部输入(不做标识符拼接的防御)。
+func (s *Store) deleteExpiredBatched(ctx context.Context, table string, batch int) (int64, error) {
+	if batch <= 0 {
+		batch = DefaultExpiredCleanupBatch
+	}
+	var total int64
+	for {
+		var n int64
+		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			// Postgres 的 DELETE 没有 LIMIT 语法,用子查询按主键取前 N 行再删。
+			res := tx.Exec(`DELETE FROM `+table+`
+				WHERE id IN (
+					SELECT id FROM `+table+` WHERE expires_at <= now() ORDER BY id LIMIT ?
+				)`, batch)
+			if res.Error != nil {
+				return res.Error
+			}
+			n = res.RowsAffected
+			return nil
+		})
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if n < int64(batch) {
+			return total, nil
+		}
+		// 批间让出,给热路径的 INSERT 留出窗口
+		select {
+		case <-ctx.Done():
+			return total, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // ---------- 邮箱 token(验证/重置) ----------

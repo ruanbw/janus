@@ -1,11 +1,14 @@
 package store
 
-// store.go 平台管理侧写操作的语义测试:连真实 Postgres,验证"改不存在的行"必须报错。
+// store.go 平台管理/清理任务的语义测试:连真实 Postgres,验证"改不存在的行"必须报错、
+// 过期清理必须分批且清干净。
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
+	"time"
 )
 
 // TestUpdateTenantAdminMissingTenantReturnsNotFound 固化平台管理端写操作的 RowsAffected 契约。
@@ -67,5 +70,95 @@ func TestUpdateTenantAdminExistingTenantSucceeds(t *testing.T) {
 	}
 	if got.TokenVersion != 2 {
 		t.Fatalf("token_version = %d, want 2(封禁必须吊销在手 token)", got.TokenVersion)
+	}
+}
+
+// TestExpiredCleanupBatched 固化过期会话/邮箱 token 清理的分批语义。
+//
+// 契约:清理必须分批独立提交(返回累计删除行数),且分批不得漏删 ——
+// 批次之间要清空全部过期行,同时一行都不能误删未过期的。
+//
+// 为什么必须分批:一条 `DELETE ... WHERE expires_at <= now()` 会把全部过期行锁到
+// 事务提交,高流量租户上是长事务 + WAL 暴涨,还与登录热路径的 INSERT 争行锁。
+// 分批后单批的锁持有时间与影响面都有界(与 CleanupVisitsBeforeBatched 同一理由)。
+func TestExpiredCleanupBatched(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+	tenantID := newTenant(t, s, "cleanup-batch@test.io")
+
+	// Given 5 条已过期 + 2 条未过期的会话,以及 3 条已过期 + 1 条未过期的邮箱 token
+	expiredSessions := []string{}
+	for i := 0; i < 5; i++ {
+		h := fmt.Sprintf("sess-expired-%d", i)
+		if _, err := s.CreateSession(ctx, tenantID, h, "csrf", -time.Minute); err != nil {
+			t.Fatalf("create expired session: %v", err)
+		}
+		expiredSessions = append(expiredSessions, h)
+	}
+	liveSessions := []string{}
+	for i := 0; i < 2; i++ {
+		h := fmt.Sprintf("sess-live-%d", i)
+		if _, err := s.CreateSession(ctx, tenantID, h, "csrf", time.Hour); err != nil {
+			t.Fatalf("create live session: %v", err)
+		}
+		liveSessions = append(liveSessions, h)
+	}
+	for i := 0; i < 3; i++ {
+		if err := s.CreateEmailToken(ctx, tenantID, fmt.Sprintf("tok-expired-%d", i), "verify", -time.Minute); err != nil {
+			t.Fatalf("create expired email token: %v", err)
+		}
+	}
+	if err := s.CreateEmailToken(ctx, tenantID, "tok-live", "verify", time.Hour); err != nil {
+		t.Fatalf("create live email token: %v", err)
+	}
+
+	// When 以极小的批大小(2)分批清理:必须真的走多批
+	nSessions, err := s.DeleteExpiredSessionsBatched(ctx, 2)
+	if err != nil {
+		t.Fatalf("delete expired sessions: %v", err)
+	}
+	nTokens, err := s.DeleteExpiredEmailTokensBatched(ctx, 2)
+	if err != nil {
+		t.Fatalf("delete expired email tokens: %v", err)
+	}
+
+	// Then 过期行被清空、未过期行保留
+	if nSessions != 5 {
+		t.Errorf("删除的过期会话数 = %d, want 5(批大小 2 时分批不得漏删)", nSessions)
+	}
+	if nTokens != 3 {
+		t.Errorf("删除的过期邮箱 token 数 = %d, want 3", nTokens)
+	}
+	var remaining int64
+	if err := s.db.WithContext(ctx).Raw(`SELECT count(*) FROM sessions WHERE tenant_id = ?`, tenantID).Scan(&remaining).Error; err != nil {
+		t.Fatalf("count sessions: %v", err)
+	}
+	if remaining != int64(len(liveSessions)) {
+		t.Errorf("剩余会话数 = %d, want %d(未过期会话不得被误删)", remaining, len(liveSessions))
+	}
+	for _, h := range liveSessions {
+		var n int64
+		if err := s.db.WithContext(ctx).Raw(`SELECT count(*) FROM sessions WHERE token_hash = ?`, h).Scan(&n).Error; err != nil {
+			t.Fatalf("count session %s: %v", h, err)
+		}
+		if n != 1 {
+			t.Errorf("未过期会话 %s 被误删", h)
+		}
+	}
+	for _, h := range expiredSessions {
+		var n int64
+		if err := s.db.WithContext(ctx).Raw(`SELECT count(*) FROM sessions WHERE token_hash = ?`, h).Scan(&n).Error; err != nil {
+			t.Fatalf("count session %s: %v", h, err)
+		}
+		if n != 0 {
+			t.Errorf("过期会话 %s 未被清理", h)
+		}
+	}
+	var liveTokens int64
+	if err := s.db.WithContext(ctx).Raw(`SELECT count(*) FROM email_tokens WHERE tenant_id = ?`, tenantID).Scan(&liveTokens).Error; err != nil {
+		t.Fatalf("count email tokens: %v", err)
+	}
+	if liveTokens != 1 {
+		t.Errorf("剩余邮箱 token 数 = %d, want 1", liveTokens)
 	}
 }
