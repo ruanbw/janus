@@ -119,26 +119,10 @@ func loginFailBackoff(step int) time.Duration {
 	return d
 }
 
-// accountFailureBuckets 保存"每个 API 实例一份"的账号级失败退避器。
-//
-// 为什么不直接用包级单例:账号退避的状态必须与 API 实例同生命周期。生产进程只有
-// 一个实例,两者等价;但测试在同一个进程里先后起多个 httptest 实例,包级单例会把
-// 上一个用例的失败计数带进下一个用例(同一个邮箱在后续用例里被前一个用例的退避
-// 挡成 429),既有测试会随机失败。
-//
-// 为什么不把字段加进 API 结构体:API 定义在 server.go,本次修复的文件所有权不含
-// 该文件(并发开发下改动它容易与其他人冲突)。用 *API 作键与"每实例一个字段"语义
-// 完全等价,且状态集中在本文件内。
-var accountFailureBuckets sync.Map // *API → *loginFailureLimiter
-
-// accountFailures 返回该 API 实例的账号级失败退避器(懒创建)。
-func (a *API) accountFailures() *loginFailureLimiter {
-	if v, ok := accountFailureBuckets.Load(a); ok {
-		return v.(*loginFailureLimiter)
-	}
-	actual, _ := accountFailureBuckets.LoadOrStore(a, newLoginFailureLimiter())
-	return actual.(*loginFailureLimiter)
-}
+// 退避器由 API 实例持有(API.loginFailures,见 server.go)。为什么必须是实例级
+// 而不是包级单例:状态要与实例同生命周期 —— 生产进程只有一个实例,两者等价;但
+// 测试在同一个进程里先后起多个 httptest 实例,包级单例会把上一个用例的失败计数
+// 带进下一个用例(同一个邮箱在后续用例里被前一个用例的退避挡成 429)。
 
 // writeAccountThrottled 账号被退避时的统一响应:429 + Retry-After。
 func writeAccountThrottled(c *gin.Context, retryAfter time.Duration) {

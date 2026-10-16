@@ -289,7 +289,7 @@ func (a *API) probeTenantDefaultDomain(tenantID int64) {
 // 校验结果记账(成功清零、失败累加)。login 与 token 共用本函数,不会出现
 // "换个端点绕过退避"。
 func (a *API) verifyCredentials(c *gin.Context, email, password, setupToken string) (*store.Tenant, bool) {
-	failures := a.accountFailures()
+	failures := a.loginFailures
 	if ok, retryAfter := failures.Allow(email); !ok {
 		writeAccountThrottled(c, retryAfter)
 		return nil, false
@@ -498,7 +498,7 @@ func (a *API) handleChangePassword(c *gin.Context) {
 		// 旧密码猜测限流:复用登录的账号级退避机制,但用独立命名空间 ——
 		// 改密失败不该把同一账号的登录一起锁死(反之亦然)。
 		key := "chpw:" + domain.NormalizeEmail(t.Email)
-		failures := a.accountFailures()
+		failures := a.loginFailures
 		if allowed, retryAfter := failures.Allow(key); !allowed {
 			writeAccountThrottled(c, retryAfter)
 			return

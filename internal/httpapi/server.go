@@ -68,6 +68,10 @@ type API struct {
 	setupRate *rateLimiter
 	// resendVerifyRate 限制 /api/auth/resend-verification 的发信速度(按邮箱分桶)。
 	resendVerifyRate *rateLimiter
+	// loginFailures 是账号级失败退避(登录 / token / 改密的旧密码猜测)。
+	// 按归一化邮箱累计失败并指数退避,与上面的每 IP 限流正交 —— 每 IP 限流挡不住
+	// "换 IP 打同一个账号"的撞库(见 auth_limit.go)。
+	loginFailures *loginFailureLimiter
 	// trustedProxyNets 是运维显式声明的可信代理网段(JANUS_TRUSTED_PROXY_CIDRS)。
 	// 为空 = 不采信任何来源的 X-Forwarded-For(限流只认 TCP 对端)。
 	trustedProxyNets []netip.Prefix
@@ -137,6 +141,7 @@ func New(d Deps) http.Handler {
 		// 每 15 分钟最多一封:够运维在丢失邮件后自助补发,又挡得住邮件轰炸。
 		setupRate:        newRateLimiter(1, 15*time.Minute),
 		resendVerifyRate: newRateLimiter(1, 5*time.Minute),
+		loginFailures:    newLoginFailureLimiter(),
 		trustedProxyNets: trustedProxyNets,
 		rbacEnforcer:     rb,
 		jwtMgr:           jwtMgr,
