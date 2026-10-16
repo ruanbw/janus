@@ -288,13 +288,20 @@ type Session struct {
 }
 
 // CreateSession 创建会话并返回会话记录。token 由调用方生成,此处仅存哈希。
+//
+// expires_at 交给数据库算(now() + make_interval),而不是 Go 侧 time.Now().Add(ttl):
+// 校验侧 GetSessionByTokenHash 用的是 `expires_at > now()`,即 PG 时钟。两边各用
+// 自己的时钟时,漂移会让会话提前失效或超期存活;同一语句内计算则天然同源。
+// RETURNING 把库算出的值回读进结构体,调用方拿到的与库里存的逐微秒一致。
 func (s *Store) CreateSession(ctx context.Context, tenantID int64, tokenHash, csrfToken string, ttl time.Duration) (*Session, error) {
-	sess := Session{
-		TenantID: tenantID, TokenHash: tokenHash, CSRFToken: csrfToken,
-		ExpiresAt: time.Now().Add(ttl),
-	}
-	if err := s.db.WithContext(ctx).Create(&sess).Error; err != nil {
-		return nil, err
+	sess := Session{TenantID: tenantID, TokenHash: tokenHash, CSRFToken: csrfToken}
+	res := s.db.WithContext(ctx).Raw(`
+		INSERT INTO sessions (tenant_id, token_hash, csrf_token, expires_at)
+		VALUES (?, ?, ?, now() + make_interval(secs => ?))
+		RETURNING id, tenant_id, token_hash, csrf_token, expires_at`,
+		tenantID, tokenHash, csrfToken, ttl.Seconds()).Scan(&sess)
+	if res.Error != nil {
+		return nil, res.Error
 	}
 	return &sess, nil
 }

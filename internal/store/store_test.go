@@ -162,3 +162,61 @@ func TestExpiredCleanupBatched(t *testing.T) {
 		t.Errorf("剩余邮箱 token 数 = %d, want 1", liveTokens)
 	}
 }
+
+// TestCreateSessionExpiryComputedByDatabase 固化会话过期时间的计算位置。
+//
+// 契约:expires_at 必须由数据库在同一语句内用 now() 算出,而不是 Go 侧算好再写 ——
+// 校验侧(GetSessionByTokenHash 的 `expires_at > now()`)用的是 PG 时钟,
+// 两边用不同时钟时,漂移会让会话提前失效或超期存活。
+//
+// 怎么在单机测试里把这两者区分开:同一个语句里 created_at 的 DEFAULT now() 与
+// expires_at 的 now() 是同一个事务时间戳,因此
+// `expires_at - created_at` 必须**精确等于** ttl。若 expires_at 由 Go 在发语句
+// 之前算好,差值必然比 ttl 少一个往返延迟(纳秒级随机量),不可能恰好相等。
+func TestCreateSessionExpiryComputedByDatabase(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+	tenantID := newTenant(t, s, "session-clock@test.io")
+
+	// Given 一个 90 分钟的 TTL
+	ttl := 90 * time.Minute
+
+	// When 创建会话
+	sess, err := s.CreateSession(ctx, tenantID, "tok-clock", "csrf", ttl)
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+
+	// Then 库里 expires_at - created_at 精确等于 ttl(两者同出一个 DB 时钟)
+	var delta float64
+	if err := s.db.WithContext(ctx).Raw(
+		`SELECT EXTRACT(EPOCH FROM (expires_at - created_at)) FROM sessions WHERE token_hash = ?`,
+		"tok-clock").Scan(&delta).Error; err != nil {
+		t.Fatalf("measure expiry delta: %v", err)
+	}
+	if diff := delta - ttl.Seconds(); diff > 1e-6 || diff < -1e-6 {
+		t.Fatalf("expires_at - created_at = %fs, want %fs(差值说明 expires_at 不是数据库时钟算的)",
+			delta, ttl.Seconds())
+	}
+
+	// Then 返回给调用方的值必须等于库里存的值(逐微秒一致)
+	var stored time.Time
+	if err := s.db.WithContext(ctx).Raw(
+		`SELECT expires_at FROM sessions WHERE token_hash = ?`, "tok-clock").Scan(&stored).Error; err != nil {
+		t.Fatalf("read stored expiry: %v", err)
+	}
+	if !stored.Equal(sess.ExpiresAt) {
+		t.Fatalf("返回的 expires_at(%v) 与库里的(%v) 不一致", sess.ExpiresAt, stored)
+	}
+
+	// Then TTL 语义:正 TTL 的会话有效,负 TTL 的会话立即过期(校验侧用的是 now())
+	if _, err := s.GetSessionByTokenHash(ctx, "tok-clock"); err != nil {
+		t.Fatalf("刚创建的有效会话查不到: %v", err)
+	}
+	if _, err := s.CreateSession(ctx, tenantID, "tok-expired", "csrf", -time.Minute); err != nil {
+		t.Fatalf("create expired session: %v", err)
+	}
+	if _, err := s.GetSessionByTokenHash(ctx, "tok-expired"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("已过期会话仍能取到(err=%v),want ErrNotFound", err)
+	}
+}
