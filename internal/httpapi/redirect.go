@@ -14,6 +14,10 @@ package httpapi
 // 三条热路径上的硬约束:
 //  1. 零 DB 查询:规则集合来自按租户缓存的内存快照(Cache.Get 只读一次 map)。
 //     多数租户没有规则,此时连访客画像都不构造。
+//     例外是**错误路径**:域名不存在/未 active 时,为了渲染租户自己的自定义错误页,
+//     handleRedirect 会走一次 resolveDomainForError → GetDomainByFQDNAnyStatus
+//     (fqdn 唯一索引上的等值查询,见 :237-240)。这条查询只在"不跳转"的 404 路径上
+//     发生,不在成功跳转或规则求值链路上;"零 DB 查询"约束约束的是后者。
 //  2. 零写放大:命中不 UPDATE 任何表,只多写本次访问那一行明细。
 //     「24h 命中」是列表接口从 visits 读时聚合出来的(spec D9)。
 //  3. fail-open:快照加载失败/求值 panic 一律按"未命中"继续(spec 风险章节),
@@ -242,6 +246,8 @@ func (a *API) errorPageTenantID(c *gin.Context) int64 {
 func (a *API) handleRedirect(c *gin.Context) {
 	code := c.Param("code")
 	if code == "" || strings.Contains(code, "/") {
+		// 未命中路径:这里是本条链路上唯一为渲染租户自定义错误页而做的一次 DB 查询
+		// (fqdn 唯一索引等值查询),与文件头"零 DB 查询"约束的关系见其第 1 条注记。
 		a.renderVisitorError(c, http.StatusNotFound, a.errorPageTenantID(c), nil)
 		return
 	}
