@@ -56,7 +56,10 @@ func pgxPoolConfig(url string) (*pgxpool.Config, error) {
 	return cfg, nil
 }
 
-// Connect 建立连接池并等待数据库就绪(最多约 30 秒)。
+// Connect 建立连接池并等待数据库就绪。
+//
+// 重试预算:最多 30 次,每次 Ping 超时 2s + 间隔 1s,最坏约 90 秒
+// (不是旧注释写的 30 秒)。ctx 取消/超时立即返回,不再把剩余的等待睡完。
 func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	cfg, err := pgxPoolConfig(url)
 	if err != nil {
@@ -75,7 +78,14 @@ func Connect(ctx context.Context, url string) (*pgxpool.Pool, error) {
 			return pool, nil
 		}
 		lastErr = err
-		time.Sleep(time.Second)
+		// 等待也要响应 ctx:调用方取消后必须立刻收口,而不是把剩下的重试预算睡完
+		// (启动路径上的取消通常意味着进程正在退出,多等 30~90 秒纯属拖慢关闭)。
+		select {
+		case <-ctx.Done():
+			pool.Close()
+			return nil, fmt.Errorf("database not reachable: %w", lastErr)
+		case <-time.After(time.Second):
+		}
 	}
 	pool.Close()
 	return nil, fmt.Errorf("database not reachable: %w", lastErr)
