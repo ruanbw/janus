@@ -1149,9 +1149,10 @@ async function onSubmit() {
         }
         await updateLink(created.id, { linkType: 'landing', landingSource: 'upload' });
       }
-      markClean();
       message.success('短链已创建');
     }
+    // 创建/编辑两条路径统一在这里解除脏保护:edit 分支内部无需重复调用,
+    // 上传失败那条分支已提前 return(它有自己的 markClean)。
     markClean();
     router.push({ name: 'links' });
   } catch (error) {

@@ -4,6 +4,9 @@
  * 背景（审查项 WEB2）：创建顺序是「先建跳转型短链 → 上传压缩包 → 再 PATCH 定型」。
  * 上传失败时会退回列表页，但原先跳转前没有 markClean —— 表单确实已提交，
  * dirtyGuard 却仍把它当成未保存离开，多弹一个误导性的「放弃未保存修改？」确认框。
+ *
+ * 背景（审查项 WEB13）：创建分支内与分支外各调了一次 markClean（冗余），
+ * 保留下来的应是外层那一次；这里用调用次数把「只调一次」钉住。
  */
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
@@ -129,6 +132,21 @@ describe('LinkFormView 创建 landing+upload', () => {
 
     // 失败留痕：短链已建成，只是落地页没传上去
     expect(toastMock.warning).toHaveBeenCalledWith(expect.stringContaining('已创建'));
+
+    wrapper.unmount();
+  });
+
+  it('上传成功：创建路径只调一次 markClean（分支内那次冗余已删）', async () => {
+    linksApi.uploadLanding.mockResolvedValue({ id: 9, landingUploaded: true });
+
+    const wrapper = await mountCreateForm();
+    await clickCreate(wrapper);
+
+    expect(linksApi.uploadLanding).toHaveBeenCalledTimes(1);
+    expect(linksApi.updateLink).toHaveBeenCalledTimes(1);
+    expect(dirtyGuard.markClean).toHaveBeenCalledTimes(1);
+    expect(toastMock.success).toHaveBeenCalledWith('短链已创建');
+    expect(routerMock.push).toHaveBeenCalledWith({ name: 'links' });
 
     wrapper.unmount();
   });
