@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -46,6 +47,12 @@ func (m *Metadata) Scan(value any) error {
 	}
 	out := make(Metadata)
 	if err := json.Unmarshal(bytes, &out); err != nil {
+		// 读坏一行(手工改库、外部导入写坏 JSONB)必须留痕:调用方拿到的是空字典,
+		// 无从区分"本来就没有元数据"和"库里那行 JSON 坏了"。
+		// 只记长度与来源类型,不记原文 —— metadata 是租户业务数据,可能含敏感信息。
+		// (database/sql 的 Scanner 只拿到值本身,拿不到列名,故只能标到本类型。)
+		slog.Warn("metadata: JSONB 解析失败,按空字典继续",
+			"err", err, "bytes", len(bytes), "sourceType", fmt.Sprintf("%T", value))
 		*m = Metadata{}
 		return nil
 	}
