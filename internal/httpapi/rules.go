@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -256,14 +257,23 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 			return ruleWrite{}, ruleErr("expression 非法: %v", err)
 		}
 		// 表达式引用的字段校验:确保字段在基座有效字段集合内。
-		if refs, err := rules.ExpressionFieldRefs(w.expression); err == nil {
-			for _, ref := range refs {
-				if !rules.ValidField(ref) {
-					return ruleWrite{}, ruleErr("expression 引用了未知字段: %s", ref)
-				}
-				if ref == rules.FieldASN && !rules.HasASNProvider() {
-					return ruleWrite{}, ruleErr("asn 字段当前没有数据源,依赖它的条件恒不命中,不能用于规则")
-				}
+		//
+		// fail-closed:这是"引用无数据源字段"的唯一准入闸门,refs 取不到证据时
+		// 必须拒,不能像旧实现那样 `err == nil` 才校验——那等于"取不到证据就放行"。
+		// 正常路径下该错误不可达(上面 ValidateExpression 走同一套 compileExpression),
+		// 真出现时说明编译路径分叉,记日志并 400,把问题暴露在写入边界而不是求值期。
+		refs, err := rules.ExpressionFieldRefs(w.expression)
+		if err != nil {
+			slog.Error("expression 字段引用收集失败,按 fail-closed 拒绝落库",
+				"err", err, "expressionLen", len(w.expression))
+			return ruleWrite{}, ruleErr("expression 字段校验失败: %v", err)
+		}
+		for _, ref := range refs {
+			if !rules.ValidField(ref) {
+				return ruleWrite{}, ruleErr("expression 引用了未知字段: %s", ref)
+			}
+			if ref == rules.FieldASN && !rules.HasASNProvider() {
+				return ruleWrite{}, ruleErr("asn 字段当前没有数据源,依赖它的条件恒不命中,不能用于规则")
 			}
 		}
 	}
