@@ -171,7 +171,10 @@ func WithRoutes(fn func(engine *gin.Engine)) Option {
 	}
 }
 
-// WithProtectedRoutes 注入受保护的控制面路由组，外部 Handler 自动继承基座的多租户认证与 Casbin RBAC 鉴权
+// WithProtectedRoutes 注入受保护的控制面路由组，外部 Handler 自动继承基座的多租户认证与 Casbin RBAC 鉴权。
+//
+// 需要数据库支撑:未提供 WithDB 且未配置 postgres 数据库地址时,New 会显式报错
+// (否则这些 handler 只能挂在恒定 401 的死代码后、永远不可达)。
 func WithProtectedRoutes(fn func(rg *gin.RouterGroup)) Option {
 	return func(o *options) error {
 		if fn != nil {
@@ -286,6 +289,14 @@ func New(opts ...Option) (*App, error) {
 	// 校验配置合规性
 	if err := validateAppConfig(cfg); err != nil {
 		return nil, err
+	}
+
+	// 真正的「无 DB 模式」(既未注入 DB,也未配置 postgres DSN)下,受保护路由的
+	// handler 只会挂在恒定 401 的死代码后、永远不可达。与其静默丢弃这些路由,
+	// 不如显式失败:调用方要么提供 WithDB / postgres 地址,要么改用 WithRoutes。
+	// 注意 DatabaseURL 为 postgres DSN 时不算无 DB —— Run 会连库并重建路由。
+	if opt.customDB == nil && !isPostgresDSN(cfg.DatabaseURL) && len(opt.protectedRouteInjects) > 0 {
+		return nil, errors.New("WithProtectedRoutes 需要数据库支撑认证与鉴权,但既未提供 WithDB 也未配置 postgres 数据库地址")
 	}
 
 	app := &App{
