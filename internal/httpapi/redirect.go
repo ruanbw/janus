@@ -109,19 +109,47 @@ type errorPagesCache struct {
 	items map[int64]*errorPagesSnapshot
 	// load 读取某租户的自定义错误页(签名与 (*store.Store).GetTenantErrorPages 一致)。
 	load func(ctx context.Context, tenantID int64) (string, string, error)
-	// loadMu 串行化慢路径:缓存失效瞬间的并发请求只触发一次加载,避免惊群。
-	loadMu sync.Mutex
-	ttl    time.Duration
-	log    *slog.Logger
+	// loadLocks 按租户串行化慢路径:缓存失效瞬间**同一租户**的并发请求只触发一次
+	// 加载(避免惊群),但不同租户之间互不阻塞 —— 原先一把全局 loadMu 会让任一租户
+	// 回源(2×512KB 查询)期间,全站所有租户的未命中 404 都排在它后面。
+	//
+	// 表按 tenantID 建条目,基数与上面的 items 一致(都是"活跃租户数"),不会无界增长。
+	loadLocksMu sync.Mutex
+	loadLocks   map[int64]*sync.Mutex
+	// loadTimeout 单次回源的独立超时(见 Get)。可用字段覆盖以便测试压缩时长。
+	loadTimeout time.Duration
+	ttl         time.Duration
+	log         *slog.Logger
 }
+
+// defaultErrorPagesLoadTimeout 单次错误页回源的独立超时。
+//
+// 与请求 ctx 分离:一次正常回源不该因为访客提前断连而半途失败,更不该让正在等
+// 同一把租户锁的其它请求一起拿到空快照。3s 足够一次两字段的按主键查询;
+// 超时后按 fail-open 返回空快照(退回系统内置页)且不写缓存。
+const defaultErrorPagesLoadTimeout = 3 * time.Second
 
 func newErrorPagesCache(load func(ctx context.Context, tenantID int64) (string, string, error)) *errorPagesCache {
 	return &errorPagesCache{
-		items: make(map[int64]*errorPagesSnapshot),
-		load:  load,
-		ttl:   DefaultErrorPagesTTL,
-		log:   slog.Default(),
+		items:       make(map[int64]*errorPagesSnapshot),
+		load:        load,
+		loadLocks:   make(map[int64]*sync.Mutex),
+		loadTimeout: defaultErrorPagesLoadTimeout,
+		ttl:         DefaultErrorPagesTTL,
+		log:         slog.Default(),
 	}
+}
+
+// loadLock 取某租户的加载锁(按需创建)。
+func (c *errorPagesCache) loadLock(tenantID int64) *sync.Mutex {
+	c.loadLocksMu.Lock()
+	defer c.loadLocksMu.Unlock()
+	l := c.loadLocks[tenantID]
+	if l == nil {
+		l = &sync.Mutex{}
+		c.loadLocks[tenantID] = l
+	}
+	return l
 }
 
 // Get 取某租户的错误页快照。加载失败时返回空快照(fail-open:退回系统内置页),
@@ -133,12 +161,17 @@ func (c *errorPagesCache) Get(ctx context.Context, tenantID int64) *errorPagesSn
 	if snap := c.cached(tenantID); snap != nil {
 		return snap
 	}
-	c.loadMu.Lock()
-	defer c.loadMu.Unlock()
+	// 只串行化同一租户:不同租户的慢路径完全并行,一个租户回源不再阻塞全站 404。
+	lk := c.loadLock(tenantID)
+	lk.Lock()
+	defer lk.Unlock()
 	if snap := c.cached(tenantID); snap != nil {
 		return snap
 	}
-	p404, p429, err := c.load(ctx, tenantID)
+	// 独立超时 + 断开取消链:回源的成败只由它自己决定,不受访客断连影响。
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.loadTimeout)
+	defer cancel()
+	p404, p429, err := c.load(loadCtx, tenantID)
 	if err != nil {
 		c.log.Error("加载租户错误页失败,退回内置页(fail-open)", "tenant", tenantID, "err", err)
 		return &errorPagesSnapshot{builtAt: time.Now()}

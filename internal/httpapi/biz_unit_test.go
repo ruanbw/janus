@@ -186,6 +186,111 @@ func TestDomainVerifyLimiterPerTenant(t *testing.T) {
 	}
 }
 
+// BIZ1: 错误页缓存按租户串行化,不同租户的慢路径互不阻塞。
+func TestErrorPagesCachePerTenantLoadsDoNotBlock(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	load := func(_ context.Context, tenantID int64) (string, string, error) {
+		if tenantID == 1 {
+			once.Do(func() { close(entered) })
+			<-release // 模拟租户 1 的慢回源
+			return "<p>t1</p>", "", nil
+		}
+		return "<p>t2</p>", "", nil
+	}
+	c := newErrorPagesCache(load)
+
+	go c.Get(context.Background(), 1)
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("租户 1 未进入加载")
+	}
+
+	res2 := make(chan *errorPagesSnapshot, 1)
+	go func() { res2 <- c.Get(context.Background(), 2) }()
+	select {
+	case snap := <-res2:
+		if snap.notFound != "<p>t2</p>" {
+			close(release)
+			t.Fatalf("租户 2 快照 = %+v", snap)
+		}
+	case <-time.After(2 * time.Second):
+		close(release)
+		t.Fatal("租户 1 回源期间租户 2 的加载被阻塞(全局锁未拆)")
+	}
+	close(release)
+}
+
+// BIZ1: 同一租户的并发未命中只触发一次加载(双检 + 按租户锁)。
+func TestErrorPagesCacheSameTenantCoalesced(t *testing.T) {
+	var loads atomic.Int32
+	c := newErrorPagesCache(func(context.Context, int64) (string, string, error) {
+		loads.Add(1)
+		time.Sleep(50 * time.Millisecond)
+		return "x", "", nil
+	})
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c.Get(context.Background(), 1)
+		}()
+	}
+	wg.Wait()
+	if got := loads.Load(); got != 1 {
+		t.Fatalf("同一租户并发加载 %d 次, want 1", got)
+	}
+}
+
+// BIZ1: 回源使用独立超时,超时空快照 fail-open,且不写缓存。
+func TestErrorPagesCacheLoadTimeoutFailsOpen(t *testing.T) {
+	c := newErrorPagesCache(func(ctx context.Context, _ int64) (string, string, error) {
+		<-ctx.Done()
+		return "", "", ctx.Err()
+	})
+	c.loadTimeout = 30 * time.Millisecond
+
+	start := time.Now()
+	snap := c.Get(context.Background(), 1) // 请求 ctx 无 deadline
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("回源耗时 %v,独立超时未生效", elapsed)
+	}
+	if snap.notFound != "" || snap.tooManyRequests != "" {
+		t.Fatalf("超时应返回空快照(fail-open),得到 %+v", snap)
+	}
+	if c.cached(1) != nil {
+		t.Fatal("超时结果被写进缓存")
+	}
+}
+
+// BIZ1: 回源不受访客请求 ctx 取消影响(用 context.WithoutCancel)。
+func TestErrorPagesCacheIgnoresRequestCtxCancellation(t *testing.T) {
+	called := make(chan struct{}, 1)
+	c := newErrorPagesCache(func(ctx context.Context, _ int64) (string, string, error) {
+		if ctx.Err() != nil {
+			return "", "", ctx.Err()
+		}
+		called <- struct{}{}
+		return "<p>ok</p>", "", nil
+	})
+	reqCtx, cancel := context.WithCancel(context.Background())
+	cancel() // 访客已断连
+
+	snap := c.Get(reqCtx, 1)
+	select {
+	case <-called:
+	default:
+		t.Fatal("请求 ctx 已取消时 loader 未被调用")
+	}
+	if snap.notFound != "<p>ok</p>" {
+		t.Fatalf("请求 ctx 取消不该影响回源: %+v", snap)
+	}
+}
+
 // BIZ14: 后置访问钩子的 goroutine 数量有上限,满则丢弃且不阻塞调用方。
 func TestTriggerPostVisitHooksBoundedAndNonBlocking(t *testing.T) {
 	ResetPostVisitHooks()
