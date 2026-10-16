@@ -43,6 +43,10 @@ func NewManager(secret string, ttl time.Duration) *Manager {
 // Issue 为租户签发 HS256 JWT,并把签发时刻的 token_version 写进载荷。
 // jti 使用 crypto/rand 随机生成(参考 session.go newToken 的写法)。
 func (m *Manager) Issue(tenantID int64, role string, tokenVersion int64) (string, error) {
+	jti, err := newJTI()
+	if err != nil {
+		return "", err
+	}
 	now := time.Now()
 	claims := Claims{
 		Role:         role,
@@ -52,7 +56,7 @@ func (m *Manager) Issue(tenantID int64, role string, tokenVersion int64) (string
 			Subject:   strconv.FormatInt(tenantID, 10),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.ttl)),
-			ID:        newJTI(),
+			ID:        jti,
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(m.secret)
@@ -96,11 +100,18 @@ func (m *Manager) Parse(tokenString string) (*Claims, error) {
 	return claims, nil
 }
 
+// randRead 抽象 crypto/rand.Read,仅用于测试注入随机源失败。
+var randRead = rand.Read
+
 // newJTI 生成随机 jti(每次签发唯一,便于服务端吊销/审计)。
-func newJTI() string {
+//
+// crypto/rand 失败(熵源不可用)是极端环境异常:此处不再 panic(库代码不应 panic
+// 调用方),而是返回错误,由 Issue 向上传播 —— 调用方按签发失败处理(HTTP 500),
+// 不会因一个 jti 生成失败就带走整个进程。
+func newJTI() (string, error) {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
+	if _, err := randRead(b); err != nil {
+		return "", fmt.Errorf("crypto/rand unavailable: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
