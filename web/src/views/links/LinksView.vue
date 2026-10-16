@@ -516,8 +516,23 @@
 
       <template #footer>
         <span class="mr-auto text-xs text-ink-soft">有效行数：{{ parsedBatchLinesCount }}</span>
-        <AppButton size="sm" variant="outline" :disabled="batchImporting" @click="showBatchModal = false">
+        <AppButton
+          size="sm"
+          variant="outline"
+          :disabled="batchImporting"
+          @click="showBatchModal = false"
+        >
           取消
+        </AppButton>
+        <!-- 中止只能拦住尚未发出的请求:已在飞行中的那一次拦不回来,
+             循环下一轮才会真正停下,所以提示如实说"中止"而非即时停止。 -->
+        <AppButton
+          v-if="batchImporting"
+          size="sm"
+          variant="outline"
+          @click="batchAbortRequested = true"
+        >
+          中止导入
         </AppButton>
         <AppButton
           size="sm"
@@ -828,6 +843,12 @@ const showBatchModal = ref(false);
 const batchText = ref('');
 const batchDomainId = ref<number | undefined>(undefined);
 const batchImporting = ref(false);
+/**
+ * 批量导入的中止请求。串行 await 必须能被用户掐断:
+ * 500 行逐个入库要几十秒,而原先没有任何中止机制 —— 模态框关掉了,后台还在
+ * 继续往库里写,用户既看不到进度也停不下来,再回来会撞上一堆重复短码冲突。
+ */
+let batchAbortRequested = false;
 
 const parsedBatchLinesCount = computed(() => {
   return batchText.value
@@ -1164,11 +1185,15 @@ async function executeBatchImport() {
   }
 
   batchImporting.value = true;
+  batchAbortRequested = false;
   let successCount = 0;
   let failCount = 0;
   const errors: string[] = [];
 
   for (const line of lines) {
+    // 每轮开头检查,而不是 await 之后:用户点中止时应当立刻停,
+    // 不该再发出下一次写入请求。
+    if (batchAbortRequested) break;
     const parts = line.split(/[\s,]+/).filter(Boolean);
     let code: string | undefined = undefined;
     let url = '';
@@ -1211,6 +1236,17 @@ async function executeBatchImport() {
   batchImporting.value = false;
   showBatchModal.value = false;
   batchText.value = '';
+  batchAbortRequested = false;
+
+  if (batchAbortRequested) {
+    // 中止时如实报告已经发出去的部分,而不是当作没发生过:否则用户不知道到底
+    // 入库了多少条、要不要重新整理清单去重。
+    message.warning(
+      `导入已中止：已完成 ${successCount} 条${failCount > 0 ? `，失败 ${failCount} 条` : ''}`,
+    );
+    if (successCount > 0) await loadData();
+    return;
+  }
 
   if (successCount > 0) {
     message.success(`成功导入 ${successCount} 条短链${failCount > 0 ? `，失败 ${failCount} 条` : ''}`);
@@ -1225,6 +1261,11 @@ function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape') {
     if (showBatchModal.value) {
       showBatchModal.value = false;
+      // 导入进行中按下 Esc 必须同时请求中止:串行循环不认模态框关没关,
+      // 关掉只是看不见了,请求还在继续往库里写。
+      if (batchImporting.value) {
+        batchAbortRequested = true;
+      }
     }
   }
 }
