@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -634,6 +635,13 @@ func (a *API) handleDeleteLink(c *gin.Context) {
 		return
 	}
 	if err := a.store.SoftDeleteLink(c.Request.Context(), t.ID, id); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			// 数据库/连接类错误不能一律说成"短链不存在":那会把一次基础设施故障
+			// 伪装成"你删错了 id",租户与排查者都被误导。
+			slog.Error("逻辑删除短链失败", "linkId", id, "tenantId", t.ID, "err", err)
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+			return
+		}
 		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
@@ -654,6 +662,12 @@ func (a *API) handlePurgeLink(c *gin.Context) {
 		return
 	}
 	if err := a.store.PurgeLink(c.Request.Context(), t.ID, id); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			// 同 SoftDeleteLink:真错误要与"不存在"区分,否则故障被说成 404。
+			slog.Error("彻底删除短链失败", "linkId", id, "tenantId", t.ID, "err", err)
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+			return
+		}
 		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}

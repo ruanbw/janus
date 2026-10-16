@@ -4,6 +4,7 @@ package httpapi_test
 
 import (
 	"net/http"
+	"strconv"
 	"testing"
 
 	"janus/internal/testutil"
@@ -19,6 +20,33 @@ func bizCreateLink(t *testing.T, c *testClient, code string, body map[string]any
 		body["domainIds"] = []int64{localhostDomainID(t, c)}
 	}
 	createLink(t, c, body)
+}
+
+// BIZ6: 删除/彻底删除短链区分"不存在"(404)与"内部错误"(500 + 日志)。
+// 这里断言正常路径语义不变:存在 → 204;不存在/已删 → 404。
+func TestDeleteLinkStatusSemantics(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "bizdel")
+	addDomain(t, c, "localhost")
+	link := createLink(t, c, map[string]any{
+		"code":       "bizdxyz",
+		"targetUrls": []string{"https://example.com/"},
+		"domainIds":  []int64{localhostDomainID(t, c)},
+	})
+
+	resp := c.del("/api/links/" + strconv.FormatInt(link.ID, 10))
+	assertStatus(t, resp, http.StatusNoContent)
+	_ = resp.Body.Close()
+
+	// 再次逻辑删除 → 已不存活 → 404
+	resp = c.del("/api/links/" + strconv.FormatInt(link.ID, 10))
+	assertStatus(t, resp, http.StatusNotFound)
+	_ = resp.Body.Close()
+
+	// 彻底删除不存在的短链 → 404
+	resp = c.post("/api/links/999999/purge", nil)
+	assertStatus(t, resp, http.StatusNotFound)
+	_ = resp.Body.Close()
 }
 
 // BIZ3: 301 跳转必须带 Cache-Control: no-cache, must-revalidate;302 保持不变。
