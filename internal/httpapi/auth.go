@@ -204,8 +204,10 @@ func (a *API) handleResendVerification(c *gin.Context) {
 			// 但永远收不到新邮件",没有任何线索。两条失败路径都要留痕。
 			if cerr := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "verify", a.cfg.VerifyTokenTTL); cerr != nil {
 				slog.Error("resend-verification: 写入验证 token 失败", "tenantId", tenant.ID, "err", cerr)
-			} else if serr := a.mailer.SendVerifyEmail(email, token); serr != nil {
-				slog.Error("resend-verification: 发送验证邮件失败", "tenantId", tenant.ID, "err", serr)
+			} else {
+				// 同 forgot-password:发信不得阻塞响应路径,否则 pending 分支的响应时间
+				// 与"邮箱不存在"分支可被区分。
+				dispatchMail("resend-verification", func() error { return a.mailer.SendVerifyEmail(email, token) })
 			}
 		}
 	}
@@ -499,8 +501,10 @@ func (a *API) handleForgotPassword(c *gin.Context) {
 		// 对外响应仍是 202(不泄露邮箱是否存在),但运维必须能从日志里看出"没发出去"。
 		if err := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "reset", a.cfg.ResetTokenTTL); err != nil {
 			slog.Error("forgot-password: 写入重置 token 失败", "tenantId", tenant.ID, "err", err)
-		} else if err := a.mailer.SendResetEmail(email, token); err != nil {
-			slog.Error("forgot-password: 发送重置邮件失败", "tenantId", tenant.ID, "err", err)
+		} else {
+			// 发信异步化:真实 SMTP 的 DialAndSend 是秒级网络 I/O,留在响应路径上会
+			// 让"邮箱存在(真发信,慢)/不存在(不发信,快)"被时序区分,等时化失效。
+			dispatchMail("forgot-password/reset", func() error { return a.mailer.SendResetEmail(email, token) })
 		}
 	} else {
 		// 等时化:邮箱不存在也执行一次 bcrypt 比较
