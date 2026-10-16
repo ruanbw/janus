@@ -89,6 +89,12 @@ CREATE TABLE IF NOT EXISTS links (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_links_tenant ON links(tenant_id);
+-- 总览聚合(OverviewStatsForTenant 的 totals/previous/topLinks/facets)共用作用域:
+--   FROM visits v JOIN links l ON l.id = v.link_id
+--   WHERE l.tenant_id = ? AND l.deleted_at IS NULL AND v.created_at >= ?
+-- 这条索引按租户取出"在册"短链集合(选择度最高的过滤条件在这里),
+-- 与下面 visits(link_id, created_at) 配对成嵌套循环路径。
+CREATE INDEX IF NOT EXISTS idx_links_tenant_live ON links(tenant_id, deleted_at);
 
 -- 5. 短链多目标表 (Link Targets)
 CREATE TABLE IF NOT EXISTS link_targets (
@@ -203,6 +209,11 @@ CREATE TABLE IF NOT EXISTS visits (
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_visits_created ON visits(created_at);
+-- 总览聚合的 visits 侧:按 (link_id, created_at) 取"某条短链在窗口内的访问行"。
+-- 列序刻意是 (link_id, created_at) 而不是 (created_at, link_id):所有总览查询都已经
+-- 在手上有"本租户在册短链"这个集合(见 idx_links_tenant_live),需要的是逐条短链
+-- 在时间窗口内的范围扫描;反过来按 created_at 打头会退化成扫全站窗口再回表判租户。
+CREATE INDEX IF NOT EXISTS idx_visits_link_created ON visits(link_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_visits_link_action ON visits(link_id, action, id DESC);
 CREATE INDEX IF NOT EXISTS idx_visits_link_id_desc ON visits(link_id, id DESC);
 CREATE INDEX IF NOT EXISTS idx_visits_link_success ON visits(link_id)

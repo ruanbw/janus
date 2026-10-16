@@ -171,3 +171,36 @@ func TestEmailTokensTenantKindIndexExists(t *testing.T) {
 		t.Fatalf("idx_email_tokens_tenant_kind 定义不符: %s", def)
 	}
 }
+
+// TestOverviewAggregateIndexPath 固化总览聚合的索引路径。
+//
+// 契约:必须同时存在 links(tenant_id, deleted_at) 与 visits(link_id, created_at)。
+//
+// 总览的所有聚合(OverviewStatsForTenant 的 totals/previous/topLinks/facets)共用一个
+// 作用域:
+//
+//	FROM visits v JOIN links l ON l.id = v.link_id
+//	WHERE l.tenant_id = ? AND l.deleted_at IS NULL AND v.created_at >= ?
+//
+// 两条索引合起来给 planner 一条可用的嵌套循环路径:先按租户取"在册"短链,
+// 再按 (link_id, created_at) 取窗口内的访问行 —— 否则只能先按 created_at 扫全站访问
+// (idx_visits_created)再逐行回表判租户,租户越多越亏。
+func TestOverviewAggregateIndexPath(t *testing.T) {
+	s := setupStore(t)
+
+	for name, cols := range map[string][]string{
+		"idx_links_tenant_live":   {"tenant_id", "deleted_at"},
+		"idx_visits_link_created": {"link_id", "created_at"},
+	} {
+		def := indexDef(t, s, name)
+		if def == "" {
+			t.Errorf("缺少总览聚合所需索引 %s", name)
+			continue
+		}
+		for _, col := range cols {
+			if !strings.Contains(def, col) {
+				t.Errorf("索引 %s 缺列 %s: %s", name, col, def)
+			}
+		}
+	}
+}
