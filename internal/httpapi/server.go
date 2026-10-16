@@ -235,7 +235,13 @@ func New(d Deps) http.Handler {
 	prot.PATCH("/admin/tenants/:id", a.handleAdminPatchTenant)
 	prot.DELETE("/admin/domains/:id", a.handleAdminDeleteDomain)
 
-	// 挂载外部受保护扩展路由
+	// 挂载外部受保护扩展路由。
+	//
+	// 契约:传入的是 protAuth(只有 authenticate,**没有** Casbin authorize)。
+	// 基座只做认证,授权由扩展自行完成 —— 需要授权就用 Deps 里的 Enforcer()/Casbin
+	// 规则自行校验。此前 authz 中间件里有一个 is_protected_extension 放行分支,已删除:
+	// 它没有任何写入点(永不触发),却是一个"谁设置谁绕过"的后门开关。不要依赖它,
+	// 也不要以任何形式把它加回来。
 	for _, inject := range d.ProtectedRoutes {
 		if inject != nil {
 			inject(protAuth)

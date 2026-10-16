@@ -118,8 +118,12 @@ func (a *API) authenticate() gin.HandlerFunc {
 			// token_version 吊销:签发时快照的版本必须仍等于库里的当前值。
 			// 改密/重置密码自增该值 → 别人手里的旧 accessToken 立刻失效,不必等 TTL。
 			// (没有 tv 声明的历史 token 解析为 0,与库中 ≥1 恒不相等 → 一并作废。)
-			cur, err := a.store.TenantTokenVersion(c.Request.Context(), tenantID)
-			if err != nil || cur != claims.TokenVersion {
+			//
+			// 直接读上面那次 GetTenantByID 已经取回的 t.TokenVersion,不再单独查一次:
+			// 此前每次 API 请求(每个跳转/每个前端轮询)都要为此多打一次库,而
+			// authenticate 是全站最热的路径。字段本来就在 Tenant 结构体上,只是当时
+			// 单独写了 TenantTokenVersion 才没人想到可以复用。
+			if t.TokenVersion != claims.TokenVersion {
 				writeErr(c, http.StatusUnauthorized, errUnauth, "not authenticated")
 				c.Abort()
 				return
@@ -234,11 +238,18 @@ func (a *API) authorize() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		// 若为外部注入的受保护扩展路由，且已认证(tenant 或 superadmin)，直接放行
-		if v, exists := c.Get("janus.auth.is_protected_extension"); exists && v == true {
-			c.Next()
-			return
-		}
+		// 这里**不提供**任何"扩展路由免授权"的旁路。
+		//
+		// 扩展路由组(WithProtectedRoutes 传入的 ProtectedRoutes)由基座注入,拿到的是
+		// protAuth —— 只挂 authenticate,不挂 Casbin authorize。基座的契约因此是:
+		// **基座只做认证,扩展必须自行授权**。
+		//
+		// 此前这里有一个 "janus.auth.is_protected_extension" 放行分支。它的危害不在于
+		// 它现在会不会触发(全仓没有写入点,永不触发),而在于它是一个"谁设置谁绕过"
+		// 的开关:任何能往 gin.Context 里塞这个 key 的代码(扩展、中间件、插件)都能
+		// 一步跳过整条授权链,却毫无痕迹。已删除,不要以任何形式加回来;扩展需要
+		// 授权就用 a.Enforcer()(见 Deps 注释)自行 az.Secure 或等价校验。
+		//
 		// gin-contrib/authz(v1.0.7)仅从 Basic Auth 取 subject(用户名),故先注入:
 		// subject 即角色字符串,密码位留空。参见该库源码 GetUserName/CheckPermission。
 		c.Request.SetBasicAuth(role.(string), "")
