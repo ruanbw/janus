@@ -5,6 +5,9 @@ package rbac
 
 import (
 	"fmt"
+	"log/slog"
+	"sync"
+	"time"
 
 	"github.com/casbin/casbin/v2"
 	"github.com/casbin/casbin/v2/model"
@@ -112,11 +115,40 @@ func (en *Enforcer) Enforcer() *casbin.Enforcer {
 }
 
 // Enforce 判定角色 role 是否被允许以 HTTP 方法 method 访问路径 path。
-// 返回 false 即未授权(策略未放行);底层评估异常时按拒绝处理(鉴权默认安全)。
+// 返回 false 即未授权(策略未放行);底层评估异常时按拒绝处理(鉴权默认安全),
+// 并打一条限速告警 —— 静默 fail-closed 会让"判权大面积异常"被误当成正常拒绝。
 func (en *Enforcer) Enforce(role, method, path string) bool {
-	ok, err := en.e.Enforce(role, path, method)
+	ok, err := enforceEval(en.e, role, path, method)
 	if err != nil {
+		logEnforceError(err, role, method, path)
 		return false
 	}
 	return ok
+}
+
+// enforceEval 抽象底层评估,仅用于测试注入错误(默认为 enforcer.Enforce)。
+var enforceEval = func(e *casbin.Enforcer, role, path, method string) (bool, error) {
+	return e.Enforce(role, path, method)
+}
+
+// enforceErrLogInterval 判权异常告警的最小间隔:底层一旦持续报错(如模型被破坏)
+// 每个请求都会触发,不加限速会把日志打爆。
+const enforceErrLogInterval = 30 * time.Second
+
+var (
+	enforceErrLogMu   sync.Mutex
+	enforceErrLastLog time.Time
+)
+
+func logEnforceError(err error, role, method, path string) {
+	enforceErrLogMu.Lock()
+	if !enforceErrLastLog.IsZero() && time.Since(enforceErrLastLog) < enforceErrLogInterval {
+		enforceErrLogMu.Unlock()
+		return
+	}
+	enforceErrLastLog = time.Now()
+	enforceErrLogMu.Unlock()
+
+	slog.Warn("RBAC Enforce 评估异常,按拒绝处理(fail-closed)",
+		"role", role, "method", method, "path", path, "error", err)
 }
