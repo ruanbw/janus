@@ -94,6 +94,11 @@ CREATE TABLE IF NOT EXISTS link_domains (
 );
 CREATE INDEX IF NOT EXISTS idx_link_domains_link ON link_domains(link_id);
 CREATE INDEX IF NOT EXISTS idx_link_domains_domain ON link_domains(domain_id);
+-- 热路径 lookupLink(短链跳转)按 (domain_id, code) 命中。部分唯一索引
+-- link_domains_live_code_uniq 带 WHERE NOT link_deleted,而宽松口径必须同时看到
+-- 未删除与历史软删两类行,planner 推不出可以只看未删除行,用不上它 ——
+-- 缺这条非部分索引就是每次访问按 domain_id 全量扫短码。
+CREATE INDEX IF NOT EXISTS idx_link_domains_domain_code ON link_domains(domain_id, code);
 CREATE UNIQUE INDEX IF NOT EXISTS link_domains_live_code_uniq ON link_domains(domain_id, code) WHERE NOT link_deleted;
 
 CREATE OR REPLACE FUNCTION link_domains_sync_link_deleted() RETURNS trigger AS $$
