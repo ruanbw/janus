@@ -47,7 +47,12 @@ type AuthContext struct {
 	Role     string `json:"role"`
 }
 
-// GetAuthContext 从 Gin 上下文中提取当前通过认证的租户与用户身份
+// GetAuthContext 从 Gin 上下文中提取当前通过认证的租户与用户身份。
+//
+// 注意:当上下文未携带角色(既无 CtxRoleKey 也无 "auth.role")时,返回的
+// AuthContext.Role 为空字符串,而不再静默补成 "tenant"。静默补默认会把"没拿到
+// 角色"伪装成"确认是普通租户",让调用方无法区分;需要默认值的调用方请显式判定
+// 空值。只要取到了租户 ID,第二个返回值仍为 true。
 func GetAuthContext(c *gin.Context) (*AuthContext, bool) {
 	if c == nil {
 		return nil, false
@@ -92,9 +97,6 @@ func GetAuthContext(c *gin.Context) (*AuthContext, bool) {
 	}
 	if ac.UserID == 0 {
 		ac.UserID = ac.TenantID
-	}
-	if ac.Role == "" {
-		ac.Role = "tenant"
 	}
 	return &ac, true
 }
