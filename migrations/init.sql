@@ -167,7 +167,9 @@ CREATE INDEX IF NOT EXISTS idx_rule_links_link ON rule_links(link_id);
 CREATE TABLE IF NOT EXISTS visits (
     id            BIGSERIAL PRIMARY KEY,
     link_id       BIGINT NOT NULL REFERENCES links(id) ON DELETE CASCADE,
-    domain_id     BIGINT NOT NULL REFERENCES domains(id),
+    -- domain_id 与 link_id 同为"这条明细属于谁":必须是 CASCADE,否则删域名
+    -- 要么抛 23503,要么依赖调用方记得先手工清 visits(两条外键语义自相矛盾)。
+    domain_id     BIGINT NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
     ip            TEXT NOT NULL DEFAULT '',
     user_agent    TEXT NOT NULL DEFAULT '',
     referer       TEXT NOT NULL DEFAULT '',
@@ -192,6 +194,22 @@ CREATE INDEX IF NOT EXISTS idx_visits_rule ON visits(rule_id, created_at DESC)
     WHERE rule_id IS NOT NULL;
 -- 域名删除(detachInTx)按 domain_id 清 visits,无此索引是全表扫描 + 长锁。
 CREATE INDEX IF NOT EXISTS idx_visits_domain ON visits(domain_id);
+
+-- 存量库的 visits_domain_id_fkey 是裸 REFERENCES(无 ON DELETE 语义),而 CREATE TABLE
+-- IF NOT EXISTS 不会改写已存在的约束 —— 这里只在语义确实不对时重建它。
+-- 用 confdeltype 判定(不重建已是 CASCADE 的约束):重建外键会全表校验,
+-- 放在每次启动都执行的脚本里,无条件 DROP/ADD 会让大表每次启动都白扫一遍。
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'visits_domain_id_fkey' AND confdeltype <> 'c'
+    ) THEN
+        ALTER TABLE visits DROP CONSTRAINT visits_domain_id_fkey;
+        ALTER TABLE visits ADD CONSTRAINT visits_domain_id_fkey
+            FOREIGN KEY (domain_id) REFERENCES domains(id) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 -- 10. 会话表 (Sessions)
 CREATE TABLE IF NOT EXISTS sessions (

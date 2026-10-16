@@ -45,3 +45,50 @@ func TestLinkDomainsDomainCodeIndexExists(t *testing.T) {
 		t.Fatalf("idx_link_domains_domain_code 定义不符: %s", def)
 	}
 }
+
+// TestDeleteDomainCascadesVisits 固化 visits.domain_id 的外键语义。
+//
+// 契约:直接删 domains 行时,指向它的 visits 明细必须被库内 CASCADE 连带清理,
+// 而不是抛外键违约、也不需要调用方"记得先删 visits"。
+//
+// 为什么必须由库保证:同一张 visits 表里 link_id 已经是 ON DELETE CASCADE,
+// domain_id 却是裸 REFERENCES —— 两条外键语义自相矛盾。漏删 visits 的调用路径
+// 会在删域名时抛 23503,把一次运维操作变成运行时 500。
+func TestDeleteDomainCascadesVisits(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+
+	// Given 一条挂在自有 active 域名下、已产生访问明细的短链
+	tenantID := newTenant(t, s, "domain-cascade@test.io")
+	d, err := s.CreateDomain(ctx, tenantID, "cascade.test", "self", "")
+	if err != nil {
+		t.Fatalf("create domain: %v", err)
+	}
+	if err := s.SetDomainActive(ctx, d.ID); err != nil {
+		t.Fatalf("activate domain: %v", err)
+	}
+	l, err := s.CreateLink(ctx, tenantID, "casc01", []string{"https://example.com/casc01"},
+		RedirectStatus302, LinkTypeRedirect, LandingSourceURL, "", []int64{d.ID})
+	if err != nil {
+		t.Fatalf("create link: %v", err)
+	}
+	if err := s.InsertVisit(ctx, VisitRecord{
+		LinkID: l.ID, DomainID: d.ID, Action: VisitActionRedirect, Outcome: VisitOutcomeSuccess,
+	}); err != nil {
+		t.Fatalf("insert visit: %v", err)
+	}
+
+	// When 直接删除域名行
+	if err := s.db.WithContext(ctx).Exec(`DELETE FROM domains WHERE id = ?`, d.ID).Error; err != nil {
+		t.Fatalf("删除域名失败(visits.domain_id 缺 ON DELETE CASCADE): %v", err)
+	}
+
+	// Then 该域名的访问明细被连带清理
+	var n int64
+	if err := s.db.WithContext(ctx).Model(&Visit{}).Where("domain_id = ?", d.ID).Count(&n).Error; err != nil {
+		t.Fatalf("count visits: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("删域名后仍残留 %d 条 visits:domain_id 外键未级联清理", n)
+	}
+}
