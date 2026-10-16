@@ -29,9 +29,9 @@ func (m *mockEnricher) Enrich(ctx context.Context, r *http.Request, fact *plugin
 
 // orderRecorderEnricher 记录执行顺序的富化器
 type orderRecorderEnricher struct {
-	name   string
-	order  *[]string
-	lock   *sync.Mutex
+	name  string
+	order *[]string
+	lock  *sync.Mutex
 }
 
 func (o *orderRecorderEnricher) Name() string { return o.name }

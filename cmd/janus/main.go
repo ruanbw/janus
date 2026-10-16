@@ -95,16 +95,23 @@ func main() {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	// HTTP 服务异常退出不能走 log.Fatalf:那会跳过 worker 收口与优雅关闭。
+	// 统一经 error channel 汇入退出路径,对齐 pkg/janus 的 serverErrCh 模式。
+	serverErrCh := make(chan error, 1)
 	go func() {
 		log.Printf("janus listening on %s", cfg.Addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("listen: %v", err)
+			serverErrCh <- err
+			return
 		}
+		serverErrCh <- nil
 	}()
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	<-stop
+
+	fatalErr := waitForShutdown(stop, serverErrCh)
+
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
@@ -117,5 +124,21 @@ func main() {
 	// (证书探活 10s 超时),所以等待窗口要盖得住单次调用的上限。
 	case <-time.After(12 * time.Second):
 		log.Printf("worker did not stop within 12s")
+	}
+
+	if fatalErr != nil {
+		log.Printf("exit due to server error: %v", fatalErr)
+		os.Exit(1)
+	}
+}
+
+// waitForShutdown 阻塞直到收到退出信号或 HTTP 服务异常退出。
+// 收到信号返回 nil;服务异常退出返回其错误(nil 表示服务正常关闭)。
+func waitForShutdown(stop <-chan os.Signal, serverErrCh <-chan error) error {
+	select {
+	case <-stop:
+		return nil
+	case err := <-serverErrCh:
+		return err
 	}
 }

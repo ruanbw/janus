@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -47,7 +48,12 @@ type AuthContext struct {
 	Role     string `json:"role"`
 }
 
-// GetAuthContext 从 Gin 上下文中提取当前通过认证的租户与用户身份
+// GetAuthContext 从 Gin 上下文中提取当前通过认证的租户与用户身份。
+//
+// 注意:当上下文未携带角色(既无 CtxRoleKey 也无 "auth.role")时,返回的
+// AuthContext.Role 为空字符串,而不再静默补成 "tenant"。静默补默认会把"没拿到
+// 角色"伪装成"确认是普通租户",让调用方无法区分;需要默认值的调用方请显式判定
+// 空值。只要取到了租户 ID,第二个返回值仍为 true。
 func GetAuthContext(c *gin.Context) (*AuthContext, bool) {
 	if c == nil {
 		return nil, false
@@ -93,9 +99,6 @@ func GetAuthContext(c *gin.Context) (*AuthContext, bool) {
 	if ac.UserID == 0 {
 		ac.UserID = ac.TenantID
 	}
-	if ac.Role == "" {
-		ac.Role = "tenant"
-	}
 	return &ac, true
 }
 
@@ -124,6 +127,7 @@ type options struct {
 	customDB              *gorm.DB
 	routeInjects          []func(engine *gin.Engine)
 	protectedRouteInjects []func(rg *gin.RouterGroup)
+	eventListeners        []pendingListener
 	extraFS               fs.FS
 }
 
@@ -169,7 +173,10 @@ func WithRoutes(fn func(engine *gin.Engine)) Option {
 	}
 }
 
-// WithProtectedRoutes 注入受保护的控制面路由组，外部 Handler 自动继承基座的多租户认证与 Casbin RBAC 鉴权
+// WithProtectedRoutes 注入受保护的控制面路由组，外部 Handler 自动继承基座的多租户认证与 Casbin RBAC 鉴权。
+//
+// 需要数据库支撑:未提供 WithDB 且未配置 postgres 数据库地址时,New 会显式报错
+// (否则这些 handler 只能挂在恒定 401 的死代码后、永远不可达)。
 func WithProtectedRoutes(fn func(rg *gin.RouterGroup)) Option {
 	return func(o *options) error {
 		if fn != nil {
@@ -200,12 +207,31 @@ func WithExtraMigrationsDir(dir string) Option {
 	}
 }
 
-// WithEventListener 注册领域事件监听器
+// WithEventListener 注册领域事件监听器。
+//
+// 订阅在 New 成功构建后统一完成,并在 App.Shutdown 时解绑 —— 避免全局单例订阅
+// 在实例销毁后继续被触发(多实例互相串扰、重复注册)。未调用 Shutdown 就丢弃实例
+// 仍会残留订阅,调用方应保证收尾时调用 Shutdown。
 func WithEventListener(topic string, handler event.Handler) Option {
 	return func(o *options) error {
-		event.Subscribe(topic, handler)
+		if topic == "" || handler == nil {
+			return nil
+		}
+		o.eventListeners = append(o.eventListeners, pendingListener{topic: topic, handler: handler})
 		return nil
 	}
+}
+
+// pendingListener 待注册的事件监听器(构建成功后才真正订阅)。
+type pendingListener struct {
+	topic   string
+	handler event.Handler
+}
+
+// eventSubscription 已注册监听器的解绑凭据。
+type eventSubscription struct {
+	topic string
+	id    uint64
 }
 
 // Event 重新导出领域事件公开接口
@@ -248,6 +274,8 @@ type App struct {
 	extraFS               fs.FS
 	workerDone            chan struct{}
 	cancelRun             context.CancelFunc
+	eventSubs             []eventSubscription
+	dbOwned               bool // gdb 是否由本实例(经 bootstrapDatabase)自建
 	mu                    sync.Mutex
 	running               bool
 }
@@ -286,6 +314,14 @@ func New(opts ...Option) (*App, error) {
 		return nil, err
 	}
 
+	// 真正的「无 DB 模式」(既未注入 DB,也未配置 postgres DSN)下,受保护路由的
+	// handler 只会挂在恒定 401 的死代码后、永远不可达。与其静默丢弃这些路由,
+	// 不如显式失败:调用方要么提供 WithDB / postgres 地址,要么改用 WithRoutes。
+	// 注意 DatabaseURL 为 postgres DSN 时不算无 DB —— Run 会连库并重建路由。
+	if opt.customDB == nil && !isPostgresDSN(cfg.DatabaseURL) && len(opt.protectedRouteInjects) > 0 {
+		return nil, errors.New("WithProtectedRoutes 需要数据库支撑认证与鉴权,但既未提供 WithDB 也未配置 postgres 数据库地址")
+	}
+
 	app := &App{
 		cfg:                   cfg,
 		gdb:                   opt.customDB,
@@ -301,6 +337,14 @@ func New(opts ...Option) (*App, error) {
 	// 初始化 HTTP Handler 引擎
 	if err := app.initHandler(); err != nil {
 		return nil, err
+	}
+
+	// 所有可能失败的构建步骤都已完成,最后再注册事件订阅并记录解绑凭据。
+	// 放在末尾可保证「New 失败时不会留下已注册的订阅」。
+	for _, l := range opt.eventListeners {
+		if id := event.SubscribeID(l.topic, l.handler); id != 0 {
+			app.eventSubs = append(app.eventSubs, eventSubscription{topic: l.topic, id: id})
+		}
 	}
 
 	return app, nil
@@ -321,11 +365,13 @@ func validateAppConfig(cfg Config) error {
 		}
 	}
 
-	// 执行基座内部声明式校验（时长、范围等，忽略空零值）
-	if cfg.SessionTTL > 0 || cfg.LandingMaxFiles > 0 {
-		if err := cfg.Validate(); err != nil {
-			return err
-		}
+	// 无条件执行基座内部声明式校验(时长、范围等)。
+	// 旧实现用「SessionTTL > 0 || LandingMaxFiles > 0」这种符号启发式决定是否校验,
+	// 于是整块字段为负(或恰好为零)时直接跳过:非正时长一路流到 worker 的
+	// time.NewTicker 才 panic,而 panic 发生在 goroutine 里会终止整个进程。
+	// Config.Validate 自身已对「整块未配置」的零值做容忍,不会误伤 SDK 轻量配置。
+	if err := cfg.Validate(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -352,6 +398,11 @@ func (a *App) initHandler() error {
 				Password: a.cfg.SMTPPassword,
 				From:     a.cfg.SMTPFrom,
 			}
+		}
+		// 未配置 SMTP 时为控制台 mailer。SDK 场景没有可用日志出口:writer 传
+		// io.Discard 会让验证/重置链接静默丢失,这里保留丢弃行为但显式告警一次。
+		if smtpCfg == nil {
+			slog.Warn("未配置 SMTP,邮件(含验证/重置链接)将被静默丢弃;生产/SDK 场景请配置 SMTP")
 		}
 		m := mailer.NewMailer(mailer.Config{
 			BaseURL: a.cfg.PublicBaseURL,
@@ -402,6 +453,15 @@ func (a *App) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	a.cancelRun = cancel
 	a.workerDone = make(chan struct{})
+
+	// 任何返回路径都必须复位 running:否则一次启动失败(bootstrap/监听失败/服务异常)
+	// 就让 App 永久停在 running=true,后续 Run 只会返回 "already running",只能重建
+	// 实例。正常收尾路径(ctx 取消 → Shutdown)里 Shutdown 也会复位,重复复位幂等。
+	defer func() {
+		a.mu.Lock()
+		a.running = false
+		a.mu.Unlock()
+	}()
 
 	// 数据库启动失败必须向上返回:吞掉错误只会让进程「看着健康」——实际没有数据库、
 	// 没跑迁移、没挂业务路由,却照常对外监听 HTTP。
@@ -463,6 +523,16 @@ func (a *App) Run(ctx context.Context) error {
 		_ = a.Shutdown(shutdownCtx)
 		return runCtx.Err()
 	case err := <-serverErrCh:
+		// HTTP 服务已异常退出,但后台 worker 仍绑在 runCtx 上继续写库:
+		// 必须 cancel 并等它收口,否则调用方以为 App 已停,worker goroutine
+		// 却在继续以陈旧状态写库,连接/咨询锁随之一并泄漏。
+		cancel()
+		if a.workerDone != nil {
+			select {
+			case <-a.workerDone:
+			case <-time.After(3 * time.Second):
+			}
+		}
 		return err
 	}
 }
@@ -489,6 +559,7 @@ func (a *App) bootstrapDatabase(ctx context.Context) error {
 			return fmt.Errorf("open gorm: %w", err)
 		}
 		a.gdb = gdb
+		a.dbOwned = true
 		a.store = store.New(gdb)
 		if a.cfg.SuperadminEmail != "" {
 			if err := bootstrap.Superadmin(ctx, a.store, a.cfg.SuperadminEmail); err != nil {
@@ -526,6 +597,13 @@ func (a *App) Shutdown(ctx context.Context) error {
 		a.cancelRun()
 	}
 
+	// 解绑本实例注册的全局事件订阅:否则实例销毁后订阅仍挂在全局事件总线上,
+	// 多实例场景会互相串扰、重复触发。
+	for _, s := range a.eventSubs {
+		event.Unsubscribe(s.topic, s.id)
+	}
+	a.eventSubs = nil
+
 	var srvErr error
 	if a.server != nil {
 		srvErr = a.server.Shutdown(ctx)
@@ -537,6 +615,18 @@ func (a *App) Shutdown(ctx context.Context) error {
 		case <-a.workerDone:
 		case <-ctx.Done():
 		}
+	}
+
+	// 关闭由本实例自建的底层 sql.DB:否则 SDK 场景每次 New/Run/Shutdown 都会泄漏
+	// 一个连接池。调用方经 WithDB 注入的连接归调用方所有,不越权关闭。
+	// sql.DB.Close 幂等,重复 Shutdown 安全;关闭后清标记避免重复处理。
+	if a.dbOwned && a.gdb != nil {
+		if sqlDB, err := a.gdb.DB(); err == nil && sqlDB != nil {
+			if closeErr := sqlDB.Close(); closeErr != nil && srvErr == nil {
+				srvErr = closeErr
+			}
+		}
+		a.dbOwned = false
 	}
 
 	a.running = false

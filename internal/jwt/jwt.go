@@ -36,6 +36,9 @@ type Manager struct {
 }
 
 // NewManager 以给定密钥与有效期构建 Manager。
+//
+// 密钥强度由调用方保证:生产口径要求 HS256 密钥非空且至少 32 字节(见
+// config.Config.Validate 的校验)。本函数不返回错误,故无法在此兜底拒绝。
 func NewManager(secret string, ttl time.Duration) *Manager {
 	return &Manager{secret: []byte(secret), ttl: ttl}
 }
@@ -43,6 +46,10 @@ func NewManager(secret string, ttl time.Duration) *Manager {
 // Issue 为租户签发 HS256 JWT,并把签发时刻的 token_version 写进载荷。
 // jti 使用 crypto/rand 随机生成(参考 session.go newToken 的写法)。
 func (m *Manager) Issue(tenantID int64, role string, tokenVersion int64) (string, error) {
+	jti, err := newJTI()
+	if err != nil {
+		return "", err
+	}
 	now := time.Now()
 	claims := Claims{
 		Role:         role,
@@ -52,7 +59,7 @@ func (m *Manager) Issue(tenantID int64, role string, tokenVersion int64) (string
 			Subject:   strconv.FormatInt(tenantID, 10),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.ttl)),
-			ID:        newJTI(),
+			ID:        jti,
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(m.secret)
@@ -87,14 +94,27 @@ func (m *Manager) Parse(tokenString string) (*Claims, error) {
 	if claims.Subject == "" || claims.Role == "" {
 		return nil, errors.New("token missing subject or role")
 	}
+	// Subject 是租户 ID(十进制 int64)。不校验的话,畸形/伪造 Subject(如 "abc")
+	// 会穿透到认证层,在那里被当作 0 或解析失败静默降级,与"无租户"混淆。
+	tenantID, err := strconv.ParseInt(claims.Subject, 10, 64)
+	if err != nil || tenantID <= 0 {
+		return nil, fmt.Errorf("token subject %q is not a valid tenant id", claims.Subject)
+	}
 	return claims, nil
 }
 
+// randRead 抽象 crypto/rand.Read,仅用于测试注入随机源失败。
+var randRead = rand.Read
+
 // newJTI 生成随机 jti(每次签发唯一,便于服务端吊销/审计)。
-func newJTI() string {
+//
+// crypto/rand 失败(熵源不可用)是极端环境异常:此处不再 panic(库代码不应 panic
+// 调用方),而是返回错误,由 Issue 向上传播 —— 调用方按签发失败处理(HTTP 500),
+// 不会因一个 jti 生成失败就带走整个进程。
+func newJTI() (string, error) {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand unavailable: " + err.Error())
+	if _, err := randRead(b); err != nil {
+		return "", fmt.Errorf("crypto/rand unavailable: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
