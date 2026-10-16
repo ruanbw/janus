@@ -321,11 +321,13 @@ func validateAppConfig(cfg Config) error {
 		}
 	}
 
-	// 执行基座内部声明式校验（时长、范围等，忽略空零值）
-	if cfg.SessionTTL > 0 || cfg.LandingMaxFiles > 0 {
-		if err := cfg.Validate(); err != nil {
-			return err
-		}
+	// 无条件执行基座内部声明式校验(时长、范围等)。
+	// 旧实现用「SessionTTL > 0 || LandingMaxFiles > 0」这种符号启发式决定是否校验,
+	// 于是整块字段为负(或恰好为零)时直接跳过:非正时长一路流到 worker 的
+	// time.NewTicker 才 panic,而 panic 发生在 goroutine 里会终止整个进程。
+	// Config.Validate 自身已对「整块未配置」的零值做容忍,不会误伤 SDK 轻量配置。
+	if err := cfg.Validate(); err != nil {
+		return err
 	}
 	return nil
 }

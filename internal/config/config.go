@@ -145,8 +145,15 @@ func parseEnvFile(path string) (map[string]string, error) {
 // Load 只保证「能解析」,不保证「语义合理」:0 或负的时长会让 time.NewTicker panic,
 // 而 worker 跑在 goroutine 里——那类 panic 会终止整个进程,连带 HTTP 服务一起死。
 // 所以这里返回错误,由调用方决定拒绝启动。
+//
+// 零值容忍:嵌入方(janus SDK)常只注入少数字段(如仅 Addr),其余留零值 —— 这不是
+// "配了个 0",而是"没配置"。因此每组字段按"整块未配置则跳过,整块出现非零值则要求
+// 全部为正"判定;只有非零值才会被校验正负,零值不再误伤轻量配置。
 func (c Config) Validate() error {
-	positiveDurations := []struct {
+	// runtimeDurations 是「运行期时长」块。整块为零 = 调用方未配置运行时,跳过;
+	// 一旦块内出现非零值,即视为显式配置过,要求整块为正(非正时长会让 worker 的
+	// time.NewTicker panic 并终止进程)。
+	runtimeDurations := []struct {
 		name string
 		v    time.Duration
 	}{
@@ -154,16 +161,22 @@ func (c Config) Validate() error {
 		{"JANUS_SESSION_TTL_SHORT", c.SessionTTLShort},
 		{"JANUS_VERIFY_TOKEN_TTL", c.VerifyTokenTTL},
 		{"JANUS_RESET_TOKEN_TTL", c.ResetTokenTTL},
-		{"JANUS_JWT_TTL", c.JWTTTL},
 		{"JANUS_DNS_RETRY_INTERVAL", c.DNSRetryInterval},
 		{"JANUS_DNS_MAX_AGE", c.DNSMaxAge},
 		{"JANUS_VISIT_RETENTION", c.VisitRetention},
 		{"JANUS_VISIT_CLEANUP_INTERVAL", c.VisitCleanupEvery},
 	}
-	for _, d := range positiveDurations {
-		if d.v <= 0 {
-			return fmt.Errorf("%s 必须为正数,当前为 %v(非正时长会让后台 worker 的 time.NewTicker panic 并终止进程)", d.name, d.v)
+	if anyDurationNonZero(runtimeDurations) {
+		for _, d := range runtimeDurations {
+			if d.v <= 0 {
+				return fmt.Errorf("%s 必须为正数,当前为 %v(非正时长会让后台 worker 的 time.NewTicker panic 并终止进程)", d.name, d.v)
+			}
 		}
+	}
+	// JWTTTL 单独判定:它是 SDK 覆盖的最小字段之一,常与其它节奏字段不同步,
+	// 只要非零就必须为正。
+	if c.JWTTTL < 0 {
+		return fmt.Errorf("JANUS_JWT_TTL 必须为正数,当前为 %v", c.JWTTTL)
 	}
 	positiveInts := []struct {
 		name string
@@ -173,9 +186,11 @@ func (c Config) Validate() error {
 		{"JANUS_LANDING_MAX_FILES", c.LandingMaxFiles},
 		{"JANUS_MAX_TARGET_URLS", c.MaxTargetURLs},
 	}
-	for _, i := range positiveInts {
-		if i.v <= 0 {
-			return fmt.Errorf("%s 必须为正数,当前为 %d", i.name, i.v)
+	if anyIntNonZero(positiveInts) {
+		for _, i := range positiveInts {
+			if i.v <= 0 {
+				return fmt.Errorf("%s 必须为正数,当前为 %d", i.name, i.v)
+			}
 		}
 	}
 	positiveInt64s := []struct {
@@ -185,15 +200,18 @@ func (c Config) Validate() error {
 		{"JANUS_LANDING_MAX_ZIP_BYTES", c.LandingMaxZipBytes},
 		{"JANUS_LANDING_MAX_TOTAL_BYTES", c.LandingMaxTotalBytes},
 	}
-	for _, i := range positiveInt64s {
-		if i.v <= 0 {
-			return fmt.Errorf("%s 必须为正数,当前为 %d", i.name, i.v)
+	if anyInt64NonZero(positiveInt64s) {
+		for _, i := range positiveInt64s {
+			if i.v <= 0 {
+				return fmt.Errorf("%s 必须为正数,当前为 %d", i.name, i.v)
+			}
 		}
 	}
 	if _, err := c.TrustedProxyNets(); err != nil {
 		return fmt.Errorf("JANUS_TRUSTED_PROXY_CIDRS: %w", err)
 	}
-	if c.SMTPPort < 1 || c.SMTPPort > 65535 {
+	// SMTPPort = 0 表示未配置(envDefault 会填 465);非零时必须落在 1-65535。
+	if c.SMTPPort != 0 && (c.SMTPPort < 1 || c.SMTPPort > 65535) {
 		return fmt.Errorf("JANUS_SMTP_PORT 必须是 1-65535,当前为 %d", c.SMTPPort)
 	}
 	if c.PublicBaseURL != "" {
@@ -214,6 +232,44 @@ func (c Config) Validate() error {
 		fmt.Fprintln(os.Stderr, "WARN: 未配置 JANUS_SMTP_HOST,使用 ConsoleMailer,验证/重置链接会打印到后端日志,仅适合开发环境")
 	}
 	return nil
+}
+
+// anyDurationNonZero / anyIntNonZero / anyInt64NonZero 判定一组字段是否"整块未配置"。
+// 用于 Validate 的零值容忍:整块为零即视为未配置并跳过校验。
+func anyDurationNonZero(items []struct {
+	name string
+	v    time.Duration
+}) bool {
+	for _, it := range items {
+		if it.v != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func anyIntNonZero(items []struct {
+	name string
+	v    int
+}) bool {
+	for _, it := range items {
+		if it.v != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func anyInt64NonZero(items []struct {
+	name string
+	v    int64
+}) bool {
+	for _, it := range items {
+		if it.v != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // TrustedProxyNets 解析 TrustedProxyCIDrs。空的或写错的条目在 Validate 阶段报错,
