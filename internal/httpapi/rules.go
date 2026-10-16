@@ -44,6 +44,15 @@ const maxRuleLinkNames = 3
 // defaultRulePriority 新建规则未指定优先级时的取值(与 DDL 默认一致:数字小者先评估)。
 const defaultRulePriority = 100
 
+// 规则文本字段的字节上限。
+//
+// name 参与 (tenant_id, name) 唯一索引,description 会进列表响应;两者此前都没有
+// 任何上限,已登录租户可写入任意长的字符串。给一个远大于任何合理配置的硬上界即可。
+const (
+	maxRuleNameLen        = 128
+	maxRuleDescriptionLen = 512
+)
+
 // maxRuleBodyBytes /api/rules* 请求体上限。
 //
 // 为什么必须限:customHtml 本身就有 512KB 上限,而 conditions 是一棵可任意深的
@@ -180,8 +189,14 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 	if w.name == "" {
 		return ruleWrite{}, ruleErr("name 不能为空")
 	}
+	if len(w.name) > maxRuleNameLen {
+		return ruleWrite{}, ruleErr("name 超过长度上限(%d 字节)", maxRuleNameLen)
+	}
 	if req.Description != nil {
 		w.description = *req.Description
+	}
+	if len(w.description) > maxRuleDescriptionLen {
+		return ruleWrite{}, ruleErr("description 超过长度上限(%d 字节)", maxRuleDescriptionLen)
 	}
 	// ② priority 不得为负(数字小者先评估,负数会让它排在所有规则之前且无意义)
 	if req.Priority != nil {
