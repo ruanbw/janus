@@ -8,7 +8,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
-	randv2 "math/rand/v2"
 	"net"
 	"net/netip"
 	"strings"
@@ -114,10 +113,33 @@ func IsValidCode(s string) bool {
 }
 
 // GenerateCode 随机生成指定长度的短码(均匀取自 CodeAlphabet)。
+//
+// 随机源用 crypto/rand:短码是公开的访问凭据,猜到短码就能把访客引到自己的目标
+// 上(自定义短码由租户自己负责,但自动生成这一路必须不可预测)。原先用
+// math/rand/v2,与同包的 MintVerifyToken(每次签发 TXT 挑战都用 crypto/rand)
+// 口径不一 —— 同一个包里"哪些随机是安全随机"不该靠记忆区分。开销可以忽略:
+// 每个短码 6 字节量级。
+//
+// 字符集的均匀性不能打折:256 不是 56 的整数倍,直接取模会让前 32 个字符的出现
+// 概率翻倍,所以用拒绝采样丢弃尾部整段之外的样本。
 func GenerateCode(length int) string {
+	// reject 之上(含)的字节全部丢弃:它们会让取模结果有偏。
+	const reject = 256 - 256%len(CodeAlphabet)
 	b := make([]byte, length)
+	var buf [1]byte
 	for i := range b {
-		b[i] = CodeAlphabet[randv2.IntN(len(CodeAlphabet))]
+		for {
+			if _, err := rand.Read(buf[:]); err != nil {
+				// 熵源不可用是极端环境异常;这里是纯函数、没有错误返回位,
+				// 而继续用可预测值发短码比中止更危险。与 session.go 的
+				// newToken、server.go 的密钥生成同一口径。
+				panic("crypto/rand unavailable: " + err.Error())
+			}
+			if int(buf[0]) < reject {
+				b[i] = CodeAlphabet[int(buf[0])%len(CodeAlphabet)]
+				break
+			}
+		}
 	}
 	return string(b)
 }
