@@ -83,11 +83,17 @@ func (a *API) maxTargetURLs() int {
 	return 50
 }
 
-// maxCreateLinkBodyBytes 创建端点的请求体上限。
+// maxCreateLinkBodyBytes 创建端点**自身**声明的请求体上限。
 //
 // 按「最多 max 个目标 × 单个 URL 上限 4096 + JSON 转义开销」推算,再加一批余量给
 // domainIds / code 等其余字段。只加数量校验不加体积校验是不够的:十万条 5 字节的
 // URL 数量上完全合规,体积上照样能把请求体撑到几百 MB。
+//
+// 注意这**不是**端点最终生效的上限:server.go 的 bodyLimit 全局中间件先给所有
+// 带请求体的方法套了一层 maxJSONBodyBytes(1.5MiB),handler 再在其上叠一层本值,
+// 两层 MaxBytesReader 取更小的那个。默认 MaxTargetURLs=50 时本值约 266KB,
+// 小于 1.5MiB,因此真正触发的是这里;只有把 MaxTargetURLs 配到 ≈370 以上,
+// 本值才会超过全局上限、由全局那层先拦下 —— 下面的 cap(8MiB)也就永远到不了。
 func (a *API) maxCreateLinkBodyBytes() int64 {
 	const (
 		perURLBudget = 4096 + 32 // URL 上限 + 引号/逗号/转义余量
