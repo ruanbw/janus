@@ -357,7 +357,7 @@ var exprPredicates = map[string]struct{}{
 	"groupBy": {}, "sortBy": {}, "reduce": {},
 }
 
-// exprAudit 编译前审一遍 AST:拒绝谓词类内置函数、区间运算符与 let 变量绑定。
+// exprAudit 编译前审一遍 AST:拒绝谓词类内置函数、区间运算符、let 变量绑定与 $env 访问器。
 //
 // 为什么必须单独审:见 exprPredicates 的注释 —— DisableAllBuiltins 覆盖不到它们。
 // 为什么放在 expr.Compile 之前单独 parse 一次:谓词在 AST 上是 *ast.BuiltinNode,
@@ -381,7 +381,16 @@ func exprAudit(code string) error {
 	bad := ""
 	rangeBad := false
 	letBad := false
-	ast.Walk(&tree.Node, auditVisitor{reject: &bad, rejectRange: &rangeBad, rejectLet: &letBad})
+	envBad := false
+	ast.Walk(&tree.Node, auditVisitor{reject: &bad, rejectRange: &rangeBad, rejectLet: &letBad, rejectEnv: &envBad})
+	if envBad {
+		// `$env` 是 expr 的特殊标识符,指向整个环境对象:它绕过了 refs 闸门 ——
+		// `$env.Country` 在 AST 上是 MemberNode(属性名是 StringNode 不是 IdentifierNode),
+		// fieldCasePatcher 看不见,refs 因而为空,"任一字段取不到即不命中"的闸门空转;
+		// 无 GeoIP 数据时 `$env.Country != "US"` 恒为 true。本引擎的 env 是零方法扁平
+		// 结构体,`$env` 没有任何正当用途,直接拒掉。
+		return fmt.Errorf("表达式不允许使用 %q:它指向整个求值环境,会绕过字段引用闸门,在字段取不到时误判", "$env")
+	}
 	if rangeBad {
 		// `..` 构造的是惰性区间集合:长度不受表达式长度约束(1..262143 只有 11 字节),
 		// 而 max/min/… 会把整个区间展开成实参,成本由区间长度而非字节码长度决定。
@@ -422,15 +431,22 @@ func parseForAudit(code string) (tree *parser.Tree, err error) {
 }
 
 // auditVisitor 找出第一个被禁的构造(找到就停,不用报全部):
-// 谓词类内置函数、区间运算符 `..`,以及 let 变量绑定。
+// 谓词类内置函数、区间运算符 `..`、let 变量绑定,以及 `$env` 访问器。
 type auditVisitor struct {
 	reject      *string
 	rejectRange *bool
 	rejectLet   *bool
+	rejectEnv   *bool
 }
 
 func (v auditVisitor) Visit(node *ast.Node) {
-	if *v.reject != "" || *v.rejectRange || *v.rejectLet {
+	if *v.reject != "" || *v.rejectRange || *v.rejectLet || *v.rejectEnv {
+		return
+	}
+	if id, ok := (*node).(*ast.IdentifierNode); ok && id.Value == "$env" {
+		// 裸 `$env` 与 `$env.X`/`$env["X"]` 都会走到这里:后两者的 MemberNode
+		// 以这个 IdentifierNode 为 Node,walk 必然遍历到。
+		*v.rejectEnv = true
 		return
 	}
 	if _, ok := (*node).(*ast.VariableDeclaratorNode); ok {
@@ -458,7 +474,8 @@ func CompileExpression(code string) (*vm.Program, error) {
 //
 // 编译期的四道闸门,顺序有意义:
 //  1. 长度上限(最便宜,先挡掉最大的输入)
-//  2. AST 审计:拒谓词类内置函数(DisableAllBuiltins 覆盖不到的那一半)
+//  2. AST 审计:拒谓词类内置函数(DisableAllBuiltins 覆盖不到的那一半)、
+//     区间运算符、let 绑定与 `$env` 访问器
 //  3. expr.Compile:类型检查 —— 这一层把 Fact 的方法名、未知字段名、
 //     非 bool 返回值全部变成编译错误(refs 闸门因此不再可能被绕过)
 //  4. DisableAllBuiltins + 白名单重开
