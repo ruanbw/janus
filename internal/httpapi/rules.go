@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -42,6 +43,15 @@ const maxRuleLinkNames = 3
 
 // defaultRulePriority 新建规则未指定优先级时的取值(与 DDL 默认一致:数字小者先评估)。
 const defaultRulePriority = 100
+
+// 规则文本字段的字节上限。
+//
+// name 参与 (tenant_id, name) 唯一索引,description 会进列表响应;两者此前都没有
+// 任何上限,已登录租户可写入任意长的字符串。给一个远大于任何合理配置的硬上界即可。
+const (
+	maxRuleNameLen        = 128
+	maxRuleDescriptionLen = 512
+)
 
 // maxRuleBodyBytes /api/rules* 请求体上限。
 //
@@ -75,15 +85,19 @@ const (
 // 全部字段用指针:必须能区分"没传这个字段"(PATCH 不动它)与"传了零值"
 // (如 enabled=false、destination=""、conditions:[])。任一字段用裸值都会把其中一种吃掉。
 type ruleReq struct {
-	Name        *string               `json:"name"`
-	Description *string               `json:"description"`
-	Priority    *int                  `json:"priority"`
-	Scope       *string               `json:"scope"`
-	Enabled     *bool                 `json:"enabled"`
-	Logic       *string               `json:"logic"`
-	Action      *string               `json:"action"`
-	Destination *string               `json:"destination"`
-	Conditions  *store.RuleConditions `json:"conditions"`
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Priority    *int    `json:"priority"`
+	Scope       *string `json:"scope"`
+	Enabled     *bool   `json:"enabled"`
+	Logic       *string `json:"logic"`
+	Action      *string `json:"action"`
+	Destination *string `json:"destination"`
+	// Conditions 必须收成 json.RawMessage 而不是 *store.RuleConditions:
+	// 后者的 UnmarshalJSON 是读库容错版(解析失败静默归零),直接绑到请求体上
+	// 会把"写坏的 conditions"洗成空条件组。这里先原样收字节,再交给
+	// resolveRule 用 store.DecodeRuleConditions 严格解析(失败 → 400)。
+	Conditions json.RawMessage `json:"conditions"`
 	// LinkIDs 必须是 *[]int64(指针到切片),理由见文件头不变式 ②。
 	LinkIDs    *[]int64 `json:"linkIds"`
 	PageMode   *string  `json:"pageMode"`
@@ -175,8 +189,14 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 	if w.name == "" {
 		return ruleWrite{}, ruleErr("name 不能为空")
 	}
+	if len(w.name) > maxRuleNameLen {
+		return ruleWrite{}, ruleErr("name 超过长度上限(%d 字节)", maxRuleNameLen)
+	}
 	if req.Description != nil {
 		w.description = *req.Description
+	}
+	if len(w.description) > maxRuleDescriptionLen {
+		return ruleWrite{}, ruleErr("description 超过长度上限(%d 字节)", maxRuleDescriptionLen)
 	}
 	// ② priority 不得为负(数字小者先评估,负数会让它排在所有规则之前且无意义)
 	if req.Priority != nil {
@@ -252,14 +272,23 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 			return ruleWrite{}, ruleErr("expression 非法: %v", err)
 		}
 		// 表达式引用的字段校验:确保字段在基座有效字段集合内。
-		if refs, err := rules.ExpressionFieldRefs(w.expression); err == nil {
-			for _, ref := range refs {
-				if !rules.ValidField(ref) {
-					return ruleWrite{}, ruleErr("expression 引用了未知字段: %s", ref)
-				}
-				if ref == rules.FieldASN && !rules.HasASNProvider() {
-					return ruleWrite{}, ruleErr("asn 字段当前没有数据源,依赖它的条件恒不命中,不能用于规则")
-				}
+		//
+		// fail-closed:这是"引用无数据源字段"的唯一准入闸门,refs 取不到证据时
+		// 必须拒,不能像旧实现那样 `err == nil` 才校验——那等于"取不到证据就放行"。
+		// 正常路径下该错误不可达(上面 ValidateExpression 走同一套 compileExpression),
+		// 真出现时说明编译路径分叉,记日志并 400,把问题暴露在写入边界而不是求值期。
+		refs, err := rules.ExpressionFieldRefs(w.expression)
+		if err != nil {
+			slog.Error("expression 字段引用收集失败,按 fail-closed 拒绝落库",
+				"err", err, "expressionLen", len(w.expression))
+			return ruleWrite{}, ruleErr("expression 字段校验失败: %v", err)
+		}
+		for _, ref := range refs {
+			if !rules.ValidField(ref) {
+				return ruleWrite{}, ruleErr("expression 引用了未知字段: %s", ref)
+			}
+			if ref == rules.FieldASN && !rules.HasASNProvider() {
+				return ruleWrite{}, ruleErr("asn 字段当前没有数据源,依赖它的条件恒不命中,不能用于规则")
 			}
 		}
 	}
@@ -276,11 +305,20 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 	// ⑦⑧ 条件字段与运算符必须都在 v1 白名单内(白名单以 rules 包为准,httpapi 只引用)。
 	// 条件树里的每个叶子都要校验,报错带 JSON 路径——不指明位置的话用户没法改。
 	// 注:visual 形态允许零条件——那是刻意的"兜底规则"(无条件即命中,见 eval_test.go)。
+	//
+	// 先严格解码再校验:请求体里的 conditions 是 json.RawMessage,容错解码会把
+	// "写坏的 JSON"静默洗成空条件组,而空条件组在求值侧是恒命中的兜底规则——
+	// 一次 `"conditions":"group: ..."` 笔误就能让规则从"按国家拦截"变成"拦截全部"。
+	// 这里宁可 400。省略 conditions(未传)时 RawMessage 为 nil,保持现值不动。
 	if req.Conditions != nil {
-		if err := validateConditionTree(*req.Conditions); err != nil {
+		conds, err := store.DecodeRuleConditions(req.Conditions)
+		if err != nil {
+			return ruleWrite{}, ruleErr("conditions 非法: %v", err)
+		}
+		if err := validateConditionTree(conds); err != nil {
 			return ruleWrite{}, err
 		}
-		w.conditions = *req.Conditions
+		w.conditions = conds
 	}
 	// ⑨ linkIds:只接受本租户、未逻辑删除的短链。scope=global 时不校验也不保留——
 	// 那些 id 马上会被丢弃,为一次注定不发生的写入报错只会给出误导性的失败原因。
@@ -407,6 +445,14 @@ func validateConditionLeaf(cond store.RuleCondition, path string) error {
 	values := condValues(cond.Values)
 	if len(values) == 0 {
 		return ruleErr("%s.values 去空白后为空,引擎会丢弃这条条件", path)
+	}
+	// gt / lt / duplicated 只消费 values[0](引擎 compileCond 同口径,忽略 values[1:]),
+	// 多值属于"配了不生效"的死配置,写入时直接拒而不是静默接受。
+	if cond.Operator == rules.OpGT || cond.Operator == rules.OpLT || cond.Operator == rules.OpDuplicated {
+		if len(values) != 1 {
+			return ruleErr("%s.values 对 %s 只允许 1 条,当前 %d 条(多余的值不会生效)",
+				path, cond.Operator, len(values))
+		}
 	}
 	switch cond.Operator {
 	case rules.OpGT, rules.OpLT:
@@ -630,9 +676,15 @@ func (a *API) handlePatchRule(c *gin.Context) {
 	upd := store.RuleUpdate{
 		Name: &w.name, Description: &w.description, Priority: &w.priority,
 		Scope: &w.scope, Enabled: &w.enabled, Logic: &w.logic, Action: &w.action,
-		Destination: &w.destination, Conditions: &w.conditions, LinkIDs: w.linkIDs,
+		Destination: &w.destination, LinkIDs: w.linkIDs,
 		PageMode: &w.pageMode, CustomHTML: &w.customHTML,
 		RuleType: &w.ruleType, Expression: &w.expression,
+	}
+	// conditions 只在请求体真的带了该字段时才显式设置;省略即不动这一列。
+	// 不能无条件传 &w.conditions:那会把"未设置"伪装成"显式设置",
+	// 与"显式 [] = 清空"这种合法操作在 store 侧不可区分(见 store.RuleUpdate 注释)。
+	if req.Conditions != nil {
+		upd.Conditions = &w.conditions
 	}
 	updated, err := a.store.UpdateRule(c.Request.Context(), t.ID, id, upd)
 	if err != nil {
@@ -1360,9 +1412,14 @@ type validateExprResp struct {
 }
 
 // handleValidateExpr POST /api/rules/validate-expr — 校验 Expr 表达式语法与返回值类型。
+// 与同组其它写端点一致地走 CSRF 双提交校验:它接收租户自由输入并触发编译,
+// 不该是唯一豁免 CSRF 的 /api/rules* 端点。
 func (a *API) handleValidateExpr(c *gin.Context) {
-	_, _, ok := a.requireSession(c)
+	_, sess, ok := a.requireSession(c)
 	if !ok {
+		return
+	}
+	if !a.requireCSRF(c, sess) {
 		return
 	}
 	var req validateExprReq
