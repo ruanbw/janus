@@ -474,6 +474,16 @@ func (a *App) Run(ctx context.Context) error {
 		_ = a.Shutdown(shutdownCtx)
 		return runCtx.Err()
 	case err := <-serverErrCh:
+		// HTTP 服务已异常退出,但后台 worker 仍绑在 runCtx 上继续写库:
+		// 必须 cancel 并等它收口,否则调用方以为 App 已停,worker goroutine
+		// 却在继续以陈旧状态写库,连接/咨询锁随之一并泄漏。
+		cancel()
+		if a.workerDone != nil {
+			select {
+			case <-a.workerDone:
+			case <-time.After(3 * time.Second):
+			}
+		}
 		return err
 	}
 }
