@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -193,8 +194,11 @@ func clientLang(r *http.Request) string {
 	if tag == "" {
 		return ""
 	}
-	if len(tag) > maxLangLen {
-		tag = tag[:maxLangLen]
+	// 按 rune(而非字节)截断:Accept-Language 里的语言标签可能含多字节字符,
+	// 按字节切会把一个 UTF-8 序列从中间截断,落库后成为一个非法编码字符串
+	// (后续读取/导出/JSON 序列化都可能因此出错)。
+	if utf8.RuneCountInString(tag) > maxLangLen {
+		tag = string([]rune(tag)[:maxLangLen])
 	}
 	return tag
 }
