@@ -3,11 +3,13 @@ package store
 import (
 	"context"
 	"errors"
-	"strings"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"janus/internal/fqdn"
 )
 
 type Domain struct {
@@ -37,8 +39,10 @@ var ErrPlatformDomain = errors.New("platform domain is protected")
 // 放在数据层而不是只在 handler 做:读路径(GetDomainByFQDN / GetDomainAuth)同样要过它,
 // 否则 Host 头带尾点、大小写不同的请求查不到已归一化的行,而入库路径与读路径的
 // 形态不一致时 UNIQUE 索引会放过 "a.com"/"a.com." 这种同主机双份记录。
+// 归一化的实现已收敛到 internal/fqdn(唯一物理副本);两份逐字相同的实现一旦漂移,
+// UNIQUE 索引就会被 "a.com"/"a.com." 这种同主机双份记录绕过,且漂移没有编译器兜底。
 func NormalizeFQDN(s string) string {
-	return strings.TrimRight(strings.ToLower(strings.TrimSpace(s)), ".")
+	return fqdn.Normalize(s)
 }
 
 // CreateDomain 创建域名记录(fqdn 唯一冲突返回唯一约束错误)。
@@ -71,8 +75,13 @@ func CreateDomainChalleged(tx *gorm.DB, tenantID int64, fqdn, token, description
 }
 
 // CreatePlatformDomain 创建平台默认域名:创建即 active(泛域名解析已指向本机),cert_status=pending。
+// CreatePlatformDomain 建平台自己的域名行。
+//
+// 归一化在这里再补一次(纵深防御):config 已在 parseEnvFrom 归一化过,但本方法是
+// 导出 API,字面量构造的 Config(测试、SDK、未来的嵌入方使用)会绕过 parseEnvFrom。
+// 漏归一化的后果是注册"成功"但默认域名永远查不到——因为读路径按归一化后的值查。
 func (s *Store) CreatePlatformDomain(ctx context.Context, tenantID int64, fqdn string) (*Domain, error) {
-	d := Domain{TenantID: tenantID, FQDN: fqdn, Origin: "platform", Status: "active", CertStatus: "pending", ActivatedAt: nowPtr()}
+	d := Domain{TenantID: tenantID, FQDN: NormalizeFQDN(fqdn), Origin: "platform", Status: "active", CertStatus: "pending", ActivatedAt: nowPtr()}
 	if err := s.db.WithContext(ctx).Create(&d).Error; err != nil {
 		return nil, err
 	}
@@ -188,19 +197,36 @@ func (s *Store) MintVerifyToken(ctx context.Context, id int64, token string) err
 // dns_checked_at 必须重写:扫描 SQL 用 COALESCE(dns_checked_at, created_at) 算
 // "距上次校验多久",一个两年前创建、刚被手动复活的域名若沿用旧 created_at,
 // 下一轮就会被判超期再打回终态。
+// updateDomainStatusRequiringHit 更新域名状态,并要求真的命中一行。
+//
+// 为什么必须查 RowsAffected:GORM 的 Updates 对"0 行命中"不返回错误,于是改一个
+// 不存在的域名会静默成功。这三个方法都是 worker 的状态机落点,静默失败意味着
+// 域名卡在旧状态且**没有任何告警**——worker 会一轮轮重扫同一批行,直到人工发现。
+func (s *Store) updateDomainStatusRequiringHit(ctx context.Context, id int64, fields map[string]any, what string) error {
+	res := s.db.WithContext(ctx).Model(&Domain{}).Where("id = ?", id).Updates(fields)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("%s: 域名 id=%d 不存在或未命中,状态未更新", what, id)
+	}
+	return nil
+}
+
+// ReviveDomain 把域名恢复为 pending,等待重新校验。
 func (s *Store) ReviveDomain(ctx context.Context, id int64) error {
-	return s.db.WithContext(ctx).Model(&Domain{}).Where("id = ?", id).Updates(map[string]any{
+	return s.updateDomainStatusRequiringHit(ctx, id, map[string]any{
 		"status":         "pending",
 		"dns_checked_at": gorm.Expr("now()"),
-	}).Error
+	}, "ReviveDomain")
 }
 
 // MarkDomainExpired 把超期仍未完成归属证明的域名置为终态 expired。
 func (s *Store) MarkDomainExpired(ctx context.Context, id int64) error {
-	return s.db.WithContext(ctx).Model(&Domain{}).Where("id = ?", id).Updates(map[string]any{
+	return s.updateDomainStatusRequiringHit(ctx, id, map[string]any{
 		"status":         "expired",
 		"dns_checked_at": gorm.Expr("now()"),
-	}).Error
+	}, "MarkDomainExpired")
 }
 
 // DegradeDomain 归属复检不通过时的降级。
@@ -217,12 +243,12 @@ func (s *Store) MarkDomainExpired(ctx context.Context, id int64) error {
 // 就成了空话。重置后这一列表达的是「本次尝试从何时开始」,降级同样享有完整的
 // 重试窗口;verify_token 本身保留不动,重试仍用它比对 TXT。
 func (s *Store) DegradeDomain(ctx context.Context, id int64) error {
-	return s.db.WithContext(ctx).Model(&Domain{}).Where("id = ?", id).Updates(map[string]any{
+	return s.updateDomainStatusRequiringHit(ctx, id, map[string]any{
 		"status":                  "failed",
 		"cert_status":             "pending",
 		"dns_checked_at":          gorm.Expr("now()"),
 		"verify_token_created_at": gorm.Expr("now()"),
-	}).Error
+	}, "DegradeDomain")
 }
 
 // DomainScanRow 是后台扫描用的轻量行(只取处理所需列,不载入整表)。
@@ -352,13 +378,18 @@ func (s *Store) SetDomainCertStatus(ctx context.Context, id int64, status string
 
 // SetDomainCertStatusByFQDN 按 fqdn 更新证书状态(验证通过后触发探活用)。
 func (s *Store) SetDomainCertStatusByFQDN(ctx context.Context, fqdn, status string) error {
-	return s.db.WithContext(ctx).Model(&Domain{}).Where("fqdn = ?", fqdn).
-		Updates(map[string]any{"cert_status": status, "cert_probed_at": gorm.Expr("now()")}).Error
-}
-
-// DeleteDomain 物理删除域名(调用方须先保证其短链关联已清空)。
-func (s *Store) DeleteDomain(ctx context.Context, id int64) error {
-	return s.db.WithContext(ctx).Delete(&Domain{}, id).Error
+	res := s.db.WithContext(ctx).Model(&Domain{}).Where("fqdn = ?", NormalizeFQDN(fqdn)).
+		Updates(map[string]any{"cert_status": status, "cert_probed_at": gorm.Expr("now()")})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		// 按 FQDN 更新 0 行有两种成因:域名不存在,或传进来的形态与入库形态不一致
+		// (未归一化)。这两种都必须让调用方看见——否则探活结果会静默丢弃,
+		// cert_status 永远停在 pending,而没有任何错误可查。
+		return fmt.Errorf("SetDomainCertStatusByFQDN: 域名 %q 不存在或形态不匹配,证书状态未更新", fqdn)
+	}
+	return nil
 }
 
 // DomainAuth 返回授权端点所需的域名与租户状态。

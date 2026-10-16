@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
+
+	"janus/internal/fqdn"
 )
 
 type Config struct {
@@ -106,6 +108,11 @@ func parseEnvFrom(environment map[string]string) (Config, error) {
 	if err := env.ParseWithOptions(&cfg, env.Options{Environment: environment}); err != nil {
 		return cfg, fmt.Errorf("无法解析环境变量(请检查 JANUS_* 变量的格式,例如时长必须写成 30h 而不是 30d): %w", err)
 	}
+	// 平台域名在这里归一化(Load/LoadWithEnvFile 的唯一公共漏斗)。此前归一化责任被
+	// 下放给各消费点,于是同一份运维输入("Example.com" 或带尾点)会在三处得到不同形态:
+	// store 原样入库 → 默认域名永远查不到;授权端点拿归一化值与裸配置值比较 → 永不命中
+	// → 平台自己签不出证书;更新路径按裸值比对 → 0 行不报错。
+	cfg.PlatformDomain = fqdn.Normalize(cfg.PlatformDomain)
 	return cfg, nil
 }
 
@@ -209,6 +216,14 @@ func (c Config) Validate() error {
 	}
 	if _, err := c.TrustedProxyNets(); err != nil {
 		return fmt.Errorf("JANUS_TRUSTED_PROXY_CIDRS: %w", err)
+	}
+	// 平台域名 fail-fast:格式非法时启动即失败,而不是等到证书签发时才以"授权端点
+	// 永不命中"的形式表现出来(那时排查成本高得多)。
+	//
+	// 空值放行(与本文件其它块"整块为零视为未配置"的约定一致):直接构造 Config 的
+	// 调用方(测试、SDK)不一定关心平台域名,这不是一个"配错了"的输入。
+	if c.PlatformDomain != "" && !fqdn.IsValid(c.PlatformDomain) {
+		return fmt.Errorf("JANUS_PLATFORM_DOMAIN 不是合法域名(允许单标签,如 localhost): %q", c.PlatformDomain)
 	}
 	// SMTPPort = 0 表示未配置(envDefault 会填 465);非零时必须落在 1-65535。
 	if c.SMTPPort != 0 && (c.SMTPPort < 1 || c.SMTPPort > 65535) {

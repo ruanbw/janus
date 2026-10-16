@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"janus/internal/fqdn"
 )
 
 // CodeAlphabet 短码字符集:a-zA-Z0-9 去掉易混淆字符 0/O/1/l/I(spec 决策)。
@@ -59,30 +61,18 @@ func MintVerifyToken() (string, error) {
 // 入库前必须过这一道:校验时剥了尾点而入库只 TrimSpace,会让 "a.com" 与 "a.com."
 // 在 UNIQUE 索引下成为两行 —— 同一个真实主机被两个租户各绑一份、各计一份配额。
 // 读路径(FQDN → 域名、授权端点)也要走它,否则 Host 头带尾点时查不到已归一化的行。
+// 归一化的实现已收敛到 internal/fqdn(唯一物理副本)。这里保留转发,是因为:
+//   - 调用点零改动,注释记录的不变式(UNIQUE 索引)留在原文件里便于对照;
+//   - domain 是公开 API 面,删掉导出会打断外部调用方。
 func NormalizeFQDN(s string) string {
-	return strings.TrimRight(strings.ToLower(strings.TrimSpace(s)), ".")
+	return fqdn.Normalize(s)
 }
 
-// IsValidFQDN 校验域名格式:点分标签,字母/数字/连字符,标签不以连字符开头结尾。
-// 允许单标签(如 localhost,开发环境 DNS 校验用)。
+// IsValidFQDN 校验域名格式。实现见 internal/fqdn.IsValid。
+//
+// 保留原文档注释:它记录的是调用点依赖的不变式,而不只是"校验一下"。
 func IsValidFQDN(s string) bool {
-	s = NormalizeFQDN(s)
-	if s == "" || len(s) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(s, ".") {
-		if label == "" || len(label) > 63 {
-			return false
-		}
-		for i := 0; i < len(label); i++ {
-			c := label[i]
-			ok := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-'
-			if !ok || (c == '-' && (i == 0 || i == len(label)-1)) {
-				return false
-			}
-		}
-	}
-	return true
+	return fqdn.IsValid(s)
 }
 
 // IsReservedFQDN 判断域名是否属于平台自己:等于平台域名,或是它的子域。
