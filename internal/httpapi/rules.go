@@ -446,6 +446,14 @@ func validateConditionLeaf(cond store.RuleCondition, path string) error {
 	if len(values) == 0 {
 		return ruleErr("%s.values 去空白后为空,引擎会丢弃这条条件", path)
 	}
+	// gt / lt / duplicated 只消费 values[0](引擎 compileCond 同口径,忽略 values[1:]),
+	// 多值属于"配了不生效"的死配置,写入时直接拒而不是静默接受。
+	if cond.Operator == rules.OpGT || cond.Operator == rules.OpLT || cond.Operator == rules.OpDuplicated {
+		if len(values) != 1 {
+			return ruleErr("%s.values 对 %s 只允许 1 条,当前 %d 条(多余的值不会生效)",
+				path, cond.Operator, len(values))
+		}
+	}
 	switch cond.Operator {
 	case rules.OpGT, rules.OpLT:
 		if _, err := strconv.ParseFloat(values[0].val, 64); err != nil {
