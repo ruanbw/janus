@@ -24,42 +24,20 @@ import (
 func (s *Store) RegisterTenant(ctx context.Context, email, passwordHash, slug, fqdn, tokenHash string, tokenTTL time.Duration, isSuperAdmin bool) (*Tenant, error) {
 	var tenantID int64
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var tier Tier
-		if err := tx.Where("name = 'free'").First(&tier).Error; err != nil {
+		// 用绑定到 tx 的 Store 复用既有实现,而不是把三张表的行形态各抄一遍:
+		// CreateTenant / CreatePlatformDomain / CreateEmailToken 是这些行的唯一
+		// 权威定义(字段、默认值、将来的归一化),复制只会让两条路径悄悄漂移。
+		ts := &Store{db: tx}
+		t, err := ts.CreateTenant(ctx, email, passwordHash, slug, isSuperAdmin)
+		if err != nil {
 			return err
 		}
-
-		t := Tenant{
-			Email: email, Slug: slug, Status: "pending",
-			IsSuperAdmin: isSuperAdmin, TierID: tier.ID,
-			TokenVersion: 1,
-		}
-		if passwordHash != "" {
-			t.PasswordHash = &passwordHash
-		}
-		if err := tx.Create(&t).Error; err != nil {
+		if _, err := ts.CreatePlatformDomain(ctx, t.ID, fqdn); err != nil {
 			return err
 		}
-
-		// 平台默认域名:创建即 active(泛域名解析已指向本机),证书待探活。
-		d := Domain{
-			TenantID: t.ID, FQDN: fqdn, Origin: "platform",
-			Status: "active", CertStatus: "pending", ActivatedAt: nowPtr(),
-		}
-		if err := tx.Create(&d).Error; err != nil {
+		if err := ts.CreateEmailToken(ctx, t.ID, tokenHash, "verify", tokenTTL); err != nil {
 			return err
 		}
-
-		tok := EmailToken{
-			TenantID:  t.ID,
-			TokenHash: tokenHash,
-			Kind:      "verify",
-			ExpiresAt: time.Now().Add(tokenTTL),
-		}
-		if err := tx.Create(&tok).Error; err != nil {
-			return err
-		}
-
 		tenantID = t.ID
 		return nil
 	})
