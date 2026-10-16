@@ -347,6 +347,12 @@ func (a *API) redirectToTarget(c *gin.Context, link *store.Link, targetURL strin
 	status := http.StatusFound // 302
 	if link.RedirectStatus == store.RedirectStatus301 {
 		status = http.StatusMovedPermanently
+		// 301 按语义可被浏览器/CDN **永久**缓存:目标一旦变更,已经缓存的访客仍会被
+		// 送到旧地址,且没有任何办法让他们回源 —— 这是一条不可撤回的重定向。
+		// 显式声明 no-cache, must-revalidate 把"永久"降级为"可失效的永久":
+		// 客户端每次仍可缓存,但使用前必须回源校验(ETag/Last-Modified 不在时即重新取)。
+		// 302 分支保持不带此头,保持既有的可缓存语义。
+		c.Header("Cache-Control", "no-cache, must-revalidate")
 	}
 	c.Redirect(status, targetURL)
 }
