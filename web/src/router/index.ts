@@ -197,7 +197,9 @@ router.onError((error, to) => {
   if (isChunkLoadFailed) {
     // 计数逻辑集中到 utils/chunkReload(此前 main.ts 与这里各维护一份且已漂移:
     // key 一个用 pathname 一个用 fullPath,同一页面两条路径各算各的账)
-    handleChunkLoadFailure(to?.fullPath || window.location.href);
+    const targetPath = to?.fullPath || window.location.href;
+    // assign 而非 reload:手上有明确的 to.fullPath,reload 会丢掉 hash 与查询串
+    handleChunkLoadFailure(targetPath, () => window.location.assign(targetPath));
   }
 });
 

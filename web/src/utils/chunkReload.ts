@@ -2,12 +2,13 @@
  * chunk 自动重载计数（共享实现）。
  *
  * 为什么集中在这里：这份逻辑此前在 main.ts 与 router/index.ts 各有一份逐字拷贝，
- * 而拷贝出来的两份**已经漂移**，且漂移的方向全是对用户不利的：
+ * 而拷贝出来的两份**已经漂移**，漂移方向全是对用户不利的：main.ts 那一份在计数不可
+ * 用或用尽时什么都不做，用户只能盯着白屏，而 router 那一份会提示「请刷新重试」。
  *
- *   - key 不一致：一份用 location.pathname，一份用 route.fullPath。同一个页面在两条
- *     路径上各算各的账 → 计数互相看不见 → 自动重载被放行两次才被拦住。
- *   - 失败静默：main.ts 那一份在计数不可用或已用尽时什么都不做，用户只能盯着白屏，
- *     而 router 那一份会提示「请刷新重试」。
+ * 注意各自的**入参保持不同**是对的，不要合并成同一个：unhandledrejection 兜底只知道
+ * 「页面坏了」，用 pathname 计数（同一页面不同查询串算同一页）且只能 reload；router
+ * 场景手上有 to.fullPath，用 fullPath 计数并 assign 过去（reload 会丢掉 hash 与查询串）。
+ * 两边语义本来就不同，强行统一才是 bug。
  *
  * 发版后旧 chunk 被清掉是唯一真正会命中这条路径的典型场景，而它的表现恰恰是白屏 ——
  * 兜底代码自己再静默失效，等于没有兜底。
@@ -54,11 +55,15 @@ export function clearChunkReloadCount(reloadKey: string): void {
 }
 
 /**
- * 处理一次 chunk 加载失败：可以自动重载就重载，否则提示用户手动重试。
+ * 处理一次 chunk 加载失败：判断该自动重载还是提示用户手动重试。
  *
+ * @param targetPath 决定计数 key
+ * @param reload 由调用方决定**怎么**重载 —— 两边语义不同，不能替它们统一：
+ *   unhandledrejection 兜底只知道「页面坏了」，只能 reload 当前页；而 router 场景下
+ *   手上有明确的 to.fullPath，assign 过去才精确（reload 会丢掉 hash 与查询串）。
  * @returns 是否已安排自动重载（false 表示已提示用户手动重试）
  */
-export function handleChunkLoadFailure(targetPath: string): boolean {
+export function handleChunkLoadFailure(targetPath: string, reload: () => void): boolean {
   const reloadKey = chunkReloadKey(targetPath);
   const reloadCount = readChunkReloadCount(reloadKey);
   if (reloadCount === null) {
@@ -68,7 +73,7 @@ export function handleChunkLoadFailure(targetPath: string): boolean {
   }
   if (reloadCount < MAX_AUTO_RELOAD) {
     writeChunkReloadCount(reloadKey, reloadCount + 1);
-    window.location.assign(targetPath);
+    reload();
     return true;
   }
   // 已尝试自动刷新仍未成功，提示手动重试，避免死循环重载

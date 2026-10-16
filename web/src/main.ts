@@ -45,7 +45,10 @@ window.addEventListener('unhandledrejection', (event) => {
   // 计数这里曾经自己维护一份拷贝,且与 router 那份的 key 不一致(pathname vs fullPath),
   // 同一个页面在两条路径上各算各的账。现在统一走 utils/chunkReload —— 它也补上了这里
   // 原来缺失的用户提示(此前失败分支是完全静默的)。
-  handleChunkLoadFailure(window.location.href);
+  // 重载方式与目标 key 都保留原语义:unhandledrejection 只知道「页面坏了」,只能
+  // reload 当前页;key 用 pathname 是因为同一页面的不同查询串算同一页,不该各给一次
+  // 自动重载机会。共享到 utils/chunkReload 的只是**计数与失败提示**那部分。
+  handleChunkLoadFailure(window.location.pathname, () => window.location.reload());
 });
 
 window.addEventListener('error', (event) => {
