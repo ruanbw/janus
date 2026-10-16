@@ -6,8 +6,10 @@ package httpapi
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -404,7 +406,12 @@ func (a *API) handleUploadLanding(c *gin.Context) {
 	}
 	commit, rollback, err := a.installLandingZip(link.ID, raw)
 	if err != nil {
-		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
+		status, code, msg := landingInstallError(err)
+		if status >= http.StatusInternalServerError {
+			// 内部错误(文件系统等)细节只写日志:直接回显会泄露绝对路径与磁盘状态。
+			slog.Error("安装落地页失败", "linkId", link.ID, "err", err)
+		}
+		writeErr(c, status, code, msg)
 		return
 	}
 	// 落地页型:来源切到 upload、landingUrl 清空。跳转型只装文件、不改来源 ——
@@ -437,6 +444,18 @@ func (a *API) handleUploadLanding(c *gin.Context) {
 type zipErr struct{ msg string }
 
 func (e zipErr) Error() string { return e.msg }
+
+// landingInstallError 把 installLandingZip 的错误分成两类:
+//   - zipErr:压缩包本身的问题(可读原因,400);
+//   - 其余(文件系统/IO):内部错误,500 + 统一文案 —— 细节只写日志,
+//     绝不把 os 错误的绝对路径与磁盘状态回显给调用方。
+func landingInstallError(err error) (status int, code, msg string) {
+	var ze zipErr
+	if errors.As(err, &ze) {
+		return http.StatusBadRequest, errValidation, ze.msg
+	}
+	return http.StatusInternalServerError, errInternal, "internal error"
+}
 
 // landingMaxTotalBytes 解压后所有文件的大小合计上限。
 // 与 LandingMaxZipBytes 是两个语义:前者管"磁盘被撑多大",后者管"上传的包有多大"。
