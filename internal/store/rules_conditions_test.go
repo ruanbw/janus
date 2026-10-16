@@ -6,7 +6,10 @@ package store
 // "故意兜底"与"输入被吞错归零",所以防线只能落在写入边界:一份写坏的 conditions
 // 宁可 400,也绝不能静默归零成空条件组(空组 = 对全部流量生效)。
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // TestDecodeRuleConditionsStrict 严格解码:任何"写坏"的输入都必须报错。
 // 与 UnmarshalJSON/Scan(读库容错,解析失败降级为空组)语义刻意相反。
@@ -57,3 +60,51 @@ func TestDecodeRuleConditionsStrict(t *testing.T) {
 		})
 	}
 }
+
+// TestUpdateRuleConditionsPointerIsExplicit 审查项 COND2:RuleUpdate.Conditions
+// 非 nil 就表示"显式设置",即使是零值(零值 = 无条件组 = 合法的清空/恒命中兜底)。
+//
+// 旧实现用 `Conditions != nil && !Conditions.IsZero()` 双重条件,而 IsZero()
+// 同时承担"本次没传这个字段"的哨兵职责,于是"显式清空"被误当成"未设置"静默丢弃:
+// PATCH 写坏 conditions 时归零 → 哨兵吞掉 → 200 但条件一字未改。
+// 把哨兵显式化为指针本身(与 RuleUpdate 其它字段一致的约定)后,显式零值必须真的落库。
+func TestUpdateRuleConditionsPointerIsExplicit(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+	tenantID := newTenant(t, s, "cond-sentinel@test.io")
+
+	r, err := s.CreateRule(ctx, tenantID, Rule{
+		Name: "有条件的规则", Action: RuleActionPass,
+		Conditions: Conditions(RuleCondition{Field: "country", Operator: "in", Values: []string{"US"}}),
+	})
+	if err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	if rawColumn(t, s, r.ID, "conditions") == "[]" {
+		t.Fatalf("前置条件不成立:种子规则本就无条件")
+	}
+
+	// 显式设置为"无条件组":Conditions() 是无参形态(零值),也必须被当成显式清空。
+	clear := Conditions()
+	got, err := s.UpdateRule(ctx, tenantID, r.ID, RuleUpdate{Conditions: &clear})
+	if err != nil {
+		t.Fatalf("update conditions: %v", err)
+	}
+	if raw := rawColumn(t, s, r.ID, "conditions"); raw != "[]" {
+		t.Fatalf("显式清空后库内 conditions = %s, want [](被 IsZero 哨兵静默丢弃)", raw)
+	}
+	if got.Conditions.Len() != 0 || got.Conditions.IsTree() {
+		t.Fatalf("显式清空后条件 = %#v, want 空条件组", got.Conditions)
+	}
+
+	// 反向确认:传 nil 指针(未设置)不动 conditions 列
+	if _, err := s.UpdateRule(ctx, tenantID, r.ID, RuleUpdate{Description: strPtr("只改描述")}); err != nil {
+		t.Fatalf("update description: %v", err)
+	}
+	if raw := rawColumn(t, s, r.ID, "conditions"); raw != "[]" {
+		t.Fatalf("未传 conditions 后库内 conditions = %s, want 保持 []", raw)
+	}
+}
+
+// strPtr 取字符串指针(store 包内测试小工具)。
+func strPtr(s string) *string { return &s }

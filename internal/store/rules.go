@@ -794,7 +794,11 @@ func (s *Store) UpdateRule(ctx context.Context, tenantID, id int64, upd RuleUpda
 	put("custom_html", upd.CustomHTML != nil, derefOr(cur.CustomHTML, upd.CustomHTML))
 	put("rule_type", upd.RuleType != nil, derefOr(orDefault(cur.RuleType, RuleTypeVisual), upd.RuleType))
 	put("expression", upd.Expression != nil, derefOr(cur.Expression, upd.Expression))
-	if upd.Conditions != nil && !upd.Conditions.IsZero() {
+	// conditions 用指针本身作"是否设置"的哨兵(与本结构其余字段一致):
+	// 非 nil 即显式设置,即使是零值(零值 = 无条件组 = 合法的清空/恒命中兜底)。
+	// 不再叠加 !IsZero():那会把"显式清空"误判成"未设置"而静默丢弃,且让
+	// IsZero 同时背"哨兵"与"解析失败归零"两个职责(见 COND1 的严格解码约定)。
+	if upd.Conditions != nil {
 		fields["conditions"] = *upd.Conditions
 	}
 	newScope := orDefault(cur.Scope, RuleScopeGlobal)

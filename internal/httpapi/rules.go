@@ -643,9 +643,15 @@ func (a *API) handlePatchRule(c *gin.Context) {
 	upd := store.RuleUpdate{
 		Name: &w.name, Description: &w.description, Priority: &w.priority,
 		Scope: &w.scope, Enabled: &w.enabled, Logic: &w.logic, Action: &w.action,
-		Destination: &w.destination, Conditions: &w.conditions, LinkIDs: w.linkIDs,
+		Destination: &w.destination, LinkIDs: w.linkIDs,
 		PageMode: &w.pageMode, CustomHTML: &w.customHTML,
 		RuleType: &w.ruleType, Expression: &w.expression,
+	}
+	// conditions 只在请求体真的带了该字段时才显式设置;省略即不动这一列。
+	// 不能无条件传 &w.conditions:那会把"未设置"伪装成"显式设置",
+	// 与"显式 [] = 清空"这种合法操作在 store 侧不可区分(见 store.RuleUpdate 注释)。
+	if req.Conditions != nil {
+		upd.Conditions = &w.conditions
 	}
 	updated, err := a.store.UpdateRule(c.Request.Context(), t.ID, id, upd)
 	if err != nil {
