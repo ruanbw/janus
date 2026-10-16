@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -299,7 +300,19 @@ func WrapGeneratedSDK(domain, code string, rawSDK string) (out string) {
 // =========================================================================
 
 // PostVisitHook 访问日志持久化完成后的异步回调。
+//
+// 异步阶段契约(钩子实现者必读):
+//   - 调用发生在请求已交付、原始请求生命周期结束之后的 goroutine 中;
+//   - ctx 不是请求 ctx:基座用 context.WithoutCancel 断开取消信号并叠加固定超时,
+//     因此请求结束/客户端断连不会取消钩子。钩子应尊重 ctx 的 Deadline;
+//   - r 是原始 *http.Request 指针。此时连接可能已关闭、Body 可能已读尽,
+//     钩子不得再次读取 Body、不得依赖连接级状态;需要的字段请在持久化前拷进 visit;
+//   - visit 是只读快照,钩子不得修改。
 type PostVisitHook func(ctx context.Context, r *http.Request, visit VisitRecord)
+
+// asyncHookTimeout 异步后置钩子的执行上限:既避免请求级 ctx 取消误伤,
+// 也避免个别慢钩子永久占用 goroutine。
+const asyncHookTimeout = 30 * time.Second
 
 var (
 	postHooksLock sync.RWMutex
@@ -324,6 +337,10 @@ func ResetPostVisitHooks() {
 }
 
 // TriggerPostVisitHooks 异步触发全部注册的后置钩子。
+//
+// 基座传入的 ctx 是请求级 ctx:请求交付完成后会被取消。异步阶段必须与它解耦,
+// 否则钩子(常见于落库/统计)会在写入完成前被 context canceled 打断,表现为
+// "偶发丢数据"。这里用 context.WithoutCancel 断开取消信号,并叠加固定超时护栏。
 func TriggerPostVisitHooks(ctx context.Context, r *http.Request, visit VisitRecord) {
 	postHooksLock.RLock()
 	if len(postHooks) == 0 {
@@ -335,8 +352,10 @@ func TriggerPostVisitHooks(ctx context.Context, r *http.Request, visit VisitReco
 	postHooksLock.RUnlock()
 
 	go func() {
+		hookCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), asyncHookTimeout)
+		defer cancel()
 		for _, h := range list {
-			runHook(h, ctx, r, visit)
+			runHook(h, hookCtx, r, visit)
 		}
 	}()
 }
