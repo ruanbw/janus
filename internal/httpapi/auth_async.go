@@ -14,11 +14,14 @@ package httpapi
 import "log/slog"
 
 // dispatchMail 在后台 goroutine 里执行一次邮件发送,调用方立即返回。
-// 失败只记结构化日志(不吞):线上"用户收不到邮件"必须能从日志归因。
-func dispatchMail(kind string, send func() error) {
+//
+// msg 是失败日志正文(要写清"哪个端点的哪一步失败"),tenantID 用于归因 ——
+// 线上"用户收不到邮件"必须能直接从日志定位到租户与调用点,而不是只有一句
+// "发送失败"。
+func dispatchMail(msg string, tenantID int64, send func() error) {
 	go func() {
 		if err := send(); err != nil {
-			slog.Error("邮件发送失败", "kind", kind, "err", err)
+			slog.Error(msg, "tenantId", tenantID, "err", err)
 		}
 	}()
 }

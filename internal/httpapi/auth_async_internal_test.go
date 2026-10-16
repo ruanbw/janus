@@ -62,7 +62,7 @@ func TestDispatchMailDoesNotBlockCaller(t *testing.T) {
 	started := make(chan struct{})
 
 	start := time.Now()
-	dispatchMail("reset", func() error {
+	dispatchMail("reset: 发送重置邮件失败", 1, func() error {
 		close(started)
 		// 上界 3s:同步实现会在这里耗尽预算 → 判定失败,而不是把测试挂死。
 		select {
@@ -84,7 +84,7 @@ func TestDispatchMailDoesNotBlockCaller(t *testing.T) {
 // TestDispatchMailLogsFailure 后台发送失败必须留痕,不能静默吞掉。
 func TestDispatchMailLogsFailure(t *testing.T) {
 	logs := captureAsyncLogs(t)
-	dispatchMail("reset", func() error { return errors.New("smtp boom") })
+	dispatchMail("reset: 发送重置邮件失败", 1, func() error { return errors.New("smtp boom") })
 	waitFor(t, 2*time.Second, "发信失败日志", func() bool {
 		return strings.Contains(logs(), "smtp boom")
 	})
