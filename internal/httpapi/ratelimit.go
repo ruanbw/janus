@@ -75,8 +75,18 @@ func newRateLimiter(limit int, window time.Duration) *rateLimiter {
 
 // Allow 对 key 计数;未超限返回 true,超限返回 false。
 func (l *rateLimiter) Allow(key string) bool {
+	ok, _ := l.AllowWithRetry(key)
+	return ok
+}
+
+// AllowWithRetry 与 Allow 语义相同,但在超限时额外返回该 key 的建议重试等待时长
+// (向上取整到秒,用于 429 的 Retry-After 头)。
+//
+// 为什么必须有这个头(RFC 6585 §4):只回 429 而不回 Retry-After,客户端无从得知
+// 何时该重试 —— 只能靠退避猜。前端轮询撞上 429 时,没有这个头就只能整窗干等。
+func (l *rateLimiter) AllowWithRetry(key string) (bool, time.Duration) {
 	if l == nil || l.limit <= 0 {
-		return true
+		return true, 0
 	}
 	now := l.now()
 	l.mu.Lock()
@@ -89,7 +99,9 @@ func (l *rateLimiter) Allow(key string) bool {
 			l.purgeExpired(now)
 		}
 		if len(l.buckets) >= maxRateKeys {
-			return false
+			// 内存打满时一律拒,但不能谎报"等 window 秒" —— 实际得等条目过期
+			// 后才可能放行,这里给一个保守的整窗等待。
+			return false, l.window
 		}
 		b = &visitorBucket{hits: make([]int64, 0, l.limit), lastSeen: now}
 		l.buckets[key] = b
@@ -108,10 +120,15 @@ func (l *rateLimiter) Allow(key string) bool {
 		b.hits = append(b.hits[:0], b.hits[drop:]...)
 	}
 	if len(b.hits) >= l.limit {
-		return false
+		// 最早的那次命中滑出窗口后才有配额 → 重试等待 = 距最早命中剩多久。
+		wait := time.Unix(0, b.hits[0]).Add(l.window).Sub(now)
+		if wait < 0 {
+			wait = 0
+		}
+		return false, wait
 	}
 	b.hits = append(b.hits, now.UnixNano())
-	return true
+	return true, 0
 }
 
 // purgeExpired 删除过期条目，防止无界增长。调用方须持有 mu。
@@ -239,10 +256,11 @@ func isTrustedProxyPeer(remote string, trusted []netip.Prefix) bool {
 	return false
 }
 
-// authRateLimit 注册端点限流:超限 429。
+// authRateLimit 注册端点限流:超限 429(带精确 Retry-After)。
 func (a *API) rateLimit(c *gin.Context, l *rateLimiter) bool {
-	if !l.Allow(a.trustedClientIP(c.Request)) {
-		writeErr(c, http.StatusTooManyRequests, errRateLimited, "请求过于频繁,请稍后再试")
+	ok, wait := l.AllowWithRetry(a.trustedClientIP(c.Request))
+	if !ok {
+		a.writeErrRetryAfter(c, errRateLimited, "请求过于频繁,请稍后再试", wait)
 		return false
 	}
 	return true

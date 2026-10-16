@@ -130,6 +130,19 @@ func New(d Deps) http.Handler {
 		log.Printf("JANUS_TRUSTED_PROXY_CIDRS 解析失败(%v),已按「不采信任何 X-Forwarded-For」处理", err)
 		trustedProxyNets = nil
 	}
+	if len(trustedProxyNets) == 0 && rl.AuthLimit > 0 {
+		// 启动即提示,而不是等运维来问「为什么全站用户一起被限流」。
+		//
+		// 可信代理网段为空时,trustedClientIP 只认 TCP 对端。若前面有 Caddy/NGINX
+		// 这类反代(默认部署就是这样),所有请求的对端都是**同一个**代理 IP,
+		// 于是「每 IP 20 次/分」实际变成「全站共享 20 次/分」:一个人连续试密码,
+		// 所有人一起吃 429。
+		//
+		// 这里只告警不改行为:配错网段的后果是限流被彻底绕过(注册/登录/找回密码
+		// 全无防护),比限流偏严危险得多,所以默认 fail-closed 是对的取舍。修法是
+		// 运维显式声明 JANUS_TRUSTED_PROXY_CIDRS。
+		log.Printf("WARN: JANUS_TRUSTED_PROXY_CIDRS 未配置,限流只按 TCP 对端计数。若 Janus 前面有反向代理(如默认部署的 Caddy),所有请求将共用代理这一个来源 IP,认证类限流会退化成「全站共享 %d 次/%v」,请配置该环境变量后重启", rl.AuthLimit, rl.AuthWindow)
+	}
 
 	a := &API{
 		store:        d.Store,
