@@ -464,8 +464,10 @@ func (c *compiledCond) matchOne(ctx VisitorContext, raw string) bool {
 	case OpRegex:
 		return c.matchRegex(raw)
 	case OpDuplicated:
-		// 计数来自调用方提供的 Fact.Seen;没有计数数据(=没接数据源)时恒不命中
-		if f, ok := ctx.(*Fact); ok && f.Seen != nil {
+		// 计数来自调用方提供的 Fact.Seen;没有计数数据(=没接数据源)时恒不命中。
+		// f != nil 是必须的:接口里的 typed-nil(如 `var p *Fact; var ctx VisitorContext = p`)
+		// 类型断言会成功但值是 nil,只判 ok 就会解引用 nil —— 与 FactFromContext 同一道防御。
+		if f, ok := ctx.(*Fact); ok && f != nil && f.Seen != nil {
 			return f.Seen[SeenKey(c.field, raw)] >= c.seen
 		}
 		if f, ok := ctx.(Fact); ok && f.Seen != nil {

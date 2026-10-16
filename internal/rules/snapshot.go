@@ -841,7 +841,9 @@ func seenCount(ctx VisitorContext, field, value string) int {
 	key := SeenKey(field, value)
 	switch f := ctx.(type) {
 	case *Fact:
-		if f.Seen != nil {
+		// f != nil 双检:接口里的 typed-nil *Fact 断言成功但值为 nil,只判 Seen 会解引用 nil
+		// (与 FactFromContext / eval.go 的 duplicated 分支同一道防御)。
+		if f != nil && f.Seen != nil {
 			return f.Seen[key]
 		}
 	case Fact:
