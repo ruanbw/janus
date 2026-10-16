@@ -847,11 +847,21 @@ const batchDomainOptions = computed(() =>
 );
 
 // ==================== 数据加载 ====================
+/**
+ * 并发防护:每次 loadData 领一个自增序号,只有**最新**一次请求的结果允许落地。
+ *
+ * 翻页/刷新/切回收站都可能在中途再触发一次加载,慢响应晚于新响应返回时会把
+ * 新窗口的数据覆盖成旧窗口的(last-write-wins 反了),表现为「点了下一页却显示上一页」。
+ */
+let loadSeq = 0;
+
 async function loadData() {
+  const seq = ++loadSeq;
   loading.value = true;
   try {
     if (recycleBin.value) {
       const res = await listDeletedLinks(page.value, pageSize.value);
+      if (seq !== loadSeq) return;
       links.value = res.items;
       total.value = res.total;
       deletedTotal.value = res.total;
@@ -864,6 +874,7 @@ async function loadData() {
         // 回收站角标:只取 total,所以 pageSize=1 即可(避免把整页回收站记录拉下来)
         listDeletedLinks(1, 1),
       ]);
+      if (seq !== loadSeq) return;
 
       links.value = linksRes.items;
       total.value = linksRes.total;
@@ -873,7 +884,6 @@ async function loadData() {
       // 批量删除后当前页可能被删空:回退一页再取,避免停在空白页
       if (links.value.length === 0 && page.value > 1) {
         page.value -= 1;
-        loading.value = false;
         return loadData();
       }
       // 选中项可能已不在当前页/筛选结果内,丢弃以免后续批量操作打到陈旧 id
@@ -886,15 +896,17 @@ async function loadData() {
     }
 
   } catch (error) {
+    // 过期请求的失败同样要丢弃:它的报错属于用户已经离开的那个视图
+    if (seq !== loadSeq) return;
     if (error instanceof ApiError) {
       message.error(error.message);
     } else {
       message.error('加载短链数据失败');
     }
-    links.value = [];
-    total.value = 0;
+    // 失败**不清空**列表:清空会把「这次没拿到」谎报成「这里没有数据」,
+    // 旧数据 + 一条错误提示远比空态诚实(与 OverviewView 的口径一致)。
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) loading.value = false;
   }
 }
 
