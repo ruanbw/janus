@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -404,7 +405,7 @@ func (a *API) handleUploadLanding(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "压缩包超过大小上限")
 		return
 	}
-	commit, rollback, err := a.installLandingZip(link.ID, raw)
+	commit, rollback, err := a.installLandingZipGuarded(link.ID, raw)
 	if err != nil {
 		status, code, msg := landingInstallError(err)
 		if status >= http.StatusInternalServerError {
@@ -466,6 +467,40 @@ func (a *API) landingMaxTotalBytes() int64 {
 		return a.cfg.LandingMaxTotalBytes
 	}
 	return a.cfg.LandingMaxZipBytes
+}
+
+// landingInstallLockShards 按短链 ID 分片的上传互斥锁数量。
+//
+// 用固定分片数组而不是 map[int64]*Mutex:后者会随上传过的短链数单调增长且永不回收。
+// 分片数取一个远大于并发上传数的常量,偶发共享同一把锁只略微降低并发,不影响正确性。
+const landingInstallLockShards = 64
+
+var landingInstallLocks [landingInstallLockShards]sync.Mutex
+
+// landingInstallLock 取某短链对应的安装锁(linkID 相同的调用必然落同一分片)。
+func landingInstallLock(linkID int64) *sync.Mutex {
+	return &landingInstallLocks[uint64(linkID)%landingInstallLockShards]
+}
+
+// installLandingZipGuarded 在按短链 ID 的互斥锁内安装落地页 zip。
+//
+// 没有这层互斥时,同一短链的两个并发上传会各自 stat dest、各自 rename:
+// 轻则第二次 rename 拿到 ENOENT,重则把对方刚装好的目录 rename 走 —— 访问者
+// 在这个窗口里会读到 landing_missing,凭空多出一批假失败明细。
+//
+// 返回的 commit / rollback 会**顺带释放锁**:临界区必须覆盖"安装 → 调用方写库 →
+// commit/rollback"整段,否则写库还没做完就放锁,后面的上传又会踩上来。
+func (a *API) installLandingZipGuarded(linkID int64, raw []byte) (commit, rollback func(), err error) {
+	mu := landingInstallLock(linkID)
+	mu.Lock()
+	c, r, err := a.installLandingZip(linkID, raw)
+	if err != nil {
+		mu.Unlock()
+		return nil, nil, err
+	}
+	var once sync.Once
+	release := func() { once.Do(mu.Unlock) }
+	return func() { c(); release() }, func() { r(); release() }, nil
 }
 
 // installLandingZip 校验并解压 zip 到 uploads/{linkID},返回 commit / rollback 两个闭包。

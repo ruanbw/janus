@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -78,6 +79,63 @@ func TestLandingInstallErrorClassification(t *testing.T) {
 	}
 	if st, _, msg := landingInstallError(err); st != http.StatusInternalServerError {
 		t.Fatalf("文件系统错误应归为 500,得到 %d(文案 %q,err %v)", st, msg, err)
+	}
+}
+
+// BIZ9: 同一短链的并发上传必须串行化,不得出现 rename ENOENT 或残留临时/备份目录。
+func TestInstallLandingZipGuardedSerializesConcurrentUploads(t *testing.T) {
+	dir := t.TempDir()
+	a := &API{cfg: config.Config{
+		LandingUploadDir:     dir,
+		LandingMaxZipBytes:   1 << 20,
+		LandingMaxTotalBytes: 1 << 20,
+		LandingMaxFiles:      10,
+	}}
+	zipA := bizZip(t, map[string]string{"index.html": "<html>A</html>"})
+	zipB := bizZip(t, map[string]string{"index.html": "<html>B</html>", "a.css": "body{}"})
+
+	// 先装一份,让并发上传走"替换已有目录"这条最容易踩的路径。
+	commit, _, err := a.installLandingZipGuarded(7, zipA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit()
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 32)
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			z := zipA
+			if i%2 == 0 {
+				z = zipB
+			}
+			c, _, err := a.installLandingZipGuarded(7, z)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			c()
+		}(i)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatalf("并发安装失败: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "7", "index.html")); err != nil {
+		t.Fatalf("并发安装后 index.html 缺失: %v", err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".landing-") || strings.Contains(e.Name(), ".old-") {
+			t.Fatalf("残留临时/备份目录: %s", e.Name())
+		}
 	}
 }
 
