@@ -3,7 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 
 import AdminLayout from '@/layouts/AdminLayout.vue';
 import { useAuthStore } from '@/stores/auth';
-import { message } from '@/utils/toast';
+import { handleChunkLoadFailure } from '@/utils/chunkReload';
 
 const router = createRouter({
   history: createWebHistory(),
@@ -183,37 +183,6 @@ router.afterEach((to) => {
   }
 });
 
-/**
- * 读 chunk 自动重载计数。受限存储环境下 sessionStorage 会抛 SecurityError,
- * 此时返回 null —— 调用方据此**跳过自动重载**(拿不到计数就无法保证不重复重载),
- * 而不是让兜底机制自己先炸掉。
- */
-function readChunkReloadCount(reloadKey: string): number | null {
-  try {
-    return parseInt(sessionStorage.getItem(reloadKey) || '0', 10);
-  } catch {
-    return null;
-  }
-}
-
-/** 受限存储下也必须能执行的重载计数写入 */
-function writeChunkReloadCount(reloadKey: string, count: number): void {
-  try {
-    sessionStorage.setItem(reloadKey, String(count));
-  } catch {
-    // 忽略 sessionStorage 访问限制异常
-  }
-}
-
-/** 受限存储下也必须能执行的重载计数清除 */
-function clearChunkReloadCount(reloadKey: string): void {
-  try {
-    sessionStorage.removeItem(reloadKey);
-  } catch {
-    // 忽略 sessionStorage 访问限制异常
-  }
-}
-
 // 路由错误捕获：防止前端部署更新或偶发网络抖动导致 Chunk 加载失败卡在白屏
 router.onError((error, to) => {
   if (import.meta.env.DEV) console.error('[Router Error]', error, to);
@@ -226,22 +195,9 @@ router.onError((error, to) => {
     (error as { name?: string })?.name === 'ChunkLoadError';
 
   if (isChunkLoadFailed) {
-    const targetPath = to?.fullPath || window.location.href;
-    const reloadKey = `chunk_reload_${targetPath}`;
-    const reloadCount = readChunkReloadCount(reloadKey);
-    if (reloadCount === null) {
-      // sessionStorage 不可用:无法判断是否已重载过,直接提示手动重试,绝不自动重载
-      message.error('页面资源加载失败，请检查网络连接后刷新重试');
-      return;
-    }
-    if (reloadCount < 1) {
-      writeChunkReloadCount(reloadKey, reloadCount + 1);
-      window.location.assign(targetPath);
-      return;
-    }
-    // 已尝试自动刷新但仍未成功，提示用户手动重试，避免死循环重载
-    clearChunkReloadCount(reloadKey);
-    message.error('页面资源加载失败，请检查网络连接后刷新重试');
+    // 计数逻辑集中到 utils/chunkReload(此前 main.ts 与这里各维护一份且已漂移:
+    // key 一个用 pathname 一个用 fullPath,同一页面两条路径各算各的账)
+    handleChunkLoadFailure(to?.fullPath || window.location.href);
   }
 });
 

@@ -12,6 +12,7 @@ import UI from '@/components/app';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
 import { setUnauthorizedHandler } from '@/utils/request';
+import { handleChunkLoadFailure } from '@/utils/chunkReload';
 
 const app = createApp(App);
 const pinia = createPinia();
@@ -29,28 +30,6 @@ function isChunkLoadError(reason: unknown): boolean {
   return CHUNK_ERROR_PATTERNS.some((pattern) => msg.includes(pattern));
 }
 
-/**
- * 读 chunk 自动重载计数。sessionStorage 在受限环境(隐私模式 / 企业策略 / 扩展拦截)
- * 下会抛 SecurityError —— 这正是兜底代码最不该自己炸掉的地方,返回 null 让调用方
- * 跳过自动重载(拿不到计数就无法保证不重复重载,绝不无限重试)。
- */
-function readChunkReloadCount(reloadKey: string): number | null {
-  try {
-    return parseInt(sessionStorage.getItem(reloadKey) || '0', 10);
-  } catch {
-    return null;
-  }
-}
-
-/** 受限存储下也必须能执行的重载计数写入 */
-function writeChunkReloadCount(reloadKey: string, count: number): void {
-  try {
-    sessionStorage.setItem(reloadKey, String(count));
-  } catch {
-    // 忽略 sessionStorage 访问限制异常
-  }
-}
-
 // 全局 Vue 渲染与运行时错误捕获,避免未处理异常导致渲染树崩溃静默白屏
 app.config.errorHandler = (err, instance, info) => {
   if (import.meta.env.DEV) console.error('[Vue Global Error]', err, info);
@@ -63,12 +42,10 @@ window.addEventListener('unhandledrejection', (event) => {
   // 我们接管了 chunk 失败:preventDefault 掉浏览器默认的
   // Uncaught (in promise),否则同一份错误会被打印两遍
   event.preventDefault();
-  const reloadKey = `chunk_reload_${window.location.pathname}`;
-  const reloadCount = readChunkReloadCount(reloadKey);
-  if (reloadCount !== null && reloadCount < 1) {
-    writeChunkReloadCount(reloadKey, reloadCount + 1);
-    window.location.reload();
-  }
+  // 计数这里曾经自己维护一份拷贝,且与 router 那份的 key 不一致(pathname vs fullPath),
+  // 同一个页面在两条路径上各算各的账。现在统一走 utils/chunkReload —— 它也补上了这里
+  // 原来缺失的用户提示(此前失败分支是完全静默的)。
+  handleChunkLoadFailure(window.location.href);
 });
 
 window.addEventListener('error', (event) => {
