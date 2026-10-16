@@ -8,7 +8,6 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
-	randv2 "math/rand/v2"
 	"net"
 	"net/netip"
 	"strings"
@@ -114,10 +113,33 @@ func IsValidCode(s string) bool {
 }
 
 // GenerateCode 随机生成指定长度的短码(均匀取自 CodeAlphabet)。
+//
+// 随机源用 crypto/rand:短码是公开的访问凭据,猜到短码就能把访客引到自己的目标
+// 上(自定义短码由租户自己负责,但自动生成这一路必须不可预测)。原先用
+// math/rand/v2,与同包的 MintVerifyToken(每次签发 TXT 挑战都用 crypto/rand)
+// 口径不一 —— 同一个包里"哪些随机是安全随机"不该靠记忆区分。开销可以忽略:
+// 每个短码 6 字节量级。
+//
+// 字符集的均匀性不能打折:256 不是 56 的整数倍,直接取模会让前 32 个字符的出现
+// 概率翻倍,所以用拒绝采样丢弃尾部整段之外的样本。
 func GenerateCode(length int) string {
+	// reject 之上(含)的字节全部丢弃:它们会让取模结果有偏。
+	const reject = 256 - 256%len(CodeAlphabet)
 	b := make([]byte, length)
+	var buf [1]byte
 	for i := range b {
-		b[i] = CodeAlphabet[randv2.IntN(len(CodeAlphabet))]
+		for {
+			if _, err := rand.Read(buf[:]); err != nil {
+				// 熵源不可用是极端环境异常;这里是纯函数、没有错误返回位,
+				// 而继续用可预测值发短码比中止更危险。与 session.go 的
+				// newToken、server.go 的密钥生成同一口径。
+				panic("crypto/rand unavailable: " + err.Error())
+			}
+			if int(buf[0]) < reject {
+				b[i] = CodeAlphabet[int(buf[0])%len(CodeAlphabet)]
+				break
+			}
+		}
 	}
 	return string(b)
 }
@@ -154,6 +176,16 @@ const (
 	VerifyNeedTXT VerifyStatus = "need_txt"
 	// VerifyVerified TXT 挑战通过(且 A/AAAA 指向本机):可以激活。
 	VerifyVerified VerifyStatus = "verified"
+	// VerifyDNSUnavailable DNS 查询本身失败(解析器不可达、/etc/resolv.conf 不可读、
+	// 应答异常):既证明不了 A/AAAA 指向本机,也证明不了它没指向本机 —— 归属仍然
+	// 悬而未决。调用方必须按"本轮没有结论"处理:不改域名状态、不当作校验失败,
+	// 等下一轮再问。
+	//
+	// 为什么必须与 VerifyNeedDNS 分开:原先解析失败也返回 (VerifyNeedDNS, nil),
+	// 于是"上游 DNS 抖了一下"与"租户没配 A 记录"在下游完全同形 ——
+	// ownershipRecheckPass 据此把 active 域名降级成 failed,Caddy 授权端点随即
+	// 拒绝,该租户全部短链立刻 404。触发条件极常见(见 C3)。
+	VerifyDNSUnavailable VerifyStatus = "dns_unavailable"
 )
 
 // VerifyResult 归属校验结果。TXTValues 是该域名当前发布的挑战记录值,只用于后台
@@ -193,31 +225,63 @@ type DNSChecker struct {
 
 	resolverOnce sync.Once
 	txtResolver  *net.Resolver
-	tasksOnce    sync.Once
-	tasks        *TaskQueue
+
+	tasksMu sync.Mutex
+	tasks   *TaskQueue
 }
 
 // Tasks 返回与本校验器绑定的后台任务队列(有界并发 + single-flight)。
 //
 // 挂在校验器上而不是全局:一次 API 实例 = 一个校验器 = 一份队列。原先的
 // `go func()` 是每个请求一个 goroutine,没有并发上限、没有去重,也没有队列上限。
+//
+// 队列是懒创建的,所以持有者停机时必须调 Shutdown 把已创建的队列关掉
+// (否则留下 defaultTaskWorkers 个永不退出的 worker goroutine)。
 func (c *DNSChecker) Tasks() *TaskQueue {
-	c.tasksOnce.Do(func() {
+	c.tasksMu.Lock()
+	defer c.tasksMu.Unlock()
+	if c.tasks == nil {
 		c.tasks = NewTaskQueue(defaultTaskWorkers, defaultTaskQueue)
-	})
+	}
 	return c.tasks
 }
 
-// Verify 校验域名归属,返回三态结果。
+// Shutdown 关闭本校验器已创建的队列(没创建过就什么都不做),并取消其上下文,
+// 让正在跑的任务能感知停机。之后再次调用 Tasks() 会得到一份新队列。
+//
+// 装配点:队列的持有者在停机路径上调用 —— 生产环境是 httpapi 的 API 实例
+// (每个实例持有自己的 DNSChecker),测试里是 testutil 的 fakeOwnership。
+// 这一层只提供关机手柄;把 HandleSignals/Shutdown 接进各自的关闭路径属于装配,
+// 不在本包内(见审查项 DOM4 的遗留说明)。
+func (c *DNSChecker) Shutdown() {
+	c.tasksMu.Lock()
+	q := c.tasks
+	c.tasks = nil
+	c.tasksMu.Unlock()
+	if q != nil {
+		q.Close()
+	}
+}
+
+// Verify 校验域名归属,返回三态结果(外加"本轮无法判定"的 VerifyDNSUnavailable)。
 //
 // 判定顺序刻意是 A/AAAA → TXT:A/AAAA 失败是最常见、也最容易自查的原因,先把它分出去
 // 既能给精确指引,又省掉那些根本不会激活的域名的 TXT 查询(后台重试队列每轮都跑)。
+// 但"查询失败"与"查到了、只是没指向本机"必须分开报:前者是 VerifyDNSUnavailable
+// (本轮无结论),后者才是 VerifyNeedDNS。
 func (c *DNSChecker) Verify(ctx context.Context, fqdn, token string) (VerifyResult, error) {
 	fqdn = NormalizeFQDN(fqdn)
 	if !IsValidFQDN(fqdn) {
 		return VerifyResult{}, fmt.Errorf("域名格式非法: %q", fqdn)
 	}
-	addrs, _ := c.LookupAddrs(ctx, fqdn)
+	addrs, err := c.LookupAddrs(ctx, fqdn)
+	if err != nil {
+		// 查询失败 ≠ 归属不成立。显式翻成"不确定"态,而不是让它退化成
+		// VerifyNeedDNS("A 记录没指向本机")——后者会被复检当成"归属已不成立"。
+		// err 本身不上抛:Verify 对 DNS 通道故障的既有契约就是"不把它当系统错误",
+		// 同步路径(创建/恢复)靠返回值给出租户可读的指引。
+		return VerifyResult{Status: VerifyDNSUnavailable}, nil
+	}
 	if !c.anyMatchExpected(addrs) {
 		return VerifyResult{Status: VerifyNeedDNS}, nil
 	}

@@ -111,10 +111,16 @@ func (w *Worker) Run(ctx context.Context) {
 	start(func() { w.guardedLoop(ctx, w.cfg.DNSRetryInterval, w.dnsRetryPass, "dns-retry") })
 	start(func() { w.guardedLoop(ctx, certProbeInterval, w.certProbePass, "cert-probe") })
 	start(func() { w.guardedLoop(ctx, OwnershipRecheckInterval, w.ownershipRecheckPass, "ownership-recheck") })
-	start(func() { w.loop(ctx, w.cfg.VisitCleanupEvery, w.visitCleanupPass, "visit-cleanup") })
+	// 两个清理循环同样要走咨询锁:它们不发出网请求,但**写库**,多副本下会重复执行
+	// 同一批删除(白做一遍、还多占一份行锁与 WAL),与上面三个循环的取舍一致。
+	start(func() { w.guardedLoop(ctx, w.cfg.VisitCleanupEvery, w.visitCleanupPass, "visit-cleanup") })
 	// 过期会话与邮箱 token 清理与访问清理同一节奏(默认 24h)。
 	// email_tokens 仅消费时惰性校验过期,需定期物理清理防表膨胀;spec 未禁止,属合理运维。
-	start(func() { w.loop(ctx, w.cfg.VisitCleanupEvery, w.sessionCleanupPass, "session-cleanup") })
+	start(func() { w.guardedLoop(ctx, w.cfg.VisitCleanupEvery, w.sessionCleanupPass, "session-cleanup") })
+	// 超期未验证的 pending 租户回收(释放 slug 与默认域名),同一节奏。
+	start(func() {
+		w.guardedLoop(ctx, w.cfg.VisitCleanupEvery, w.pendingTenantCleanupPass, "pending-tenant-cleanup")
+	})
 	<-ctx.Done()
 	wg.Wait()
 }
@@ -179,27 +185,65 @@ func (w *Worker) guarded(ctx context.Context, pass func(context.Context), name s
 	w.safePass(ctx, pass, name)
 }
 
+// domainPassWorkers 单轮出网 pass 的并发上限。
+//
+// 原先一轮里的 500 条域名是**顺序**处理的:每条最多等 2 次 A/AAAA 查询 + 1 次
+// TXT(dns-retry 最坏 ≈75 分钟)或一次 HTTPS 探活(cert-probe 最坏 ≈83 分钟),
+// 都远超 5 分钟的 interval —— 一轮还没跑完,下一轮早该开始了,而
+// `ORDER BY last_at LIMIT 500` 意味着新 pending 域名永远排在队尾,长期排不上队。
+//
+// 上限取 4(与 HTTP 侧 TaskQueue 的 defaultTaskWorkers 同值):瓶颈是上游 DNS 与
+// Caddy 的签发,并发再大只是互相拖慢,还会把平台自己的解析打满。
+const domainPassWorkers = 4
+
+// runBounded 以最多 limit 个并发遍历 items,全部处理完才返回。
+//
+// 为什么要有界:一轮最多 500 行,无界并发(每行一个 goroutine)会把上游 DNS 与
+// 平台自己一起打满。为什么不是顺序:见 domainPassWorkers —— 单轮耗时会超过轮询
+// 间隔。单行的异常隔离仍由调用方的 recover 负责,与顺序版语义一致。
+func runBounded[T any](items []T, limit int, fn func(T)) {
+	if limit < 1 {
+		limit = 1
+	}
+	sem := make(chan struct{}, limit)
+	var wg sync.WaitGroup
+	for _, item := range items {
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(item T) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(item)
+		}(item)
+	}
+	wg.Wait()
+}
+
+// recoverDomainPanic 吞掉单条域名处理中的 panic。
+//
+// goroutine 内未捕获的 panic 会终止整个进程(连带 HTTP 服务),所以每条域名的
+// 处理都要兜住自己;label 用于在日志里定位是哪条域名出的问题。
+func recoverDomainPanic(label string) {
+	if rec := recover(); rec != nil {
+		log.Printf("%s panic: %v\n%s", label, rec, debug.Stack())
+	}
+}
+
 // dnsRetryPass 自有域名重试队列:每轮取到期的 pending/failed 域名重新做归属校验。
 // 通过则激活并探活证书;超过最长等待(默认 72h)转入终态 expired 退出队列。
 //
 // 每条记录的错误都被吞掉并继续下一条:一条坏数据不该让整轮停摆(更不该让
-// 后面的域名永远排不上队)。
+// 后面的域名永远排不上队)。同一轮内按 domainPassWorkers 有界并发。
 func (w *Worker) dnsRetryPass(ctx context.Context) {
 	rows, err := w.store.ListDomainsForDNSCheck(ctx, w.cfg.DNSMaxAge, w.cfg.DNSRetryInterval, store.DefaultDomainScanLimit)
 	if err != nil {
 		log.Printf("worker dns-retry: list domains: %v", err)
 		return
 	}
-	for _, d := range rows {
-		func() {
-			defer func() {
-				if rec := recover(); rec != nil {
-					log.Printf("worker dns-retry: domain %s panic: %v\n%s", d.FQDN, rec, debug.Stack())
-				}
-			}()
-			w.verifyAndActivate(ctx, d)
-		}()
-	}
+	runBounded(rows, domainPassWorkers, func(d store.DomainScanRow) {
+		defer recoverDomainPanic("worker dns-retry: domain " + d.FQDN)
+		w.verifyAndActivate(ctx, d)
+	})
 }
 
 // verifyAndActivate 对单个重试队列条目做归属校验并落地状态。
@@ -230,6 +274,12 @@ func (w *Worker) verifyAndActivate(ctx context.Context, d store.DomainScanRow) {
 	res, err := w.dns.Verify(ctx, d.FQDN, d.VerifyToken)
 	if err != nil {
 		log.Printf("worker dns-retry: verify %s: %v", d.FQDN, err)
+		return
+	}
+	if res.Status == VerifyDNSUnavailable {
+		// DNS 通道故障:"查不到"与"没配好"必须分开 —— 这一轮不下任何结论,
+		// 也不刷新 dns_checked_at(别把这次失败算进重试节奏),下一轮再问。
+		log.Printf("worker dns-retry: %s DNS 查询失败,归属无法判定,本轮不改状态", d.FQDN)
 		return
 	}
 	if !res.Verified() {
@@ -263,7 +313,8 @@ func challengeExpired(d store.DomainScanRow, maxAge time.Duration) bool {
 // ownershipRecheckPass 低频复检 active 自有域名的归属。
 //
 // 通过:刷新 ownership_verified_at(顺带记录本次校验时间)。
-// 不通过:降级为 failed(仍在重试队列里,租户修好 DNS 后自动恢复)。
+// 不通过(确实查到、但归属不成立):降级为 failed(仍在重试队列里,租户修好 DNS 后自动恢复)。
+// 查不到(DNS 通道故障):本轮跳过,状态不变 —— 详见下面 VerifyDNSUnavailable 分支。
 //
 // 为什么是 failed 而不是 stopped:stopped 的语义是"租户主动暂停",系统不该替租户
 // 做这个决定;failed 表示"系统复检发现它不成立",并且 DNS 一修好就能自动回来。
@@ -276,30 +327,31 @@ func (w *Worker) ownershipRecheckPass(ctx context.Context) {
 		log.Printf("worker ownership-recheck: list domains: %v", err)
 		return
 	}
-	for _, d := range rows {
-		func() {
-			defer func() {
-				if rec := recover(); rec != nil {
-					log.Printf("worker ownership-recheck: domain %s panic: %v\n%s", d.FQDN, rec, debug.Stack())
-				}
-			}()
-			res, err := w.dns.Verify(ctx, d.FQDN, d.VerifyToken)
-			if err != nil {
-				log.Printf("worker ownership-recheck: verify %s: %v", d.FQDN, err)
-				return
+	runBounded(rows, domainPassWorkers, func(d store.DomainScanRow) {
+		defer recoverDomainPanic("worker ownership-recheck: domain " + d.FQDN)
+		res, err := w.dns.Verify(ctx, d.FQDN, d.VerifyToken)
+		if err != nil {
+			log.Printf("worker ownership-recheck: verify %s: %v", d.FQDN, err)
+			return
+		}
+		if res.Status == VerifyDNSUnavailable {
+			// 关键分支:上游 DNS 抖动不能让域名被降级。降级的后果是 Caddy
+			// 授权端点立刻拒绝,该租户所有短链一起 404 —— 用一次查询失败
+			// 换全站停服是不可接受的。只记日志,状态一个字节都不动。
+			log.Printf("worker ownership-recheck: %s DNS 查询失败,归属无法判定,本轮不改状态(不降级)", d.FQDN)
+			return
+		}
+		if res.Verified() {
+			if err := w.store.ActivateDomainVerified(ctx, d.ID); err != nil {
+				log.Printf("worker ownership-recheck: refresh %s: %v", d.FQDN, err)
 			}
-			if res.Verified() {
-				if err := w.store.ActivateDomainVerified(ctx, d.ID); err != nil {
-					log.Printf("worker ownership-recheck: refresh %s: %v", d.FQDN, err)
-				}
-				return
-			}
-			log.Printf("worker ownership-recheck: %s 归属复检未通过(%s,TXT 未匹配),降级为 failed 并停止授权端点放行", d.FQDN, res.Status)
-			if err := w.store.DegradeDomain(ctx, d.ID); err != nil {
-				log.Printf("worker ownership-recheck: degrade %s: %v", d.FQDN, err)
-			}
-		}()
-	}
+			return
+		}
+		log.Printf("worker ownership-recheck: %s 归属复检未通过(%s,TXT 未匹配),降级为 failed 并停止授权端点放行", d.FQDN, res.Status)
+		if err := w.store.DegradeDomain(ctx, d.ID); err != nil {
+			log.Printf("worker ownership-recheck: degrade %s: %v", d.FQDN, err)
+		}
+	})
 }
 
 // certProbePass 对 active 且证书尚未签发(pending/failed)的域名发起 HTTPS 探活,
@@ -310,23 +362,17 @@ func (w *Worker) ownershipRecheckPass(ctx context.Context) {
 //
 // 扫描条件已经把"租户非 active"和"上次探活不到 interval"过滤在 SQL 里:
 // 未验证租户的平台默认域名在注册时就是 active,若不加租户状态这一条,注册 spam
-// 会线性放大成每 5 分钟一批的出网 HTTPS 请求。
+// 会线性放大成每 5 分钟一批的出网 HTTPS 请求。同一轮内按 domainPassWorkers 有界并发。
 func (w *Worker) certProbePass(ctx context.Context) {
 	rows, err := w.store.ListDomainsForCertProbe(ctx, certProbeInterval, store.DefaultDomainScanLimit)
 	if err != nil {
 		log.Printf("worker cert-probe: list domains: %v", err)
 		return
 	}
-	for _, d := range rows {
-		func() {
-			defer func() {
-				if rec := recover(); rec != nil {
-					log.Printf("worker cert-probe: domain %s panic: %v\n%s", d.FQDN, rec, debug.Stack())
-				}
-			}()
-			w.probeCert(ctx, d.ID, d.FQDN)
-		}()
-	}
+	runBounded(rows, domainPassWorkers, func(d store.DomainScanRow) {
+		defer recoverDomainPanic("worker cert-probe: domain " + d.FQDN)
+		w.probeCert(ctx, d.ID, d.FQDN)
+	})
 }
 
 // probeCert 对单个域名发起证书探活并落库(每条记录的错误被调用方吞掉)。
@@ -362,5 +408,24 @@ func (w *Worker) sessionCleanupPass(ctx context.Context) {
 	}
 	if err := w.store.DeleteExpiredEmailTokens(ctx); err != nil {
 		log.Printf("worker session-cleanup: %v", err)
+	}
+}
+
+// pendingTenantCleanupPass 回收超期未验证邮箱的 pending 租户。
+//
+// 这些行占着 UNIQUE 的 slug 与默认域名 <slug>.<平台域名>:注册写错邮箱、或机器人
+// 批量注册留下的租户会永久堵住这些名字,真实注册者只会看到 slug 已被占用。保留期
+// (7 天,store.StalePendingTenantRetention)留给"验证邮件过几天才点"的正常人。
+//
+// 与访问清理同一节奏(默认 24h):它是运维清理,不追求时效;删除是分批的,单批
+// 行数有界,不会因为积压而变成一条长事务。
+func (w *Worker) pendingTenantCleanupPass(ctx context.Context) {
+	n, err := w.store.DeleteStalePendingTenants(ctx, store.StalePendingTenantRetention)
+	if err != nil {
+		log.Printf("worker pending-tenant-cleanup: %v", err)
+		return
+	}
+	if n > 0 {
+		log.Printf("worker pending-tenant-cleanup: removed %d 个超过保留期(%v)仍未验证的 pending 租户", n, store.StalePendingTenantRetention)
 	}
 }

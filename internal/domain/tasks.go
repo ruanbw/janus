@@ -13,6 +13,7 @@ import (
 	"context"
 	"log"
 	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -29,10 +30,23 @@ type task struct {
 }
 
 // TaskQueue 有界后台任务队列。
+//
+// 生命周期:队列持有一个上下文(NewTaskQueue 里创建),任务拿到的就是它;
+// Close 取消该上下文并等正在跑的任务结束。没有这一步,每个持有者
+// (一个 DNSChecker = 一个 API 实例)都会留下 defaultTaskWorkers 个永不退出的
+// goroutine,而且任务只能拿到 context.Background() —— 停机时正在跑的 DNS 查询与
+// HTTPS 探活收不到任何中止信号,只能干等超时。
 type TaskQueue struct {
 	tasks   chan task
 	running sync.Map // key → struct{}:正在执行或已入队的 key
 	wg      sync.WaitGroup
+
+	// ctx 队列的存活上下文:Close 时取消,任务是它的下游。
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	closed    atomic.Bool
+	closeOnce sync.Once
 }
 
 // NewTaskQueue 启动 workers 个后台 goroutine。
@@ -43,7 +57,8 @@ func NewTaskQueue(workers, queueLen int) *TaskQueue {
 	if queueLen <= 0 {
 		queueLen = defaultTaskQueue
 	}
-	q := &TaskQueue{tasks: make(chan task, queueLen)}
+	ctx, cancel := context.WithCancel(context.Background())
+	q := &TaskQueue{tasks: make(chan task, queueLen), ctx: ctx, cancel: cancel}
 	for i := 0; i < workers; i++ {
 		q.wg.Add(1)
 		go q.worker()
@@ -51,10 +66,20 @@ func NewTaskQueue(workers, queueLen int) *TaskQueue {
 	return q
 }
 
+// worker 反复取任务执行,直到队列被 Close。
+//
+// 刻意不用 `for t := range q.tasks`(靠 close(channel) 收口):那要求 Submit 在
+// 发送前确认 channel 未关闭,而"检查"与"发送"之间必然有竞争窗口 —— 发到已关闭的
+// channel 会 panic。改成"停机 = 取消上下文",Submit 就永远不会 panic。
 func (q *TaskQueue) worker() {
 	defer q.wg.Done()
-	for t := range q.tasks {
-		q.run(t)
+	for {
+		select {
+		case <-q.ctx.Done():
+			return
+		case t := <-q.tasks:
+			q.run(t)
+		}
 	}
 }
 
@@ -67,14 +92,15 @@ func (q *TaskQueue) run(t task) {
 			log.Printf("domain task %s panic: %v", t.key, rec)
 		}
 	}()
-	// ctx 由调用方在闭包里自己建(每个任务需要独立的超时),这里只保证传入非 nil。
-	t.fn(context.Background())
+	// 传入队列的存活上下文:任务自己派生带超时的子 ctx(每个任务需要独立的超时),
+	// 但必须能感知停机,不能再用 context.Background() 把停机信号挡在门外。
+	t.fn(q.ctx)
 }
 
 // Submit 提交一个后台任务,返回是否真的入队。
-// 同一 key 已有任务在执行/排队时直接跳过;队列满时丢弃(记日志)。
+// 同一 key 已有任务在执行/排队时直接跳过;队列已关闭或已满时丢弃(记日志)。
 func (q *TaskQueue) Submit(key string, fn func(context.Context)) bool {
-	if q == nil || fn == nil {
+	if q == nil || fn == nil || q.closed.Load() {
 		return false
 	}
 	if _, dup := q.running.LoadOrStore(key, struct{}{}); dup {
@@ -90,11 +116,17 @@ func (q *TaskQueue) Submit(key string, fn func(context.Context)) bool {
 	}
 }
 
-// Close 停止 worker(不再接受新任务)。
+// Close 停止接收新任务、取消任务上下文,并等正在执行的任务结束。
+//
+// 幂等:重复调用安全(持有者的停机路径可能与其它退出路径重入)。已入队但还没被
+// worker 取到的任务不再保证执行 —— 停机语义是"尽快收手",而不是"把队列排空"。
 func (q *TaskQueue) Close() {
 	if q == nil {
 		return
 	}
-	close(q.tasks)
+	q.closeOnce.Do(func() {
+		q.closed.Store(true)
+		q.cancel()
+	})
 	q.wg.Wait()
 }
