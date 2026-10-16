@@ -75,15 +75,19 @@ const (
 // 全部字段用指针:必须能区分"没传这个字段"(PATCH 不动它)与"传了零值"
 // (如 enabled=false、destination=""、conditions:[])。任一字段用裸值都会把其中一种吃掉。
 type ruleReq struct {
-	Name        *string               `json:"name"`
-	Description *string               `json:"description"`
-	Priority    *int                  `json:"priority"`
-	Scope       *string               `json:"scope"`
-	Enabled     *bool                 `json:"enabled"`
-	Logic       *string               `json:"logic"`
-	Action      *string               `json:"action"`
-	Destination *string               `json:"destination"`
-	Conditions  *store.RuleConditions `json:"conditions"`
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Priority    *int    `json:"priority"`
+	Scope       *string `json:"scope"`
+	Enabled     *bool   `json:"enabled"`
+	Logic       *string `json:"logic"`
+	Action      *string `json:"action"`
+	Destination *string `json:"destination"`
+	// Conditions 必须收成 json.RawMessage 而不是 *store.RuleConditions:
+	// 后者的 UnmarshalJSON 是读库容错版(解析失败静默归零),直接绑到请求体上
+	// 会把"写坏的 conditions"洗成空条件组。这里先原样收字节,再交给
+	// resolveRule 用 store.DecodeRuleConditions 严格解析(失败 → 400)。
+	Conditions json.RawMessage `json:"conditions"`
 	// LinkIDs 必须是 *[]int64(指针到切片),理由见文件头不变式 ②。
 	LinkIDs    *[]int64 `json:"linkIds"`
 	PageMode   *string  `json:"pageMode"`
@@ -276,11 +280,20 @@ func (a *API) resolveRule(ctx context.Context, tenantID int64, cur *store.Rule, 
 	// ⑦⑧ 条件字段与运算符必须都在 v1 白名单内(白名单以 rules 包为准,httpapi 只引用)。
 	// 条件树里的每个叶子都要校验,报错带 JSON 路径——不指明位置的话用户没法改。
 	// 注:visual 形态允许零条件——那是刻意的"兜底规则"(无条件即命中,见 eval_test.go)。
+	//
+	// 先严格解码再校验:请求体里的 conditions 是 json.RawMessage,容错解码会把
+	// "写坏的 JSON"静默洗成空条件组,而空条件组在求值侧是恒命中的兜底规则——
+	// 一次 `"conditions":"group: ..."` 笔误就能让规则从"按国家拦截"变成"拦截全部"。
+	// 这里宁可 400。省略 conditions(未传)时 RawMessage 为 nil,保持现值不动。
 	if req.Conditions != nil {
-		if err := validateConditionTree(*req.Conditions); err != nil {
+		conds, err := store.DecodeRuleConditions(req.Conditions)
+		if err != nil {
+			return ruleWrite{}, ruleErr("conditions 非法: %v", err)
+		}
+		if err := validateConditionTree(conds); err != nil {
 			return ruleWrite{}, err
 		}
-		w.conditions = *req.Conditions
+		w.conditions = conds
 	}
 	// ⑨ linkIds:只接受本租户、未逻辑删除的短链。scope=global 时不校验也不保留——
 	// 那些 id 马上会被丢弃,为一次注定不发生的写入报错只会给出误导性的失败原因。

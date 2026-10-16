@@ -324,6 +324,91 @@ func (c *RuleConditions) decode(b []byte) error {
 	return nil
 }
 
+// DecodeRuleConditions 严格解析**写入边界**收到的 conditions JSON 文本。
+//
+// 与 UnmarshalJSON/Scan 的容错语义刻意相反,两者面向不同的入口:
+//   - UnmarshalJSON/Scan 面向**读库**:一条历史脏数据不该把整份规则加载拖垮,
+//     所以解析失败一律降级为空条件组(见上面的约定)。
+//   - 本函数面向**写入**:租户提交的 conditions 若被静默归零,会落库成空条件组,
+//     而空条件组在求值侧是"恒成立的兜底规则"——一条本该按国家/UA 生效的
+//     notfound/throttle 规则会静默变成对全部流量生效。求值期无法区分"故意兜底"
+//     与"输入被吞错归零",写入入口是唯一可行的防线位置(见 rules/eval.go)。
+//
+// 因此这里任何无法识别为合法条件(扁平数组 / 条件树对象)的输入都返回错误:
+// 首字节非 [ / {、`"conditions":"group: ..."` 之类的字符串笔误、123、null、
+// 结构性废节点(既无 group 也无 leaf)统统报错,绝不静默归零。
+//
+// 不复用 UnmarshalJSON:它六条 return 全返回 nil,错误分支根本不可达。
+func DecodeRuleConditions(b []byte) (RuleConditions, error) {
+	var c RuleConditions
+	trimmed := bytes.TrimSpace(b)
+	if len(trimmed) == 0 {
+		return c, errors.New("conditions 为空")
+	}
+	switch trimmed[0] {
+	case '[':
+		var leaves []RuleCondition
+		if err := json.Unmarshal(trimmed, &leaves); err != nil {
+			return c, fmt.Errorf("conditions 不是合法的条件数组: %w", err)
+		}
+		if leaves == nil {
+			leaves = []RuleCondition{}
+		}
+		c.Leaves = leaves
+		return c, nil
+	case '{':
+		root, ok := strictNodeFromRaw(trimmed)
+		if !ok {
+			return c, errors.New("conditions 不是合法的条件节点")
+		}
+		c.Root = &root
+		c.Leaves = flattenNode(root)
+		return c, nil
+	default:
+		return c, errors.New("conditions 必须以 [ 或 { 开头")
+	}
+}
+
+// strictNodeFromRaw 与 nodeFromRaw 同形,区别只在"结构性废节点"的处理:
+// nodeFromRaw(读库容错)静默丢掉,这里(写入严格)一律判失败。
+func strictNodeFromRaw(raw []byte) (ConditionNode, bool) {
+	var probe rawNode
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return ConditionNode{}, false
+	}
+	switch {
+	case probe.Group != nil:
+		return strictGroup(*probe.Group)
+	case probe.Leaf != nil:
+		return normalizeLeaf(*probe.Leaf), true
+	case probe.Type == ConditionTypeGroup || probe.Children != nil:
+		return strictGroup(rawGroup{Logic: probe.Logic, Children: probe.Children})
+	case probe.Field != "":
+		return normalizeLeaf(ConditionLeafNode{Field: probe.Field, Operator: probe.Operator, Values: probe.Values}), true
+	}
+	return ConditionNode{}, false
+}
+
+// strictGroup 递归归一化子节点;任一子节点不是合法节点即整体失败
+// (写入路径不接受"少了一个条件但没人知道")。
+func strictGroup(g rawGroup) (ConditionNode, bool) {
+	kids := make([]ConditionNode, 0, len(g.Children))
+	for _, child := range g.Children {
+		n, ok := strictNodeFromRaw(child)
+		if !ok {
+			return ConditionNode{}, false
+		}
+		kids = append(kids, n)
+	}
+	if g.Logic == "" {
+		g.Logic = "all"
+	}
+	return ConditionNode{
+		Type:  ConditionTypeGroup,
+		Group: &ConditionGroupNode{Logic: g.Logic, Children: kids},
+	}, true
+}
+
 // GormDBDataType 声明该字段在 postgres 中的列类型为 jsonb
 // (与 Tag 里的 type:jsonb 二选一即可,这里写一份是为了 schema 自解释)。
 func (RuleConditions) GormDBDataType(db *gorm.DB, field *schema.Field) string {
