@@ -37,6 +37,30 @@ func ResetPostVisitHooks() {
 	postHooks = nil
 }
 
+// maxConcurrentPostHooks 后置访问钩子 goroutine 的并发上限。
+//
+// 每次访问都可能为钩子起一个 goroutine,而钩子是外部扩展(可能慢、可能阻塞)。
+// 无上限时一次流量峰值就能把 goroutine 数推到与 QPS 同阶,慢钩子会把内存与调度
+// 拖垮。这里用信号量封顶:满了就**丢弃**本次触发并记日志 —— 后置钩子是旁路观测,
+// 既不该拖慢响应路径,也不该成为压垮进程的入口。
+const maxConcurrentPostHooks = 64
+
+// postHookSlots 后置钩子并发信号量(哨兵通道,容量即上限)。
+var postHookSlots = make(chan struct{}, maxConcurrentPostHooks)
+
+// tryAcquirePostHookSlot 非阻塞地占一个槽位;满了返回 false(不等待)。
+func tryAcquirePostHookSlot() bool {
+	select {
+	case postHookSlots <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// releasePostHookSlot 归还槽位。
+func releasePostHookSlot() { <-postHookSlots }
+
 // TriggerPostVisitHooks 异步触发全部注册的后置钩子。
 func TriggerPostVisitHooks(ctx context.Context, r *http.Request, visit store.VisitRecord) {
 	// 钩子在响应结束后才跑,请求 ctx 那时已被 net/http 取消;断开取消链,保留其中的值。
@@ -53,8 +77,16 @@ func TriggerPostVisitHooks(ctx context.Context, r *http.Request, visit store.Vis
 	copy(list, postHooks)
 	postHooksLock.RUnlock()
 
+	if !tryAcquirePostHookSlot() {
+		// 满了:丢弃而不是排队等待。等待会把这一个 goroutine 压在热路径上,
+		// 反而比丢几次观测更糟。
+		slog.Warn("后置访问钩子并发已达上限,丢弃本次触发",
+			"limit", maxConcurrentPostHooks, "linkId", visit.LinkID)
+		return
+	}
 	// 必须异步执行，绝对不拖慢访客跳转热路径
 	go func() {
+		defer releasePostHookSlot()
 		for _, h := range list {
 			runHook(h, ctx, r, visit)
 		}

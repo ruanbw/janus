@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -20,7 +22,11 @@ import (
 	"janus/internal/store"
 )
 
-// validTargetURL 目标 URL 任意协议(开放重定向),但拒绝控制字符(CRLF header 注入防护)。
+// validTargetURL 目标 URL 准入:协议白名单仅 http/https,并拒绝控制字符(CRLF 注入)。
+//
+// 保留"任意 host"的开放重定向语义(短链本就允许指向任意站点),但 scheme 必须显式
+// 限定。否则 javascript:/data:/vbscript:/file: 会被原样写进 Location 头:
+// 一条短链就变成了在"短链自己的域名"下执行脚本或读本地文件的载荷。
 func validTargetURL(s string) bool {
 	if s == "" || len(s) > 4096 {
 		return false
@@ -30,7 +36,16 @@ func validTargetURL(s string) bool {
 			return false
 		}
 	}
-	return true
+	u, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+		return true
+	default:
+		return false
+	}
 }
 
 // dedupeTargetURLs 按首次出现顺序去重(保持轮询顺序稳定)。
@@ -83,11 +98,17 @@ func (a *API) maxTargetURLs() int {
 	return 50
 }
 
-// maxCreateLinkBodyBytes 创建端点的请求体上限。
+// maxCreateLinkBodyBytes 创建端点**自身**声明的请求体上限。
 //
 // 按「最多 max 个目标 × 单个 URL 上限 4096 + JSON 转义开销」推算,再加一批余量给
 // domainIds / code 等其余字段。只加数量校验不加体积校验是不够的:十万条 5 字节的
 // URL 数量上完全合规,体积上照样能把请求体撑到几百 MB。
+//
+// 注意这**不是**端点最终生效的上限:server.go 的 bodyLimit 全局中间件先给所有
+// 带请求体的方法套了一层 maxJSONBodyBytes(1.5MiB),handler 再在其上叠一层本值,
+// 两层 MaxBytesReader 取更小的那个。默认 MaxTargetURLs=50 时本值约 266KB,
+// 小于 1.5MiB,因此真正触发的是这里;只有把 MaxTargetURLs 配到 ≈370 以上,
+// 本值才会超过全局上限、由全局那层先拦下 —— 下面的 cap(8MiB)也就永远到不了。
 func (a *API) maxCreateLinkBodyBytes() int64 {
 	const (
 		perURLBudget = 4096 + 32 // URL 上限 + 引号/逗号/转义余量
@@ -338,9 +359,22 @@ func quotaAPIError(err error) error {
 
 // validateLinkDomains 校验域名归属与激活状态,返回去重后的 domainID 列表。
 // 创建与编辑都要求至少保留一个关联域名;传空数组意味着短链将无法通过任何域名访问。
+//
+// 一次取回本租户全部域名做判定,而不是每个 id 一次 GetDomainByID:后者在关联
+// N 个域名时就是 N 次数据库往返(且发生在创建事务之外,纯放大)。租户域名总数被
+// max_domains 约束(免费档 10),一次列表的代价远低于 N 次点查。
 func (a *API) validateLinkDomains(c *gin.Context, tenantID int64, ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
 		return nil, apiErr{http.StatusBadRequest, errValidation, "至少关联一个域名", nil}
+	}
+	domains, err := a.store.ListDomainsByTenant(c.Request.Context(), tenantID)
+	if err != nil {
+		slog.Error("读取租户域名列表失败", "tenantId", tenantID, "err", err)
+		return nil, apiErr{http.StatusInternalServerError, errInternal, "internal error", nil}
+	}
+	status := make(map[int64]string, len(domains))
+	for _, d := range domains {
+		status[d.ID] = d.Status
 	}
 	seen := map[int64]bool{}
 	var out []int64
@@ -349,11 +383,12 @@ func (a *API) validateLinkDomains(c *gin.Context, tenantID int64, ids []int64) (
 			continue
 		}
 		seen[id] = true
-		d, err := a.store.GetDomainByID(c.Request.Context(), id)
-		if err != nil || d.TenantID != tenantID {
+		// 不在本租户域名集合中 = 不存在或不属于当前租户(错误文案与逐条点查时一致)。
+		st, ok := status[id]
+		if !ok {
 			return nil, apiErr{http.StatusBadRequest, errValidation, "域名不存在或不属于当前租户", nil}
 		}
-		if d.Status != "active" {
+		if st != "active" {
 			return nil, apiErr{http.StatusBadRequest, errValidation, "域名未激活,无法关联短链", nil}
 		}
 		out = append(out, id)
@@ -361,18 +396,48 @@ func (a *API) validateLinkDomains(c *gin.Context, tenantID int64, ids []int64) (
 	return out, nil
 }
 
-func pageParams(c *gin.Context) (page, pageSize int) {
-	page, _ = strconv.Atoi(c.Request.URL.Query().Get("page"))
-	if page < 1 {
-		page = 1
-	}
-	pageSize, _ = strconv.Atoi(c.Request.URL.Query().Get("pageSize"))
+// maxPage 分页页码上限。
+//
+// 页码会被换算成 OFFSET = (page-1)*pageSize。不设上界时,一个超大 page 会让
+// 乘法溢出得到非法 OFFSET,Postgres 直接报错 → 500 —— 把"参数非法"伪装成
+// 服务端故障,还浪费一次全表语义的扫描。1e7 远大于任何真实分页需求。
+const maxPage = 10_000_000
+
+// parsePageParams 严格解析分页参数:page 非整数或超过 maxPage 返回 error(调用方回 400)。
+// page 缺省或 < 1 按第 1 页;pageSize 缺省 20,上限 100(与前端契约一致)。
+func parsePageParams(c *gin.Context) (page, pageSize int, err error) {
+	q := c.Request.URL.Query()
+	// pageSize 的解析沿用既有宽松语义(非法/缺省 → 20),因为它不参与 OFFSET 乘法,
+	// 不会造成溢出,收紧它对既有客户端只有破坏性。
+	pageSize, _ = strconv.Atoi(q.Get("pageSize"))
 	if pageSize < 1 {
 		pageSize = 20
 	}
 	if pageSize > 100 {
 		pageSize = 100
 	}
+
+	page = 1
+	if raw := q.Get("page"); raw != "" {
+		v, e := strconv.Atoi(raw)
+		if e != nil {
+			return page, pageSize, errors.New("page 必须为整数")
+		}
+		if v < 1 {
+			v = 1
+		}
+		if v > maxPage {
+			return page, pageSize, fmt.Errorf("page 超过上限(最大 %d)", maxPage)
+		}
+		page = v
+	}
+	return page, pageSize, nil
+}
+
+// pageParams 宽松版分页解析:非法页码回落到第 1 页,不返回错误。
+// 供 handleListRules 等既有调用点复用;links/visits 列表用 parsePageParams 显式回 400。
+func pageParams(c *gin.Context) (page, pageSize int) {
+	page, pageSize, _ = parsePageParams(c)
 	return page, pageSize
 }
 
@@ -381,7 +446,11 @@ func (a *API) handleListLinks(c *gin.Context) {
 	if !ok {
 		return
 	}
-	page, pageSize := pageParams(c)
+	page, pageSize, err := parsePageParams(c)
+	if err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
+		return
+	}
 	// includeDeleted(默认 false)打开回收站视图:列出已逻辑删除的短链。
 	// 省略该参数时行为与从前完全一致,既有客户端不受影响。
 	includeDeleted, err := parseBoolQuery(c, "includeDeleted")
@@ -628,6 +697,13 @@ func (a *API) handleDeleteLink(c *gin.Context) {
 		return
 	}
 	if err := a.store.SoftDeleteLink(c.Request.Context(), t.ID, id); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			// 数据库/连接类错误不能一律说成"短链不存在":那会把一次基础设施故障
+			// 伪装成"你删错了 id",租户与排查者都被误导。
+			slog.Error("逻辑删除短链失败", "linkId", id, "tenantId", t.ID, "err", err)
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+			return
+		}
 		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
@@ -648,6 +724,12 @@ func (a *API) handlePurgeLink(c *gin.Context) {
 		return
 	}
 	if err := a.store.PurgeLink(c.Request.Context(), t.ID, id); err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			// 同 SoftDeleteLink:真错误要与"不存在"区分,否则故障被说成 404。
+			slog.Error("彻底删除短链失败", "linkId", id, "tenantId", t.ID, "err", err)
+			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+			return
+		}
 		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
@@ -878,7 +960,11 @@ func (a *API) handleListVisits(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "outcome 必须为 success / failed")
 		return
 	}
-	page, pageSize := pageParams(c)
+	page, pageSize, err := parsePageParams(c)
+	if err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
+		return
+	}
 	items, total, err := a.store.ListVisitsByLinkFiltered(c.Request.Context(), id,
 		store.VisitFilter{Action: action, Outcome: outcome}, page, pageSize)
 	if err != nil {

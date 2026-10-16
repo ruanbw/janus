@@ -6,8 +6,10 @@ package httpapi
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"os"
@@ -15,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,7 +39,10 @@ func (a *API) handleLandingFallback(c *gin.Context) {
 		tenantID = d.TenantID
 	}
 	if c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead {
-		a.renderVisitorError(c, http.StatusNotFound, tenantID, nil)
+		// 这些二级路径是存在的资源,只是不接受该方法:语义应为 405 + Allow,
+		// 而不是 404 —— 404 会被客户端/CDN 读成"这个路径不存在"并可能缓存该判断。
+		c.Header("Allow", "GET, HEAD")
+		a.renderVisitorError(c, http.StatusMethodNotAllowed, tenantID, nil)
 		return
 	}
 	p := strings.TrimPrefix(c.Request.URL.Path, "/")
@@ -227,8 +233,14 @@ func (a *API) handleLandingSDK(c *gin.Context, code string) {
 		return
 	}
 	// 点击端点绝对地址:与 SDK 请求同源(Host 即短链域名),外部落地页跨域引用同样可用。
+	//
+	// X-Forwarded-Proto 只有在 TCP 对端命中运维显式声明的可信代理网段时才采信 ——
+	// 与 clientIPForVisitor / trustedClientIP 同一口径(isTrustedProxyPeer)。
+	// 无条件采信它等于把"这个 SDK 里写 http 还是 https"交给任意来访者决定:
+	// 攻击者可诱导 SDK 被以 http 形式生成,再对该地址做中间人降级。
 	proto := "https"
-	if p := c.GetHeader("X-Forwarded-Proto"); p == "http" || p == "https" {
+	if p := c.GetHeader("X-Forwarded-Proto"); (p == "http" || p == "https") &&
+		isTrustedProxyPeer(c.Request.RemoteAddr, a.trustedProxyNets) {
 		proto = p
 	} else if c.Request.TLS == nil {
 		proto = "http"
@@ -286,16 +298,42 @@ func (a *API) handleLandingFile(c *gin.Context, code, rel string) {
 // resolveLandingFilePath 把相对路径清洗成短链目录内的绝对路径。
 // 越界(路径穿越)返回 ok=false。清洗只在这里做一次,调用方拿到的就是最终路径,
 // 不需要在"先 stat 看看"与"真正要读"之间保持两份一致的清洗逻辑。
+//
+// 只用 filepath.Abs + 词法前缀是不够的:短链目录内若存在指向外部的符号链接
+// (root/evil -> /etc),root/evil/passwd 在词法上仍以 root 为前缀,却会读到 /etc/passwd。
+// 因此对 absRoot 与 absFp 的父目录各做一次 EvalSymlinks 后再比对。目标文件本身
+// 可能尚不存在(要 404),所以不能对整条 absFp 调 EvalSymlinks。
 func (a *API) resolveLandingFilePath(linkID int64, rel string) (abs string, cleanRel string, ok bool) {
 	root := a.landingLinkDir(linkID)
 	clean := path.Clean("/" + rel)
 	fp := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(clean, "/")))
 	absRoot, err1 := filepath.Abs(root)
 	absFp, err2 := filepath.Abs(fp)
-	if err1 != nil || err2 != nil || !strings.HasPrefix(absFp, absRoot+string(filepath.Separator)) {
+	if err1 != nil || err2 != nil {
+		return "", "", false
+	}
+	// 解析失败(目录尚不存在等)时保留词法结果:这种情况读不到文件,后续自会 404,
+	// 不会因为"两个都保留词法值"而放过穿越。
+	if resolved, err := filepath.EvalSymlinks(absRoot); err == nil {
+		absRoot = resolved
+	}
+	if resolved, err := evalSymlinksParent(absFp); err == nil {
+		absFp = resolved
+	}
+	if !strings.HasPrefix(absFp, absRoot+string(filepath.Separator)) {
 		return "", "", false
 	}
 	return absFp, strings.TrimPrefix(clean, "/"), true
+}
+
+// evalSymlinksParent 解析 p 的父目录中的符号链接,再与文件名拼回。
+// p 本身可能不存在,但父目录在"要读的文件确实存在"时必然存在。
+func evalSymlinksParent(p string) (string, error) {
+	dir, err := filepath.EvalSymlinks(filepath.Dir(p))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, filepath.Base(p)), nil
 }
 
 // serveLandingFile 服务上传落地页中的单个文件(禁目录列表)。
@@ -367,9 +405,14 @@ func (a *API) handleUploadLanding(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "压缩包超过大小上限")
 		return
 	}
-	commit, rollback, err := a.installLandingZip(link.ID, raw)
+	commit, rollback, err := a.installLandingZipGuarded(link.ID, raw)
 	if err != nil {
-		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
+		status, code, msg := landingInstallError(err)
+		if status >= http.StatusInternalServerError {
+			// 内部错误(文件系统等)细节只写日志:直接回显会泄露绝对路径与磁盘状态。
+			slog.Error("安装落地页失败", "linkId", link.ID, "err", err)
+		}
+		writeErr(c, status, code, msg)
 		return
 	}
 	// 落地页型:来源切到 upload、landingUrl 清空。跳转型只装文件、不改来源 ——
@@ -403,6 +446,18 @@ type zipErr struct{ msg string }
 
 func (e zipErr) Error() string { return e.msg }
 
+// landingInstallError 把 installLandingZip 的错误分成两类:
+//   - zipErr:压缩包本身的问题(可读原因,400);
+//   - 其余(文件系统/IO):内部错误,500 + 统一文案 —— 细节只写日志,
+//     绝不把 os 错误的绝对路径与磁盘状态回显给调用方。
+func landingInstallError(err error) (status int, code, msg string) {
+	var ze zipErr
+	if errors.As(err, &ze) {
+		return http.StatusBadRequest, errValidation, ze.msg
+	}
+	return http.StatusInternalServerError, errInternal, "internal error"
+}
+
 // landingMaxTotalBytes 解压后所有文件的大小合计上限。
 // 与 LandingMaxZipBytes 是两个语义:前者管"磁盘被撑多大",后者管"上传的包有多大"。
 // 用一个数兼两职会出现很别扭的组合(比如把上限调小到 2MB 后,连解压后 1.5MB 的
@@ -412,6 +467,40 @@ func (a *API) landingMaxTotalBytes() int64 {
 		return a.cfg.LandingMaxTotalBytes
 	}
 	return a.cfg.LandingMaxZipBytes
+}
+
+// landingInstallLockShards 按短链 ID 分片的上传互斥锁数量。
+//
+// 用固定分片数组而不是 map[int64]*Mutex:后者会随上传过的短链数单调增长且永不回收。
+// 分片数取一个远大于并发上传数的常量,偶发共享同一把锁只略微降低并发,不影响正确性。
+const landingInstallLockShards = 64
+
+var landingInstallLocks [landingInstallLockShards]sync.Mutex
+
+// landingInstallLock 取某短链对应的安装锁(linkID 相同的调用必然落同一分片)。
+func landingInstallLock(linkID int64) *sync.Mutex {
+	return &landingInstallLocks[uint64(linkID)%landingInstallLockShards]
+}
+
+// installLandingZipGuarded 在按短链 ID 的互斥锁内安装落地页 zip。
+//
+// 没有这层互斥时,同一短链的两个并发上传会各自 stat dest、各自 rename:
+// 轻则第二次 rename 拿到 ENOENT,重则把对方刚装好的目录 rename 走 —— 访问者
+// 在这个窗口里会读到 landing_missing,凭空多出一批假失败明细。
+//
+// 返回的 commit / rollback 会**顺带释放锁**:临界区必须覆盖"安装 → 调用方写库 →
+// commit/rollback"整段,否则写库还没做完就放锁,后面的上传又会踩上来。
+func (a *API) installLandingZipGuarded(linkID int64, raw []byte) (commit, rollback func(), err error) {
+	mu := landingInstallLock(linkID)
+	mu.Lock()
+	c, r, err := a.installLandingZip(linkID, raw)
+	if err != nil {
+		mu.Unlock()
+		return nil, nil, err
+	}
+	var once sync.Once
+	release := func() { once.Do(mu.Unlock) }
+	return func() { c(); release() }, func() { r(); release() }, nil
 }
 
 // installLandingZip 校验并解压 zip 到 uploads/{linkID},返回 commit / rollback 两个闭包。

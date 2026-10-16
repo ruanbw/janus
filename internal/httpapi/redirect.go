@@ -14,6 +14,10 @@ package httpapi
 // 三条热路径上的硬约束:
 //  1. 零 DB 查询:规则集合来自按租户缓存的内存快照(Cache.Get 只读一次 map)。
 //     多数租户没有规则,此时连访客画像都不构造。
+//     例外是**错误路径**:域名不存在/未 active 时,为了渲染租户自己的自定义错误页,
+//     handleRedirect 会走一次 resolveDomainForError → GetDomainByFQDNAnyStatus
+//     (fqdn 唯一索引上的等值查询,见 :237-240)。这条查询只在"不跳转"的 404 路径上
+//     发生,不在成功跳转或规则求值链路上;"零 DB 查询"约束约束的是后者。
 //  2. 零写放大:命中不 UPDATE 任何表,只多写本次访问那一行明细。
 //     「24h 命中」是列表接口从 visits 读时聚合出来的(spec D9)。
 //  3. fail-open:快照加载失败/求值 panic 一律按"未命中"继续(spec 风险章节),
@@ -56,6 +60,13 @@ import (
 // 一个租户可以往自己的 404 页里写 <script>,而同一个响应会出现在**任意**访客
 // 的浏览器上 —— 包括别的租户用同一个反向代理访问时。缺 X-Content-Type-Options
 // 时,浏览器还会对未声明类型的响应做嗅探,text/plain 里的标记可能被当 HTML 执行。
+//
+// 审查项 BIZ8 的结论(此处即修复落点,不再做入库消毒):租户自定义错误页 HTML
+// 采取"输出侧加固"而非"入库消毒" —— 消毒要么破坏租户自定义能力(把合法 HTML
+// 也改坏),要么触发 CSP 与消毒两套规则打架(ADR-0005 明确信任租户在自己域名下
+// 运行任意 HTML,与开放重定向同一条边界)。输出侧由本常量 + nosniff + no-store
+// 三个头统一收口,三个头在 setVisitorErrorHeaders 里对每条错误页路径都设置。
+// 回归断言见 TestTenantErrorPageSecurityHeaders。
 const visitorErrorCSP = "sandbox allow-scripts allow-forms; default-src 'self'; " +
 	"style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'"
 
@@ -98,19 +109,47 @@ type errorPagesCache struct {
 	items map[int64]*errorPagesSnapshot
 	// load 读取某租户的自定义错误页(签名与 (*store.Store).GetTenantErrorPages 一致)。
 	load func(ctx context.Context, tenantID int64) (string, string, error)
-	// loadMu 串行化慢路径:缓存失效瞬间的并发请求只触发一次加载,避免惊群。
-	loadMu sync.Mutex
-	ttl    time.Duration
-	log    *slog.Logger
+	// loadLocks 按租户串行化慢路径:缓存失效瞬间**同一租户**的并发请求只触发一次
+	// 加载(避免惊群),但不同租户之间互不阻塞 —— 原先一把全局 loadMu 会让任一租户
+	// 回源(2×512KB 查询)期间,全站所有租户的未命中 404 都排在它后面。
+	//
+	// 表按 tenantID 建条目,基数与上面的 items 一致(都是"活跃租户数"),不会无界增长。
+	loadLocksMu sync.Mutex
+	loadLocks   map[int64]*sync.Mutex
+	// loadTimeout 单次回源的独立超时(见 Get)。可用字段覆盖以便测试压缩时长。
+	loadTimeout time.Duration
+	ttl         time.Duration
+	log         *slog.Logger
 }
+
+// defaultErrorPagesLoadTimeout 单次错误页回源的独立超时。
+//
+// 与请求 ctx 分离:一次正常回源不该因为访客提前断连而半途失败,更不该让正在等
+// 同一把租户锁的其它请求一起拿到空快照。3s 足够一次两字段的按主键查询;
+// 超时后按 fail-open 返回空快照(退回系统内置页)且不写缓存。
+const defaultErrorPagesLoadTimeout = 3 * time.Second
 
 func newErrorPagesCache(load func(ctx context.Context, tenantID int64) (string, string, error)) *errorPagesCache {
 	return &errorPagesCache{
-		items: make(map[int64]*errorPagesSnapshot),
-		load:  load,
-		ttl:   DefaultErrorPagesTTL,
-		log:   slog.Default(),
+		items:       make(map[int64]*errorPagesSnapshot),
+		load:        load,
+		loadLocks:   make(map[int64]*sync.Mutex),
+		loadTimeout: defaultErrorPagesLoadTimeout,
+		ttl:         DefaultErrorPagesTTL,
+		log:         slog.Default(),
 	}
+}
+
+// loadLock 取某租户的加载锁(按需创建)。
+func (c *errorPagesCache) loadLock(tenantID int64) *sync.Mutex {
+	c.loadLocksMu.Lock()
+	defer c.loadLocksMu.Unlock()
+	l := c.loadLocks[tenantID]
+	if l == nil {
+		l = &sync.Mutex{}
+		c.loadLocks[tenantID] = l
+	}
+	return l
 }
 
 // Get 取某租户的错误页快照。加载失败时返回空快照(fail-open:退回系统内置页),
@@ -122,12 +161,17 @@ func (c *errorPagesCache) Get(ctx context.Context, tenantID int64) *errorPagesSn
 	if snap := c.cached(tenantID); snap != nil {
 		return snap
 	}
-	c.loadMu.Lock()
-	defer c.loadMu.Unlock()
+	// 只串行化同一租户:不同租户的慢路径完全并行,一个租户回源不再阻塞全站 404。
+	lk := c.loadLock(tenantID)
+	lk.Lock()
+	defer lk.Unlock()
 	if snap := c.cached(tenantID); snap != nil {
 		return snap
 	}
-	p404, p429, err := c.load(ctx, tenantID)
+	// 独立超时 + 断开取消链:回源的成败只由它自己决定,不受访客断连影响。
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.loadTimeout)
+	defer cancel()
+	p404, p429, err := c.load(loadCtx, tenantID)
 	if err != nil {
 		c.log.Error("加载租户错误页失败,退回内置页(fail-open)", "tenant", tenantID, "err", err)
 		return &errorPagesSnapshot{builtAt: time.Now()}
@@ -242,6 +286,8 @@ func (a *API) errorPageTenantID(c *gin.Context) int64 {
 func (a *API) handleRedirect(c *gin.Context) {
 	code := c.Param("code")
 	if code == "" || strings.Contains(code, "/") {
+		// 未命中路径:这里是本条链路上唯一为渲染租户自定义错误页而做的一次 DB 查询
+		// (fqdn 唯一索引等值查询),与文件头"零 DB 查询"约束的关系见其第 1 条注记。
 		a.renderVisitorError(c, http.StatusNotFound, a.errorPageTenantID(c), nil)
 		return
 	}
@@ -341,6 +387,12 @@ func (a *API) redirectToTarget(c *gin.Context, link *store.Link, targetURL strin
 	status := http.StatusFound // 302
 	if link.RedirectStatus == store.RedirectStatus301 {
 		status = http.StatusMovedPermanently
+		// 301 按语义可被浏览器/CDN **永久**缓存:目标一旦变更,已经缓存的访客仍会被
+		// 送到旧地址,且没有任何办法让他们回源 —— 这是一条不可撤回的重定向。
+		// 显式声明 no-cache, must-revalidate 把"永久"降级为"可失效的永久":
+		// 客户端每次仍可缓存,但使用前必须回源校验(ETag/Last-Modified 不在时即重新取)。
+		// 302 分支保持不带此头,保持既有的可缓存语义。
+		c.Header("Cache-Control", "no-cache, must-revalidate")
 	}
 	c.Redirect(status, targetURL)
 }
@@ -437,6 +489,18 @@ func visitRuleFields(dec rules.Decision) (*int64, string) {
 // 每命中一次写一次库就是写放大,而"24h 命中"由规则列表从明细读时聚合(spec D9)。
 func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domain, action string, dec rules.Decision) bool {
 	ruleID, ruleAction := visitRuleFields(dec)
+	// 统一出口校验(必须先于 ExecuteActionHandler):action=redirect 时 Destination
+	// 一律要过 validTargetURL(协议仅 http/https)。三条写入/注入路径在此汇合 ——
+	//   · 规则落库:httpapi/rules.go 写入时已用同一个 validTargetURL 校验;
+	//   · 插件前置拦截器:Decision 由外部插件给出,零校验透传;
+	//   · 外部 ActionHandler:通过 DeliveryContext.Target 拿到未校验的 Destination。
+	// 只有在这个出口拦下,后两条才不会把 javascript:/data: 之类写进 Location 头或
+	// 交给处理器。非法时按"未命中"放行(走原跳转),而不是把访客送到坏地址。
+	if dec.Action == store.RuleActionRedirect && !validTargetURL(dec.Destination) {
+		slog.Error("规则裁决为改写目标但 destination 非法,按未命中处理",
+			"rule", dec.RuleID, "link", link.ID, "destination", dec.Destination)
+		return false
+	}
 	// 先尝试外部注册的交付动作处理器（例如 proxy 服务端反代）
 	if ExecuteActionHandler(c, dec.Action, DeliveryContext{
 		Link:     link,
@@ -467,13 +531,9 @@ func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domai
 	case store.RuleActionRedirect:
 		// 规则改写的目标不参与轮询(spec 风险章节):轮询是"在目标池里选一条",
 		// 规则改写是"换一条路",语义不同,拿它去 PickTarget 会把改写目标轮询没了。
-		if dec.Destination == "" {
-			// 理论上写入时已校验过;真出现空目标时按"未命中"放行并记日志,
-			// 而不是把访问者重定向到一个空地址。
-			slog.Error("规则裁决为改写目标但 destination 为空,按未命中处理",
-				"rule", dec.RuleID, "link", link.ID)
-			return false
-		}
+		//
+		// dec.Destination 在此必然非空且合法:函数体顶部的统一出口校验已经把
+		// "空/非 http(s)" 的目标拦成"按未命中放行"。
 		a.recordVisit(c, store.VisitRecord{
 			LinkID: link.ID, DomainID: d.ID, Action: action,
 			Outcome: store.VisitOutcomeSuccess, TargetURL: dec.Destination,

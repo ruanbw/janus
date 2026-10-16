@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -24,6 +25,41 @@ import (
 
 // validFQDN 校验域名格式(实现在 domain 包,与入库归一化共用同一份规则)。
 func validFQDN(s string) bool { return domain.IsValidFQDN(s) }
+
+// domainVerifySyncTimeout 同步域名校验(创建域名 / 恢复域名)的子 ctx 超时。
+//
+// 这两个端点在请求内真实出网做 DNS(TXT + 最多 3 nameserver × A/AAAA),而没有
+// 任何上限时,上游 DNS 抖动会把请求与 goroutine 一起拖住。超时即视为"本次未通过",
+// 让租户稍后重试(状态机不变:域名仍停在 pending,进重试队列)。
+//
+// 声明为 var 以便测试压缩超时做确定性断言。
+var domainVerifySyncTimeout = 5 * time.Second
+
+// domainVerifyPerMinute 每个租户每分钟允许的同步域名校验次数。
+//
+// 与 recheck 端点的有界队列(见 enqueueVerify)对齐:那两个端点此前完全无限流,
+// 已登录租户用少量并发就能把上游 DNS 与 goroutine 打满。正常租户的域名增删改
+// 远达不到 20 次/分。
+const domainVerifyPerMinute = 20
+
+// domainVerifyLimiters 按 *API 实例持有域名校验限流器(与 visitorLimiters 同构,
+// 避免测试之间共用桶互相打空)。
+var domainVerifyLimiters sync.Map // *API -> *rateLimiter
+
+func (a *API) domainVerifyLimiter() *rateLimiter {
+	if v, ok := domainVerifyLimiters.Load(a); ok {
+		return v.(*rateLimiter)
+	}
+	v, _ := domainVerifyLimiters.LoadOrStore(a, newRateLimiter(domainVerifyPerMinute, time.Minute))
+	return v.(*rateLimiter)
+}
+
+// syncDomainVerify 在有限超时的子 ctx 内做一次同步归属校验(创建/恢复端点共用)。
+func (a *API) syncDomainVerify(ctx context.Context, fqdn, token string) (domain.VerifyResult, error) {
+	vctx, cancel := context.WithTimeout(ctx, domainVerifySyncTimeout)
+	defer cancel()
+	return a.dns.Verify(vctx, fqdn, token)
+}
 
 // domainView 是租户侧看到的域名视图:在 store.Domain 之外补上"TXT 该怎么填"的指引。
 //
@@ -129,7 +165,13 @@ func (a *API) handleCreateDomain(c *gin.Context) {
 	// 归属校验放在事务之前:校验要做 DNS 查询(最长数秒),压在租户行锁里等于
 	// 一条可被慢 DNS 放大的串行化长事务。此时还没有 token,TXT 判不了,
 	// 所以只能得到"A 记录指向了没有" —— 恰好也是租户要做的第一步。
-	res, err := a.dns.Verify(ctx, fqdn, "")
+	//
+	// 限流 + 有限超时:这个校验真实出网,不封顶就能被少量并发打满上游 DNS。
+	if !a.domainVerifyLimiter().Allow(strconv.FormatInt(t.ID, 10)) {
+		writeErr(c, http.StatusTooManyRequests, errRateLimited, "域名校验过于频繁,请稍后再试")
+		return
+	}
+	res, err := a.syncDomainVerify(ctx, fqdn, "")
 	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
@@ -349,7 +391,12 @@ func (a *API) handlePatchDomain(c *gin.Context) {
 	// 域名到期被他人注册并指向本机后,"恢复"按钮就是一条绕过闸门的路。
 	// 平台默认域名除外(泛域名解析由部署者配置,租户无权改动平台 DNS)。
 	if req.Status == "active" && d.Status != "active" && d.Origin == "self" {
-		res, err := a.dns.Verify(c.Request.Context(), d.FQDN, d.VerifyToken)
+		// 同创建端点:限流 + 有限超时,避免少量并发打满上游 DNS。
+		if !a.domainVerifyLimiter().Allow(strconv.FormatInt(t.ID, 10)) {
+			writeErr(c, http.StatusTooManyRequests, errRateLimited, "域名校验过于频繁,请稍后再试")
+			return
+		}
+		res, err := a.syncDomainVerify(c.Request.Context(), d.FQDN, d.VerifyToken)
 		if err != nil {
 			writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 			return
