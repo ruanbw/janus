@@ -6,10 +6,40 @@ import (
 	"net/http"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
+
+// PanicCounts 各扩展点触发 Fail-Open(panic 被吞)的累计次数,供运维观测。
+// 任何一项持续增长都意味着某个外部插件在静默失效,应尽快定位。
+type PanicCounts struct {
+	Enricher      uint64
+	Interceptor   uint64
+	ActionHandler uint64
+	SDKInjector   uint64
+	PostVisitHook uint64
+}
+
+var (
+	panicsEnricher      atomic.Uint64
+	panicsInterceptor   atomic.Uint64
+	panicsActionHandler atomic.Uint64
+	panicsSDKInjector   atomic.Uint64
+	panicsPostHook      atomic.Uint64
+)
+
+// PanicStatistics 快照各扩展点的 Fail-Open 累计次数(观测用)。
+func PanicStatistics() PanicCounts {
+	return PanicCounts{
+		Enricher:      panicsEnricher.Load(),
+		Interceptor:   panicsInterceptor.Load(),
+		ActionHandler: panicsActionHandler.Load(),
+		SDKInjector:   panicsSDKInjector.Load(),
+		PostVisitHook: panicsPostHook.Load(),
+	}
+}
 
 // Fact 一次访问的访客画像公开 DTO。
 // 字段语义与基座规则求值画像对齐，支持外部 Enricher 进行扩展富化。
@@ -110,8 +140,9 @@ func enricherSnapshot() []FactEnricher {
 func enrichOne(e FactEnricher, ctx context.Context, r *http.Request, fact *Fact) {
 	defer func() {
 		if rec := recover(); rec != nil {
+			n := panicsEnricher.Add(1)
 			slog.Error("画像富化器 panic,按未富化处理(fail-open)",
-				"enricher", e.Name(), "panic", rec, "stack", string(debug.Stack()))
+				"enricher", e.Name(), "panic", rec, "panics_total", n, "stack", string(debug.Stack()))
 		}
 	}()
 	e.Enrich(ctx, r, fact)
@@ -141,6 +172,12 @@ func HasASNProvider() bool {
 // =========================================================================
 
 // RuleInterceptor 允许在遍历规则快照之前短路求值逻辑，直接给出最终决议。
+//
+// Fail-Open 契约(实现者必读):Intercept panic 时基座按"未拦截"处理并继续下一个
+// 拦截器/常规规则求值 —— 即放行。对**安全型**拦截器(应阻断可疑流量者)而言,
+// panic 等于静默失效,不可依赖 panic 表达阻断;必须用返回 (*Decision, true) 显式
+// 给出 block/redirect 决议。观测型/增强型拦截器可安全享受 Fail-Open。
+// 每次 Fail-Open 都会递增 PanicStatistics().Interceptor 并打结构化日志。
 type RuleInterceptor interface {
 	Name() string
 	Intercept(ctx context.Context, r *http.Request, linkID int64, fact *Fact) (*Decision, bool)
@@ -183,8 +220,9 @@ func checkOne(i RuleInterceptor, ctx context.Context, r *http.Request, linkID in
 	defer func() {
 		if rec := recover(); rec != nil {
 			d, ok = nil, false
+			n := panicsInterceptor.Add(1)
 			slog.Error("规则拦截器 panic,按未拦截处理(fail-open)",
-				"interceptor", i.Name(), "panic", rec, "stack", string(debug.Stack()))
+				"interceptor", i.Name(), "panic", rec, "panics_total", n, "stack", string(debug.Stack()))
 		}
 	}()
 	return i.Intercept(ctx, r, linkID, fact)
@@ -206,6 +244,10 @@ func CheckInterceptors(ctx context.Context, r *http.Request, linkID int64, fact 
 
 // ActionHandler 执行具体的 HTTP 内容交付。
 // 返回 true 表示本次响应已被终结并交付；返回 false 表示由基座按默认逻辑处理。
+//
+// Fail-Open 契约:handler panic 时基座按"未处理"处理(若响应尚未写入则返回 false,
+// 交回基座默认交付;若已写入部分响应则返回 true 终结)。每次 Fail-Open 递增
+// PanicStatistics().ActionHandler 并打结构化日志。
 type ActionHandler func(c *gin.Context, dctx DeliveryContext) bool
 
 var (
@@ -241,8 +283,9 @@ func ExecuteActionHandler(c *gin.Context, action string, dctx DeliveryContext) (
 	defer func() {
 		if rec := recover(); rec != nil {
 			handled = c.Writer.Written()
+			n := panicsActionHandler.Add(1)
 			slog.Error("交付动作处理器 panic,退化为基座默认交付(fail-open)",
-				"action", action, "handled", handled, "panic", rec, "stack", string(debug.Stack()))
+				"action", action, "handled", handled, "panic", rec, "panics_total", n, "stack", string(debug.Stack()))
 		}
 	}()
 	return handler(c, dctx)
@@ -288,8 +331,9 @@ func WrapGeneratedSDK(domain, code string, rawSDK string) (out string) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			out = rawSDK
+			n := panicsSDKInjector.Add(1)
 			slog.Error("SDK 注入器 panic,回退基座 SDK(fail-open)",
-				"injector", injector.Name(), "panic", rec, "stack", string(debug.Stack()))
+				"injector", injector.Name(), "panic", rec, "panics_total", n, "stack", string(debug.Stack()))
 		}
 	}()
 	return injector.WrapSDK(domain, code, rawSDK)
@@ -363,8 +407,9 @@ func TriggerPostVisitHooks(ctx context.Context, r *http.Request, visit VisitReco
 func runHook(h PostVisitHook, ctx context.Context, r *http.Request, visit VisitRecord) {
 	defer func() {
 		if rec := recover(); rec != nil {
+			n := panicsPostHook.Add(1)
 			slog.Error("后置访问钩子 panic,已忽略(fail-open)",
-				"panic", rec, "stack", string(debug.Stack()))
+				"panic", rec, "panics_total", n, "stack", string(debug.Stack()))
 		}
 	}()
 	h(ctx, r, visit)
