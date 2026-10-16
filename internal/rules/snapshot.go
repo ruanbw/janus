@@ -236,14 +236,31 @@ func (c *Cache) Get(ctx context.Context, tenantID int64) *Snapshot {
 			if rec := recover(); rec != nil {
 				c.log.Error("加载租户规则 panic,按无规则放行(fail-open)",
 					"tenant", tenantID, "panic", rec, "stack", string(debug.Stack()))
-				// panic 路径照旧不写缓存(不记 failedAt:退避窗口只针对 loader 明确返错),
-				// 但同样先顶上上一份可用快照,而不是直接退回"没有规则"。
+				// panic 与"loader 明确返错"同属加载失败,一并进退避窗口:
+				// 一个每次都 panic 的 loader 否则会在每个请求上重跑一遍,
+				// 每跑一次展开一份 debug.Stack —— 那正是 loadFailureBackoff
+				// 要防的"故障期间把资源往死里打"。照旧不写缓存,只记失败时刻。
+				c.markLoadFailed(tenantID)
+				// 同样先顶上上一份可用快照,而不是直接退回"没有规则"。
 				snap = c.fallbackSnapshot(tenantID)
 			}
 		}()
 		snap = c.load(ctx, tenantID)
 	}()
 	return snap
+}
+
+// markLoadFailed 记下该租户的加载失败时刻,让退避窗口生效。
+// 调用方负责决定"这次失败要不要退避";failedAt 不进快照、不影响 gen 语义。
+func (c *Cache) markLoadFailed(tenantID int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e := c.items[tenantID]
+	if e == nil {
+		e = &cacheEntry{}
+		c.items[tenantID] = e
+	}
+	e.failedAt = time.Now()
 }
 
 // cached 读缓存:有且未过期才算命中。
