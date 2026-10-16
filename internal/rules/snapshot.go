@@ -38,6 +38,14 @@ const DefaultSnapshotTTL = time.Minute
 // 窗口过后才重试 loader。
 const loadFailureBackoff = time.Second
 
+// loadTimeout 单次整租户加载的独立时限。
+//
+// 加载用的是与发起请求解绑的 ctx(见 load 的注释),所以必须自带一个截止时间:
+// 否则 loader 卡住时,这条 goroutine 会一直挂着 —— 请求侧已经没有任何东西能中止它。
+// 取 5s:这是一次「整租户规则全量读 + 最多 200 条规则预编译」的完整预算,
+// 正常是毫秒级;超过它说明 DB 真的出问题了,按加载失败记退避才是正确处置。
+const loadTimeout = 5 * time.Second
+
 // Snapshot 一个租户在某一时刻的规则集合,按求值顺序(priority 升序, id 升序)排好。
 // 构造后不可变,多 goroutine 可并发读。
 type Snapshot struct {
@@ -289,7 +297,16 @@ func (c *Cache) load(ctx context.Context, tenantID int64) *Snapshot {
 	startGen := e.gen
 	c.mu.Unlock()
 
-	rules, err := c.loader(ctx, tenantID)
+	// 加载用与发起请求**解绑**的 ctx:客户端断连取消的是"这一次跳转",
+	// 不是"这个租户的规则加载失败"。沿用请求 ctx 的后果很具体 ——
+	// ctx 一取消,真实 loader(DB 查询)立刻返回 context.Canceled,被记成
+	// 加载失败写 failedAt,整个租户进入 loadFailureBackoff 窗口;一次批量断连
+	// 就能让该租户的规则降级整整一秒,而原因只是"没人等这次响应了"。
+	// WithoutCancel 保留 ctx 上的 value(追踪/租户上下文)但去掉取消信号,
+	// 再由 loadTimeout 提供独立截止时间。
+	loadCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), loadTimeout)
+	defer cancel()
+	rules, err := c.loader(loadCtx, tenantID)
 	if err != nil {
 		c.log.Error("加载租户规则失败,按无规则放行(fail-open)", "tenant", tenantID, "err", err)
 		// 失败标记与"读上一份可用快照"在同一把 items 锁内完成:
