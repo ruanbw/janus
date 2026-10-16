@@ -126,6 +126,7 @@ type options struct {
 	customDB              *gorm.DB
 	routeInjects          []func(engine *gin.Engine)
 	protectedRouteInjects []func(rg *gin.RouterGroup)
+	eventListeners        []pendingListener
 	extraFS               fs.FS
 }
 
@@ -205,12 +206,31 @@ func WithExtraMigrationsDir(dir string) Option {
 	}
 }
 
-// WithEventListener 注册领域事件监听器
+// WithEventListener 注册领域事件监听器。
+//
+// 订阅在 New 成功构建后统一完成,并在 App.Shutdown 时解绑 —— 避免全局单例订阅
+// 在实例销毁后继续被触发(多实例互相串扰、重复注册)。未调用 Shutdown 就丢弃实例
+// 仍会残留订阅,调用方应保证收尾时调用 Shutdown。
 func WithEventListener(topic string, handler event.Handler) Option {
 	return func(o *options) error {
-		event.Subscribe(topic, handler)
+		if topic == "" || handler == nil {
+			return nil
+		}
+		o.eventListeners = append(o.eventListeners, pendingListener{topic: topic, handler: handler})
 		return nil
 	}
+}
+
+// pendingListener 待注册的事件监听器(构建成功后才真正订阅)。
+type pendingListener struct {
+	topic   string
+	handler event.Handler
+}
+
+// eventSubscription 已注册监听器的解绑凭据。
+type eventSubscription struct {
+	topic string
+	id    uint64
 }
 
 // Event 重新导出领域事件公开接口
@@ -253,6 +273,7 @@ type App struct {
 	extraFS               fs.FS
 	workerDone            chan struct{}
 	cancelRun             context.CancelFunc
+	eventSubs             []eventSubscription
 	mu                    sync.Mutex
 	running               bool
 }
@@ -314,6 +335,14 @@ func New(opts ...Option) (*App, error) {
 	// 初始化 HTTP Handler 引擎
 	if err := app.initHandler(); err != nil {
 		return nil, err
+	}
+
+	// 所有可能失败的构建步骤都已完成,最后再注册事件订阅并记录解绑凭据。
+	// 放在末尾可保证「New 失败时不会留下已注册的订阅」。
+	for _, l := range opt.eventListeners {
+		if id := event.SubscribeID(l.topic, l.handler); id != 0 {
+			app.eventSubs = append(app.eventSubs, eventSubscription{topic: l.topic, id: id})
+		}
 	}
 
 	return app, nil
@@ -559,6 +588,13 @@ func (a *App) Shutdown(ctx context.Context) error {
 	if a.cancelRun != nil {
 		a.cancelRun()
 	}
+
+	// 解绑本实例注册的全局事件订阅:否则实例销毁后订阅仍挂在全局事件总线上,
+	// 多实例场景会互相串扰、重复触发。
+	for _, s := range a.eventSubs {
+		event.Unsubscribe(s.topic, s.id)
+	}
+	a.eventSubs = nil
 
 	var srvErr error
 	if a.server != nil {

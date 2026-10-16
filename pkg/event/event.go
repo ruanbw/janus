@@ -21,8 +21,16 @@ type Handler func(ctx context.Context, e Event)
 
 var (
 	busLock   sync.RWMutex
-	listeners = make(map[string][]Handler)
+	listeners = make(map[string][]subscription)
+	nextSubID atomic.Uint64
 )
+
+// subscription 一个已注册监听器:持有订阅 ID 以便解绑(Go 的函数值不可比较,
+// 无法按 handler 反查)。
+type subscription struct {
+	id      uint64
+	handler Handler
+}
 
 // 有界派发:每个已发布事件占用一个派发槽,槽满即丢弃并计数(Fail-Open),绝不阻塞
 // 发布方热路径,也不无限起 goroutine。同一次派发内,同一 topic 的多个 handler 串行。
@@ -46,21 +54,50 @@ func init() {
 	maxConcurrentDispatches.Store(defaultMaxConcurrentDispatches)
 }
 
-// Subscribe 注册事件监听器
+// Subscribe 注册事件监听器。保留原签名;需要后续解绑时用 SubscribeID。
 func Subscribe(topic string, handler Handler) {
+	_ = SubscribeID(topic, handler)
+}
+
+// SubscribeID 注册事件监听器并返回订阅 ID(非零),可与 Unsubscribe 配对解绑。
+// topic 为空或 handler 为 nil 时返回 0(未注册)。
+func SubscribeID(topic string, handler Handler) uint64 {
 	if topic == "" || handler == nil {
-		return
+		return 0
+	}
+	id := nextSubID.Add(1)
+	busLock.Lock()
+	defer busLock.Unlock()
+	listeners[topic] = append(listeners[topic], subscription{id: id, handler: handler})
+	return id
+}
+
+// Unsubscribe 按 (topic, id) 解绑先前 SubscribeID 注册的监听器,返回是否命中。
+// 用于避免全局单例订阅在实例销毁后继续被触发(多实例互相串扰/重复注册)。
+func Unsubscribe(topic string, id uint64) bool {
+	if topic == "" || id == 0 {
+		return false
 	}
 	busLock.Lock()
 	defer busLock.Unlock()
-	listeners[topic] = append(listeners[topic], handler)
+	list := listeners[topic]
+	for i, s := range list {
+		if s.id == id {
+			listeners[topic] = append(list[:i:i], list[i+1:]...)
+			if len(listeners[topic]) == 0 {
+				delete(listeners, topic)
+			}
+			return true
+		}
+	}
+	return false
 }
 
 // Reset 清空所有订阅者与派发计数（测试隔离用）
 func Reset() {
 	busLock.Lock()
 	defer busLock.Unlock()
-	listeners = make(map[string][]Handler)
+	listeners = make(map[string][]subscription)
 	droppedDispatches.Store(0)
 }
 
@@ -75,14 +112,14 @@ func Publish(ctx context.Context, e Event) {
 	}
 
 	busLock.RLock()
-	handlers := listeners[e.Topic()]
-	if len(handlers) == 0 {
+	subs := listeners[e.Topic()]
+	if len(subs) == 0 {
 		busLock.RUnlock()
 		return
 	}
-	// 拷贝一份 handler 切片，避免长持读锁或遍历时修改
-	copied := make([]Handler, len(handlers))
-	copy(copied, handlers)
+	// 拷贝一份订阅切片，避免长持读锁或遍历时修改
+	copied := make([]subscription, len(subs))
+	copy(copied, subs)
 	busLock.RUnlock()
 
 	// 抢占派发槽:非阻塞,抢不到即丢弃。
@@ -101,8 +138,8 @@ func Publish(ctx context.Context, e Event) {
 		// 断开请求级取消信号 + 固定超时(见 handlerTimeout 注释)。
 		handlerCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), handlerTimeout)
 		defer cancel()
-		for _, h := range copied {
-			runHandlerSafely(handlerCtx, e, h)
+		for _, s := range copied {
+			runHandlerSafely(handlerCtx, e, s.handler)
 		}
 	}()
 }
