@@ -21,7 +21,13 @@ type IPRadixPredicate struct {
 func (p *IPRadixPredicate) Type() string { return "ip_radix" }
 func (p *IPRadixPredicate) Cost() int    { return 5 } // Radix 树查询极快 (纳秒级)
 
+// Match 判定访客 IP 是否落在预编译的 IP/CIDR 集合内。
+// ctx == nil 与"取不到地址"同义:恒不命中,且否定运算符也不得因此翻成命中
+// (对齐 StringPredicate / 数值 / 正则 / duplicated 三个谓词的同一道防御)。
 func (p *IPRadixPredicate) Match(ctx VisitorContext) bool {
+	if ctx == nil {
+		return false
+	}
 	if p.radix == nil {
 		return false
 	}

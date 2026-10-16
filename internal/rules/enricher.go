@@ -2,10 +2,12 @@ package rules
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"janus/pkg/plugin"
 )
@@ -15,6 +17,48 @@ import (
 type FactEnricher interface {
 	Name() string
 	Enrich(ctx context.Context, r *http.Request, fact *Fact)
+}
+
+// pluginNamer 取插件名的最小接口(富化器与拦截器都满足)。
+type pluginNamer interface{ Name() string }
+
+// safePluginName 取插件名,并把 Name() 自己的 panic 也关在隔离层内。
+//
+// 为什么必须单独包一层:Name() 是外部代码。它在 panic 处理路径上二次 panic 的
+// 后果很具体 —— deferred 函数里新起的 panic 已经没有任何 recover 接得住,
+// 会直接冒到访客热路径(被全局中间件兜成 500),隔离层等于失效。
+// 所以名字要在调用插件**之前**取,而取名字这一步自己也要兜住;
+// 取不到就退回类型名(%T 不调用任何方法,不会再次触发外部代码)。
+func safePluginName(n pluginNamer) (name string) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			name = fmt.Sprintf("%T", n)
+			slog.Error("插件 Name() panic,按类型名继续", "type", name, "panic", rec)
+		}
+	}()
+	return n.Name()
+}
+
+// pluginCallSlowThreshold 单个插件调用的耗时告警阈值。
+//
+// 插件契约要求"微秒级纯内存计算"(见 FactEnricher 的文档注释),但 panic 隔离
+// 挡不住"慢":一个 sleep 1s 的插件就能挂住整条跳转链路,而且不留任何痕迹。
+// 这里的护栏是**观测**而不是熔断 —— 插件是任意 Go 代码,没有可中断的执行模型,
+// 强行超时只能"放弃等待",被放弃的 goroutine 仍在烧 CPU(与 runProgram 里
+// 弃用 goroutine+timer 的理由同源)。所以:结果照常采用,只记一条告警,
+// 让运维能定位到是哪个插件在拖慢热路径。
+//
+// 是变量而非常量:测试需要把阈值抬到"任何调用都在阈值内"来钉住阴性对照。
+var pluginCallSlowThreshold = time.Millisecond
+
+// watchPluginCall 记录一次插件调用的耗时,超阈值告警。
+// kind 区分富化器 / 拦截器;name 是插件标识 —— 基座注册表能给真实插件名,
+// pkg/plugin 侧由那个包内部逐个调用,基座只能测到聚合耗时,故用固定标识。
+func watchPluginCall(kind, name string, start time.Time) {
+	if d := time.Since(start); d >= pluginCallSlowThreshold {
+		slog.Error("插件调用耗时超过热路径阈值,阻塞跳转",
+			"kind", kind, "name", name, "elapsed", d, "threshold", pluginCallSlowThreshold)
+	}
 }
 
 var (
@@ -57,11 +101,16 @@ func enricherSnapshot() []FactEnricher {
 // 冒出去只会被全局中间件兜成 500,而正确的退化是"这个维度当没有"。
 // recover 之后继续跑后面的富化器:一个插件炸了不等于整次富化作废。
 func enrichOne(e FactEnricher, ctx context.Context, r *http.Request, fact *Fact) {
+	start := time.Now()
+	// 名字在调用插件之前取:否则 recover 路径上的 Name() 一旦再 panic,
+	// 就会从这个 deferred 函数里冒出去 —— 那正是隔离层要挡的东西(见 safePluginName)。
+	name := safePluginName(e)
 	defer func() {
 		if rec := recover(); rec != nil {
 			slog.Error("画像富化器 panic,按未富化处理(fail-open)",
-				"enricher", e.Name(), "panic", rec, "stack", string(debug.Stack()))
+				"enricher", name, "panic", rec, "stack", string(debug.Stack()))
 		}
+		watchPluginCall("enricher", name, start)
 	}()
 	e.Enrich(ctx, r, fact)
 }

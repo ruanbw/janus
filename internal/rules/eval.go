@@ -112,6 +112,67 @@ type Compiled struct {
 	nested     bool               // 是否真的用了嵌套(用于把「为什么没命中」说成人话)
 }
 
+// 引擎层的条件规模上限,与 API 层(httpapi 的 maxConditionTreeDepth /
+// maxConditionLeaves)刻意同值。
+//
+// 两份常量而不是共享一份的原因:httpapi 依赖 rules,反向引用会成环;而这道
+// 校验的位置必须落在引擎侧 —— 经 API 写入的规则已经被那一侧拦住,引擎这道
+// 只对**直写库 / 导入**通道生效。那种规则同样会进快照、在跳转热路径上被逐条
+// 求值,加载期与求值期的递归深度也跟着树深走,不能只靠写入侧把关。
+// 漂移风险因此落在"改了一边忘了另一边":两处都有测试钉住各自的上限值。
+const (
+	// maxConditionTreeDepth 条件树深度上限(根节点记为第 1 层)。
+	maxConditionTreeDepth = 8
+	// maxConditionLeaves 单规则的叶子条件总数上限(扁平与树形态统一按叶子计数)。
+	maxConditionLeaves = 64
+
+	// maxRegexPatterns 单条 regex 条件的 pattern 条数上限,与 httpapi 的
+	// maxConditionValues 同值。RE2 免疫 ReDoS,但编译成本随 pattern 长度增长、
+	// 单次匹配成本随 pattern 条数线性增长,而直写库通道进来的条件同样会在
+	// 跳转热路径上逐条求值。
+	maxRegexPatterns = 100
+	// maxRegexPatternLen 单个 regex pattern 的字节数上限,与 httpapi 的
+	// maxConditionValueLen 同值(解析/编译成本随 pattern 长度增长)。
+	maxRegexPatternLen = 1024
+)
+
+// checkConditionShape 判定条件树的深度与叶子数是否在引擎上限内。
+// 深度记法与 httpapi 的 validateConditionNode 一致:根节点为第 1 层。
+// 超限返回 false:调用方按"整条规则不可求值"丢弃(不截断、不截深 —— 截断会
+// 静默改变规则语义,and 组里丢条件等于放宽、or 组里丢条件等于收紧)。
+//
+// 递归在超出深度上限的那一层立刻返回,所以对恶意深树本身也是 O(上限) 的。
+func checkConditionShape(n store.ConditionNode, ruleID int64, log *slog.Logger) bool {
+	leaves := 0
+	var walk func(node store.ConditionNode, depth int) bool
+	walk = func(node store.ConditionNode, depth int) bool {
+		if depth > maxConditionTreeDepth {
+			log.Warn("规则条件树深度超过引擎上限,整条规则不参与求值",
+				"rule", ruleID, "depth", depth, "limit", maxConditionTreeDepth)
+			return false
+		}
+		if node.Leaf != nil {
+			leaves++
+			if leaves > maxConditionLeaves {
+				log.Warn("规则条件树叶子数超过引擎上限,整条规则不参与求值",
+					"rule", ruleID, "leaves", leaves, "limit", maxConditionLeaves)
+				return false
+			}
+			return true
+		}
+		if node.Group == nil {
+			return true // 结构非法(既无 leaf 也无 group)由 compileNode 处置
+		}
+		for _, child := range node.Group.Children {
+			if !walk(child, depth+1) {
+				return false
+			}
+		}
+		return true
+	}
+	return walk(n, 1)
+}
+
 // compileRule 预编译一条规则。conditions 非空但全部被丢弃(字段不认识/正则非法/CIDR 非法)
 // 时返回 ok=false:一条坏条件不能拖垮整份快照,但也不能让这条规则退化成"恒命中的兜底"。
 func compileRule(r store.Rule, log *slog.Logger) (Compiled, bool) {
@@ -154,6 +215,10 @@ func compileRule(r store.Rule, log *slog.Logger) (Compiled, bool) {
 	declared := r.Conditions.Len()
 	kept := 0
 	if r.Conditions.IsTree() {
+		// 引擎层规模上限(第二道防线,防直写库 / 导入通道):超限整条不参与求值。
+		if !checkConditionShape(*r.Conditions.Root, r.ID, log) {
+			return Compiled{}, false
+		}
 		root, ok := compileNode(*r.Conditions.Root, r.ID, log)
 		if !ok {
 			log.Warn("规则条件树不可求值,整条规则不参与求值", "rule", r.ID, "name", r.Name)
@@ -163,6 +228,13 @@ func compileRule(r store.Rule, log *slog.Logger) (Compiled, bool) {
 		c.nested = root.nestedTree()
 		kept = len(root.leaves())
 	} else {
+		// 扁平形态的叶子数同样要封顶:直写库可以塞进任意多条条件,
+		// 而它们会全部编进常驻快照并在跳转热路径上逐条求值。
+		if len(r.Conditions.Leaves) > maxConditionLeaves {
+			log.Warn("规则条件叶子数超过引擎上限,整条规则不参与求值",
+				"rule", r.ID, "leaves", len(r.Conditions.Leaves), "limit", maxConditionLeaves)
+			return Compiled{}, false
+		}
 		// 扁平形态就是"一层 + rules.logic"的树:求值路径只有 root 一条
 		root := compiledNode{op: nodeOpFor(c.logicAll)}
 		var preds []ConditionPredicate
@@ -370,7 +442,16 @@ func compileCond(cond store.RuleCondition, ruleID int64, log *slog.Logger) (comp
 		}
 		c.seen = n
 	case OpRegex:
+		// 规模上限(第二道防线,防直写库 / 导入通道):超限按整条条件不可求值处理。
+		// 不"跳过超限的那条 pattern 继续编译"—— 那会在 any-of 语义下静默收窄集合,
+		// 规则行为与用户以为的不一样;API 层对同样输入是直接 400。
+		if len(values) > maxRegexPatterns {
+			return drop("正则 pattern 数量超过引擎上限")
+		}
 		for _, v := range values {
+			if len(v) > maxRegexPatternLen {
+				return drop("正则 pattern 长度超过引擎上限")
+			}
 			re, err := regexp.Compile(v)
 			if err != nil {
 				// 一个值坏掉不该让整条条件失效:跳过它,剩下的照常编译
@@ -464,8 +545,10 @@ func (c *compiledCond) matchOne(ctx VisitorContext, raw string) bool {
 	case OpRegex:
 		return c.matchRegex(raw)
 	case OpDuplicated:
-		// 计数来自调用方提供的 Fact.Seen;没有计数数据(=没接数据源)时恒不命中
-		if f, ok := ctx.(*Fact); ok && f.Seen != nil {
+		// 计数来自调用方提供的 Fact.Seen;没有计数数据(=没接数据源)时恒不命中。
+		// f != nil 是必须的:接口里的 typed-nil(如 `var p *Fact; var ctx VisitorContext = p`)
+		// 类型断言会成功但值是 nil,只判 ok 就会解引用 nil —— 与 FactFromContext 同一道防御。
+		if f, ok := ctx.(*Fact); ok && f != nil && f.Seen != nil {
 			return f.Seen[SeenKey(c.field, raw)] >= c.seen
 		}
 		if f, ok := ctx.(Fact); ok && f.Seen != nil {

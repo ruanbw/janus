@@ -198,19 +198,56 @@ func isDynamicField(field string) bool {
 	return ok
 }
 
+// parseQueryFunc 解析整条查询串。是变量而非直接嵌 url.ParseQuery:测试要数
+// "一个请求的查询串被完整解析了几次"(每个请求只该解析一次,见 queryCache)。
+var parseQueryFunc = url.ParseQuery
+
+// parseQuery 解析查询串。语义与改动前一致:解析出错且没拿到任何值时,
+// 视为"没有数据"(返回 nil),而不是半份结果。
+func parseQuery(rawQuery string) url.Values {
+	vals, err := parseQueryFunc(rawQuery)
+	if err != nil && len(vals) == 0 {
+		return nil
+	}
+	return vals
+}
+
+// queryCache 惰性解析并缓存整条查询串:一个请求解析一次,全部 query: 字段共用。
+//
+// 不缓存时的代价很具体:规则里有 N 条 query: 条件,N 个不同的参数名各自触发一次
+// url.ParseQuery(整条查询串)—— 解析成本与"查询串长度 × N"成正比,而这整份
+// 解析结果本该是全部字段共享的。
+//
+// 零值可用。缓存只挂在 LazyVisitorContext 上(唯一的生产形态):Fact 是值类型,
+// 拷贝之间存不住缓存,而它只服务富化器 / 拦截器 / 模拟器,不在跳转热路径上。
+type queryCache struct {
+	vals   url.Values
+	parsed bool
+}
+
+// values 取缓存里的解析结果;首次调用时解析整条查询串。
+func (q *queryCache) values(rawQuery string) url.Values {
+	if q.parsed {
+		return q.vals
+	}
+	q.parsed = true
+	q.vals = parseQuery(rawQuery)
+	return q.vals
+}
+
 // dynamicRequestValues 从请求头 / 查询串里取出一个动态字段的全部非空值。
 // 头名走 net/http 的 canonical 化(大小写不敏感);查询参数名大小写敏感。
 // 空串值不算数据:与固定字段的"取不到值"语义一致,空值既不是匹配也不是不匹配的反面。
-func dynamicRequestValues(prefix, key string, hdr http.Header, rawQuery string) []string {
+// q 为解析缓存(可为 nil:值类型画像存不住缓存,按需解析一次)。
+func dynamicRequestValues(q *queryCache, prefix, key string, hdr http.Header, rawQuery string) []string {
 	switch prefix {
 	case fieldHeaderPrefix:
 		return nonEmptyValues(hdr.Values(key))
 	case fieldQueryPrefix:
-		vals, err := url.ParseQuery(rawQuery)
-		if err != nil && len(vals) == 0 {
-			return nil
+		if q != nil {
+			return nonEmptyValues(q.values(rawQuery)[key])
 		}
-		return nonEmptyValues(vals[key])
+		return nonEmptyValues(parseQuery(rawQuery)[key])
 	}
 	return nil
 }
@@ -336,12 +373,14 @@ func (f *Fact) value(field string) (string, bool) {
 }
 
 // dynamicValues 取动态字段的全部非空值;不是动态字段或没有数据时 ok=false。
+// 查询串不在这里缓存:Fact 是值类型、会被反复拷贝,存不了一份能共享的缓存
+// (生产形态 LazyVisitorContext 侧有 per-request 缓存,见 queryCache)。
 func (f Fact) dynamicValues(field string) ([]string, bool) {
 	prefix, key, ok := splitDynamicField(field)
 	if !ok {
 		return nil, false
 	}
-	vals := dynamicRequestValues(prefix, key, f.hdr, f.rawQuery)
+	vals := dynamicRequestValues(nil, prefix, key, f.hdr, f.rawQuery)
 	if len(vals) == 0 {
 		return nil, false
 	}
@@ -432,6 +471,10 @@ type LazyVisitorContext struct {
 	// dynValues 是动态字段取值的缓存:同一条件在一次求值里可能被问到多次,
 	// 缓存避免重复解析查询串。缺失值也缓存(空切片),不会反复解析。
 	dynValues map[string][]string
+
+	// query 是整条查询串的解析缓存:全部 query: 字段共用一份,一个请求只解析一次。
+	// reset() 会整体清零,不会把上一个请求的查询串带进下一次复用。
+	query queryCache
 }
 
 var visitorContextPool = sync.Pool{
@@ -634,6 +677,7 @@ func (c *LazyVisitorContext) Field(name string) (string, bool) {
 }
 
 // dynamicValues 取动态字段的全部非空值并缓存(不是动态字段 / 没有数据 → ok=false)。
+// 查询串的解析结果由 c.query 缓存,全部 query: 字段共用,一个请求只解析一次。
 func (c *LazyVisitorContext) dynamicValues(name string) ([]string, bool) {
 	if c.dynValues != nil {
 		if vals, ok := c.dynValues[name]; ok {
@@ -653,7 +697,7 @@ func (c *LazyVisitorContext) dynamicValues(name string) ([]string, bool) {
 		if c.req.URL != nil {
 			rawQuery = c.req.URL.RawQuery
 		}
-		vals = dynamicRequestValues(prefix, key, c.req.Header, rawQuery)
+		vals = dynamicRequestValues(&c.query, prefix, key, c.req.Header, rawQuery)
 	}
 	if c.dynValues == nil {
 		c.dynValues = make(map[string][]string, 4)
