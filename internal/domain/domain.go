@@ -203,19 +203,42 @@ type DNSChecker struct {
 
 	resolverOnce sync.Once
 	txtResolver  *net.Resolver
-	tasksOnce    sync.Once
-	tasks        *TaskQueue
+
+	tasksMu sync.Mutex
+	tasks   *TaskQueue
 }
 
 // Tasks 返回与本校验器绑定的后台任务队列(有界并发 + single-flight)。
 //
 // 挂在校验器上而不是全局:一次 API 实例 = 一个校验器 = 一份队列。原先的
 // `go func()` 是每个请求一个 goroutine,没有并发上限、没有去重,也没有队列上限。
+//
+// 队列是懒创建的,所以持有者停机时必须调 Shutdown 把已创建的队列关掉
+// (否则留下 defaultTaskWorkers 个永不退出的 worker goroutine)。
 func (c *DNSChecker) Tasks() *TaskQueue {
-	c.tasksOnce.Do(func() {
+	c.tasksMu.Lock()
+	defer c.tasksMu.Unlock()
+	if c.tasks == nil {
 		c.tasks = NewTaskQueue(defaultTaskWorkers, defaultTaskQueue)
-	})
+	}
 	return c.tasks
+}
+
+// Shutdown 关闭本校验器已创建的队列(没创建过就什么都不做),并取消其上下文,
+// 让正在跑的任务能感知停机。之后再次调用 Tasks() 会得到一份新队列。
+//
+// 装配点:队列的持有者在停机路径上调用 —— 生产环境是 httpapi 的 API 实例
+// (每个实例持有自己的 DNSChecker),测试里是 testutil 的 fakeOwnership。
+// 这一层只提供关机手柄;把 HandleSignals/Shutdown 接进各自的关闭路径属于装配,
+// 不在本包内(见审查项 DOM4 的遗留说明)。
+func (c *DNSChecker) Shutdown() {
+	c.tasksMu.Lock()
+	q := c.tasks
+	c.tasks = nil
+	c.tasksMu.Unlock()
+	if q != nil {
+		q.Close()
+	}
 }
 
 // Verify 校验域名归属,返回三态结果(外加"本轮无法判定"的 VerifyDNSUnavailable)。
