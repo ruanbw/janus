@@ -1138,9 +1138,18 @@ onMounted(init);
         </div>
       </template>
       <div class="flex-1 p-3 bg-line/20 h-full">
+        <!--
+          sandbox 必须与线上的 CSP 对齐，否则预览会骗人。
+          线上（internal/httpapi/redirect.go 的 visitorErrorCSP）是
+          `sandbox allow-scripts allow-forms`：脚本会跑，但页面处于不透明来源，
+          读不到本站 cookie / localStorage。
+          此前写 `allow-same-origin` 恰好禁掉了 allow-scripts：预览里脚本不执行、
+          真机上却执行，租户会误以为自己的脚本坏了；而一旦同时放开两个开关，
+          预览 iframe 又会拿到本站来源、能读后台会话。统一为线上同一组。
+        -->
         <iframe
           :srcdoc="form.customHtml"
-          sandbox="allow-same-origin"
+          sandbox="allow-scripts allow-forms"
           class="h-full w-full rounded border border-line bg-background shadow-xs"
         />
       </div>

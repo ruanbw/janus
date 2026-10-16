@@ -157,6 +157,12 @@ router.beforeEach(async (to) => {
   }
 
   if (!auth.isAuthenticated) {
+    // 探测失败(网络抖动/超时/5xx,非 401):登录态是「未知」而不是「未登录」。
+    // 此时跳登录页等于把持有效会话的用户踢出去(配合 fetchMe 的「仅 401 清空」);
+    // 放行让原页面自行展示失败/重试,用户网络恢复后刷新即可。
+    if (auth.sessionProbeFailed) {
+      return true;
+    }
     return { path: '/login', query: to.fullPath === '/' ? {} : { redirect: to.fullPath } };
   }
 

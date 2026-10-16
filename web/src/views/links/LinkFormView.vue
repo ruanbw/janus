@@ -1136,14 +1136,23 @@ async function onSubmit() {
       });
       if (usesUpload) {
         if (!(await doUploadLanding(created.id))) {
+          // 落地页上传失败时短链已建成(能正常跳转),失败留在这一条上而不是空壳。
+          // 跳转前必须 markClean:表单确实已提交,否则 dirtyGuard 会把这次
+          // 「提交失败后退回列表」当成未保存离开,多弹一个误导性的确认框。
+          message.warning(
+            `短链「${created.code}」已创建,但落地页压缩包上传失败,当前仍是跳转型;` +
+              '可在列表中编辑该短链后重新上传。',
+          );
+          markClean();
           router.push({ name: 'links' });
           return;
         }
         await updateLink(created.id, { linkType: 'landing', landingSource: 'upload' });
       }
-      markClean();
       message.success('短链已创建');
     }
+    // 创建/编辑两条路径统一在这里解除脏保护:edit 分支内部无需重复调用,
+    // 上传失败那条分支已提前 return(它有自己的 markClean)。
     markClean();
     router.push({ name: 'links' });
   } catch (error) {

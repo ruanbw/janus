@@ -571,9 +571,15 @@ onMounted(async () => {
         </div>
       </template>
       <div class="flex-1 p-3 bg-line/20 h-full">
+        <!--
+          sandbox 与线上 CSP 对齐（见 internal/httpapi/redirect.go 的 visitorErrorCSP）：
+          `allow-scripts allow-forms`，脚本会跑但来源不透明，读不到本站 cookie。
+          不要加 allow-same-origin（会提升到本站来源），也不要只留 allow-same-origin
+          （等于禁掉脚本，预览与真机行为不一致）。详见 RuleFormView 的同款注释。
+        -->
         <iframe
           :srcdoc="previewModalHtml"
-          sandbox="allow-same-origin"
+          sandbox="allow-scripts allow-forms"
           class="h-full w-full rounded border border-line bg-background shadow-xs"
         />
       </div>
