@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"janus/pkg/plugin"
 )
@@ -61,12 +62,14 @@ func interceptorSnapshot() []RuleInterceptor {
 // 不能让 panic 冒到访客热路径 —— 冒出去只会被全局中间件兜成 500，
 // 而「插件失灵」的正确定义是「它这一票不算」，不是「整次访问失败」。
 func checkOne(i RuleInterceptor, ctx context.Context, r *http.Request, linkID int64, fact *Fact) (d *Decision, ok bool) {
+	start := time.Now()
 	defer func() {
 		if rec := recover(); rec != nil {
 			d, ok = nil, false
 			slog.Error("规则拦截器 panic,按未拦截处理(fail-open)",
 				"interceptor", i.Name(), "panic", rec, "stack", string(debug.Stack()))
 		}
+		watchPluginCall("interceptor", i.Name(), start)
 	}()
 	return i.Intercept(ctx, r, linkID, fact)
 }

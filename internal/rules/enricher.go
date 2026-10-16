@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"sync"
+	"time"
 
 	"janus/pkg/plugin"
 )
@@ -15,6 +16,28 @@ import (
 type FactEnricher interface {
 	Name() string
 	Enrich(ctx context.Context, r *http.Request, fact *Fact)
+}
+
+// pluginCallSlowThreshold 单个插件调用的耗时告警阈值。
+//
+// 插件契约要求"微秒级纯内存计算"(见 FactEnricher 的文档注释),但 panic 隔离
+// 挡不住"慢":一个 sleep 1s 的插件就能挂住整条跳转链路,而且不留任何痕迹。
+// 这里的护栏是**观测**而不是熔断 —— 插件是任意 Go 代码,没有可中断的执行模型,
+// 强行超时只能"放弃等待",被放弃的 goroutine 仍在烧 CPU(与 runProgram 里
+// 弃用 goroutine+timer 的理由同源)。所以:结果照常采用,只记一条告警,
+// 让运维能定位到是哪个插件在拖慢热路径。
+//
+// 是变量而非常量:测试需要把阈值抬到"任何调用都在阈值内"来钉住阴性对照。
+var pluginCallSlowThreshold = time.Millisecond
+
+// watchPluginCall 记录一次插件调用的耗时,超阈值告警。
+// kind 区分富化器 / 拦截器;name 是插件标识 —— 基座注册表能给真实插件名,
+// pkg/plugin 侧由那个包内部逐个调用,基座只能测到聚合耗时,故用固定标识。
+func watchPluginCall(kind, name string, start time.Time) {
+	if d := time.Since(start); d >= pluginCallSlowThreshold {
+		slog.Error("插件调用耗时超过热路径阈值,阻塞跳转",
+			"kind", kind, "name", name, "elapsed", d, "threshold", pluginCallSlowThreshold)
+	}
 }
 
 var (
@@ -57,11 +80,13 @@ func enricherSnapshot() []FactEnricher {
 // 冒出去只会被全局中间件兜成 500,而正确的退化是"这个维度当没有"。
 // recover 之后继续跑后面的富化器:一个插件炸了不等于整次富化作废。
 func enrichOne(e FactEnricher, ctx context.Context, r *http.Request, fact *Fact) {
+	start := time.Now()
 	defer func() {
 		if rec := recover(); rec != nil {
 			slog.Error("画像富化器 panic,按未富化处理(fail-open)",
 				"enricher", e.Name(), "panic", rec, "stack", string(debug.Stack()))
 		}
+		watchPluginCall("enricher", e.Name(), start)
 	}()
 	e.Enrich(ctx, r, fact)
 }

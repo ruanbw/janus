@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"time"
 
 	"janus/pkg/plugin"
 )
@@ -78,7 +79,11 @@ func applyPluginEnrichers(ctx context.Context, r *http.Request, fact *Fact) {
 		return
 	}
 	pf := toPluginFact(*fact)
+	start := time.Now()
 	plugin.ApplyEnrichers(ctx, r, &pf)
+	// pkg/plugin 内部逐个调用富化器,基座拿不到单个插件名,只能测聚合耗时;
+	// 超阈值时用固定标识定位到"是 pkg/plugin 这一侧慢"(见 watchPluginCall)。
+	watchPluginCall("enricher", "pkg/plugin", start)
 	mergePluginFact(fact, pf)
 }
 
@@ -88,7 +93,9 @@ func checkPluginInterceptors(ctx context.Context, r *http.Request, linkID int64,
 		return nil, false
 	}
 	pf := toPluginFact(*fact)
+	start := time.Now()
 	pd, ok := plugin.CheckInterceptors(ctx, r, linkID, &pf)
+	watchPluginCall("interceptor", "pkg/plugin", start)
 	if !ok || pd == nil {
 		return nil, false
 	}
