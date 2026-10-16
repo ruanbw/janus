@@ -99,7 +99,14 @@ func New() (*Enforcer, error) {
 	return &Enforcer{e: e}, nil
 }
 
-// Enforcer 返回底层 *casbin.Enforcer,供 gin-contrib/authz 等集成方直接使用。
+// Enforcer 返回底层 *casbin.Enforcer,供 gin-contrib/authz 等集成方直接使用
+// (gin-contrib/authz v1.0.7 的 NewAuthorizer 要求具体类型 *casbin.Enforcer,
+// 无法收窄为接口,故此处保持暴露)。
+//
+// ⚠️ 只读契约:返回的 enforcer 是**可变共享实例**,调用方**不得**调用
+// AddPolicy/RemovePolicy/AddRoleForUser/LoadPolicy/LoadModel/EnableEnforce(…)
+// 等任何会改变模型或策略的方法 —— 那会污染进程内唯一的全局判权矩阵,影响所有
+// 租户的鉴权结果。集成方只应把它作为参数交给 gin-contrib/authz 使用。
 func (en *Enforcer) Enforcer() *casbin.Enforcer {
 	return en.e
 }
