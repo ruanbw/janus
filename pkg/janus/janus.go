@@ -274,6 +274,7 @@ type App struct {
 	workerDone            chan struct{}
 	cancelRun             context.CancelFunc
 	eventSubs             []eventSubscription
+	dbOwned               bool // gdb 是否由本实例(经 bootstrapDatabase)自建
 	mu                    sync.Mutex
 	running               bool
 }
@@ -552,6 +553,7 @@ func (a *App) bootstrapDatabase(ctx context.Context) error {
 			return fmt.Errorf("open gorm: %w", err)
 		}
 		a.gdb = gdb
+		a.dbOwned = true
 		a.store = store.New(gdb)
 		if a.cfg.SuperadminEmail != "" {
 			if err := bootstrap.Superadmin(ctx, a.store, a.cfg.SuperadminEmail); err != nil {
@@ -607,6 +609,18 @@ func (a *App) Shutdown(ctx context.Context) error {
 		case <-a.workerDone:
 		case <-ctx.Done():
 		}
+	}
+
+	// 关闭由本实例自建的底层 sql.DB:否则 SDK 场景每次 New/Run/Shutdown 都会泄漏
+	// 一个连接池。调用方经 WithDB 注入的连接归调用方所有,不越权关闭。
+	// sql.DB.Close 幂等,重复 Shutdown 安全;关闭后清标记避免重复处理。
+	if a.dbOwned && a.gdb != nil {
+		if sqlDB, err := a.gdb.DB(); err == nil && sqlDB != nil {
+			if closeErr := sqlDB.Close(); closeErr != nil && srvErr == nil {
+				srvErr = closeErr
+			}
+		}
+		a.dbOwned = false
 	}
 
 	a.running = false
