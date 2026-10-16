@@ -195,3 +195,56 @@ func TestPluginEnricherInvalidIPKeepsBaseline(t *testing.T) {
 		t.Fatalf("非法 IP 被静默忽略,没有留痕: %q", buf.String())
 	}
 }
+
+// TestPluginEnricherIPv4MappedIsNormalized 插件写入 v4-mapped IPv6(::ffff:1.2.3.4)时,
+// 画像里的 IP 必须与 LazyVisitorContext.backfillEnriched 同一口径归一成 1.2.3.4。
+//
+// 旧实现直接把插件写的原串塞进 dst.IP:于是 Field("ip") 返回 "::ffff:1.2.3.4",
+// 而 ClientIP() 走 netIP/ParseAddr 归一后返回 "1.2.3.4" —— 同一个访客,
+// `ip eq "1.2.3.4"` 与 `ip in_cidr "1.2.3.0/24"` 会给出相反结论。
+func TestPluginEnricherIPv4MappedIsNormalized(t *testing.T) {
+	plugin.ResetEnrichers()
+	t.Cleanup(plugin.ResetEnrichers)
+	plugin.RegisterEnricher(pluginIPEnricher{ip: "::ffff:1.2.3.4"})
+
+	req := httptest.NewRequest(http.MethodGet, "http://go.example.com/abc", nil)
+	fact := Fact{}.WithIP("10.1.2.3")
+	applyPluginEnrichers(req.Context(), req, &fact)
+
+	if got := fact.IP; got != "1.2.3.4" {
+		t.Fatalf("fact.IP = %q, want 1.2.3.4(v4-mapped 必须归一)", got)
+	}
+	if v, ok := fact.Field(FieldIP); !ok || v != "1.2.3.4" {
+		t.Fatalf("Field(ip) = %q, %v; want \"1.2.3.4\", true:Field 不能与 ClientIP 分叉", v, ok)
+	}
+	if got := fact.ClientIP().String(); got != "1.2.3.4" {
+		t.Fatalf("ClientIP = %q, want 1.2.3.4", got)
+	}
+	if !matchesCIDR(t, fact, "1.2.3.0/24") {
+		t.Fatal("归一后的地址没有进 CIDR 判定")
+	}
+}
+
+// TestPluginEnricherInvalidIPKeepsExplicitIPAttr 插件同时写了非法 IP 和显式 ipattr 时:
+// IP 回退基线,但显式 ipattr 必须独立生效。
+//
+// 旧实现把 IP 与 ipattr 绑在同一个 return 里整条回滚(dst.IP, dst.IPAttr = base, base),
+// 显式标记被静默丢弃;而 backfillEnriched 的口径是"显式写入优先"(ipattr 与 IP 是否
+// 可解析无关)。两条富化路径必须给出同一个画像,否则同一份插件配置经不同入口
+// 得到的裁决不同。
+func TestPluginEnricherInvalidIPKeepsExplicitIPAttr(t *testing.T) {
+	plugin.ResetEnrichers()
+	t.Cleanup(plugin.ResetEnrichers)
+	plugin.RegisterEnricher(pluginIPEnricher{ip: "not-an-ip", ipAttr: "hosting"})
+
+	req := httptest.NewRequest(http.MethodGet, "http://go.example.com/abc", nil)
+	fact := Fact{}.WithIP("198.51.100.7")
+	applyPluginEnrichers(req.Context(), req, &fact)
+
+	if got := fact.IP; got != "198.51.100.7" {
+		t.Fatalf("fact.IP = %q, want 保留基线 198.51.100.7", got)
+	}
+	if got := fact.IPAttr; got != "hosting" {
+		t.Fatalf("ipattr = %q, want hosting:非法 IP 回退不该连带丢弃显式 ipattr", got)
+	}
+}
