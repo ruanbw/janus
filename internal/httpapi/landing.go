@@ -230,8 +230,14 @@ func (a *API) handleLandingSDK(c *gin.Context, code string) {
 		return
 	}
 	// 点击端点绝对地址:与 SDK 请求同源(Host 即短链域名),外部落地页跨域引用同样可用。
+	//
+	// X-Forwarded-Proto 只有在 TCP 对端命中运维显式声明的可信代理网段时才采信 ——
+	// 与 clientIPForVisitor / trustedClientIP 同一口径(isTrustedProxyPeer)。
+	// 无条件采信它等于把"这个 SDK 里写 http 还是 https"交给任意来访者决定:
+	// 攻击者可诱导 SDK 被以 http 形式生成,再对该地址做中间人降级。
 	proto := "https"
-	if p := c.GetHeader("X-Forwarded-Proto"); p == "http" || p == "https" {
+	if p := c.GetHeader("X-Forwarded-Proto"); (p == "http" || p == "https") &&
+		isTrustedProxyPeer(c.Request.RemoteAddr, a.trustedProxyNets) {
 		proto = p
 	} else if c.Request.TLS == nil {
 		proto = "http"

@@ -3,8 +3,10 @@ package httpapi_test
 // httpapi 业务接口层审查项(BIZ*)的黑盒回归测试。见 .workbuddy 审查报告对应条目。
 
 import (
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"janus/internal/testutil"
@@ -20,6 +22,37 @@ func bizCreateLink(t *testing.T, c *testClient, code string, body map[string]any
 		body["domainIds"] = []int64{localhostDomainID(t, c)}
 	}
 	createLink(t, c, body)
+}
+
+// BIZ11: X-Forwarded-Proto 只在可信代理对端时采信,否则忽略(回落 http)。
+func TestLandingSDKIgnoresUntrustedForwardedProto(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "bizxfp")
+	addDomain(t, c, "localhost")
+	createLandingLink(t, c, localhostDomainID(t, c), "bizxfp", "url", "https://page.example.com/lp")
+
+	req, err := http.NewRequest(http.MethodGet, env.Server.URL+"/bizxfp/sdk.js", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "localhost"
+	// 测试环境未配置可信代理网段 → 该头来自不可信的对端,必须被忽略。
+	req.Header.Set("X-Forwarded-Proto", "https")
+	resp, err := env.Server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "http://localhost/bizxfp/click") {
+		t.Fatalf("SDK 未按不可信来源回落 http: %s", body)
+	}
+	if strings.Contains(string(body), "https://localhost/bizxfp/click") {
+		t.Fatalf("SDK 错误地采信了不可信来源的 X-Forwarded-Proto: %s", body)
+	}
 }
 
 // BIZ12: 落地页二级路径对非 GET/HEAD 应回 405 + Allow,而不是 404。
