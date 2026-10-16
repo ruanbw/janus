@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"janus/internal/config"
+	"janus/internal/domain"
 	"janus/internal/store"
 )
 
@@ -136,6 +137,52 @@ func TestInstallLandingZipGuardedSerializesConcurrentUploads(t *testing.T) {
 		if strings.HasPrefix(e.Name(), ".landing-") || strings.Contains(e.Name(), ".old-") {
 			t.Fatalf("残留临时/备份目录: %s", e.Name())
 		}
+	}
+}
+
+// bizSlowOwnership 模拟慢 DNS 的归属校验器:直到 ctx 超时才返回。
+type bizSlowOwnership struct{ delay time.Duration }
+
+func (bizSlowOwnership) Tasks() *domain.TaskQueue { return nil }
+
+func (s bizSlowOwnership) Verify(ctx context.Context, _, _ string) (domain.VerifyResult, error) {
+	select {
+	case <-time.After(s.delay):
+		return domain.VerifyResult{Status: domain.VerifyVerified}, nil
+	case <-ctx.Done():
+		return domain.VerifyResult{}, ctx.Err()
+	}
+}
+
+// BIZ2: 同步域名校验的子 ctx 超时生效(不会无限等待慢 DNS)。
+func TestSyncDomainVerifyTimeout(t *testing.T) {
+	old := domainVerifySyncTimeout
+	domainVerifySyncTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { domainVerifySyncTimeout = old })
+
+	a := &API{dns: bizSlowOwnership{delay: 5 * time.Second}}
+	start := time.Now()
+	if _, err := a.syncDomainVerify(context.Background(), "example.com", ""); err == nil {
+		t.Fatal("超过子 ctx 超时仍返回 nil 错误")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("校验耗时 %v,超时上限未生效", elapsed)
+	}
+}
+
+// BIZ2: 域名校验按租户限流,超限拒绝,不同租户互不影响。
+func TestDomainVerifyLimiterPerTenant(t *testing.T) {
+	a := &API{}
+	for i := 0; i < domainVerifyPerMinute; i++ {
+		if !a.domainVerifyLimiter().Allow("1") {
+			t.Fatalf("第 %d 次域名校验被限流", i+1)
+		}
+	}
+	if a.domainVerifyLimiter().Allow("1") {
+		t.Fatal("超过每分钟上限仍放行")
+	}
+	if !a.domainVerifyLimiter().Allow("2") {
+		t.Fatal("限流桶应按租户隔离,另一个租户被误伤")
 	}
 }
 

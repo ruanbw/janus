@@ -4,6 +4,7 @@ package httpapi_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -121,6 +122,29 @@ func (bizEvilInterceptor) Name() string { return "biz-evil-destination" }
 
 func (b bizEvilInterceptor) Intercept(_ context.Context, _ *http.Request, _ int64, _ *plugin.Fact) (*plugin.Decision, bool) {
 	return &plugin.Decision{Action: "redirect", Destination: b.dest}, true
+}
+
+// BIZ2: 创建域名的同步 DNS 校验按租户限流,超限回 429(E_RATE_LIMITED)。
+func TestCreateDomainRateLimited(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "bizdlim")
+	env.SetTierLimits(t, tenantIDOf(t, c), 1000, 1000)
+
+	// 与 domainVerifyPerMinute 一致(黑盒测试不能引用包内常量)。
+	const perMinute = 20
+	hit := false
+	for i := 0; i < perMinute+3; i++ {
+		resp := c.post("/api/domains", map[string]string{"fqdn": fmt.Sprintf("lim%d.invalid", i)})
+		if resp.StatusCode == http.StatusTooManyRequests {
+			hit = true
+			_ = resp.Body.Close()
+			break
+		}
+		_ = resp.Body.Close()
+	}
+	if !hit {
+		t.Fatalf("%d 次创建域名后仍未触发按租户限流", perMinute+3)
+	}
 }
 
 // BIZ8: 租户自定义错误页是原样输出的租户 HTML,输出侧必须带 CSP(sandbox,
