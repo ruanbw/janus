@@ -7,12 +7,29 @@
 --   4. 整段在一个事务里执行 —— 任何一句失败都不会留下半截 schema。
 
 -- 1. 等级表 (Tiers)
+-- 配额列的非负约束在表定义之后以命名约束补上(见紧跟的 DO 块),此处不再内联,
+-- 避免同一列的 CHECK 出现两份(内联那份是自动命名,DO 块就判不出来)。
 CREATE TABLE IF NOT EXISTS tiers (
     id          BIGSERIAL PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,
     max_links   INT  NOT NULL,
     max_domains INT  NOT NULL
 );
+
+-- 配额判定形如 `已用 < max_links`,负值会让任何租户恒超限(或者按实现绕开限制)。
+-- CREATE TABLE IF NOT EXISTS 不会给已存在的表补约束,ADD CONSTRAINT 又没有
+-- IF NOT EXISTS,故用 pg_constraint 判定后幂等添加。
+-- 用 NOT VALID:只保证"此后写入不得为负",不因存量库里的历史脏值(如某档位被手工
+-- 写成 -1)让整个初始化脚本失败、进程起不来 —— 启动路径不该被一条 Low 级加固拖垮。
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tiers_max_links_nonneg') THEN
+        ALTER TABLE tiers ADD CONSTRAINT tiers_max_links_nonneg CHECK (max_links >= 0) NOT VALID;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'tiers_max_domains_nonneg') THEN
+        ALTER TABLE tiers ADD CONSTRAINT tiers_max_domains_nonneg CHECK (max_domains >= 0) NOT VALID;
+    END IF;
+END $$;
 
 -- 2. 租户表 (Tenants)
 CREATE TABLE IF NOT EXISTS tenants (

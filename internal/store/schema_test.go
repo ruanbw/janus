@@ -6,8 +6,10 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // indexDef 返回 public 下指定索引的定义文本(不存在返回空串)。
@@ -91,4 +93,57 @@ func TestDeleteDomainCascadesVisits(t *testing.T) {
 	if n != 0 {
 		t.Fatalf("删域名后仍残留 %d 条 visits:domain_id 外键未级联清理", n)
 	}
+}
+
+// TestTiersQuotaNonNegativeConstraint 固化 tiers 配额列的非负约束。
+//
+// 契约:tiers.max_links / max_domains 必须拒绝负数(约束名为
+// tiers_max_links_nonneg / tiers_max_domains_nonneg,存量库由 init.sql 的幂等
+// DO 块补上加),0 仍合法(表示"不允许创建",与"无限制"由 NULL/-1 之类约定无关)。
+//
+// 为什么必须由库保证:配额比较是 `links < max_links` 形式的判定,负数会让任何租户
+// 永远超限(或按实现不同绕开限制);这两个值来自平台管理配置,写错一个负号不该
+// 只能靠前端表单拦住。
+func TestTiersQuotaNonNegativeConstraint(t *testing.T) {
+	s := setupStore(t)
+	ctx := context.Background()
+
+	// Then 两个命名约束都必须存在
+	for _, name := range []string{"tiers_max_links_nonneg", "tiers_max_domains_nonneg"} {
+		var n int64
+		if err := s.db.WithContext(ctx).Raw(
+			`SELECT count(*) FROM pg_constraint WHERE conname = ?`, name).Scan(&n).Error; err != nil {
+			t.Fatalf("query constraint %s: %v", name, err)
+		}
+		if n != 1 {
+			t.Errorf("tiers 上缺少 CHECK 约束 %s", name)
+		}
+	}
+
+	// When 插入负数配额(名字唯一,避免历史脏数据让断言退化成唯一冲突)
+	errLinks := s.db.WithContext(ctx).Exec(
+		`INSERT INTO tiers (name, max_links, max_domains) VALUES (?, -1, 10)`, uniqueTierName("neg-links")).Error
+	if errLinks == nil {
+		t.Error("max_links = -1 未被拒绝:负数配额会让配额判定永远超限")
+	} else if !strings.Contains(errLinks.Error(), "tiers_max_links_nonneg") {
+		t.Errorf("max_links = -1 报的不是预想的约束: %v", errLinks)
+	}
+	errDomains := s.db.WithContext(ctx).Exec(
+		`INSERT INTO tiers (name, max_links, max_domains) VALUES (?, 10, -1)`, uniqueTierName("neg-domains")).Error
+	if errDomains == nil {
+		t.Error("max_domains = -1 未被拒绝")
+	} else if !strings.Contains(errDomains.Error(), "tiers_max_domains_nonneg") {
+		t.Errorf("max_domains = -1 报的不是预想的约束: %v", errDomains)
+	}
+
+	// 正向对照:0 与正常值是合法的
+	if err := s.db.WithContext(ctx).Exec(
+		`INSERT INTO tiers (name, max_links, max_domains) VALUES (?, 0, 0)`, uniqueTierName("zero-quota")).Error; err != nil {
+		t.Errorf("0 配额应合法(表示不允许创建): %v", err)
+	}
+}
+
+// uniqueTierName 给测试用的 tiers.name 加一个唯一后缀(tiers.name 是 UNIQUE)。
+func uniqueTierName(prefix string) string {
+	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 }
