@@ -60,6 +60,13 @@ import (
 // 一个租户可以往自己的 404 页里写 <script>,而同一个响应会出现在**任意**访客
 // 的浏览器上 —— 包括别的租户用同一个反向代理访问时。缺 X-Content-Type-Options
 // 时,浏览器还会对未声明类型的响应做嗅探,text/plain 里的标记可能被当 HTML 执行。
+//
+// 审查项 BIZ8 的结论(此处即修复落点,不再做入库消毒):租户自定义错误页 HTML
+// 采取"输出侧加固"而非"入库消毒" —— 消毒要么破坏租户自定义能力(把合法 HTML
+// 也改坏),要么触发 CSP 与消毒两套规则打架(ADR-0005 明确信任租户在自己域名下
+// 运行任意 HTML,与开放重定向同一条边界)。输出侧由本常量 + nosniff + no-store
+// 三个头统一收口,三个头在 setVisitorErrorHeaders 里对每条错误页路径都设置。
+// 回归断言见 TestTenantErrorPageSecurityHeaders。
 const visitorErrorCSP = "sandbox allow-scripts allow-forms; default-src 'self'; " +
 	"style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'"
 

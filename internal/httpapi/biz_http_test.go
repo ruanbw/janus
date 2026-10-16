@@ -123,6 +123,43 @@ func (b bizEvilInterceptor) Intercept(_ context.Context, _ *http.Request, _ int6
 	return &plugin.Decision{Action: "redirect", Destination: b.dest}, true
 }
 
+// BIZ8: 租户自定义错误页是原样输出的租户 HTML,输出侧必须带 CSP(sandbox,
+// 不给 allow-same-origin)+ nosniff + no-store 三个头。
+func TestTenantErrorPageSecurityHeaders(t *testing.T) {
+	env := testutil.Setup(t)
+	c := loggedInTenant(t, env, "bizcsp")
+	addDomain(t, c, "localhost")
+
+	custom := `<html><body><script>document.title='x'</script><p>tenant-404</p></body></html>`
+	resp := c.patch("/api/me/error-pages", map[string]any{"custom404Html": custom})
+	assertStatus(t, resp, http.StatusOK)
+	_ = resp.Body.Close()
+
+	got := redirectGet(t, env, "localhost", "/no-such-code")
+	assertStatus(t, got, http.StatusNotFound)
+
+	csp := got.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "sandbox") {
+		t.Fatalf("CSP 缺 sandbox: %q", csp)
+	}
+	if strings.Contains(csp, "allow-same-origin") {
+		t.Fatalf("CSP 不得给 allow-same-origin(会泄露会话): %q", csp)
+	}
+	if got.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("缺 nosniff: %q", got.Header.Get("X-Content-Type-Options"))
+	}
+	if got.Header.Get("Cache-Control") != "no-store" {
+		t.Fatalf("缺 no-store: %q", got.Header.Get("Cache-Control"))
+	}
+	body, err := io.ReadAll(got.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "tenant-404") {
+		t.Fatalf("未渲染租户自定义 404 页: %s", body)
+	}
+}
+
 // BIZ5: 目标 URL 协议白名单——创建/规则写入拒绝可执行协议;插件注入的非法目标
 // 在跳转出口被拦下(走原跳转,而不是把 javascript: 写进 Location)。
 func TestTargetURLProtocolWhitelist(t *testing.T) {
