@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -16,7 +17,24 @@ import (
 // 显示"已签发",Caddy 手里却没有证书。InsecureSkipVerify 下拿到的正是对端真实证书
 // (不走系统信任链),所以直接比对 SAN 就够,不需要验签链(开发环境是本地 CA)。
 func ProbeCert(ctx context.Context, fqdn string) bool {
-	return probeCert(ctx, fqdn, newProbeClient())
+	return probeCert(ctx, fqdn, probeClient())
+}
+
+// probeClient 探活用的客户端:整个进程共用一份。
+//
+// 原先每次探活都 newProbeClient(),于是每个调用方自带一个 http.Transport —— 而
+// 零值 Transport 的 IdleConnTimeout 是 0(空闲连接永不超时),探活留下的
+// readLoop/writeLoop goroutine 与它的 fd 再也不会回收。worker 每 5 分钟最多扫
+// 500 个域名、每次探活产生 2 条 idle 连接(HTTPS 的 TCP + 可能的重连),进程跑
+// 几小时后就 too many open files,连 HTTP 服务与 DB 连接一起失败。
+//
+// 单例 + DisableKeepAlives 一起用:单例消除"每次调用新建 Transport"(泄漏的来源),
+// DisableKeepAlives 保证探活这种一次性短连接用完即关 —— 探活只关心对端出示了什么
+// 证书,没有连接复用价值,留着 idle 连接反而占着 fd。
+var probeClientOnce = sync.OnceValue(newProbeClient)
+
+func probeClient() *http.Client {
+	return probeClientOnce()
 }
 
 func newProbeClient() *http.Client {
@@ -29,6 +47,8 @@ func newProbeClient() *http.Client {
 		},
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // 见上
+			// 探活是一次性短连接:不复用连接,也就不会留下 idle 连接等待超时。
+			DisableKeepAlives: true,
 		},
 	}
 }
