@@ -133,16 +133,27 @@ const columns: TableColumn[] = [
 
 let timer: number | undefined;
 
+// 并发防护:每次 load 领一个自增序号,只有**最新**一次的结果允许落地。
+//
+// 这里比别的页面更容易踩:轮询周期 10s,而 request 的超时是 15s(见 utils/request.ts)。
+// 慢响应晚于新一轮轮询返回时,会把新一批数据覆盖成旧的 —— 页面上表现为状态
+// 「往回跳」(刚变 active 又变回 verifying),而用户会以为域名校验真的失败了。
+let loadSeq = 0;
+
 async function load() {
+  const seq = ++loadSeq;
   loading.value = true;
   try {
     domains.value = await listDomains();
+    if (seq !== loadSeq) return;
   } catch (error) {
+    // 过期请求的失败同样丢弃:它的报错属于已经被新轮询取代的那次刷新
+    if (seq !== loadSeq) return;
     if (error instanceof ApiError && error.status !== 401) {
       message.error(error.message);
     }
   } finally {
-    loading.value = false;
+    if (seq === loadSeq) loading.value = false;
   }
 }
 

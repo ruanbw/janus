@@ -67,6 +67,8 @@ import { AlertDialogDescription } from '@/components/ui/alert-dialog';
 
 import AppButton from './AppButton.vue';
 import { closeConfirm, confirmState } from './confirm';
+import { ApiError } from '@/types/api';
+import { message } from '@/utils/toast';
 
 const busy = ref(false);
 const state = computed(() => confirmState.current);
@@ -92,9 +94,22 @@ async function onOk(): Promise<void> {
     if (current.onOk) {
       await current.onOk();
     }
+  } catch (error) {
+    // 原来这里是 try/finally:异常照抛,但弹窗已经在 finally 里关掉了 —— 用户看到的是
+    // 「点确认后弹窗消失了」,和成功一模一样,而删除/封禁其实失败了。
+    // 破坏性操作必须用用户看得见的方式宣告失败。
+    //
+    // 也不 closeConfirm(保持打开):重试一次的成本远低于让用户以为已删除
+    // 然后发现东西还在时反复点。
+    if (error instanceof ApiError) {
+      message.error(error.message);
+    } else {
+      message.error('操作失败,请重试');
+    }
+    return;
   } finally {
     busy.value = false;
-    closeConfirm(true);
   }
+  closeConfirm(true);
 }
 </script>

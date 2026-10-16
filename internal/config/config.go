@@ -16,6 +16,11 @@ import (
 	"janus/internal/fqdn"
 )
 
+// defaultDatabaseURL 是 JANUS_DATABASE_URL 的开发默认值(JANUS_DATABASE_URL 的
+// envDefault 必须与这里逐字一致)。留一份常量是为了 Validate 能识别出"用户没改过",
+// 从而在启动时告警:默认口令 + sslmode=disable 带进生产是实打实的裸奔。
+const defaultDatabaseURL = "postgres://janus:janus@localhost:5432/janus?sslmode=disable"
+
 type Config struct {
 	Addr            string `env:"JANUS_ADDR" envDefault:":8080"`
 	DatabaseURL     string `env:"JANUS_DATABASE_URL" envDefault:"postgres://janus:janus@localhost:5432/janus?sslmode=disable"`
@@ -44,8 +49,12 @@ type Config struct {
 	// Caddy 侧以 header 传入,后端做常量时间比对。
 	// 原来该端点只有"对端是私网地址"这一层判断:在 compose 网络里够用,但一旦
 	// 后端被加上 ports: 映射,或前面再套一层反代(来源是内网 IP),判定恒真,
-	// 无认证的 GET 就变成公网可调 —— 它能枚举出"哪些租户域名处于 active",
-	// 且能引导 Caddy 为它们签发证书。IP 判定保留为第二层,不作为唯一防线。
+	// 无人能枚举"哪些租户域名处于 active",且无法私自引导 Caddy 签发证书。
+	//
+	// 部署提示:Caddy 2.11 的 on_demand_tls 只能把 ask 的凭据放进**查询参数**,
+	// 而查询参数会被写进 Caddy 的访问日志。请把该端点的访问日志脱敏或关闭,
+	// 否则这个共享密钥会以明文留在日志里。支持 header 的版本优先走 header
+	// (见 httpapi.CaddyAskTokenHeader)。
 	CaddyAskToken string `env:"JANUS_CADDY_ASK_TOKEN"`
 
 	DNSRetryInterval  time.Duration `env:"JANUS_DNS_RETRY_INTERVAL" envDefault:"5m"`
@@ -135,7 +144,12 @@ func parseEnvFile(path string) (map[string]string, error) {
 		key, value, found := strings.Cut(line, "=")
 		key = strings.TrimSpace(key)
 		if !found || key == "" {
-			return nil, fmt.Errorf("配置文件 %s 第 %d 行不是 KEY=VALUE: %q", path, i+1, rawLine)
+			// 报错只给行号与"为什么不合格",**不回显整行原文**。
+			// 这一行很可能是 JANUS_DATABASE_URL=postgres://user:password@host/db
+			// 或 JANUS_JWT_SECRET=... —— 而启动失败时,运维的第一反应是把完整报错
+			// 贴到工单/GitHub issue/日志收集系统里。回显原文等于把密钥发到一个
+			// 我们看不见的地方。要排查就让用户自己打开这一行看。
+			return nil, fmt.Errorf("配置文件 %s 第 %d 行格式错误:应为 KEY=VALUE(键为空或缺少 =)。该行内容可能含密钥,故不在此回显,请直接查看文件这一行", path, i+1)
 		}
 		value = strings.TrimSpace(value)
 		if len(value) >= 2 {
@@ -236,6 +250,12 @@ func (c Config) Validate() error {
 	}
 	if c.ServerPublicIP != "" && net.ParseIP(c.ServerPublicIP) == nil {
 		return fmt.Errorf("JANUS_SERVER_PUBLIC_IP 不是合法 IP: %q", c.ServerPublicIP)
+	}
+	if c.DatabaseURL == defaultDatabaseURL {
+		// 启动时而不是被攻击后:默认口令 janus/janus + sslmode=disable 是给开发用的,
+		// 带进生产等于"数据库配了锁但钥匙挂在门上"。这里不改行为(改了会让所有
+		// 现有部署起不来),只在启动时把它喊出来。
+		fmt.Fprintln(os.Stderr, "WARN: JANUS_DATABASE_URL 仍是开发默认值(janus/janus@localhost,且 sslmode=disable),生产环境必须显式配置")
 	}
 	if c.JWTSecret == "" {
 		// 为空时 httpapi 会退回每次重启随机的临时密钥(已签发 token 全部失效),

@@ -26,6 +26,12 @@ export function useDirtyGuard(options: UseDirtyGuardOptions) {
   // 路由离开前拦截
   onBeforeRouteLeave((_to, _from, next) => {
     if (isBypassed.value || !isDirty()) {
+      // 放行后立刻重新武装:绕过是**一次性**的,不是"这个页面从此不设防"。
+      //
+      // 原实现一旦 markClean 就永久解除:编辑模式下保存后再改点什么,直接跳走
+      // 连个确认都没有,"未保存提醒"从这一刻起就失效了。这里保证 markClean 只
+      // 对紧随其后的那一次跳转生效(保存后按新建者意图跳走),之后重新保护。
+      isBypassed.value = false;
       next();
       return;
     }
@@ -37,7 +43,10 @@ export function useDirtyGuard(options: UseDirtyGuardOptions) {
       cancelText: '继续编辑',
       danger: true,
     }).then((ok) => {
+      // 用户在弹窗里选"确认离开"同样是一次性放行,必须跟上面同口径 re-arm,
+      // 否则取消过一次之后这个表单就再也不会被拦了。
       if (ok) {
+        isBypassed.value = false;
         next();
       } else {
         next(false);
