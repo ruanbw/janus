@@ -1389,9 +1389,14 @@ type validateExprResp struct {
 }
 
 // handleValidateExpr POST /api/rules/validate-expr — 校验 Expr 表达式语法与返回值类型。
+// 与同组其它写端点一致地走 CSRF 双提交校验:它接收租户自由输入并触发编译,
+// 不该是唯一豁免 CSRF 的 /api/rules* 端点。
 func (a *API) handleValidateExpr(c *gin.Context) {
-	_, _, ok := a.requireSession(c)
+	_, sess, ok := a.requireSession(c)
 	if !ok {
+		return
+	}
+	if !a.requireCSRF(c, sess) {
 		return
 	}
 	var req validateExprReq
