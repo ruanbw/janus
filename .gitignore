@@ -19,3 +19,9 @@ private_docs/
 # 本地 agent skills（由 skills 安装器按 skills-lock.json 的 GitHub 源生成，可再生）
 .agents/
 skills-lock.json
+
+# 并行开发用的 git worktree 目录（每个 ~50MB，合并后即可删除）
+.worktrees/
+
+# WorkBuddy 的项目数据（会话记忆与审查报告），工具本地数据，不进版本库
+.workbuddy/
