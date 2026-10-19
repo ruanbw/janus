@@ -126,7 +126,8 @@ curl -sk https://app.janus.test/healthz    # 经 Caddy 走通全链路
 
 要验证**平台管理端**,先在 `.env` 里设 `JANUS_SUPERADMIN_EMAIL=admin@janus.test`,重启后端(启动时幂等初始化)。
 超管首次登录:用该邮箱登录一次(账号还没有密码,密码随便填)→ 页面出现「首次登录校验码」→
-从后端终端日志(`[JANUS mailer]`)取校验码填入 → 自动进入 `/account` 设置初始密码。
+从后端终端日志(`[JANUS mailer]`)取校验码填入 → 自动进入 `/account` 设置初始密码;
+也可以直接点日志里那条重置链接设密码(重置端点同时接受首登校验码)。
 细节与无浏览器时的 API 流程见 [`docs/deploy.md`](docs/deploy.md) 第 3 节。
 
 ### 7. 清空数据库重来

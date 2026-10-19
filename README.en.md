@@ -126,7 +126,8 @@ Open `http://localhost:5173` and register an account; without SMTP configured, v
 To reach the **platform admin** UI, set `JANUS_SUPERADMIN_EMAIL=admin@janus.test` in `.env` and restart the
 backend (idempotently initialised at startup). First login: sign in with that email once (the account has no
 password yet, so any password works) → the page reveals a "first-login code" field → copy the code from the
-backend terminal log (`[JANUS mailer]`) → you land on `/account` to set the real password. Details and the
+backend terminal log (`[JANUS mailer]`) → you land on `/account` to set the real password. Clicking the reset
+link printed in that log works as well (the reset endpoint accepts setup-token purposes too). Details and the
 headless API flow: [`docs/deploy.md`](docs/deploy.md) §3.
 
 ### 7. Reset the development database

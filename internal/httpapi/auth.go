@@ -39,6 +39,42 @@ const (
 // 这才是超管账号应有的门槛。
 const emailTokenPurposeSetup = "setup"
 
+// emailTokenPurposeReset 是「忘记密码 → 重置」流程的一次性 token 用途。
+const emailTokenPurposeReset = "reset"
+
+// resetConsumableKinds 是 /api/auth/reset-password 可以消费的 token 用途,按尝试顺序排列。
+//
+// 为什么 setup 也在里面:超管首登的 setup token 复用重置邮件模板(见 issueSetupToken),
+// 邮件正文里的链接就是 /reset-password?token=...。端点原先只认 kind=reset,于是那封信的
+// 链接永远是死链 —— 管理员只能回登录页手工填校验码。两种用途的性质完全一致(都证明
+// 「能读到这个邮箱」,都一次性且限期),所以允许它们共用同一个端点。
+// verify 不在此列:验证邮箱与设置密码是两件事,不接受跨用途消费。
+// 每次返回新切片:这是个安全口径,不能给任何调用方留下"就地改掉"的机会。
+func resetConsumableKinds() []string {
+	return []string{emailTokenPurposeReset, emailTokenPurposeSetup}
+}
+
+// consumeTokenKinds 依次尝试 kinds,返回第一个被成功消费的 token 所属租户。
+//
+// 消费动作由调用方注入,所以「顺序 + 命中即停 + 全落空即失败」这三条语义可以
+// 直接单测,不必起数据库。注意零值 tenantID 绝不能伴随 nil error 返回 —— 调用方
+// 会拿它去写密码。
+func consumeTokenKinds(kinds []string, consume func(kind string) (int64, error)) (int64, error) {
+	for _, kind := range kinds {
+		if id, err := consume(kind); err == nil {
+			return id, nil
+		}
+	}
+	return 0, store.ErrNotFound
+}
+
+// consumeResetToken 在重置流程里消费 token(普通重置的 reset,或超管首登的 setup)。
+func (a *API) consumeResetToken(ctx context.Context, tokenHash string) (int64, error) {
+	return consumeTokenKinds(resetConsumableKinds(), func(kind string) (int64, error) {
+		return a.store.ConsumeEmailToken(ctx, tokenHash, kind)
+	})
+}
+
 // dummyPasswordHash 用于不存在邮箱时的假 bcrypt 比较,抹平"账号不存在/密码错误"
 // 的响应时间差,降低邮箱枚举侧信道(登录与忘记密码)。
 var dummyPasswordHash = func() []byte {
@@ -558,7 +594,7 @@ func (a *API) handleForgotPassword(c *gin.Context) {
 		token, tokenHash := newToken()
 		// 两条失败路径都必须留痕:写 token 失败原先被静默吞掉,发信失败原先 `_ =`。
 		// 对外响应仍是 202(不泄露邮箱是否存在),但运维必须能从日志里看出"没发出去"。
-		if err := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, "reset", a.cfg.ResetTokenTTL); err != nil {
+		if err := a.store.CreateEmailToken(c.Request.Context(), tenant.ID, tokenHash, emailTokenPurposeReset, a.cfg.ResetTokenTTL); err != nil {
 			slog.Error("forgot-password: 写入重置 token 失败", "tenantId", tenant.ID, "err", err)
 		} else {
 			// 发信异步化:真实 SMTP 的 DialAndSend 是秒级网络 I/O,留在响应路径上会
@@ -578,6 +614,10 @@ type resetPasswordReq struct {
 }
 
 // handleResetPassword 无效/已使用/过期 token 一律 400。
+//
+// token 可能是普通重置的 reset,也可能是超管首登的 setup(邮件里的链接就走这里,
+// 见 resetConsumableKinds);两条路径设好密码后的效果一致:password_hash 落库 →
+// FirstLoginSetup 自动消失(判定口径见 store.Tenant.needsFirstLoginSetup)。
 func (a *API) handleResetPassword(c *gin.Context) {
 	if !a.rateLimit(c, a.authRate) {
 		return
@@ -591,7 +631,7 @@ func (a *API) handleResetPassword(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "新密码"+passwordLenMsg)
 		return
 	}
-	tenantID, err := a.store.ConsumeEmailToken(c.Request.Context(), hashToken(strings.TrimSpace(req.Token)), "reset")
+	tenantID, err := a.consumeResetToken(c.Request.Context(), hashToken(strings.TrimSpace(req.Token)))
 	if err != nil {
 		writeErr(c, http.StatusBadRequest, errValidation, "无效、已使用或过期的重置 token")
 		return
