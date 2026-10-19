@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"janus/pkg/plugin"
+	"github.com/ruanbw/janus/pkg/plugin"
 )
 
 // FactEnricher 用于在规则求值前，对基础访客画像进行扩展富化。

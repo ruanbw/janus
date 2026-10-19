@@ -19,7 +19,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // assertShapesAgree 对同一条件分别以扁平形态与等价树形态求值,断言两者结论一致,

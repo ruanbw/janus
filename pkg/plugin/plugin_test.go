@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/pkg/plugin"
+	"github.com/ruanbw/janus/pkg/plugin"
 )
 
 // mockEnricher 模拟访客画像富化器

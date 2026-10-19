@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // DefaultSnapshotTTL 快照兜底存活时间。规则/关联变更后应显式 Invalidate,

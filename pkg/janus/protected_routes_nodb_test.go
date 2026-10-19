@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/pkg/janus"
+	"github.com/ruanbw/janus/pkg/janus"
 )
 
 // TestProtectedRoutesRequireDatabase 钉住「无 DB 模式下受保护路由必须 fail fast」:

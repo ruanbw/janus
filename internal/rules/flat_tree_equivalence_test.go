@@ -27,7 +27,7 @@ import (
 	"regexp"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // probeUA 一份"能判出设备/系统/浏览器"的 iPhone Safari UA。

@@ -5,7 +5,7 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"janus/pkg/plugin"
+	"github.com/ruanbw/janus/pkg/plugin"
 )
 
 // SDKInjector 允许对基座原生生成的 sdk.js 进行包装与增强。

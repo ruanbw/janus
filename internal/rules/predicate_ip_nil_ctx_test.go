@@ -3,7 +3,7 @@ package rules
 import (
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // TestIPRadixPredicateNilContext 钉住 IP 谓词的 nil 上下文防御,与其余谓词对齐。

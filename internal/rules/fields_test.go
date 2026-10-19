@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // mustRequest 造一个带 UA / Referer / Host 的请求。

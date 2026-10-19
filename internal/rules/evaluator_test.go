@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 func TestExprCompileAndEvaluate(t *testing.T) {

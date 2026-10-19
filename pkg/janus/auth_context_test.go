@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/pkg/janus"
+	"github.com/ruanbw/janus/pkg/janus"
 )
 
 // TestGetAuthContextDoesNotDefaultRole 钉住「不静默补默认角色」契约:

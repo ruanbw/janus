@@ -25,7 +25,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"janus/pkg/plugin"
+	"github.com/ruanbw/janus/pkg/plugin"
 )
 
 // 条件字段(spec D5 的 13 个,库内以字符串落库)。

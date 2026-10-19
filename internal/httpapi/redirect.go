@@ -35,9 +35,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/internal/httpapi/templates"
-	"janus/internal/rules"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/httpapi/templates"
+	"github.com/ruanbw/janus/internal/rules"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // ---------- 访客可见错误页的安全响应头与租户错误页快照 ----------

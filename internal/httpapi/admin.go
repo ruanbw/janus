@@ -12,7 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"strconv"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 func (a *API) requireSuperadmin(c *gin.Context) (*store.Tenant, *store.Session, bool) {

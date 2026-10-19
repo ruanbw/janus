@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 type dummyEnricher struct {

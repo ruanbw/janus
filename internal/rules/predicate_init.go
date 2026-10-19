@@ -3,7 +3,7 @@ package rules
 import (
 	"log/slog"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 func init() {

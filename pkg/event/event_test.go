@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"janus/pkg/event"
+	"github.com/ruanbw/janus/pkg/event"
 )
 
 type simpleEvent struct {

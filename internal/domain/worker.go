@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"janus/internal/config"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/config"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // 后台循环的固定节奏。

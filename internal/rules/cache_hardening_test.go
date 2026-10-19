@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // ---------- 03:失效与加载的丢失效竞态 ----------

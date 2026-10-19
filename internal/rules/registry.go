@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // PredicateCompiler 算子编译函数，负责将持久化的条件配置编译为具体的原子断言算子。

@@ -12,7 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 func TestPasswordChangeExemptWhitelist(t *testing.T) {

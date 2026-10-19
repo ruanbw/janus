@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"janus/pkg/plugin"
+	"github.com/ruanbw/janus/pkg/plugin"
 )
 
 // RuleInterceptor 允许在遍历规则快照之前短路求值逻辑，直接给出最终决议。

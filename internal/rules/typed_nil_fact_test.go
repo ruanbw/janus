@@ -3,7 +3,7 @@ package rules
 import (
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // TestTypedNilFactDoesNotPanicInSeenBranches 钉住 duplicated 计数分支的 typed-nil 防御。

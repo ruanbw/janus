@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // TestCacheLoaderPanicRecordsBackoff loader panic 也必须进退避窗口。

@@ -12,7 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // passwordChangeExempt 是强制改密期间仍必须放行的端点白名单(冻结契约):

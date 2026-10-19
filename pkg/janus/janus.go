@@ -16,13 +16,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"janus/internal/bootstrap"
-	"janus/internal/config"
-	"janus/internal/db"
-	"janus/internal/domain"
-	"janus/internal/httpapi"
-	"janus/internal/store"
-	"janus/pkg/event"
+	"github.com/ruanbw/janus/internal/bootstrap"
+	"github.com/ruanbw/janus/internal/config"
+	"github.com/ruanbw/janus/internal/db"
+	"github.com/ruanbw/janus/internal/domain"
+	"github.com/ruanbw/janus/internal/httpapi"
+	"github.com/ruanbw/janus/internal/store"
+	"github.com/ruanbw/janus/pkg/event"
 )
 
 // Config 重新导出配置结构，方便外部工程配置

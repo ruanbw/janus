@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"janus/internal/fqdn"
+	"github.com/ruanbw/janus/internal/fqdn"
 )
 
 // CodeAlphabet 短码字符集:a-zA-Z0-9 去掉易混淆字符 0/O/1/l/I(spec 决策)。

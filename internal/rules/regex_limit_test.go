@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // TestEngineRejectsOversizedRegexCondition 是引擎层正则规模上限的回归测试。

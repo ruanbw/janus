@@ -19,8 +19,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"janus/internal/domain"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/domain"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // validFQDN 校验域名格式(实现在 domain 包,与入库归一化共用同一份规则)。

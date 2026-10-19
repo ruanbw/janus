@@ -17,13 +17,13 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/internal/config"
-	"janus/internal/domain"
-	"janus/internal/geo"
-	"janus/internal/jwt"
-	"janus/internal/rbac"
-	"janus/internal/rules"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/config"
+	"github.com/ruanbw/janus/internal/domain"
+	"github.com/ruanbw/janus/internal/geo"
+	"github.com/ruanbw/janus/internal/jwt"
+	"github.com/ruanbw/janus/internal/rbac"
+	"github.com/ruanbw/janus/internal/rules"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 type Deps struct {

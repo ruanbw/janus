@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 func hashPtr(t *testing.T, pw string) *string {

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"janus/pkg/janus"
+	"github.com/ruanbw/janus/pkg/janus"
 )
 
 // TestRunRetryAfterStartupFailure 钉住失败路径的 running 复位契约:

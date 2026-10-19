@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"janus/pkg/plugin"
+	"github.com/ruanbw/janus/pkg/plugin"
 )
 
 // 测试替身:耗时可控的富化器 / 拦截器(基座注册表与 pkg/plugin 注册表各一套)。

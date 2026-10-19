@@ -9,8 +9,8 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"janus/internal/domain"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/domain"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 const (

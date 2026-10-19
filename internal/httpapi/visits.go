@@ -16,8 +16,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/internal/geo"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/geo"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // overviewRangeDays 时间范围快捷值 → 窗口跨度(自然日,含今日)。

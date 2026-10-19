@@ -11,7 +11,7 @@ import (
 	"github.com/expr-lang/expr/builtin"
 	"github.com/expr-lang/expr/parser"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // exprRule 造一条以表达式为条件的全局规则(测试构造用)。

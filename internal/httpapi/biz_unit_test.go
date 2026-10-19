@@ -18,9 +18,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"janus/internal/config"
-	"janus/internal/domain"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/config"
+	"github.com/ruanbw/janus/internal/domain"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // bizZip 构造一个最小合法 zip(仅用于安装错误分类的单测)。

@@ -9,7 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"janus/internal/fqdn"
+	"github.com/ruanbw/janus/internal/fqdn"
 )
 
 type Domain struct {

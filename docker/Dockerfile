@@ -49,8 +49,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
-# pkg/ 必须显式 COPY:internal/{rules,httpapi} 依赖 janus/pkg/plugin,
-# 少了它 go build 直接失败(package janus/pkg/plugin is not in std),
+# pkg/ 必须显式 COPY:internal/{rules,httpapi} 依赖 github.com/ruanbw/janus/pkg/plugin,
+# 少了它 go build 直接失败(package .../pkg/plugin is not in std),
 # 而 go build ./... 在仓库里是全绿的 —— 只有镜像编不出来。
 COPY pkg/ pkg/
 COPY migrations/ migrations/

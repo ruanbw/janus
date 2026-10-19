@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"janus/pkg/event"
-	"janus/pkg/janus"
+	"github.com/ruanbw/janus/pkg/event"
+	"github.com/ruanbw/janus/pkg/janus"
 )
 
 // TestEventListenerUnsubscribedOnShutdown 钉住「App 销毁即解绑全局事件订阅」契约:

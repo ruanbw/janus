@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // StringPredicate 专注于字符串常规运算符（in, not_in, eq, neq, contains, not_contains, starts_with, ends_with）。

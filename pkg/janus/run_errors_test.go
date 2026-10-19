@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"janus/pkg/janus"
+	"github.com/ruanbw/janus/pkg/janus"
 )
 
 // TestRunFailsWhenDatabaseUnreachable 钉住契约:App.Run 不得吞掉启动错误。

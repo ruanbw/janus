@@ -19,8 +19,8 @@ import (
 	"github.com/gin-contrib/authz"
 	"github.com/gin-gonic/gin"
 
-	"janus/internal/rbac"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/rbac"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 const (

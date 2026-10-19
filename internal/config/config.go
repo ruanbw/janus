@@ -12,7 +12,7 @@ import (
 
 	"github.com/caarlos0/env/v11"
 
-	"janus/internal/fqdn"
+	"github.com/ruanbw/janus/internal/fqdn"
 )
 
 // defaultDatabaseURL 是 JANUS_DATABASE_URL 的开发默认值(JANUS_DATABASE_URL 的

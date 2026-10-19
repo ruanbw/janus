@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // RegexPredicate 预编译正则表达式断言算子。

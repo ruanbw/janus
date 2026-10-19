@@ -22,8 +22,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/internal/domain"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/domain"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // handleLandingFallback NoRoute 兜底:gin 路由树不支持 /:code 与 /:code/... 子路由并存,

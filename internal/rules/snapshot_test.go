@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 func logBuf() (*slog.Logger, *bytes.Buffer) {

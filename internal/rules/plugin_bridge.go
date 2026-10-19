@@ -8,7 +8,7 @@ import (
 	"net/netip"
 	"time"
 
-	"janus/pkg/plugin"
+	"github.com/ruanbw/janus/pkg/plugin"
 )
 
 // 公开扩展 API(pkg/plugin)与基座内部注册表的接线。

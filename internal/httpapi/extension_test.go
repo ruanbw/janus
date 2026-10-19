@@ -10,8 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/internal/rules"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/rules"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 type mockInjector struct {

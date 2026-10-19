@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // TestCacheClientDisconnectDoesNotTriggerLoadFailureBackoff 是"客户端断连不该被记成

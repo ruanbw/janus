@@ -18,8 +18,8 @@ import (
 	"gorm.io/gorm"
 	"strconv"
 
-	"janus/internal/domain"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/domain"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // validTargetURL 目标 URL 准入:协议白名单仅 http/https,并拒绝控制字符(CRLF 注入)。

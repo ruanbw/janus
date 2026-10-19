@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // countQueryParses 把 parseQueryFunc 换成计数器,返回读取计数的函数。

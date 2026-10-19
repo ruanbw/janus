@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // chainTree 造一棵 depth 层深的链式条件树:每层一个 all 组,最内层挂 leaf。

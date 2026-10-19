@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"janus/pkg/janus"
+	"github.com/ruanbw/janus/pkg/janus"
 )
 
 // TestValidateAppConfigZeroTolerance 钉住 validateAppConfig 的校验契约:

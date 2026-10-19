@@ -23,7 +23,7 @@ import (
 	"strings"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // dynCtx 一个带名字的访客画像形态。

@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 type appConfigResp struct {

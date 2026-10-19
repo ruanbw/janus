@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"janus/internal/store"
-	"janus/pkg/plugin"
+	"github.com/ruanbw/janus/internal/store"
+	"github.com/ruanbw/janus/pkg/plugin"
 )
 
 type pubEnricher struct{}

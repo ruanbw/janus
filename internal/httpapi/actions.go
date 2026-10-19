@@ -7,9 +7,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/internal/rules"
-	"janus/internal/store"
-	"janus/pkg/plugin"
+	"github.com/ruanbw/janus/internal/rules"
+	"github.com/ruanbw/janus/internal/store"
+	"github.com/ruanbw/janus/pkg/plugin"
 )
 
 // DeliveryContext 传递给交付处理器的上下文信息。

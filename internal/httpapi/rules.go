@@ -34,8 +34,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"janus/internal/rules"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/rules"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // maxRuleLinkNames 列表里回传的关联短链可读标识上限(完整关联由 linkIds 给出)。

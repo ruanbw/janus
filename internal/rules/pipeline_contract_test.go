@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // mockTestContext 是专门为谓词与流水线测试构造的简易 VisitorContext。

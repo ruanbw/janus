@@ -11,12 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"janus/internal/bootstrap"
-	"janus/internal/config"
-	"janus/internal/db"
-	"janus/internal/domain"
-	"janus/internal/httpapi"
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/bootstrap"
+	"github.com/ruanbw/janus/internal/config"
+	"github.com/ruanbw/janus/internal/db"
+	"github.com/ruanbw/janus/internal/domain"
+	"github.com/ruanbw/janus/internal/httpapi"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 func main() {

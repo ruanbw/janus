@@ -12,7 +12,7 @@ package httpapi_test
 import (
 	"testing"
 
-	"janus/internal/rules"
+	"github.com/ruanbw/janus/internal/rules"
 )
 
 // TestExpressionRefsAndValidationAgree 前提:ValidateExpression 通过 ⇒

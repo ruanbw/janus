@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"janus/pkg/plugin"
+	"github.com/ruanbw/janus/pkg/plugin"
 )
 
 // TestPostVisitHookAsyncContext 钉住异步后置钩子的上下文契约:

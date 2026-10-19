@@ -27,7 +27,7 @@ import (
 	"fmt"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // multivalueCase 一条"多值条件 + 一份画像"的语义断言。

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // TestExprEnvAccessorRejectedAtCompileTime 是 C1($env 绕过 refs 闸门)的回归测试。

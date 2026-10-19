@@ -7,8 +7,8 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"janus/internal/store"
-	"janus/pkg/plugin"
+	"github.com/ruanbw/janus/internal/store"
+	"github.com/ruanbw/janus/pkg/plugin"
 )
 
 // PostVisitHook 访问日志持久化完成后的异步回调。

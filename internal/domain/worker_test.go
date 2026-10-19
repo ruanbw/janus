@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"janus/internal/config"
+	"github.com/ruanbw/janus/internal/config"
 )
 
 func testCfg() config.Config {

@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"janus/internal/store"
+	"github.com/ruanbw/janus/internal/store"
 )
 
 // IPRadixPredicate 专注于 IP 地址及 CIDR 网段高效判定的原子谓词。
