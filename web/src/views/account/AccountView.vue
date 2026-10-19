@@ -5,14 +5,14 @@
       description="查看租户核心账户信息与资源配额，并管理控制台登录密码凭据"
     />
 
-    <!-- 平台超管首次登录设置密码提醒 -->
+    <!-- 强制改密提醒 -->
     <AppAlert
-      v-if="auth.tenant?.firstLoginSetup"
+      v-if="auth.tenant?.mustChangePassword"
       class="mb-6"
       type="warning"
       show-icon
-      title="首次登录安全提示"
-      message="平台管理员账号尚未设置独立登录密码，请先在右侧完成初始密码设置后再正常使用各项管理功能。"
+      title="账号安全提示"
+      message="当前账号处于强制修改密码状态，请先在右侧完成密码修改后再正常使用各项管理功能。"
     />
 
     <div class="grid grid-cols-1 gap-6 lg:grid-cols-2 items-start">
@@ -34,8 +34,8 @@
             <!-- 结构化的租户信息描述列表 -->
             <div class="rounded-xl border border-line bg-surface-muted/40 p-4 space-y-3">
               <div class="flex items-center justify-between text-xs">
-                <span class="text-ink-soft">租户登录邮箱</span>
-                <span class="mono font-semibold text-ink">{{ auth.tenant?.email ?? '—' }}</span>
+                <span class="text-ink-soft">租户登录账号</span>
+                <span class="mono font-semibold text-ink">{{ auth.tenant?.username ?? '—' }}</span>
               </div>
               <div class="flex items-center justify-between text-xs border-t border-line/60 pt-2.5">
                 <span class="text-ink-soft">租户标识前缀 (Slug)</span>
@@ -127,12 +127,12 @@
         <CardHeader>
           <CardTitle class="flex items-center gap-2">
             <KeyRound :size="18" class="text-brand" />
-            {{ isFirstLogin ? '设置初始登录密码' : '修改登录密码' }}
+            {{ mustChangePassword ? '设置初始登录密码' : '修改登录密码' }}
           </CardTitle>
           <CardDescription>
             {{
-              isFirstLogin
-                ? '平台管理员首次登录，请设置独立登录密码以保障管理后台安全'
+              mustChangePassword
+                ? '账号处于强制改密状态，请先设置独立登录密码以恢复管理后台各项功能'
                 : '定期更换强密码有助于保护您的短链路由资源与访问统计数据安全'
             }}
           </CardDescription>
@@ -150,9 +150,9 @@
             @finish="onChangePassword"
             @keydown.enter="submitPasswordForm"
           >
-            <!-- 当前密码(首次登录设置密码时无需输入) -->
+            <!-- 当前密码(强制改密时可省略) -->
             <AppFormItem
-              v-if="!isFirstLogin"
+              v-if="!mustChangePassword"
               label="当前旧密码"
               name="oldPassword"
               extra="请输入您当前使用的账号密码进行身份验证"
@@ -171,7 +171,7 @@
 
             <!-- 新密码 -->
             <AppFormItem
-              :label="isFirstLogin ? '设置登录密码' : '设置新密码'"
+              :label="mustChangePassword ? '设置登录密码' : '设置新密码'"
               name="newPassword"
               extra="密码长度须至少 8 位，包含字符多样性"
             >
@@ -230,7 +230,7 @@
             :loading="changingPassword"
             @click="submitPasswordForm"
           >
-            {{ isFirstLogin ? '确认设置初始密码' : '确认修改密码' }}
+            {{ mustChangePassword ? '确认设置初始密码' : '确认修改密码' }}
           </AppButton>
         </CardFooter>
       </AppCard>
@@ -270,7 +270,7 @@ const changingPassword = ref(false);
 const pwdFormRef = ref();
 const form = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' });
 
-const isFirstLogin = computed(() => Boolean(auth.tenant?.firstLoginSetup));
+const mustChangePassword = computed(() => auth.tenant?.mustChangePassword === true);
 
 const statusInfo = computed(() => {
   const s = auth.tenant?.status ?? 'pending';
@@ -365,14 +365,14 @@ async function onChangePassword() {
   changingPassword.value = true;
   try {
     await changePassword({
-      oldPassword: isFirstLogin.value ? undefined : form.oldPassword,
+      oldPassword: mustChangePassword.value ? undefined : form.oldPassword,
       newPassword: form.newPassword,
     });
-    message.success(isFirstLogin.value ? '初始密码已成功设置' : '登录密码已成功修改');
+    message.success(mustChangePassword.value ? '初始密码已成功设置' : '登录密码已成功修改');
     form.oldPassword = '';
     form.newPassword = '';
     form.confirmPassword = '';
-    if (isFirstLogin.value) {
+    if (mustChangePassword.value) {
       await load();
     }
   } catch (error) {

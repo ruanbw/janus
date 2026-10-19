@@ -3,30 +3,16 @@ import { get, post } from '@/utils/request';
 
 import type { Tenant } from '@/types/api';
 
-/** 注册:创建租户(pending)+ 平台默认域名 */
-export function register(data: { email: string; password: string; slug: string }): Promise<Tenant> {
+/** 注册:创建租户 + 平台默认域名,注册即生效(不再有验证邮件) */
+export function register(data: { username: string; password: string; slug: string }): Promise<Tenant> {
   return post<Tenant>('/auth/register', data);
 }
 
-/** 重发验证邮件:恒 202,不泄露邮箱是否存在 */
-export function resendVerification(data: { email: string }): Promise<void> {
-  return post<void>('/auth/resend-verification', data);
-}
-
-/** 邮箱验证 */
-export function verifyEmail(data: { token: string }): Promise<void> {
-  return post<void>('/auth/verify-email', data);
-}
-
-/** 登录:200 tenant + Set-Cookie(janus_session / janus_csrf)
- *
- * setupToken:仅超管首次登录(尚无密码)需要。后端对 firstLoginSetup 的租户强制校验它
- * (一次性、邮递到 JANUS_SUPERADMIN_EMAIL),没有它登录恒 401。 */
+/** 登录:200 tenant + Set-Cookie(janus_session / janus_csrf) */
 export function login(data: {
-  email: string;
+  username: string;
   password: string;
   rememberMe?: boolean;
-  setupToken?: string;
 }): Promise<Tenant> {
   return post<Tenant>('/auth/login', data);
 }
@@ -41,20 +27,10 @@ export function fetchMe(): Promise<Tenant> {
   return get<Tenant>('/auth/me');
 }
 
-/** 修改密码(超管首次登录可省略 oldPassword) */
+/** 修改密码(强制改密的首登可省略 oldPassword) */
 export function changePassword(data: {
   oldPassword?: string;
   newPassword: string;
 }): Promise<void> {
   return post<void>('/auth/change-password', data);
-}
-
-/** 忘记密码:始终 202,不泄露邮箱是否存在 */
-export function forgotPassword(data: { email: string }): Promise<void> {
-  return post<void>('/auth/forgot-password', data);
-}
-
-/** 重置密码 */
-export function resetPassword(data: { token: string; newPassword: string }): Promise<void> {
-  return post<void>('/auth/reset-password', data);
 }

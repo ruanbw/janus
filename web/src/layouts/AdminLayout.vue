@@ -13,7 +13,7 @@
       <div
         class="border-t border-line px-3.5 py-3"
         :class="collapsed ? 'flex justify-center' : ''"
-        :title="collapsed ? auth.tenant?.email : undefined"
+        :title="collapsed ? auth.tenant?.username : undefined"
       >
         <div
           v-if="!collapsed"
@@ -124,7 +124,7 @@
                   {{ avatarInitial }}
                 </span>
                 <span class="hidden max-w-44 truncate text-sm text-ink sm:block">
-                  {{ auth.tenant?.email }}
+                  {{ auth.tenant?.username }}
                 </span>
                 <ChevronDown :size="12" class="text-ink-faint" />
               </button>
@@ -326,13 +326,13 @@ const routeTitle = computed(() => (route.meta.title as string | undefined) ?? 'J
 const tenantName = computed(
   () =>
     auth.tenant?.slug?.toUpperCase() ||
-    auth.tenant?.email?.split('@')[0]?.toUpperCase() ||
+    auth.tenant?.username?.toUpperCase() ||
     'TENANT',
 );
 
 const avatarInitial = computed(() => {
-  const email = auth.tenant?.email ?? '?';
-  return email.charAt(0).toUpperCase();
+  const name = auth.tenant?.username ?? '?';
+  return name.charAt(0).toUpperCase();
 });
 
 function go(to: string): void {

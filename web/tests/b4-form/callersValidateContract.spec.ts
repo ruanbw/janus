@@ -174,7 +174,7 @@ describe('AccountView：密码不合法时不得调用 changePassword', () => {
 
 describe('AdminTenantRemoveDomainView：域名 ID 非法时不得调用 removeDomain', () => {
   it('域名 ID 为 0（小于最小值 1）→ 二次确认框不弹、removeDomain 未被调用', async () => {
-    adminApi.getTenant.mockResolvedValue({ id: 7, email: 'a@b.c', slug: 'a', tier: { name: 'free' } });
+    adminApi.getTenant.mockResolvedValue({ id: 7, username: 'a_user', slug: 'a', tier: { name: 'free' } });
     const wrapper = mountView(AdminTenantRemoveDomainView);
     await flushPromises();
 

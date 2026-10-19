@@ -212,16 +212,17 @@ export interface AppConfig {
 /** 租户 */
 export interface Tenant {
   id: number;
-  email: string;
+  /** 登录账号:3-32 位,仅小写字母、数字、下划线、连字符 */
+  username: string;
   slug: string;
   status: TenantStatus;
   isSuperAdmin: boolean;
+  /** 为真时后端除 /auth/me、/auth/change-password、/auth/logout 外一律 403(E_PASSWORD_CHANGE_REQUIRED),前端只能停在 /account */
+  mustChangePassword: boolean;
   tier: Tier;
   /** 平台默认域名,形如 "<slug>.<平台域名>" */
   defaultDomain: string;
   createdAt: string;
-  /** 仅超管首次登录(尚无密码)时为 true */
-  firstLoginSetup?: boolean;
   /** 用量(仅 /api/me 与超管列表返回) */
   usage?: QuotaUsage;
 }

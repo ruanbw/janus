@@ -21,10 +21,10 @@
       :scroll="{ x: 1220 }"
     >
       <template #cell="{ column, record }">
-        <template v-if="column.key === 'email'">
+        <template v-if="column.key === 'username'">
           <div class="flex min-w-0 items-center gap-2">
-            <AppTooltip :title="String(record.email)">
-              <span class="truncate font-medium text-ink">{{ record.email }}</span>
+            <AppTooltip :title="String(record.username)">
+              <span class="truncate font-medium text-ink">{{ record.username }}</span>
             </AppTooltip>
             <AppTag v-if="record.isSuperAdmin" color="warn" class="shrink-0">平台管理员</AppTag>
           </div>
@@ -108,7 +108,7 @@ const tenants = ref<Tenant[]>([]);
 const loading = ref(false);
 
 const columns: TableColumn[] = [
-  { title: '邮箱', key: 'email', dataIndex: 'email', minWidth: 200, ellipsis: true },
+  { title: '账号', key: 'username', dataIndex: 'username', minWidth: 200, ellipsis: true },
   { title: '前缀', key: 'slug', dataIndex: 'slug', width: 120, nowrap: true },
   { title: '状态', key: 'status', dataIndex: 'status', width: 100, nowrap: true },
   { title: '等级', key: 'tier', dataIndex: 'tier', width: 110, nowrap: true },
@@ -139,7 +139,7 @@ onMounted(load);
 function onToggleBan(record: Tenant, status: 'banned' | 'active') {
   const label = status === 'banned' ? '封禁' : '解封';
   confirm({
-    title: label + '租户 ' + record.email + '?',
+    title: label + '租户 ' + record.username + '?',
     content:
       status === 'banned'
         ? '封禁后该租户将无法登录,其域名下的短码将不再放行。'
