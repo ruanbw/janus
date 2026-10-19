@@ -147,7 +147,6 @@ docker compose down -v && docker compose up -d     # -v 删掉 pgdata 卷,数据
 | `JANUS_ADDR` | `:8080` | HTTP 监听地址 |
 | `JANUS_PLATFORM_DOMAIN` | `janus.test` | 平台裸域名,租户默认域名 `<slug>.<平台域名>` |
 | `JANUS_SERVER_PUBLIC_IP` | `127.0.0.1` | 自有域名 DNS 激活校验的比对地址 |
-| `JANUS_PUBLIC_BASE_URL` | `https://app.janus.test` | 邮件中验证 / 重置链接前缀 |
 | `JANUS_DATABASE_URL` | `postgres://janus:janus@localhost:5432/janus?sslmode=disable` | 后端连接串 |
 | `JANUS_COOKIE_SECURE` | `false` | 会话 cookie Secure 标记,http 开发必须 false |
 | `JANUS_JWT_SECRET` | 空 | JWT 签名密钥;留空则每次启动随机生成(重启后 token 失效) |

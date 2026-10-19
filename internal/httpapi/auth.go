@@ -133,8 +133,18 @@ func (a *API) handleRegister(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
-	// 注册即 active:平台默认域名的证书预签发探活原先由邮箱验证成功触发,现在在这里触发。
+	// 注册即 active 且直接登录:前端注册后不再经过登录页,
+	// 所以这里要随响应下发会话 cookie(与 handleLogin 同一路径)。
+	// 平台默认域名的证书预签发探活原先由邮箱验证成功触发,现在在这里触发。
 	go a.probeTenantDefaultDomain(tenant.ID)
+	token, tokenHash := newToken()
+	csrf, _ := newToken()
+	sess, err := a.store.CreateSession(ctx, tenant.ID, tokenHash, csrf, a.cfg.SessionTTL)
+	if err != nil {
+		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
+		return
+	}
+	a.setSessionCookies(c, token, sess.CSRFToken, a.cfg.SessionTTL)
 	writeJSON(c, http.StatusCreated, tenant)
 }
 

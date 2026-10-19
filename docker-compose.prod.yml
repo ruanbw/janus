@@ -29,7 +29,6 @@ services:
       JANUS_DATABASE_URL: "postgres://${JANUS_DB_USER:-janus}:${JANUS_DB_PASSWORD:?}@postgres:5432/${JANUS_DB_NAME:-janus}?sslmode=disable"
       JANUS_PLATFORM_DOMAIN: "${JANUS_PLATFORM_DOMAIN:?JANUS_PLATFORM_DOMAIN 必须设置(裸平台域名)}"
       JANUS_SERVER_PUBLIC_IP: "${JANUS_SERVER_PUBLIC_IP:?JANUS_SERVER_PUBLIC_IP 必须设置(服务器公网 IP)}"
-      JANUS_SUPERADMIN_EMAIL: "${JANUS_SUPERADMIN_EMAIL:-}"
       # on-demand TLS ask 端点的共享密钥:必须与 caddy 容器的 CADDY_ASK_TOKEN 同值。
       # 后端拿不到时 /internal/caddy/authorize 一律 403,Caddy 一张证书都签不出来。
       JANUS_CADDY_ASK_TOKEN: "${JANUS_CADDY_ASK_TOKEN:?未配置 JANUS_CADDY_ASK_TOKEN,后端无法校验 on-demand TLS 的 ask 请求}"
@@ -47,8 +46,6 @@ services:
       # 可选参数与 .env.example/代码默认值一致(compose 显式转发,便于 .env 覆盖)
       JANUS_SESSION_TTL: "${JANUS_SESSION_TTL:-720h}"
       JANUS_SESSION_TTL_SHORT: "${JANUS_SESSION_TTL_SHORT:-24h}"
-      JANUS_VERIFY_TOKEN_TTL: "${JANUS_VERIFY_TOKEN_TTL:-24h}"
-      JANUS_RESET_TOKEN_TTL: "${JANUS_RESET_TOKEN_TTL:-1h}"
       # JWT(API Bearer 认证):密钥必须配置强随机值(openssl rand -hex 32);留空则每次启动随机,重启后已签发 token 失效
       JANUS_JWT_SECRET: "${JANUS_JWT_SECRET:-}"
       JANUS_JWT_TTL: "${JANUS_JWT_TTL:-24h}"
@@ -63,13 +60,6 @@ services:
       JANUS_LANDING_MAX_TOTAL_BYTES: "${JANUS_LANDING_MAX_TOTAL_BYTES:-10485760}"
       JANUS_LANDING_MAX_FILES: "${JANUS_LANDING_MAX_FILES:-500}"
       JANUS_MAX_TARGET_URLS: "${JANUS_MAX_TARGET_URLS:-50}"
-      # 邮件:SMTP 凭据来自 .env(未配置时用控制台 mailer)
-      JANUS_PUBLIC_BASE_URL: "https://${JANUS_PLATFORM_DOMAIN:?}"
-      JANUS_SMTP_HOST: "${JANUS_SMTP_HOST:-}"
-      JANUS_SMTP_PORT: "${JANUS_SMTP_PORT:-465}"
-      JANUS_SMTP_USERNAME: "${JANUS_SMTP_USERNAME:-}"
-      JANUS_SMTP_PASSWORD: "${JANUS_SMTP_PASSWORD:-}"
-      JANUS_SMTP_FROM: "${JANUS_SMTP_FROM:-}"
     volumes:
       - uploads:/app/uploads
     depends_on:

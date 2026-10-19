@@ -30,7 +30,7 @@ cd web && npx vue-tsc --noEmit
 | `internal/jwt` `internal/rbac` `internal/config` `internal/mailer` `internal/fqdn` `internal/db` | 各自纯逻辑单测 |
 | `pkg/janus` `pkg/event` `pkg/plugin` | SDK / 事件 / 插件契约 |
 
-`internal/bootstrap`、`internal/store`、`cmd/janus` 目前没有测试。
+`cmd/janus` 目前没有测试;`internal/bootstrap`(超管幂等收敛)与 `internal/store`(首登态判定)已有纯逻辑单测。
 
 ---
 
