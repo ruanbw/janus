@@ -16,6 +16,16 @@ RUN corepack enable
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY web/ ./
+# 注册页的默认域名提示(RegisterView 读 VITE_PLATFORM_DOMAIN)。
+# 构建期注入:仓库里的 web/.env.production 固定是开发用 janus.test,自托管部署若不覆盖,
+# 注册页会提示 "alice.janus.test" 而平台实际是别的域名。
+#   docker-compose.prod.yml 用 .env 的 JANUS_PLATFORM_DOMAIN 自动传进来;
+#   手工构建时用 --build-arg VITE_PLATFORM_DOMAIN=example.com。
+# 留空时写入动作整体跳过,沿用 web/.env.production。
+ARG VITE_PLATFORM_DOMAIN
+RUN if [ -n "$VITE_PLATFORM_DOMAIN" ]; then \
+      printf 'VITE_PLATFORM_DOMAIN=%s\n' "$VITE_PLATFORM_DOMAIN" > .env.production.local; \
+    fi
 # 门禁必须在 build **之前**跑完，且必须非零即失败:
 #   type-check 挡住类型错误，check:ui 挡住 UI 规范违规。
 # 放在这里而不是只写在 README 里，是因为 README 的清单只对"记得手动跑"的人有效 ——
@@ -39,6 +49,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/ cmd/
 COPY internal/ internal/
+# pkg/ 必须显式 COPY:internal/{rules,httpapi} 依赖 janus/pkg/plugin,
+# 少了它 go build 直接失败(package janus/pkg/plugin is not in std),
+# 而 go build ./... 在仓库里是全绿的 —— 只有镜像编不出来。
+COPY pkg/ pkg/
 COPY migrations/ migrations/
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/janus ./cmd/janus
 

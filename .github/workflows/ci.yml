@@ -107,3 +107,41 @@ jobs:
 
       - name: check:ui
         run: pnpm check:ui
+
+  docker:
+    name: 镜像构建 (docker build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # 只验证两个镜像能构建出来,不推送任何东西。
+      #
+      # 为什么必须有:docker/Dockerfile 的 backend 阶段用的是显式 COPY 清单
+      # (cmd/ + internal/ + pkg/ + migrations/,不是 COPY . .)。新增顶层包时漏一行,
+      # 仓库内 go build ./... / go vet ./... / go test ./... 全是绿的,只有镜像编不出来 ——
+      # 这个漏洞已经真实发生过一次(pkg/ 引入后没同步 COPY,生产 compose 起不来)。
+      - name: backend 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: backend
+          push: false
+          cache-from: type=gha,scope=backend
+          # ignore-error=true:fork PR 上拿不到 gha 缓存的写权限,缓存失败不该把构建判成失败
+          cache-to: type=gha,mode=max,scope=backend,ignore-error=true
+
+      # web 阶段同样受 COPY 清单与构建期变量影响(如 VITE_PLATFORM_DOMAIN),
+      # 顺手一起验:镜像构建成功即代表 pnpm install/type-check/build/check:ui 在容器内跑通。
+      - name: web 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: web
+          push: false
+          build-args: VITE_PLATFORM_DOMAIN=example.com
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web,ignore-error=true

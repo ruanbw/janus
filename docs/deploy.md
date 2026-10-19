@@ -17,8 +17,10 @@
 | --- | --- | --- |
 | `JANUS_PLATFORM_DOMAIN` | ✅ | 裸平台域名,如 `example.com`。租户默认域名形如 `<slug>.<平台域名>` |
 | `JANUS_SERVER_PUBLIC_IP` | ✅ | 服务器公网 IP,DNS 激活校验比对地址 |
-| `JANUS_DB_PASSWORD` | ✅ | Postgres 密码 |
+| `JANUS_DB_PASSWORD` | ✅ | Postgres 密码。注意 `.env.example` 预置的 `janus` 能直接启动(compose 只挡空值,不挡默认值),不会报错 |
 | `JANUS_CADDY_ASK_TOKEN` | ✅ | Caddy on-demand TLS 授权端点 `/internal/caddy/authorize` 的共享密钥,建议 `openssl rand -hex 32`。compose 以 `${JANUS_CADDY_ASK_TOKEN:?}` 同时注入 backend 与 caddy 两个容器;留空则 `docker compose up -d` 直接报错退出 |
+| `JANUS_TRUSTED_PROXY_CIDRS` | ✅ | 声明「哪些对端的 X-Forwarded-For 可以采信」,生产填 Caddy 所在容器网段(Docker 默认网桥为 `172.16.0.0/12`)。compose 以 `${...:?}` 转发,留空直接启动失败;不配而强行走起来的后果:认证端点限流退化成**全站共享一个桶**(一个人试密码全站吃 429)、落地页 SDK 生成的 click 地址降级为 `http://` |
+| `JANUS_JWT_SECRET` | ✅ | API Bearer JWT 签名密钥,`openssl rand -hex 32`(后端要求 ≥ 32 字节,短于 32 字节直接拒绝启动)。留空只告警、不拒绝启动,但每次重启换随机密钥 → 已签发的 API token 全部失效 |
 | `JANUS_SUPERADMIN_EMAIL` | 建议 | 平台管理员邮箱(环境变量初始化,首次登录引导设置密码)。邮箱已被普通租户占用时启动**硬失败**(拒绝提权),修正后重启 |
 | `JANUS_ACME_EMAIL` | 建议 | Let's Encrypt 账户邮箱 |
 | `JANUS_DB_USER` / `JANUS_DB_NAME` | 可选 | 默认 `janus` / `janus` |
@@ -27,6 +29,8 @@
 其余可选变量见 `.env.example`(token 有效期、DNS 重试、访问保留时长等)。
 
 > **部署前必须修改 Caddyfile.prod**:Caddy 站点地址不支持环境变量占位符,该文件把站点域名硬编码为 `example.com`(注释中已标注),需要把 `example.com` 全部替换为你的平台域名(与 `JANUS_PLATFORM_DOMAIN` 一致)。`JANUS_ACME_EMAIL` 仅在取消注释 Caddyfile.prod 中的 `email` 指令后生效(为空时该指令会导致 Caddy 启动失败)。
+>
+> 前端注册页的默认域名提示是**构建期**烘进产物的(`VITE_PLATFORM_DOMAIN`):compose 会把 `.env` 的 `JANUS_PLATFORM_DOMAIN` 作为 `--build-arg` 自动传进去,无需手工干预;但**改了平台域名后必须重建 web 镜像**(`docker compose -f docker-compose.prod.yml build web`),否则注册页仍提示旧域名。
 
 ## 3. 启动
 

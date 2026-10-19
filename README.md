@@ -54,7 +54,7 @@ docs/                 # deploy.md、testing.md、adr/
 | Go | ≥ 1.26 |
 | Node.js | ≥ 20.19 |
 | pnpm | ≥ 9(仓库锁定 10.x) |
-| Caddy CLI(可选) | ≥ 2.x,用于信任本地 CA |
+| Caddy CLI | ≥ 2.x,开发流程第 3 步信任本地 CA 需要(生产不需要) |
 
 开发环境**基础设施进 Docker**(Postgres、Caddy),**后端与前端在终端跑**,改代码即时生效。
 
@@ -86,10 +86,17 @@ sudo caddy trust --ca certs/caddy-root.pem
 ### 4. 启动后端
 
 ```bash
+# go run 不读 .env(那是 compose 的行为):set -a 把 .env 里的变量注入进程环境
+set -a; . ./.env; set +a
 JANUS_COOKIE_SECURE=false JANUS_ADDR=:8080 go run ./cmd/janus
 ```
 
-`go run` **不会**读 `.env`(那是 compose 的行为),需要覆盖配置就在命令行 export。
+这一步的 `set -a; . ./.env` 不能省:后端的 `JANUS_CADDY_ASK_TOKEN` 只从进程环境读,
+而 Caddy 容器用的是 `.env` 里那一份。两边不一致时授权端点**一律 403**(fail-closed),
+表现为 Caddy 一张证书都签不出来(`https://app.janus.test/healthz` 握手失败、租户域名全不可用),
+后端日志只有一行 "JANUS_CADDY_ASK_TOKEN 未配置"。
+
+也可以直接跑 `./run_backend.sh`(做同样的事,并先 `cd` 到仓库根)。
 
 ### 5. 启动前端
 
@@ -134,8 +141,10 @@ curl -sk https://app.janus.test/healthz    # 经 Caddy 走通全链路
 完整步骤与上线检查清单见 **[`docs/deploy.md`](docs/deploy.md)**。最小流程:
 
 ```bash
-cp .env.example .env && chmod 600 .env     # 填 JANUS_PLATFORM_DOMAIN / JANUS_SERVER_PUBLIC_IP / JANUS_DB_PASSWORD 等
-sed -i 's/example\.com/YOUR-DOMAIN/g' Caddyfile.prod   # 站点地址不支持环境变量
+cp .env.example .env && chmod 600 .env     # 必填项见 docs/deploy.md 第 2 节;CADDY_ASK_TOKEN 用 openssl rand -hex 32 生成
+# Caddyfile.prod 的站点地址不支持环境变量:把 example.com 换成你的平台域名(与 .env 的 JANUS_PLATFORM_DOMAIN 一致)。
+# -i.bak 在 macOS(BSD sed)与 Linux(GNU sed)下都可用,故随后删掉备份文件。
+sed -i.bak 's/example\.com/your-domain.com/g' Caddyfile.prod && rm Caddyfile.prod.bak
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 

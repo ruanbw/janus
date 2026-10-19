@@ -36,6 +36,14 @@ services:
       # 生产必须 true:HTTPS 下 Secure cookie 生效
       JANUS_COOKIE_SECURE: "true"
       JANUS_MIGRATIONS_DIR: "/app/migrations"
+      # 可信代理网段:声明「哪些对端的 X-Forwarded-For 可以采信」。生产链路是
+      # 浏览器 → Caddy 容器 → backend,XFF 由 Caddy 用 {remote_host} 覆盖,
+      # 但只有在这里显式声明 Caddy 所在网段,后端才会采信它。留空(即不转发)的后果:
+      #   - 认证端点限流退化成「全站共享一个桶」(一个人试密码,所有人吃 429);
+      #   - 落地页 SDK 生成的 click 地址降级成 http://(X-Forwarded-Proto 不被采信)。
+      # 默认 Docker 网桥段是 172.16.0.0/12。这里用 :? 而不是 :-:静默降级的代价
+      # 比启动失败大,而启动日志里那行 WARN 很容易被忽略。
+      JANUS_TRUSTED_PROXY_CIDRS: "${JANUS_TRUSTED_PROXY_CIDRS:?生产必须声明可信代理网段(Caddy 所在容器网段,默认 Docker 网桥为 172.16.0.0/12);留空会让认证限流退化成全站共享、并让落地页 click 地址降级为 http}"
       # 可选参数与 .env.example/代码默认值一致(compose 显式转发,便于 .env 覆盖)
       JANUS_SESSION_TTL: "${JANUS_SESSION_TTL:-720h}"
       JANUS_SESSION_TTL_SHORT: "${JANUS_SESSION_TTL_SHORT:-24h}"
@@ -48,10 +56,13 @@ services:
       JANUS_DNS_MAX_AGE: "${JANUS_DNS_MAX_AGE:-72h}"
       JANUS_VISIT_RETENTION: "${JANUS_VISIT_RETENTION:-2160h}"
       JANUS_VISIT_CLEANUP_INTERVAL: "${JANUS_VISIT_CLEANUP_INTERVAL:-24h}"
+      JANUS_VISIT_CLEANUP_BATCH: "${JANUS_VISIT_CLEANUP_BATCH:-10000}"
       # 上传落地页:容器内固定目录,由 uploads 卷持久化
       JANUS_LANDING_UPLOAD_DIR: "/app/uploads"
       JANUS_LANDING_MAX_ZIP_BYTES: "${JANUS_LANDING_MAX_ZIP_BYTES:-10485760}"
+      JANUS_LANDING_MAX_TOTAL_BYTES: "${JANUS_LANDING_MAX_TOTAL_BYTES:-10485760}"
       JANUS_LANDING_MAX_FILES: "${JANUS_LANDING_MAX_FILES:-500}"
+      JANUS_MAX_TARGET_URLS: "${JANUS_MAX_TARGET_URLS:-50}"
       # 邮件:SMTP 凭据来自 .env(未配置时用控制台 mailer)
       JANUS_PUBLIC_BASE_URL: "https://${JANUS_PLATFORM_DOMAIN:?}"
       JANUS_SMTP_HOST: "${JANUS_SMTP_HOST:-}"
@@ -79,6 +90,11 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       target: web
+      args:
+        # 注册页的默认域名提示是构建期烘进产物的(前端读 VITE_PLATFORM_DOMAIN),
+        # 所以用 .env 的平台域名自动注入 —— 否则自托管部署会提示仓库默认值 janus.test。
+        # 改了 JANUS_PLATFORM_DOMAIN 后需要重建本镜像:docker compose -f docker-compose.prod.yml build web
+        VITE_PLATFORM_DOMAIN: "${JANUS_PLATFORM_DOMAIN:?}"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/index.html"]
