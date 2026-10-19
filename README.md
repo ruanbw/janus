@@ -529,7 +529,7 @@ pnpm check:ui                     # 0 违规才通过(第 8 项要读 dist 产�
 
 1. 架构决策先对齐:涉及系统设计或技术选型取舍时写 `docs/adr/NNNN-*.md`。
 2. `init.sql` → `store` → `httpapi`(路由 + RBAC 策略 + 错误码)。
-3. 涉及判定逻辑(如规则求值)时,补黑盒测试:`internal/httpapi/*_test.go` 走 `testutil.Setup`。
+3. 涉及判定逻辑(如规则求值)时,补纯逻辑单测:`go test -count=1 ./internal/rules/`。
 4. 前端:API 类型 → 页面 → 接进路由与导航。
 5. 更新本 README 的功能列表与 `docs/`。
 
@@ -539,19 +539,15 @@ pnpm check:ui                     # 0 违规才通过(第 8 项要读 dist 产�
 
 ### 8.1 后端自动化测试
 
-后端测试是**黑盒 HTTP 测试**:`httptest.Server` + **真实 Postgres** + **真实初始化脚本**,不 mock 内部函数(`internal/testutil/testutil.go`)。需要 `janus_test` 测试库,不可用时用例自动跳过。
+后端只保留**纯逻辑单元测试**,不依赖 Postgres、不建库、不起服务。DB 黑盒测试、端到端脚本与全量门禁已移除。
 
 ```bash
-docker compose up -d postgres
-docker compose exec postgres psql -U janus -d janus -c 'CREATE DATABASE janus_test'
-
-go test ./...                                   # 全部
-go test ./internal/httpapi/ -count=1 -v        # 单包 + 详细输出
-go test ./... -cover                            # 覆盖率
-JANUS_TEST_DATABASE_URL='postgres://janus:janus@localhost:5432/other_test?sslmode=disable' go test ./...
+go test -count=1 ./internal/rules/             # 单包定向
+go test -count=1 ./internal/domain/            # 单包定向
+go test -count=1 -run '^TestIsValidSlug$' ./internal/domain/   # 精确到用例
 ```
 
-每个测试的 `Setup` 会连接测试库、执行初始化脚本、`TRUNCATE` 业务表并重新插入免费档种子(短链 100 / 域名 10),用例之间互不干扰,可重复运行。**看到全部 SKIP 就是连不上测试库**,先建库。
+日常只跑被改动包的定向用例，不要运行 `go test ./...`。
 
 ### 8.2 前端质量门禁
 

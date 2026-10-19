@@ -522,7 +522,7 @@ The full contract lives in [`web/UI_KIT.md`](web/UI_KIT.md); the gate script `we
 
 1. Align architecture trade-offs first: record significant design choices in `docs/adr/NNNN-*.md`.
 2. `init.sql` → `store` → `httpapi` (route + RBAC policy + error codes).
-3. If it touches decision logic (rule evaluation), add black-box tests in `internal/httpapi/*_test.go` using `testutil.Setup`.
+3. If it touches decision logic (rule evaluation), add pure-logic unit tests: `go test -count=1 ./internal/rules/`.
 4. Frontend: API types → page → route and navigation wiring.
 5. Update the feature list in this README and the docs.
 
@@ -532,19 +532,15 @@ The full contract lives in [`web/UI_KIT.md`](web/UI_KIT.md); the gate script `we
 
 ### 8.1 Backend tests
 
-Backend tests are **black-box HTTP tests**: `httptest.Server` + a **real Postgres** + **the real init script**, with no internal mocking (`internal/testutil/testutil.go`). They need a `janus_test` database and skip automatically when it is unavailable.
+The backend keeps **pure-logic unit tests** only — no Postgres, no database creation, no server startup. The DB black-box tests, end-to-end script and full-suite gates have been removed.
 
 ```bash
-docker compose up -d postgres
-docker compose exec postgres psql -U janus -d janus -c 'CREATE DATABASE janus_test'
-
-go test ./...                                   # everything
-go test ./internal/httpapi/ -count=1 -v        # single package, uncached, verbose
-go test ./... -cover                            # coverage
-JANUS_TEST_DATABASE_URL='postgres://janus:janus@localhost:5432/other_test?sslmode=disable' go test ./...
+go test -count=1 ./internal/rules/             # one package
+go test -count=1 ./internal/domain/            # one package
+go test -count=1 -run '^TestIsValidSlug$' ./internal/domain/   # one case
 ```
 
-Each test's `Setup` connects to the test database, applies the init script, `TRUNCATE`s business tables and re-seeds the free tier (100 links / 10 domains), so cases are isolated and repeatable. **If everything reports SKIP, the test database is missing** — create it as above.
+Run only the targeted cases for the package you changed; do not run `go test ./...`.
 
 ### 8.2 Frontend quality gates
 

@@ -1,135 +1,42 @@
 # Janus 测试流程
 
-三层防线:单元/黑盒测试 → 端到端 API 脚本 → 浏览器 UI 实操。
+当前只保留**纯逻辑单元测试**（不依赖 Postgres、不建库、不起服务）。
+
+已移除的层：DB 黑盒测试（`internal/testutil`）、`scripts/e2e.sh`、`scripts/quality.sh`
+（全量隔离库 / CRAP / 变异测试）。仓库不再有全量或端到端测试代码。
 
 ---
 
-## 第 1 层:Go 测试(黑盒,真实 Postgres)
+## 运行方式
 
-`internal/testutil` 提供黑盒设施:启动 `httptest.Server` + 连真实 `janus_test` 库 + 跑真实初始化脚本,
-测试 seam 是 HTTP API 边界,不 mock 内部函数。
+只跑被改动包的定向用例，单次控制在 30 秒以内：
 
 ```bash
-# 需要先起 Postgres 并建测试库
-docker compose up -d postgres
-docker exec -i janus-postgres-1 psql -U janus -d postgres \
-  -c 'CREATE DATABASE janus_test'
-
-go test ./... -count=1
+go test -count=1 ./internal/rules/ 
+go test -count=1 -run '^TestIsValidSlug$' ./internal/domain/
+cd web && npx vue-tsc --noEmit
 ```
 
-各包通过 `db.LockTestDB` 独占测试库(各包都 TRUNCATE 同一张表,并行跑会互相清数据)。
+不要运行 `go test ./...`。
+
+## 保留的测试范围
 
 | 包 | 覆盖 |
 | --- | --- |
-| `internal/httpapi` | 认证/域名/短链/规则/落地页/统计/超管/CSRF/限流/授权 |
 | `internal/rules` | 条件求值、字段提取、快照缓存、表达式沙箱、Radix 路由 |
-| `internal/store` | 规则存储、配额、meta |
-| `internal/domain` | FQDN/slug/短码校验、DNS 校验、后台 worker |
+| `internal/domain` | FQDN/slug/短码校验、DNS 校验、worker 调度等纯逻辑 |
+| `internal/httpapi` | 纯函数/中间件单测（不连库） |
 | `internal/geo` | 离线 ip2region 查询 |
-| `internal/jwt` `internal/rbac` `internal/config` `internal/mailer` `internal/db` | 各自单测 |
+| `internal/jwt` `internal/rbac` `internal/config` `internal/mailer` `internal/fqdn` `internal/db` | 各自纯逻辑单测 |
+| `pkg/janus` `pkg/event` `pkg/plugin` | SDK / 事件 / 插件契约 |
 
-默认注入高阈值限流;测限流本身用 `SetupWithRateLimit`。
-
-### 共享测试库的竞态(必须用下面的门禁脚本)
-
-所有 DB 测试连同一个 `janus_test` 库,各包 Setup 都会 `TRUNCATE` 业务表。
-`db.LockTestDB` 的 advisory lock 只能跨包互斥,**挡不住上一个包遗留的后台 goroutine
-继续写库**,因此 `go test ./...` 无论并行还是 `-p 1` 都会非确定性失败
-(deadlock / duplicate key / not found),而且并行时因锁竞争更慢(实测 700s+ 且抖动)。
-
-`scripts/quality.sh` 为**每个包创建独立测试库**,跑完即删,门禁才可复现:
-
-```bash
-./scripts/quality.sh tests              # 每包独立库跑测试 + 合并覆盖率 (~170s)
-./scripts/quality.sh crap               # CRAP 复杂度/覆盖率门禁(会再跑一遍全量测试)
-./scripts/quality.sh mutate <file.go>   # 指定文件变异测试
-./scripts/quality.sh changed            # 对 HEAD 以来变更的 .go 做变异测试(dry-run)
-./scripts/quality.sh changed --yes      # 同上,真正执行
-```
-
-`changed` 默认只输出计划(dry-run),需 `--yes`(或 `MUTATE_YES=1`)才真正变异。
-**`all`(tests + crap + changed 叠加)属小时级操作,日常严禁执行。**
-
-需要 `createdb`/`dropdb`(Homebrew `libpq`,keg-only)与 CREATEDB 权限的维护库连接串
-(`JANUS_ADMIN_DATABASE_URL`,默认 `postgres://janus:janus@localhost:5432/postgres`)。
-
-#### 当前 CRAP 基线(2026-10-03,阈值 CRAP_MAX=12)
-
-CRAP = 圈复杂度 × 未覆盖率,分数越高越危险。当前最需要处理的:
-
-| 函数 | 包 | CC | 覆盖 | CRAP |
-| --- | --- | --- | --- | --- |
-| `parseDNSAnswer` | domain | 20 | 0% | 420 |
-| `Store.UpdateLink` | store | 19 | 0% | 380 |
-| `superadminSlug` | bootstrap | 15 | 0% | 240 |
-| `IsValidSlug` | domain | 11 | 0% | 132 |
-| `Worker.verifyAndActivate` | domain | 11 | 0% | 132 |
-
-`bootstrap` 与 `cmd/janus` 目前 0 测试覆盖,是最大盲区。
-
-#### 变异测试说明
-
-`changed` / `all` 默认 dry-run:先打印将变异的文件与可变异点估计,加 `--yes` 才执行。
-`mutate4go` 会把 manifest 以footer 形式写进被测源文件(用于增量只跑变更函数),
-因此跑完该文件的 git diff 会包含 manifest 段落,属于预期行为。
-`Survived`(变异后测试仍通过)= 测试没测到该行为,必须补测试;
-`Uncovered` 中像 `jwt.go` 的 `crypto/rand` panic 分支属于**不可达、也不该被 kill**,
-可以保留。
+`internal/bootstrap`、`internal/store`、`cmd/janus` 目前没有测试。
 
 ---
 
-## 第 2 层:端到端 API 脚本 `scripts/e2e.sh`
+## 浏览器 UI 手动实操
 
-自包含:自建数据库 → 编译二进制 → 起独立实例 → 跑完即清理。**不碰开发数据。**
-
-```bash
-./scripts/e2e.sh            # 全量(约 265 断言,以脚本实际 check/ok/bad 计)
-./scripts/e2e.sh --keep     # 保留数据库与日志,便于排查
-./scripts/e2e.sh --base URL # 测已运行的服务(需自备数据)
-```
-
-隔离手段:独立库 `janus_e2e`、独立端口 `:18080`、独立平台域名 `e2e.janus.test`、
-落地页上传目录在临时目录。邮箱验证与超管 setup token 从控制台 mailer 日志里捞。
-
-覆盖范围:
-
-| 分区 | 内容 |
-| --- | --- |
-| 0 | 健康检查、未认证访问全部受保护端点 |
-| 1 | 注册/邮箱验证/登录/登出/改密/忘记密码/超管首登 setup token 一次性 |
-| 2 | `/api/config`、`/api/me` 配额 |
-| 3 | 域名 CRUD、TXT 指引、停用恢复、平台域名免删 |
-| 4 | 短链 CRUD、目标去重、批量删/彻底删、回收站还原、短码不可改 |
-| 5 | 跳转、301/302、多目标轮询、停用/删除的失败明细 |
-| 6 | 规则 CRUD、四种动作裁决、作用域、零关联不命中、仿真 |
-| 7 | 总览聚合 |
-| 8 | 落地页 url/upload 两种来源、SDK、点击回传、zip 校验 |
-| 9 | 自定义 404/429 页 |
-| 10 | 配额上限(短链/域名)、软删仍占配额 |
-| 11 | 租户隔离(读/改/删/明细) |
-| 12 | JWT 签发/吊销/Bearer 免 CSRF |
-| 13 | Caddy on-demand TLS 授权端点 |
-| 14 | CSRF 防护 |
-| 15 | 平台管理、超管封禁/解封/防自锁 |
-
-跑测试时的注意事项:
-
-- **短码字母表**不含 `0/O/1/l/I`(产品刻意剔除易混淆字符),脚本生成器必须避开,
-  否则 `IsValidCode` 拒 400,后续用例连环失败。
-- **slug 只允许小写字母/数字/连字符**,生成器不能用大写。
-- **改密会吊销在手 JWT**(同事务自增 `token_version`),签发与使用之间不要插入改密。
-- **软删的短链仍占配额**(业务口径按「尚未物理删除」计数),断言要按这个口径写。
-- **规则快照 TTL 60 秒**:直接改库停用规则不会触发 `Cache.Invalidate`,
-  需等满 TTL;走 API 的规则 CRUD 会主动失效缓存。手工改库调试时容易误判。
-
----
-
-## 第 3 层:浏览器 UI 实操
-
-脚本覆盖不到交互层(路由过渡、确认框、遮罩、组件透传),这一层必须手动跑或脚本驱动浏览器。
-
-覆盖:每个页面的渲染、增删改查、表单校验文案、空状态/错误态。
+仅在用户显式要求做真实浏览器联调或涉及关键交互重构时执行。
 
 用 `browser-hand` 驱动真实 Chrome:
 
@@ -143,47 +50,13 @@ $BH click  --page-name janus --text "保存修改"
 $BH evaluate --page-name janus --code "document.body.innerText.slice(0,200)"
 ```
 
-### 这一层已经踩到的坑(测试时必须知道)
+### 这一层已经踩到的坑
 
 1. **CSS 过渡在后台标签页里永不结束** — `AdminLayout.vue` 用
    `<transition mode="out-in">`,浏览器冻结隐藏标签页的动画帧,leave 卡在
-   `page-leave-active`,新页面永远不挂载(标题变了、内容还是旧的)。
-   已修(接管 `@leave`,隐藏时立即收尾),但**回归验证时仍要专门测隐藏状态**:
+   `page-leave-active`,新页面永远不挂载。回归验证时要专门测隐藏状态:
    把标签页切到后台 → 点侧边栏导航 → 看 `main` 的子节点数与标题是否同步更新。
-   只测前台会漏掉这个问题 —— 这正是它当初能进主干的原因。
 2. **点按钮要用真实指针序列**。`browser-hand click` 走完整指针事件;
-   直接 `element.click()` 对 reka-ui 组件不可靠(它依赖 pointerdown/mouseup 序列)。
-   行内按钮要先用 `title` 或唯一属性打标记,再用 `--selector` 精确点,
-   否则会命中同名的其它按钮(如「删除」vs「彻底删除」)。
-3. **确认框的按钮标签要现取**,不要照抄文档:不同操作的 `okText` 各不相同
-   (「确认逻辑删除」/「彻底物理删除」/「确认还原」/「删除」)。
-4. 用 `window.__log` 挂 XHR/fetch 钩子,才能判断「点了有没有发请求」——
-   这类「UI 没反应」的问题必须区分开是前端没触发还是后端报错。
-
----
-
-## 回归检查清单
-
-### 1. 日常快速验证（推荐，30秒内完成）：
-```bash
-# 场景 A：后端逻辑/API 改动（极速自包含验证，约 15~25s）
-./scripts/e2e.sh
-# 或单包轻量定向测试（1~3s）：
-# go test -count=1 ./internal/<受影响的包>/...
-
-# 场景 B：前端改动（约 5s）
-cd web && npx vue-tsc --noEmit -p tsconfig.json
-```
-
-### 2. 阶段性全量回归（按需选跑，约 3 分钟）：
-```bash
-./scripts/quality.sh tests                            # 每包独立临时库全量跑
-```
-
-### 3. 离线深度审计 / 发版前门禁（耗时长，日常禁止自动执行）：
-```bash
-./scripts/quality.sh crap                             # CRAP 复杂度/覆盖率门禁
-./scripts/quality.sh changed                          # 变异测试：默认 dry-run，仅列计划
-./scripts/quality.sh changed --yes                    # 真正跑变异（仅显式要求或发版审计时）
-# ./scripts/quality.sh all                            # 禁止：tests + crap + changed，小时级
-```
+   直接 `element.click()` 对 reka-ui 组件不可靠。行内按钮先打标记再用 `--selector` 精确点。
+3. **确认框的按钮标签要现取**,不同操作的 `okText` 各不相同。
+4. 用 `window.__log` 挂 XHR/fetch 钩子,区分「前端没触发」和「后端报错」。
