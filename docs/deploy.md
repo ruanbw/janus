@@ -58,7 +58,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 | 维度 | 开发 | 生产 |
 | --- | --- | --- |
-| 编排 | 基础设施 Docker(`docker compose up -d`:postgres + caddy);后端/前端终端启动(`go run` + `pnpm dev`,见根 README §5) | `docker compose -f docker-compose.prod.yml up -d`(全部容器化) |
+| 编排 | 基础设施 Docker(`docker compose up -d`:postgres + caddy);后端/前端终端启动(`go run` + `pnpm dev`,见根 README「快速开始」) | `docker compose -f docker-compose.prod.yml up -d`(全部容器化) |
 | 端口 | 后端 8080;Caddy 映射宿主 443/80(无端口访问) | 标准 80/443;后端不暴露公网 |
 | DNS | SwitchHosts 把 `app.janus.test` 与测试租户子域指向 127.0.0.1(`JANUS_SERVER_PUBLIC_IP=127.0.0.1`,Go 读 /etc/hosts 走真实代码路径) | 真实 DNS 泛解析 `*.<平台域名>` |
 | 证书 | Caddy 本地 CA(`tls internal` + `on_demand_tls`),`caddy trust` 信任根证书 | Let's Encrypt(ACME 自动签发/续期) |

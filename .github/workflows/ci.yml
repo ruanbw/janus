@@ -1,4 +1,4 @@
-# Janus CI —— 把 README 7.1 / 13 的"提交前必须跑通"清单变成机器强制执行。
+# Janus CI —— 把 README「开发约定」的"提交前必须跑通"清单变成机器强制执行。
 #
 # 为什么必须有:此前 .github/ 不存在,gofmt / go vet / go test / pnpm type-check /
 # pnpm check:ui 全都只写在 README 里,靠人记得手动跑;而 docker/Dockerfile 的

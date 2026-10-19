@@ -306,7 +306,7 @@ if (fs.existsSync(distAssetsDir)) {
 } else {
   // 静默跳过 = 门禁形同虚设：CI 里 `pnpm check:ui` 若先于 build 执行，
   // 退出码仍是 0，这项检查就等于没跑。所以这里计入 totalErrors 并非零退出，
-  // 强制执行顺序是 build → check（README 7.1 与 UI_KIT.md 已统一到这个顺序）。
+  // 强制执行顺序是 build → check（与 web/UI_KIT.md 及 CI 保持一致）。
   totalErrors++;
   console.error(
     '  ❌ [AnimationVariants] dist/assets 不存在：请先执行 pnpm build 再执行 pnpm check:ui',

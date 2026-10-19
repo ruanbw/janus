@@ -160,7 +160,7 @@ func remoteHostOnly(remote string) string {
 // visits.ip 与国家码被污染、规则的 ip/ipattr/country 条件可被规避。
 // 部署侧对应地在 Caddyfile 里用 `header_up X-Forwarded-For {remote_host}` 覆盖该头。
 //
-// ⚠️ 「对端是私网就可信」是推断,不是事实:README 6.4 允许后端 :8080 裸跑,此时局域网内
+// ⚠️ 「对端是私网就可信」是推断,不是事实:开发方式允许后端 :8080 裸跑(README 快速开始),此时局域网内
 // 任何主机都能直连并自带 XFF 换限流桶。所以认证端点的限流**不再**走这里,改用
 // (*API).trustedClientIP(显式可信代理网段,配置为空则永不采信)。
 // 访客侧(跳转/统计/规则)走 (*API).clientIPForVisitor:配置了可信代理网段时同样
@@ -205,7 +205,7 @@ func clientIP(r *http.Request) string {
 //     与认证端点同一口径,伪造 XFF 无处可用);
 //   - 未声明 → 保持既有的"对端是私网即采信"行为。文档化的 Caddy 部署会用
 //     `header_up X-Forwarded-For {remote_host}` 覆盖该头,伪造值到不了后端;
-//     直接暴露 :8080 的部署仍可能被伪造,这一点 README 6.4 与 .env.example 都已说明。
+//     直接暴露 :8080 的部署仍可能被伪造,这一点 .env.example 的 JANUS_TRUSTED_PROXY_CIDRS 已说明。
 func (a *API) clientIPForVisitor(r *http.Request) string {
 	if len(a.trustedProxyNets) > 0 {
 		return a.trustedClientIP(r)

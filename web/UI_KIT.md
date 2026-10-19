@@ -166,7 +166,7 @@ pnpm build        # 必须先 build
 pnpm check:ui     # 第 8 项读 dist/assets,dist 缺失会计入违规并非零退出
 ```
 
-本文件此前把两条命令并列书写、与 README 7.1 的顺序互相矛盾,而第 8 项依赖 dist ——
+本文件此前把两条命令并列书写、与强制执行的顺序互相矛盾,而第 8 项依赖 dist ——
 顺序写错就会得到一个静默跳过产物检查的"通过"。现统一为 build → check,
 并由 `.github/workflows/ci.yml` 与 `docker/Dockerfile` 强制执行。
 

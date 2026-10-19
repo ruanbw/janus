@@ -20,7 +20,7 @@ pnpm check:ui   # 自动化 UI 一致性与设计规范门禁检查（0 违规�
 pnpm type-check # Vue 3 + TypeScript 全量类型检查
 ```
 
-环境要求:Postgres 与 Caddy 由 `docker compose up -d` 提供;Go 后端在终端启动并监听 `http://localhost:8080`(见仓库根 README §5.6:`JANUS_COOKIE_SECURE=false JANUS_ADDR=:8080 go run ./cmd/janus`)。
+环境要求:Postgres 与 Caddy 由 `docker compose up -d` 提供;Go 后端在终端启动并监听 `http://localhost:8080`(见仓库根 README「快速开始」:`JANUS_COOKIE_SECURE=false JANUS_ADDR=:8080 go run ./cmd/janus`)。
 
 ## 构建
 
