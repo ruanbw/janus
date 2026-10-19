@@ -181,6 +181,20 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 前置条件是 DNS:平台裸域名与泛解析 `*.<平台域名>` 均指向服务器公网 IP。首次启动自动执行初始化脚本、创建免费档种子、初始化超管;证书按需签发。
 
+### 用预构建镜像代替源码构建(可选)
+
+每个 `v*` 标签会产出两个镜像(`ghcr.io/ruanbw/janus-backend` / `ghcr.io/ruanbw/janus-web`)。
+不想在服务器上装 Go 与 Node 时,叠加覆盖文件、加 `--no-build` 即可:
+
+```bash
+JANUS_VERSION=1.0.0 docker compose \
+  -f docker-compose.prod.yml -f docker-compose.images.yml up -d --no-build
+```
+
+`--no-build` 不能省(两份文件合并后 service 上仍有 `build:`,否则会先构建再打标签)。
+一个已知限制:注册页的域名提示是**构建期**烘进前端的,发布镜像用中性默认值;登录后的平台域名由后端下发。
+要让注册页显示你自己的域名,需从源码构建。
+
 首次上线后还有三件事不在这一段里:**超管首登**(`superadmin` / `123456`,登录后强制改密,见 `docs/deploy.md` 第 3 节)、**升级与回滚**、**备份**(尤其 `caddy_data` 卷,丢了要重签全部证书)——分别见 `docs/deploy.md` 第 3、8、9 节。
 
 ## 开发约定

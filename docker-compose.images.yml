@@ -1,0 +1,18 @@
+# 用预构建镜像替代源码构建(可选覆盖文件)。
+#
+# 用法:
+#   JANUS_VERSION=1.0.0 docker compose \
+#     -f docker-compose.prod.yml -f docker-compose.images.yml up -d --no-build
+#
+# 存在的理由:Release 工作流把 backend / web 推到 ghcr.io,但生产编排默认从源码
+# 构建。没有这个覆盖文件,预构建镜像只能靠用户自己改 compose —— 等于没发布。
+# 保留两份文件而不是把 image: 写进 prod 编排,是为了让"从源码构建"仍是默认,
+# 镜像只是可选加速路径(自建域名提示需要源码构建,见 release.yml 文件头)。
+#
+# --no-build 不能省:两份文件合并后 service 上仍带着 build:,不加它 compose 会
+# 先构建再打标签,预构建镜像等于白拉。
+services:
+  backend:
+    image: ghcr.io/ruanbw/janus-backend:${JANUS_VERSION:-latest}
+  web:
+    image: ghcr.io/ruanbw/janus-web:${JANUS_VERSION:-latest}

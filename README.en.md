@@ -179,6 +179,21 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 Prerequisite DNS: both the bare platform domain and the wildcard `*.<platform-domain>` must point at the server's public IP. First boot runs the init script, seeds the free tier and creates the super admin; certificates are issued on demand.
 
+### Prebuilt images (optional)
+
+Every `v*` tag publishes two images (`ghcr.io/ruanbw/janus-backend` / `ghcr.io/ruanbw/janus-web`).
+If you would rather not install Go and Node on the server, layer the override file and pass `--no-build`:
+
+```bash
+JANUS_VERSION=1.0.0 docker compose \
+  -f docker-compose.prod.yml -f docker-compose.images.yml up -d --no-build
+```
+
+`--no-build` is required: the merged service still carries `build:`, so compose would otherwise
+build from source and then tag it. Known limitation: the register page's domain hint is baked in at
+**build time**; released images use a neutral default, while the real platform domain is delivered
+at runtime by the backend. Rebuild from source if you need your own domain on the register page.
+
 Three things this snippet does not cover: **super admin first login** (`superadmin` / `123456`, forced password
 change — `docs/deploy.md` §3), **upgrade / rollback** (§8) and **backups** (especially the `caddy_data` volume:
 losing it forces every certificate to be re-issued — §9).

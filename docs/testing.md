@@ -27,7 +27,7 @@ cd web && npx vue-tsc --noEmit
 | `internal/domain` | FQDN/slug/短码校验、DNS 校验、worker 调度等纯逻辑 |
 | `internal/httpapi` | 纯函数/中间件单测（不连库） |
 | `internal/geo` | 离线 ip2region 查询 |
-| `internal/jwt` `internal/rbac` `internal/config` `internal/mailer` `internal/fqdn` `internal/db` | 各自纯逻辑单测 |
+| `internal/jwt` `internal/rbac` `internal/config` `internal/fqdn` `internal/db` | 各自纯逻辑单测 |
 | `pkg/janus` `pkg/event` `pkg/plugin` | SDK / 事件 / 插件契约 |
 
 `cmd/janus` 目前没有测试;`internal/bootstrap`(超管幂等收敛)与 `internal/store`(首登态判定)已有纯逻辑单测。

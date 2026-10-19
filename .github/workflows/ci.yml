@@ -7,9 +7,10 @@
 # 两条硬性顺序约束(改这个文件时别把它们拆开):
 #   1. 前端 build 必须在 check:ui 之前:第 8 项要读 dist/assets 里的编译产物,
 #      dist 不存在时它会计入违规并以非零码退出。
-#   2. 后端 job 必须起 Postgres:internal/httpapi 与 internal/store 是黑盒测试,
-#      跑在真实库上。库连不上时 testutil 会 t.Skip —— 那样 CI 会"全绿"，
-#      等于什么都没验。
+#   2. 后端 job 跑 `go test ./...` 做全量门禁,而日常开发只跑定向包
+#      (docs/testing.md)。两件事不矛盾:仓库里已无 DB 黑盒测试,单测全部是纯逻辑,
+#      不需要 Postgres 服务 —— 别为了"看起来更严谨"把数据库加回来,
+#      那只会让 CI 变慢并掩盖"测试其实不碰库"这个事实。
 name: CI
 
 on:
@@ -25,23 +26,7 @@ jobs:
   backend:
     name: 后端 (gofmt / vet / test)
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: janus
-          POSTGRES_PASSWORD: janus
-          POSTGRES_DB: janus
-        ports:
-          - 5432:5432
-        # 等 Postgres 真正可接受连接再开跑,否则 migrate 会连不上。
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
     env:
-      JANUS_TEST_DATABASE_URL: postgres://janus:janus@localhost:5432/janus_test?sslmode=disable
       GOCACHE: ${{ github.workspace }}/.gocache
     steps:
       - uses: actions/checkout@v4
@@ -50,12 +35,6 @@ jobs:
         with:
           go-version: '1.26'
           cache: true
-
-      # 测试库与开发库分离(与 docker-compose 的约定一致):先建库再跑测试。
-      - name: 创建测试库
-        run: |
-          docker exec "${{ job.services.postgres.id }}" \
-            psql -U janus -d janus -c 'CREATE DATABASE janus_test'
 
       - name: gofmt
         run: |

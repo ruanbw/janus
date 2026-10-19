@@ -1,0 +1,126 @@
+# Janus 发布 —— 给自托管用户一个"装了 docker 就能跑"的入口。
+#
+# 为什么必须有:此前只有 ci.yml 与 pages.yml,仓库不发版也不产出镜像。自托管项目
+# 的第一道门槛是 `docker pull`,而不是让用户先装 Go 1.26 + Node 22 + pnpm 10
+# 再 `docker compose build`。没有预构建镜像时,README 里的"快速开始"对陌生人
+# 不成立,只有作者自己的机器是顺的。
+#
+# 触发:推 `v*` 标签(语义化版本),或手动 dispatch(用于补发/演练)。
+# 产出:`ghcr.io/<owner>/janus-backend` 与 `ghcr.io/<owner>/janus-web`,标签为
+# 去掉 v 前缀的版本号,并在正式标签上额外打 `latest`。
+#
+# 一个已知限制:web 镜像的注册页提示域名在**构建期**烘进产物(VITE_PLATFORM_DOMAIN)。
+# 发布镜像用中性默认值,平台的真实域名由后端 /api/config 在登录后下发。要在注册页
+# 显示自己的域名,请从源码构建(见 README「生产部署」)—— 这条限制写在这里,
+# 而不是让用户以为是 bug。
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的标签(如 v1.0.0);留空则用当前 ref'
+        required: false
+        type: string
+
+permissions:
+  contents: write # gh release create
+  packages: write # ghcr.io 推送
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  images:
+    name: 镜像 (${{ matrix.component }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: backend
+            target: backend
+            build_args: ''
+          - component: web
+            target: web
+            # 中性默认值:真实域名在运行时由后端 /api/config 下发(见文件头说明)。
+            build_args: |
+              VITE_PLATFORM_DOMAIN=janus.test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 计算版本与镜像标签
+        id: version
+        run: |
+          # 标签名去掉前导 v;手动 dispatch 时可显式覆盖。
+          ref='${{ inputs.tag }}'
+          if [ -z "$ref" ]; then ref='${{ github.ref_name }}'; fi
+          ver="${ref#v}"
+          echo "value=$ver" >> "$GITHUB_OUTPUT"
+          # 标签列表写成一个输出,避免表达式拼出空行(docker/build-push-action 对空标签
+          # 的行为取决于版本,不赌)。
+          {
+            echo 'tags<<TAGS'
+            echo "ghcr.io/${{ github.repository }}-${{ matrix.component }}:$ver"
+            if [ "${{ startsWith(github.ref, 'refs/tags/v') }}" = 'true' ]; then
+              echo "ghcr.io/${{ github.repository }}-${{ matrix.component }}:latest"
+            fi
+            echo 'TAGS'
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          target: ${{ matrix.target }}
+          build-args: ${{ matrix.build_args }}
+          push: true
+          tags: ${{ steps.version.outputs.tags }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }},ignore-error=true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+
+  release-notes:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: images
+    # 只有打标签才建 Release;手动 dispatch 只重建镜像。
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 创建 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 用 GitHub 自动生成的分类笔记,并在正文里写清镜像坐标 ——
+          # 用户拿到 Release 页面就该知道该 pull 什么。
+          version='${{ github.ref_name }}'
+          notes="$(gh api "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="$version" --jq .body)"
+          {
+            printf '%s\n\n' "$notes"
+            printf '## 镜像\n\n'
+            printf '```bash\n'
+            printf 'docker pull ghcr.io/%s-backend:%s\n' '${{ github.repository }}' "${version#v}"
+            printf 'docker pull ghcr.io/%s-web:%s\n' '${{ github.repository }}' "${version#v}"
+            printf '```\n\n'
+            printf '编排仍以仓库内的 docker-compose.prod.yml 为准;用预构建镜像部署见 README「生产部署」。\n'
+          } > release-body.md
+          gh release create "$version" --title "$version" --notes-file release-body.md
