@@ -45,14 +45,31 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 ### 首次登录(平台管理员)
 
-`JANUS_SUPERADMIN_EMAIL` 对应的账号在首次启动时被创建为「无密码」状态。首登需要邮件里的一次性
-**setup token**;而前端登录页目前没有 `setupToken` 输入框,所以首登先走三步 API,设好密码之后浏览器正常登录。
+`JANUS_SUPERADMIN_EMAIL` 对应的账号在首次启动时被创建为「无密码」状态。首登需要一枚一次性
+**setup token**(邮件发送;未配 SMTP 时打印在后端日志)。
+
+#### 浏览器流程(推荐)
+
+1. 打开 `https://<平台域名>`,用超管邮箱登录(密码随便填:账号还没有密码,这一步不校验密码);
+2. 首登被拒后,页面会出现**「首次登录校验码」**输入框,同时自动发出一封校验码邮件;
+3. 从邮箱取到校验码填进去,再点一次登录;
+4. 登录成功后自动进入 `/account` 设置初始密码;之后就用「邮箱 + 密码」正常登录。
+
+取不到邮件(未配 SMTP)时,校验码就在容器日志里:
+
+```bash
+docker compose -f docker-compose.prod.yml logs backend | grep -A3 'JANUS mailer' | tail -6
+```
+
+> 同一邮箱 15 分钟最多发一封;丢了就在登录页重新提交一次会补发。
+
+#### 无浏览器时(API 流程)
 
 ```bash
 BASE=https://<平台域名>
 EMAIL=<JANUS_SUPERADMIN_EMAIL 的值>
 
-# 1) 触发 setup 邮件。返回 401 是预期结果(响应会说明 token 已发出,同邮箱 15 分钟最多一封)
+# 1) 触发 setup 邮件。返回 401 是预期结果(响应会说明 token 已发出)
 curl -s -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
   -d "{\"email\":\"$EMAIL\",\"password\":\"placeholder\"}"
 
@@ -124,7 +141,7 @@ compose 会把上述变量转发给后端容器。
 - 访问记录默认保留 90 天,后台定时清理;
 - 授权端点仅内网可达(`/internal/caddy/authorize`),未激活域名拒绝签发,防止任意域名解析到本机即触发签发(spec 决策 #8);
 - 超管首登邮件里的链接对 setup token 不可用:重置端点只接受 `kind=reset` 的 token,点开 `/reset-password?token=...`
-  会提示「无效、已使用或过期的重置 token」。请按第 3 节用 API 提交 setup token。
+  会提示「无效、已使用或过期的重置 token」。请改在登录页的「首次登录校验码」输入框里填(第 3 节),或用同一节的 API 流程。
 
 ## 8. 产品介绍页(GitHub Pages)
 

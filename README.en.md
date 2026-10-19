@@ -124,9 +124,10 @@ Open `http://localhost:5173` and register an account; without SMTP configured, v
 > Caddy binds host ports 80/443 — start it at different times from any other service using those ports.
 
 To reach the **platform admin** UI, set `JANUS_SUPERADMIN_EMAIL=admin@janus.test` in `.env` and restart the
-backend (idempotently initialised at startup). The super admin's first login requires the one-time setup token
-sent by email, and the login page has no field for it yet — the first login is a three-step API flow, see
-[`docs/deploy.md`](docs/deploy.md) §3 (`BASE=http://127.0.0.1:8080`, token from the backend terminal log).
+backend (idempotently initialised at startup). First login: sign in with that email once (the account has no
+password yet, so any password works) → the page reveals a "first-login code" field → copy the code from the
+backend terminal log (`[JANUS mailer]`) → you land on `/account` to set the real password. Details and the
+headless API flow: [`docs/deploy.md`](docs/deploy.md) §3.
 
 ### 7. Reset the development database
 

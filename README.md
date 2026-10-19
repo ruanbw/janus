@@ -125,8 +125,9 @@ curl -sk https://app.janus.test/healthz    # 经 Caddy 走通全链路
 > Caddy 占用宿主 80/443,与本机其他绑定这两个端口的服务错开启动。
 
 要验证**平台管理端**,先在 `.env` 里设 `JANUS_SUPERADMIN_EMAIL=admin@janus.test`,重启后端(启动时幂等初始化)。
-超管首次登录需要邮件里的一次性 setup token,而登录页目前没有该输入框 —— 首登要走三步 API,
-命令见 [`docs/deploy.md`](docs/deploy.md) 第 3 节(把 `BASE` 换成 `http://127.0.0.1:8080`,token 从后端终端日志里取)。
+超管首次登录:用该邮箱登录一次(账号还没有密码,密码随便填)→ 页面出现「首次登录校验码」→
+从后端终端日志(`[JANUS mailer]`)取校验码填入 → 自动进入 `/account` 设置初始密码。
+细节与无浏览器时的 API 流程见 [`docs/deploy.md`](docs/deploy.md) 第 3 节。
 
 ### 7. 清空数据库重来
 
