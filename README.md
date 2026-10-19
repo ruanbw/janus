@@ -64,7 +64,7 @@ docs/                 # deploy.md、testing.md、adr/
 
 ```bash
 # 从模板生成 .env,并把必填的 on-demand TLS 密钥直接填进去
-# 重定向会覆盖已有的 .env(SMTP 凭据、超管邮箱会一起丢):重复执行前先备份
+# 重定向会覆盖已有的 .env(数据库密码等手工改动会一起丢):重复执行前先备份
 sed "s/^JANUS_CADDY_ASK_TOKEN=.*/JANUS_CADDY_ASK_TOKEN=$(openssl rand -hex 32)/" .env.example > .env
 docker compose up -d    # postgres:5432、caddy:80/443
 ```
@@ -120,15 +120,12 @@ curl -s  http://127.0.0.1:8080/healthz     # → {"status":"ok"}
 curl -sk https://app.janus.test/healthz    # 经 Caddy 走通全链路
 ```
 
-浏览器打开 `http://localhost:5173` 注册账号;未配置 SMTP 时,验证邮件直接打印在后端终端。
+浏览器打开 `http://localhost:5173` 注册账号(账号 + 密码 + 域名前缀),注册即生效,不再需要邮箱验证。
 
 > Caddy 占用宿主 80/443,与本机其他绑定这两个端口的服务错开启动。
 
-要验证**平台管理端**,先在 `.env` 里设 `JANUS_SUPERADMIN_EMAIL=admin@janus.test`,重启后端(启动时幂等初始化)。
-超管首次登录:用该邮箱登录一次(账号还没有密码,密码随便填)→ 页面出现「首次登录校验码」→
-从后端终端日志(`[JANUS mailer]`)取校验码填入 → 自动进入 `/account` 设置初始密码;
-也可以直接点日志里那条重置链接设密码(重置端点同时接受首登校验码)。
-细节与无浏览器时的 API 流程见 [`docs/deploy.md`](docs/deploy.md) 第 3 节。
+要验证**平台管理端**,用内置超管账号 `superadmin` / `123456` 登录(启动时幂等创建)。
+首次登录会被强制跳 `/account` 改密码,改完才能访问其它页面。
 
 ### 7. 清空数据库重来
 
@@ -152,15 +149,15 @@ docker compose down -v && docker compose up -d     # -v 删掉 pgdata 卷,数据
 | `JANUS_SERVER_PUBLIC_IP` | `127.0.0.1` | 自有域名 DNS 激活校验的比对地址 |
 | `JANUS_PUBLIC_BASE_URL` | `https://app.janus.test` | 邮件中验证 / 重置链接前缀 |
 | `JANUS_DATABASE_URL` | `postgres://janus:janus@localhost:5432/janus?sslmode=disable` | 后端连接串 |
-| `JANUS_SUPERADMIN_EMAIL` | 空 | 超管邮箱,启动时幂等初始化;留空则无超管 |
 | `JANUS_COOKIE_SECURE` | `false` | 会话 cookie Secure 标记,http 开发必须 false |
 | `JANUS_JWT_SECRET` | 空 | JWT 签名密钥;留空则每次启动随机生成(重启后 token 失效) |
 | `JANUS_CADDY_ASK_TOKEN` | 空(**必填**) | on-demand TLS 授权端点共享密钥,compose 与后端同值注入 |
 | `JANUS_DNS_RETRY_INTERVAL` / `JANUS_DNS_MAX_AGE` | `5m` / `72h` | 域名激活重试间隔 / 最长等待 |
 | `JANUS_VISIT_RETENTION` | `2160h` | 访问记录保留时长(90 天) |
-| `JANUS_SMTP_*` | 空 | 配置 `HOST` 才真实发信,否则打印到后端日志 |
 
-> `.env` 含数据库密码与 SMTP 凭据,已在 `.gitignore` 中。
+> `.env` 含数据库密码等敏感配置,已在 `.gitignore` 中。
+>
+> 平台管理员是内置账号 `superadmin` / `123456`,启动时幂等创建,首次登录强制改密;不需要配置项。
 
 ## 生产部署
 
@@ -175,7 +172,7 @@ cp .env.example .env && chmod 600 .env
 #   JANUS_DB_PASSWORD         别留模板里的 janus
 #   JANUS_TRUSTED_PROXY_CIDRS 172.16.0.0/12(Docker 默认网桥段)
 #   JANUS_CADDY_ASK_TOKEN     openssl rand -hex 32
-# 另外建议同时设:JANUS_JWT_SECRET(openssl rand -hex 32)、JANUS_SUPERADMIN_EMAIL(否则没有平台管理员)
+# 另外建议同时设 JANUS_JWT_SECRET(openssl rand -hex 32);超管是内置的 superadmin / 123456,无需配置
 
 # Caddyfile.prod 的站点地址不支持环境变量:把 example.com 换成你的平台域名(与 .env 的 JANUS_PLATFORM_DOMAIN 一致)。
 # -i.bak 在 macOS(BSD sed)与 Linux(GNU sed)下都可用,故随后删掉备份文件。
@@ -185,7 +182,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 前置条件是 DNS:平台裸域名与泛解析 `*.<平台域名>` 均指向服务器公网 IP。首次启动自动执行初始化脚本、创建免费档种子、初始化超管;证书按需签发。
 
-首次上线后还有三件事不在这一段里:**超管首登**(需要提交邮件里的 setup token,见 `docs/deploy.md` 第 3 节)、**升级与回滚**、**备份**(尤其 `caddy_data` 卷,丢了要重签全部证书)——分别见 `docs/deploy.md` 第 3、9、10 节。
+首次上线后还有三件事不在这一段里:**超管首登**(`superadmin` / `123456`,登录后强制改密,见 `docs/deploy.md` 第 3 节)、**升级与回滚**、**备份**(尤其 `caddy_data` 卷,丢了要重签全部证书)——分别见 `docs/deploy.md` 第 3、8、9 节。
 
 ## 开发约定
 

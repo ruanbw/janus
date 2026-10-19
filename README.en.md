@@ -64,7 +64,7 @@ In development **infrastructure runs in Docker** (Postgres, Caddy) while the **b
 
 ```bash
 # generate .env from the template with the required on-demand TLS secret filled in
-# NOTE: the redirect overwrites an existing .env (SMTP credentials, admin email) — back it up first
+# NOTE: the redirect overwrites an existing .env (hand edits such as the DB password) — back it up first
 sed "s/^JANUS_CADDY_ASK_TOKEN=.*/JANUS_CADDY_ASK_TOKEN=$(openssl rand -hex 32)/" .env.example > .env
 docker compose up -d    # postgres:5432, caddy:80/443
 ```
@@ -119,16 +119,13 @@ curl -s  http://127.0.0.1:8080/healthz     # → {"status":"ok"}
 curl -sk https://app.janus.test/healthz    # full chain through Caddy
 ```
 
-Open `http://localhost:5173` and register an account; without SMTP configured, verification emails are printed to the backend terminal.
+Open `http://localhost:5173` and register an account (username + password + domain prefix); registration takes effect immediately — there is no email verification.
 
 > Caddy binds host ports 80/443 — start it at different times from any other service using those ports.
 
-To reach the **platform admin** UI, set `JANUS_SUPERADMIN_EMAIL=admin@janus.test` in `.env` and restart the
-backend (idempotently initialised at startup). First login: sign in with that email once (the account has no
-password yet, so any password works) → the page reveals a "first-login code" field → copy the code from the
-backend terminal log (`[JANUS mailer]`) → you land on `/account` to set the real password. Clicking the reset
-link printed in that log works as well (the reset endpoint accepts setup-token purposes too). Details and the
-headless API flow: [`docs/deploy.md`](docs/deploy.md) §3.
+To reach the **platform admin** UI, sign in with the built-in super admin `superadmin` / `123456` (created
+idempotently at startup). The first login is forced to `/account` to change the password before anything else
+is reachable. See [`docs/deploy.md`](docs/deploy.md) §3.
 
 ### 7. Reset the development database
 
@@ -151,17 +148,16 @@ Everything is configured through environment variables; see [`.env.example`](.en
 | `JANUS_ADDR` | `:8080` | HTTP listen address |
 | `JANUS_PLATFORM_DOMAIN` | `janus.test` | Bare platform domain; tenant default domain is `<slug>.<platform-domain>` |
 | `JANUS_SERVER_PUBLIC_IP` | `127.0.0.1` | IP compared during DNS activation of tenant-owned domains |
-| `JANUS_PUBLIC_BASE_URL` | `https://app.janus.test` | Prefix for verification / reset links in emails |
 | `JANUS_DATABASE_URL` | `postgres://janus:janus@localhost:5432/janus?sslmode=disable` | Backend connection string |
-| `JANUS_SUPERADMIN_EMAIL` | empty | Platform admin email, idempotently created at startup; empty means no admin |
 | `JANUS_COOKIE_SECURE` | `false` | Session cookie Secure flag — must be false over http |
 | `JANUS_JWT_SECRET` | empty | JWT signing key; empty regenerates per start (issued tokens die on restart) |
 | `JANUS_CADDY_ASK_TOKEN` | empty (**required**) | Shared secret for the on-demand TLS authorize endpoint, injected into both compose and backend |
 | `JANUS_DNS_RETRY_INTERVAL` / `JANUS_DNS_MAX_AGE` | `5m` / `72h` | Domain activation retry interval / maximum wait |
 | `JANUS_VISIT_RETENTION` | `2160h` | Visit retention (90 days) |
-| `JANUS_SMTP_*` | empty | Real SMTP only when `HOST` is set; otherwise mails are logged |
 
-> `.env` holds database and SMTP credentials and is git-ignored.
+> `.env` holds sensitive configuration and is git-ignored.
+>
+> The platform admin is a built-in account `superadmin` / `123456`, created at startup and forced to change its password on first login — no configuration needed.
 
 ## Production deployment
 
@@ -175,7 +171,7 @@ cp .env.example .env && chmod 600 .env
 #   JANUS_DB_PASSWORD         do not keep the template's `janus`
 #   JANUS_TRUSTED_PROXY_CIDRS 172.16.0.0/12 (default Docker bridge range)
 #   JANUS_CADDY_ASK_TOKEN     openssl rand -hex 32
-# Recommended as well: JANUS_JWT_SECRET (openssl rand -hex 32) and JANUS_SUPERADMIN_EMAIL.
+# Recommended as well: JANUS_JWT_SECRET (openssl rand -hex 32). The super admin (superadmin / 123456) is built in.
 
 sed -i 's/example\.com/YOUR-DOMAIN/g' Caddyfile.prod   # site addresses cannot use env vars
 docker compose -f docker-compose.prod.yml up -d --build
@@ -183,9 +179,9 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 Prerequisite DNS: both the bare platform domain and the wildcard `*.<platform-domain>` must point at the server's public IP. First boot runs the init script, seeds the free tier and creates the super admin; certificates are issued on demand.
 
-Three things this snippet does not cover: **super admin first login** (it needs the setup token mailed to
-`JANUS_SUPERADMIN_EMAIL` — `docs/deploy.md` §3), **upgrade / rollback** (§9) and **backups** (especially the
-`caddy_data` volume: losing it forces every certificate to be re-issued — §10).
+Three things this snippet does not cover: **super admin first login** (`superadmin` / `123456`, forced password
+change — `docs/deploy.md` §3), **upgrade / rollback** (§8) and **backups** (especially the `caddy_data` volume:
+losing it forces every certificate to be re-issued — §9).
 
 ## Development conventions
 
