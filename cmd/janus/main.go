@@ -16,7 +16,6 @@ import (
 	"janus/internal/db"
 	"janus/internal/domain"
 	"janus/internal/httpapi"
-	"janus/internal/mailer"
 	"janus/internal/store"
 )
 
@@ -49,33 +48,17 @@ func main() {
 	}
 	st := store.New(gdb)
 
-	if cfg.SuperadminEmail != "" {
-		if err := bootstrap.Superadmin(ctx, st, cfg.SuperadminEmail); err != nil {
-			// 刻意硬失败(不降级为「跳过超管初始化 + 告警」):该邮箱被普通租户占用,
-			// 意味着配置里可猜的超管邮箱被抢注 —— 继续启动等于让平台以「没有超管」
-			// 的状态对外服务,而这比启动失败更难被发现。运维修正邮箱后重启即可。
-			// 拒绝提权的理由与幂等收敛见 internal/bootstrap/convergeOwnTenant。
-			log.Fatalf("init superadmin: %v", err)
-		}
+	// 超管初始化:bootstrap 确保存在 username=superadmin 的超管账号(种子口令 + 首登强制改密)。
+	// 不再是条件初始化 —— 登录需要 username,没有环境变量可以跳过这一步。
+	if err := bootstrap.Superadmin(ctx, st); err != nil {
+		// 刻意硬失败(不降级为「跳过超管初始化 + 告警」):该 username 被普通租户占用,
+		// 意味着平台自留的超管账号被抢注 —— 继续启动等于让平台以「没有超管」
+		// 的状态对外服务,而这比启动失败更难被发现。运维清理占用后重启即可。
+		// 拒绝提权的理由与幂等收敛见 internal/bootstrap/convergeOwnTenant。
+		log.Fatalf("init superadmin: %v", err)
 	}
 
-	// 邮件:配置 SMTP 后启用真实发送(见 .env.example),否则控制台 mailer
-	var smtpCfg *mailer.SMTPConfig
-	if cfg.SMTPHost != "" {
-		smtpCfg = &mailer.SMTPConfig{
-			Host:     cfg.SMTPHost,
-			Port:     cfg.SMTPPort,
-			Username: cfg.SMTPUsername,
-			Password: cfg.SMTPPassword,
-			From:     cfg.SMTPFrom,
-		}
-	}
-	m := mailer.NewMailer(mailer.Config{
-		BaseURL: cfg.PublicBaseURL,
-		SMTP:    smtpCfg,
-	}, os.Stdout)
-
-	app := httpapi.New(httpapi.Deps{Store: st, Mailer: m, Cfg: cfg})
+	app := httpapi.New(httpapi.Deps{Store: st, Cfg: cfg})
 
 	// 后台任务:DNS 重试、证书预签发探活、访问/会话清理。
 	// Shutdown 后显式 cancel 并等待 worker 退出,避免进程退出时后台任务仍在写库。

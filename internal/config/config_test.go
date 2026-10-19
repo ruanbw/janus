@@ -40,7 +40,6 @@ func TestConfigLoadOverrides(t *testing.T) {
 	t.Setenv("JANUS_ADDR", ":9090")
 	t.Setenv("JANUS_COOKIE_SECURE", "false")
 	t.Setenv("JANUS_SESSION_TTL", "12h")
-	t.Setenv("JANUS_SMTP_PORT", "587")
 
 	cfg, err := Load()
 	if err != nil {
@@ -55,9 +54,6 @@ func TestConfigLoadOverrides(t *testing.T) {
 	}
 	if cfg.SessionTTL != 12*time.Hour {
 		t.Fatalf("cfg.SessionTTL = %v, want 12h", cfg.SessionTTL)
-	}
-	if cfg.SMTPPort != 587 {
-		t.Fatalf("cfg.SMTPPort = %d, want 587", cfg.SMTPPort)
 	}
 }
 
@@ -75,8 +71,6 @@ func validConfig() Config {
 	return Config{
 		SessionTTL:           time.Hour,
 		SessionTTLShort:      time.Hour,
-		VerifyTokenTTL:       time.Hour,
-		ResetTokenTTL:        time.Hour,
 		JWTTTL:               time.Hour,
 		DNSRetryInterval:     time.Minute,
 		DNSMaxAge:            time.Hour,

@@ -55,7 +55,7 @@ var missingAskTokenLogged sync.Once
 //   - 请求来自本网络(第二层,不是唯一防线);
 //   - 携带正确的共享密钥 JANUS_CADDY_ASK_TOKEN(第一层);
 //   - 平台后台域名(裸平台域名)始终放行;
-//   - 域名记录 active 且所属租户 active(未封禁/已邮箱验证)。
+//   - 域名记录 active 且所属租户 active(未封禁)。
 //
 // 仅内网可达;放行 200,拒绝 403。
 func (a *API) handleCaddyAuthorize(c *gin.Context) {

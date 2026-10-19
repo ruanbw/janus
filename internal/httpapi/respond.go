@@ -66,4 +66,7 @@ const (
 	errCSRF        = "E_CSRF"
 	errDomainInUse = "E_DOMAIN_IN_USE"
 	errRateLimited = "E_RATE_LIMITED"
+	// errPasswordChangeRequired 是强制改密闸门的错误码:must_change_password=true 的
+	// 租户在改密前访问白名单之外的受保护端点。
+	errPasswordChangeRequired = "E_PASSWORD_CHANGE_REQUIRED"
 )

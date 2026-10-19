@@ -1,7 +1,7 @@
 package httpapi
 
 // 08 — 平台管理(超管):租户列表/详情/封禁解封/调等级;平台强删违规域名。
-// 超管初始化见 cmd/janus/main.go initSuperadmin(环境变量 JANUS_SUPERADMIN_EMAIL)。
+// 超管初始化见 bootstrap.Superadmin(username 固定为 superadmin)。
 
 import (
 	"encoding/json"
@@ -125,13 +125,13 @@ func (a *API) handleAdminPatchTenant(c *gin.Context) {
 			return
 		}
 		if id == admin.ID && *req.Status == "banned" {
-			writeErr(c, http.StatusBadRequest, errValidation, "不能封禁自己,请使用其他超管邮箱处理")
+			writeErr(c, http.StatusBadRequest, errValidation, "不能封禁自己,请使用其他超管账号处理")
 			return
 		}
 	}
 	if req.TierID != nil {
 		if id == admin.ID {
-			writeErr(c, http.StatusBadRequest, errValidation, "不能调整自己的等级,请使用其他超管邮箱处理")
+			writeErr(c, http.StatusBadRequest, errValidation, "不能调整自己的等级,请使用其他超管账号处理")
 			return
 		}
 		if _, err := a.store.GetTier(c.Request.Context(), *req.TierID); err != nil {

@@ -67,8 +67,6 @@ func TestValidateAppConfigZeroTolerance(t *testing.T) {
 			Addr:                 "127.0.0.1:0",
 			SessionTTL:           12 * time.Hour,
 			SessionTTLShort:      time.Hour,
-			VerifyTokenTTL:       time.Hour,
-			ResetTokenTTL:        time.Hour,
 			JWTTTL:               time.Hour,
 			DNSRetryInterval:     time.Minute,
 			DNSMaxAge:            time.Hour,
