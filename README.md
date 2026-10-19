@@ -64,16 +64,22 @@ docs/                 # deploy.md、testing.md、adr/
 
 ```bash
 # 从模板生成 .env,并把必填的 on-demand TLS 密钥直接填进去
+# 重定向会覆盖已有的 .env(SMTP 凭据、超管邮箱会一起丢):重复执行前先备份
 sed "s/^JANUS_CADDY_ASK_TOKEN=.*/JANUS_CADDY_ASK_TOKEN=$(openssl rand -hex 32)/" .env.example > .env
 docker compose up -d    # postgres:5432、caddy:80/443
 ```
 
 ### 2. 本地域名解析
 
+编辑 `/etc/hosts`(需要管理员 / sudo 权限):
+
 ```text
 127.0.0.1 app.janus.test
 127.0.0.1 alice.janus.test      # 每注册一个租户加一行,hosts 不支持通配符
 ```
+
+这些行只服务于浏览器与 Caddy:平台默认子域 `<slug>.janus.test` 建号即 active,不做 DNS 校验;
+自有域名的激活校验走真实 DNS(实现刻意绕开 /etc/hosts),往 hosts 里加行无效,详见 `docs/deploy.md` 第 5 节。
 
 ### 3. 信任 Caddy 本地 CA
 
@@ -84,6 +90,8 @@ sudo caddy trust --ca certs/caddy-root.pem
 ```
 
 ### 4. 启动后端
+
+以下命令都在**仓库根目录**执行(`JANUS_MIGRATIONS_DIR` 默认是相对路径 `migrations`,换目录会读不到 init.sql):
 
 ```bash
 # go run 不读 .env(那是 compose 的行为):set -a 把 .env 里的变量注入进程环境
@@ -101,6 +109,7 @@ JANUS_COOKIE_SECURE=false JANUS_ADDR=:8080 go run ./cmd/janus
 ### 5. 启动前端
 
 ```bash
+corepack enable                        # 本机没有 pnpm 时:corepack 会按 packageManager 字段装上 10.x
 cd web && pnpm install && pnpm dev     # http://localhost:5173,/api 代理到 :8080
 ```
 
@@ -114,6 +123,21 @@ curl -sk https://app.janus.test/healthz    # 经 Caddy 走通全链路
 浏览器打开 `http://localhost:5173` 注册账号;未配置 SMTP 时,验证邮件直接打印在后端终端。
 
 > Caddy 占用宿主 80/443,与本机其他绑定这两个端口的服务错开启动。
+
+要验证**平台管理端**,先在 `.env` 里设 `JANUS_SUPERADMIN_EMAIL=admin@janus.test`,重启后端(启动时幂等初始化)。
+超管首次登录需要邮件里的一次性 setup token,而登录页目前没有该输入框 —— 首登要走三步 API,
+命令见 [`docs/deploy.md`](docs/deploy.md) 第 3 节(把 `BASE` 换成 `http://127.0.0.1:8080`,token 从后端终端日志里取)。
+
+### 7. 清空数据库重来
+
+改了 `migrations/init.sql` 之后要连数据一起重建(项目约定不写增量迁移):
+
+```bash
+docker compose down -v && docker compose up -d     # -v 删掉 pgdata 卷,数据全清
+```
+
+`-v` 会连 `caddy_data` 一起删掉,本地 CA 根证书随之重建:要重做第 3 步的 `caddy trust`,
+否则浏览器会对 `https://*.janus.test` 报证书不受信任。
 
 ## 配置
 
@@ -141,7 +165,16 @@ curl -sk https://app.janus.test/healthz    # 经 Caddy 走通全链路
 完整步骤与上线检查清单见 **[`docs/deploy.md`](docs/deploy.md)**。最小流程:
 
 ```bash
-cp .env.example .env && chmod 600 .env     # 必填项见 docs/deploy.md 第 2 节;CADDY_ASK_TOKEN 用 openssl rand -hex 32 生成
+cp .env.example .env && chmod 600 .env
+
+# 下面几项留空会让 docker compose 直接报错退出(必填),先在 .env 里填好:
+#   JANUS_PLATFORM_DOMAIN     裸平台域名,如 example.com
+#   JANUS_SERVER_PUBLIC_IP    服务器公网 IP
+#   JANUS_DB_PASSWORD         别留模板里的 janus
+#   JANUS_TRUSTED_PROXY_CIDRS 172.16.0.0/12(Docker 默认网桥段)
+#   JANUS_CADDY_ASK_TOKEN     openssl rand -hex 32
+# 另外建议同时设:JANUS_JWT_SECRET(openssl rand -hex 32)、JANUS_SUPERADMIN_EMAIL(否则没有平台管理员)
+
 # Caddyfile.prod 的站点地址不支持环境变量:把 example.com 换成你的平台域名(与 .env 的 JANUS_PLATFORM_DOMAIN 一致)。
 # -i.bak 在 macOS(BSD sed)与 Linux(GNU sed)下都可用,故随后删掉备份文件。
 sed -i.bak 's/example\.com/your-domain.com/g' Caddyfile.prod && rm Caddyfile.prod.bak
@@ -149,6 +182,8 @@ docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 前置条件是 DNS:平台裸域名与泛解析 `*.<平台域名>` 均指向服务器公网 IP。首次启动自动执行初始化脚本、创建免费档种子、初始化超管;证书按需签发。
+
+首次上线后还有三件事不在这一段里:**超管首登**(需要提交邮件里的 setup token,见 `docs/deploy.md` 第 3 节)、**升级与回滚**、**备份**(尤其 `caddy_data` 卷,丢了要重签全部证书)——分别见 `docs/deploy.md` 第 3、9、10 节。
 
 ## 开发约定
 

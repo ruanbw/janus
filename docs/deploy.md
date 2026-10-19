@@ -35,28 +35,59 @@
 ## 3. 启动
 
 ```bash
-cp .env.example .env   # 填写生产值
+cp .env.example .env   # 填写生产值(必填项见第 2 节)
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 - 首次启动自动执行数据库初始化脚本、创建免费档种子、按 `JANUS_SUPERADMIN_EMAIL` 初始化超管;
 - 证书按需签发:租户域名激活后,访问者首次访问时 Caddy 询问授权端点并签发 Let's Encrypt 证书,到期前自动续期(ADR-0002、ADR-0004);
-- 查看状态:`docker compose -f docker-compose.prod.yml ps`、`docker compose -f docker-compose.prod.yml logs -f caddy`。
+- 查看状态:`docker compose -f docker-compose.prod.yml ps`、`docker compose -f docker-compose.prod.yml logs -f caddy`
+
+### 首次登录(平台管理员)
+
+`JANUS_SUPERADMIN_EMAIL` 对应的账号在首次启动时被创建为「无密码」状态。首登需要邮件里的一次性
+**setup token**;而前端登录页目前没有 `setupToken` 输入框,所以首登先走三步 API,设好密码之后浏览器正常登录。
+
+```bash
+BASE=https://<平台域名>
+EMAIL=<JANUS_SUPERADMIN_EMAIL 的值>
+
+# 1) 触发 setup 邮件。返回 401 是预期结果(响应会说明 token 已发出,同邮箱 15 分钟最多一封)
+curl -s -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$EMAIL\",\"password\":\"placeholder\"}"
+
+# 2) 取 token:配了 SMTP 就看邮箱;没配 SMTP 就在后端容器日志里(ConsoleMailer)
+docker compose -f docker-compose.prod.yml logs backend | grep -A3 'JANUS mailer' | tail -6
+
+# 3) 带 token 登录,拿到会话 cookie(这一步只发会话,不会写入密码)
+curl -s -c cookies.txt -X POST "$BASE/api/auth/login" -H 'Content-Type: application/json' \
+  -d "{\"email\":\"$EMAIL\",\"password\":\"placeholder\",\"setupToken\":\"<token>\"}"
+
+# 4) 用会话设置密码(首登允许省略旧密码;CSRF 取自 janus_csrf cookie)
+CSRF=$(awk '$6=="janus_csrf"{print $7}' cookies.txt)
+curl -s -b cookies.txt -X POST "$BASE/api/auth/change-password" \
+  -H 'Content-Type: application/json' -H "X-CSRF-Token: $CSRF" \
+  -d '{"newPassword":"<新密码>"}'
+```
+
+设好密码后即可删除 `cookies.txt`。若第 3 步一直失败,先确认 `JANUS_SUPERADMIN_EMAIL` 与 token 属于同一个邮箱,并且 token 未被用过。
 
 ## 4. 上线前检查清单
 
-按顺序在**生产环境**走通(与 spec Testing Decisions 一致):
+按顺序在**生产环境**走通:
 
-- [ ] `curl -k https://<平台域名>/healthz` 返回 `{"status":"ok"}`
+- [ ] `curl https://<平台域名>/healthz` 返回 `{"status":"ok"}`(不加 `-k`:证书有问题就该在这里暴露;下一条再确认签发方是 Let's Encrypt)
 - [ ] 浏览器访问 `https://<平台域名>` 打开后台,证书为 Let's Encrypt 签发(非本地 CA)
 - [ ] 注册新租户(提交 email/password/slug),收到验证邮件(需配置真实 SMTP,见第 6 节;未配置时验证链接打印在后端日志)
 - [ ] 邮箱验证后租户转 active,`{slug}.<平台域名>` 默认域名可承载短链
 - [ ] 通过 `https://{slug}.<平台域名>/<短码>` 访问短链,返回 302/301 跳转,访问计数增长
 - [ ] 添加自有域名:解析指向本服务器后自动激活并签发证书;未指向时状态 `pending`、超时 `failed`
-- [ ] 超管登录后可见租户列表,可封禁/解封、调整等级、移除违规域名
+- [ ] 超管登录后可见租户列表,可封禁/解封、调整等级、移除违规域名(首登见第 3 节)
 - [ ] 停用短链/域名后访问返回 404;配额超限时创建被拒并提示用量/上限
 
-> 上线前先在**开发环境**按清单走通并完成测试(见 docs/testing.md)，再切生产。
+> 清单里的**自有域名激活、真实 SMTP 发信、Let's Encrypt 签发**三项只能在生产验证:开发环境用 Caddy 本地 CA,
+> 自有域名的归属校验走真实 DNS(绕开 /etc/hosts)、证书探活刻意拒绝 loopback(见第 5 节)。
+> 开发环境能先走的是 1、5、8 的等价路径(域名换成 `app.janus.test` / `<slug>.janus.test`,邮件从后端日志里取链接)。
 
 ## 5. 开发 / 生产差异
 
@@ -64,11 +95,15 @@ docker compose -f docker-compose.prod.yml up -d --build
 | --- | --- | --- |
 | 编排 | 基础设施 Docker(`docker compose up -d`:postgres + caddy);后端/前端终端启动(`go run` + `pnpm dev`,见根 README「快速开始」) | `docker compose -f docker-compose.prod.yml up -d`(全部容器化) |
 | 端口 | 后端 8080;Caddy 映射宿主 443/80(无端口访问) | 标准 80/443;后端不暴露公网 |
-| DNS | SwitchHosts 把 `app.janus.test` 与测试租户子域指向 127.0.0.1(`JANUS_SERVER_PUBLIC_IP=127.0.0.1`,Go 读 /etc/hosts 走真实代码路径) | 真实 DNS 泛解析 `*.<平台域名>` |
+| DNS | 用 hosts/SwitchHosts 把 `app.janus.test` 与测试租户子域指向 127.0.0.1(配合 `JANUS_SERVER_PUBLIC_IP=127.0.0.1`);平台默认子域建号即 active,**不做** DNS 校验 | 真实 DNS:裸平台域名与泛解析 `*.<平台域名>` 都指向本服务器 |
 | 证书 | Caddy 本地 CA(`tls internal` + `on_demand_tls`),`caddy trust` 信任根证书 | Let's Encrypt(ACME 自动签发/续期) |
 | 邮件 | 控制台假 mailer(验证/重置链接打印在后端日志) | 真实 SMTP(部署者提供凭据;mailer 可插拔,见 spec 决策 #3) |
 | Cookie | `JANUS_COOKIE_SECURE=false`(http) | `JANUS_COOKIE_SECURE=true`(https,必须) |
 | 平台域名 | `janus.test`(RFC 保留测试域) | 真实域名 |
+
+> **开发环境演练不了自有域名激活。** 归属校验是 TXT + A/AAAA 真实 DNS 查询,实现刻意绕开 `/etc/hosts`
+> (`internal/domain/dns.go`);证书探活还显式拒绝 loopback / 私网 / 链路本地地址(`internal/domain/cert.go`)。
+> 所以 hosts 加行只对**平台默认子域**有用,「自有域名 → 激活 → 自动签发 → 跳转」这条链路只能上生产验证。
 
 ## 6. SMTP 配置(邮件发送)
 
@@ -87,8 +122,9 @@ compose 会把上述变量转发给后端容器。
 
 - 平台默认域名按子域逐个签发,受 Let's Encrypt 每注册域名每周 50 张证书限制,额度按平台域名聚合;接近上限时迁移到泛域名证书方案(ADR-0004);
 - 访问记录默认保留 90 天,后台定时清理;
-- 授权端点仅内网可达(`/internal/caddy/authorize`),未激活域名拒绝签发,防止任意域名解析到本机即触发签发(spec 决策 #8)。
-
+- 授权端点仅内网可达(`/internal/caddy/authorize`),未激活域名拒绝签发,防止任意域名解析到本机即触发签发(spec 决策 #8);
+- 超管首登邮件里的链接对 setup token 不可用:重置端点只接受 `kind=reset` 的 token,点开 `/reset-password?token=...`
+  会提示「无效、已使用或过期的重置 token」。请按第 3 节用 API 提交 setup token。
 
 ## 8. 产品介绍页(GitHub Pages)
 
@@ -98,3 +134,67 @@ compose 会把上述变量转发给后端容器。
 - 触发条件:`main` 分支上 `site/**` 或该 workflow 自身发生变化;也可在 Actions 页面手动 `Run workflow`;
 - 首次启用需在仓库 Settings → Pages 把 Source 设为 **GitHub Actions**(仅靠 workflow 内 `configure-pages` 的 `enablement` 自动开启,可能因 `GITHUB_TOKEN` 权限不足而失败);
 - 与运行时完全解耦:改 `site/` 不会重建任何服务镜像,产物也不经过后端或 nginx。
+
+## 9. 升级与回滚
+
+```bash
+git pull                                                  # 或 checkout 到目标 tag/commit
+docker compose -f docker-compose.prod.yml up -d --build    # 重建 backend / web,Postgres 不动
+```
+
+- **每次启动都会整段重跑 `migrations/init.sql`**(没有版本表;脚本本身幂等)。改表靠改脚本 + 重建库,不是增量迁移。
+- 只改前端 / 只改后端:`... up -d --build web` 或 `... up -d --build backend`,两个镜像互不依赖(ADR-0006)。
+- 数据卷(`pgdata` / `caddy_data` / `uploads`)不随重建丢失。
+- **回滚**:`git checkout <旧 commit>` 后重复上面的 `up -d --build`。先备份(第 10 节)——若新版本改过
+  `init.sql` 且与旧代码不兼容,回滚后要恢复数据库,否则旧代码会读到新 schema。
+
+## 10. 备份与恢复
+
+有状态数据全在三个具名卷里,卷名前缀是 compose 项目名(默认 = 仓库目录名,如 `janus_pgdata`):
+
+| 卷 | 内容 | 丢失后果 |
+| --- | --- | --- |
+| `*_pgdata` | 租户、域名、短链、规则、访问记录、会话 | 业务数据全部丢失 |
+| `*_caddy_data` | ACME 账户与已签发证书 | **全部域名重签**;平台域名受 Let's Encrypt「每注册域名每周 50 张」限额约束(见第 7 节),高峰期可能当天签不回来 |
+| `*_uploads` | 上传的落地页文件 | 落地页 404 |
+
+数据库(建议每天 cron,备份文件再同步到机器之外):
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  sh -c 'pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > "janus-$(date +%F).dump"
+```
+
+恢复(先停 backend,避免写入竞争):
+
+```bash
+docker compose -f docker-compose.prod.yml stop backend
+docker compose -f docker-compose.prod.yml exec -T postgres \
+  sh -c 'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < janus-YYYY-MM-DD.dump
+docker compose -f docker-compose.prod.yml start backend
+```
+
+证书与上传文件:
+
+```bash
+docker volume ls | grep -E 'pgdata|caddy_data|uploads'    # 先确认卷名
+docker run --rm -v janus_caddy_data:/data:ro -v "$PWD":/backup alpine tar czf /backup/caddy_data.tgz -C /data .
+```
+
+## 11. 故障排查
+
+先看三处:`docker compose -f docker-compose.prod.yml ps`、`... logs backend`、`... logs caddy`。
+
+| 症状 | 原因 | 处理 |
+| --- | --- | --- |
+| `up` 直接报 `required variable ... is missing a value` | 必填项为空,compose 用 `${VAR:?}` 硬卡 | 按第 2 节填 `.env` 后重试 |
+| 后端反复重启,日志 `invalid config: JANUS_JWT_SECRET 至少需要 32 字节` | 密钥太短 | `openssl rand -hex 32` 重新生成 |
+| 后端日志 `init superadmin: ... already taken by a non-superadmin tenant` | 该邮箱已被公开注册抢注 | 换一个不可猜的 `JANUS_SUPERADMIN_EMAIL` 后重启(系统拒绝自动提权,这是设计) |
+| 浏览器打不开后台、任何域名握手都失败,Caddy 侧看不到明显错误 | 两个容器的 ask token 不一致 | `... exec caddy printenv CADDY_ASK_TOKEN` 与 `... exec backend printenv JANUS_CADDY_ASK_TOKEN` 比对;后端打印 `JANUS_CADDY_ASK_TOKEN 未配置` 说明根本没注入 |
+| 单个租户域名握不了手,后端日志 403 `domain not authorized` | 域名不是 active / 租户被封 / DNS 还没指过来 | 后台看域名状态;`pending` 等 DNS 生效(上限 `JANUS_DNS_MAX_AGE`) |
+| 登录、注册大面积 429,像「一个人试错全站受限」 | `JANUS_TRUSTED_PROXY_CIDRS` 没覆盖 Caddy 网段,认证限流退化成全站共享一个桶 | 填实际网段:`docker network inspect <项目名>_default` 看 Subnet(默认在 `172.16.0.0/12` 内) |
+| 落地页 SDK 生成的 click 地址是 `http://` | 同上,`X-Forwarded-Proto` 不被采信 | 同上 |
+| Caddy 起不来,日志 `expanding email address ... is empty` | 取消了 `Caddyfile.prod` 里 `email` 的注释,但 `JANUS_ACME_EMAIL` 为空 | 二选一:填邮箱,或把 `email` 那行重新注释 |
+| 注册页提示 `alice.janus.test`,但平台不是这个域名 | 提示文案是构建期烘进产物的 | 改过 `JANUS_PLATFORM_DOMAIN` 就重建 web 镜像(第 2 节) |
+| 证书签不出来,或 `address already in use` | 宿主 80/443 被别的 nginx/apache 占着 | 停掉占用者,让 Caddy 独占 80/443 |
+| ask 请求没打到 backend(疑似超时/5xx) | 容器继承了宿主的 `HTTP(S)_PROXY` | 确认 `NO_PROXY` 含 `backend`;不要把宿主代理变量传进容器 |

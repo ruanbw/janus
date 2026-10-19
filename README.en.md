@@ -64,16 +64,23 @@ In development **infrastructure runs in Docker** (Postgres, Caddy) while the **b
 
 ```bash
 # generate .env from the template with the required on-demand TLS secret filled in
+# NOTE: the redirect overwrites an existing .env (SMTP credentials, admin email) — back it up first
 sed "s/^JANUS_CADDY_ASK_TOKEN=.*/JANUS_CADDY_ASK_TOKEN=$(openssl rand -hex 32)/" .env.example > .env
 docker compose up -d    # postgres:5432, caddy:80/443
 ```
 
 ### 2. Local DNS
 
+Edit `/etc/hosts` (needs admin / sudo):
+
 ```text
 127.0.0.1 app.janus.test
 127.0.0.1 alice.janus.test      # one line per tenant; hosts has no wildcards
 ```
+
+These lines only serve the browser and Caddy. Platform default subdomains `<slug>.janus.test` are active on
+creation and are never DNS-checked; activation of tenant-owned domains uses real DNS (deliberately bypassing
+`/etc/hosts`), so adding hosts lines does not help there — see `docs/deploy.md` §5.
 
 ### 3. Trust the Caddy local CA
 
@@ -85,15 +92,23 @@ sudo caddy trust --ca certs/caddy-root.pem
 
 ### 4. Start the backend
 
+Run these from the **repository root** (`JANUS_MIGRATIONS_DIR` defaults to the relative path `migrations`):
+
 ```bash
+# go run does not read .env (that is compose's behaviour): inject it into the process environment
+set -a; . ./.env; set +a
 JANUS_COOKIE_SECURE=false JANUS_ADDR=:8080 go run ./cmd/janus
 ```
 
-`go run` does **not** read `.env` (that is compose's behaviour) — export overrides on the command line.
+Skipping the `set -a; . ./.env` line breaks TLS: the backend only reads `JANUS_CADDY_ASK_TOKEN` from the process
+environment, while the Caddy container uses the copy in `.env`. When the two differ, the authorize endpoint
+rejects everything (fail-closed) and Caddy can issue no certificate at all. `./run_backend.sh` does the same
+thing (and `cd`s to the repository root first).
 
 ### 5. Start the frontend
 
 ```bash
+corepack enable                        # if pnpm is missing: corepack installs the pinned 10.x
 cd web && pnpm install && pnpm dev     # http://localhost:5173, /api proxied to :8080
 ```
 
@@ -107,6 +122,23 @@ curl -sk https://app.janus.test/healthz    # full chain through Caddy
 Open `http://localhost:5173` and register an account; without SMTP configured, verification emails are printed to the backend terminal.
 
 > Caddy binds host ports 80/443 — start it at different times from any other service using those ports.
+
+To reach the **platform admin** UI, set `JANUS_SUPERADMIN_EMAIL=admin@janus.test` in `.env` and restart the
+backend (idempotently initialised at startup). The super admin's first login requires the one-time setup token
+sent by email, and the login page has no field for it yet — the first login is a three-step API flow, see
+[`docs/deploy.md`](docs/deploy.md) §3 (`BASE=http://127.0.0.1:8080`, token from the backend terminal log).
+
+### 7. Reset the development database
+
+After changing `migrations/init.sql` you must recreate the database together with its data (the project keeps
+no incremental migrations):
+
+```bash
+docker compose down -v && docker compose up -d     # -v drops the pgdata volume, all data gone
+```
+
+`-v` also drops `caddy_data`, which recreates the local CA root: redo step 3 (`caddy trust`) or the browser
+will reject `https://*.janus.test` certificates.
 
 ## Configuration
 
@@ -134,12 +166,24 @@ Everything is configured through environment variables; see [`.env.example`](.en
 Full steps and a go-live checklist live in **[`docs/deploy.md`](docs/deploy.md)** (currently written in Chinese). Minimal flow:
 
 ```bash
-cp .env.example .env && chmod 600 .env     # set JANUS_PLATFORM_DOMAIN / JANUS_SERVER_PUBLIC_IP / JANUS_DB_PASSWORD …
+cp .env.example .env && chmod 600 .env
+# These are hard requirements — compose exits immediately when they are empty:
+#   JANUS_PLATFORM_DOMAIN     bare platform domain, e.g. example.com
+#   JANUS_SERVER_PUBLIC_IP    public IP of the server
+#   JANUS_DB_PASSWORD         do not keep the template's `janus`
+#   JANUS_TRUSTED_PROXY_CIDRS 172.16.0.0/12 (default Docker bridge range)
+#   JANUS_CADDY_ASK_TOKEN     openssl rand -hex 32
+# Recommended as well: JANUS_JWT_SECRET (openssl rand -hex 32) and JANUS_SUPERADMIN_EMAIL.
+
 sed -i 's/example\.com/YOUR-DOMAIN/g' Caddyfile.prod   # site addresses cannot use env vars
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 Prerequisite DNS: both the bare platform domain and the wildcard `*.<platform-domain>` must point at the server's public IP. First boot runs the init script, seeds the free tier and creates the super admin; certificates are issued on demand.
+
+Three things this snippet does not cover: **super admin first login** (it needs the setup token mailed to
+`JANUS_SUPERADMIN_EMAIL` — `docs/deploy.md` §3), **upgrade / rollback** (§9) and **backups** (especially the
+`caddy_data` volume: losing it forces every certificate to be re-issued — §10).
 
 ## Development conventions
 
