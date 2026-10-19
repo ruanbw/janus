@@ -35,7 +35,7 @@
             </div>
             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 text-xs">
               <span class="mono font-semibold text-ink text-sm">
-                {{ tenant?.email ?? '—' }}
+                {{ tenant?.username ?? '—' }}
               </span>
               <span class="text-ink-faint">
                 租户前缀标识: <code class="font-mono text-ink">{{ tenant?.slug ?? '-' }}</code>

@@ -29,8 +29,8 @@
           <!-- 目标租户信息栏 -->
           <div class="rounded-xl border border-line bg-surface-muted/50 p-4 space-y-2.5">
             <div class="flex items-center justify-between text-xs">
-              <span class="font-medium text-ink-soft">目标租户邮箱</span>
-              <span class="mono font-semibold text-ink">{{ tenant?.email ?? '—' }}</span>
+              <span class="font-medium text-ink-soft">目标租户账号</span>
+              <span class="mono font-semibold text-ink">{{ tenant?.username ?? '—' }}</span>
             </div>
             <div class="flex items-center justify-between text-xs">
               <span class="font-medium text-ink-soft">租户前缀 / 等级</span>
@@ -166,7 +166,7 @@ async function onRemoveClick() {
 
   const confirmed = await confirmAsync({
     title: `确认强制移除域名 ID #${form.domainId}？`,
-    content: `该操作不可撤销！将物理删除该域名，并同时解除租户「${tenant.value?.email ?? '该租户'}」所有绑定在此域名上的短链关联。`,
+    content: `该操作不可撤销！将物理删除该域名，并同时解除租户「${tenant.value?.username ?? '该租户'}」所有绑定在此域名上的短链关联。`,
     okText: '确认强制删除',
     cancelText: '取消',
     danger: true,

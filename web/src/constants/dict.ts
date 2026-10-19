@@ -67,6 +67,10 @@ export const SHORT_CODE_ALPHABET = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTU
 export const SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 export const SLUG_MAX_LENGTH = 63;
 
+/** 账号规则:3-32 位,仅小写字母、数字、下划线、连字符(后端冻结契约) */
+export const USERNAME_PATTERN = /^[a-z0-9_-]{3,32}$/;
+export const USERNAME_MAX_LENGTH = 32;
+
 /** 自定义短码规则:仅允许字母与数字(易混淆字符由 FORBIDDEN 单独校验),长度 1-64(后端 MaxCodeLen=64) */
 export const SHORT_CODE_PATTERN = /^[a-zA-Z0-9]+$/;
 /** 短码中的易混淆字符(后端字符集不含 0/O/1/l/I) */

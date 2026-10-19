@@ -16,8 +16,8 @@ const CSRF_COOKIE = 'janus_csrf';
 /** 无需 CSRF 的安全方法 */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-/** 公开页面:401 时不强制跳登录(如邮箱验证、重置密码链接页)。用精确匹配,避免 /login-xxx 误命中 */
-const PUBLIC_PATHS = new Set(['/login', '/register', '/verify-email', '/forgot-password', '/reset-password']);
+/** 公开页面:401 时不强制跳登录(如登录/注册页)。用精确匹配,避免 /login-xxx 误命中 */
+const PUBLIC_PATHS = new Set(['/login', '/register']);
 
 /** 401 处理器(由 main.ts 注册,与 Vue Router 集成);未注册时回退整页跳转 */
 let unauthorizedHandler: ((redirectTo?: string) => void) | null = null;

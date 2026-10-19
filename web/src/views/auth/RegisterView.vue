@@ -7,9 +7,15 @@
     </template>
 
     <AppForm :model="form" :schema="schema" @finish="onSubmit">
-      <AppFormItem label="邮箱" name="email">
-        <AppInput v-model="form.email" placeholder="you@example.com" autocomplete="email" size="large">
-          <template #prefix><Mail :size="16" /></template>
+      <AppFormItem label="账号" name="username" extra="3-32 位小写字母、数字、下划线或连字符,用于登录后台">
+        <AppInput
+          v-model="form.username"
+          placeholder="例如 mybrand"
+          autocomplete="username"
+          :maxlength="USERNAME_MAX_LENGTH"
+          size="large"
+        >
+          <template #prefix><User :size="16" /></template>
         </AppInput>
       </AppFormItem>
       <AppFormItem label="密码" name="password">
@@ -36,7 +42,7 @@
         </AppInput>
       </AppFormItem>
       <AppFormItem
-        label="前缀"
+        label="默认域名前缀"
         name="slug"
         extra="小写字母或数字开头/结尾,可包含连字符;将用于生成你的平台默认域名"
       >
@@ -66,24 +72,31 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { Globe, Lock, Mail } from '@lucide/vue';
+import { Globe, Lock, User } from '@lucide/vue';
 import { z } from 'zod';
 import type { FormSchema } from '@/components/app/form';
 
 import { register } from '@/api/auth';
 import AuthShell from '@/components/AuthShell.vue';
 import PasswordStrength from '@/components/PasswordStrength.vue';
-import { SLUG_MAX_LENGTH, SLUG_PATTERN } from '@/constants/dict';
+import {
+  SLUG_MAX_LENGTH,
+  SLUG_PATTERN,
+  USERNAME_MAX_LENGTH,
+  USERNAME_PATTERN,
+} from '@/constants/dict';
+import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
 import { message } from '@/utils/toast';
 
+const auth = useAuthStore();
 const router = useRouter();
 const submitting = ref(false);
 
 const PLATFORM_DOMAIN = import.meta.env.VITE_PLATFORM_DOMAIN || 'janus.test';
 
 const form = reactive({
-  email: '',
+  username: '',
   password: '',
   confirmPassword: '',
   slug: '',
@@ -95,7 +108,10 @@ const slugHint = computed(() => {
 });
 
 const schema: FormSchema = {
-  email: z.string().min(1, '请输入邮箱').email('邮箱格式不正确'),
+  username: z
+    .string()
+    .min(1, '请输入账号')
+    .regex(USERNAME_PATTERN, '账号需为 3-32 位小写字母、数字、下划线或连字符'),
   password: z
     .string()
     .min(1, '请输入密码')
@@ -114,17 +130,20 @@ const schema: FormSchema = {
 async function onSubmit() {
   submitting.value = true;
   try {
-    await register({
-      email: form.email.trim(),
+    // 注册即建立会话(后端同时下发 janus_session),因此直接把返回的租户写进 store,
+    // 无需再走一次登录;mustChangePassword 由返回体决定首屏去向。
+    const tenant = await register({
+      username: form.username.trim(),
       password: form.password,
       slug: form.slug.trim(),
     });
-    message.success('注册成功,请查收验证邮件');
-    router.push({ path: '/verify-email', query: { sent: '1' } });
+    auth.tenant = tenant;
+    message.success('注册成功');
+    router.push(tenant.mustChangePassword ? '/account' : '/domains');
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 409) {
-        message.error(error.message || '邮箱或前缀已被占用');
+        message.error(error.message || '账号或前缀已被占用');
       } else if (error.status === 400) {
         message.error(error.message || '注册信息不合法,请检查后重试');
       } else {

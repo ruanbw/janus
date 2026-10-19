@@ -25,6 +25,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => tenant.value !== null);
   const isSuperAdmin = computed(() => tenant.value?.isSuperAdmin === true);
+  /** 强制改密:此时路由守卫只放行 /account(其余页面后端也会 403 E_PASSWORD_CHANGE_REQUIRED) */
+  const mustChangePassword = computed(() => tenant.value?.mustChangePassword === true);
 
   /**
    * 用量增强:GET /api/me 返回 tenant + usage(配额用量)。
@@ -73,17 +75,13 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /** 登录:成功后后端 Set-Cookie(janus_session + janus_csrf),请求层自动携带 CSRF
-   *
-   * setupToken 只在超管首次登录(尚无密码)时传:后端要求它才能建立会话,
-   * 缺了就是一个普通 401。其余账号传 undefined(JSON 序列化时直接丢掉)。 */
+  /** 登录:成功后后端 Set-Cookie(janus_session + janus_csrf),请求层自动携带 CSRF */
   async function login(
-    email: string,
+    username: string,
     password: string,
     rememberMe?: boolean,
-    setupToken?: string,
   ): Promise<Tenant> {
-    const me = await authApi.login({ email, password, rememberMe, setupToken });
+    const me = await authApi.login({ username, password, rememberMe });
     tenant.value = me;
     sessionProbeFailed.value = false;
     await enrichUsage();
@@ -116,6 +114,7 @@ export const useAuthStore = defineStore('auth', () => {
     sessionProbeFailed,
     isAuthenticated,
     isSuperAdmin,
+    mustChangePassword,
     fetchMe,
     login,
     logout,

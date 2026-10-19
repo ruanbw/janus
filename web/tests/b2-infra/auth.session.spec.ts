@@ -33,10 +33,11 @@ const { useAuthStore } = await import('@/stores/auth');
 
 const TENANT = {
   id: 1,
-  email: 'a@example.com',
+  username: 'a_user',
   slug: 'a',
   status: 'active',
   isSuperAdmin: false,
+  mustChangePassword: false,
   tier: 'free',
   defaultDomain: 'a.platform.test',
   createdAt: '2026-01-01T00:00:00Z',
@@ -48,12 +49,24 @@ describe('auth store 会话探测', () => {
     setActivePinia(createPinia());
   });
 
+  it('登录:请求体为 {username,password,rememberMe},成功后写入 tenant', async () => {
+    loginMock.mockResolvedValue(TENANT);
+    fetchMyTenantMock.mockResolvedValue(TENANT);
+
+    const store = useAuthStore();
+    await store.login('a_user', 'Passw0rd!', true);
+
+    expect(loginMock).toHaveBeenCalledWith({ username: 'a_user', password: 'Passw0rd!', rememberMe: true });
+    expect(store.tenant).toEqual(TENANT);
+    expect(store.isAuthenticated).toBe(true);
+  });
+
   it('网络抖动(非 401)不清空会话,置 sessionProbeFailed 且返回现有 tenant', async () => {
     loginMock.mockResolvedValue(TENANT);
     fetchMyTenantMock.mockResolvedValue(TENANT);
 
     const store = useAuthStore();
-    await store.login('a@example.com', 'pw');
+    await store.login('a_user', 'pw');
     expect(store.isAuthenticated).toBe(true);
 
     fetchMeMock.mockRejectedValue(new ApiError(0, 'E_NETWORK', '无法连接后台服务'));
@@ -71,7 +84,7 @@ describe('auth store 会话探测', () => {
     fetchMyTenantMock.mockResolvedValue(TENANT);
 
     const store = useAuthStore();
-    await store.login('a@example.com', 'pw');
+    await store.login('a_user', 'pw');
 
     fetchMeMock.mockRejectedValue(new ApiError(0, 'E_TIMEOUT', '请求超时,请稍后重试'));
 
@@ -86,7 +99,7 @@ describe('auth store 会话探测', () => {
     fetchMyTenantMock.mockResolvedValue(TENANT);
 
     const store = useAuthStore();
-    await store.login('a@example.com', 'pw');
+    await store.login('a_user', 'pw');
 
     fetchMeMock.mockRejectedValue(new ApiError(500, 'E_UNKNOWN', '请求失败(HTTP 500)'));
 
@@ -101,7 +114,7 @@ describe('auth store 会话探测', () => {
     fetchMyTenantMock.mockResolvedValue(TENANT);
 
     const store = useAuthStore();
-    await store.login('a@example.com', 'pw');
+    await store.login('a_user', 'pw');
 
     fetchMeMock.mockRejectedValue(new ApiError(401, 'E_UNAUTH', '未登录'));
 

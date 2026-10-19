@@ -21,24 +21,6 @@ const router = createRouter({
       meta: { public: true, title: '注册' },
     },
     {
-      path: '/verify-email',
-      name: 'verify-email',
-      component: () => import('@/views/auth/VerifyEmailView.vue'),
-      meta: { public: true, title: '邮箱验证' },
-    },
-    {
-      path: '/forgot-password',
-      name: 'forgot-password',
-      component: () => import('@/views/auth/ForgotPasswordView.vue'),
-      meta: { public: true, title: '忘记密码' },
-    },
-    {
-      path: '/reset-password',
-      name: 'reset-password',
-      component: () => import('@/views/auth/ResetPasswordView.vue'),
-      meta: { public: true, title: '重置密码' },
-    },
-    {
       path: '/',
       component: AdminLayout,
       redirect: '/overview',
@@ -149,9 +131,9 @@ router.beforeEach(async (to) => {
   }
 
   if (to.meta.public) {
-    // 已登录访问登录/注册页 → 回后台
+    // 已登录访问登录/注册页 → 回后台(强制改密时回账号设置页)
     if (auth.isAuthenticated && (to.path === '/login' || to.path === '/register')) {
-      return { path: '/domains' };
+      return { path: auth.mustChangePassword ? '/account' : '/domains' };
     }
     return true;
   }
@@ -164,6 +146,12 @@ router.beforeEach(async (to) => {
       return true;
     }
     return { path: '/login', query: to.fullPath === '/' ? {} : { redirect: to.fullPath } };
+  }
+
+  // 强制改密:后端除 /auth/me、/auth/change-password、/auth/logout 外一律 403,
+  // 前端同步把用户锁在账号设置页,避免进入一个只会报错的页面。
+  if (auth.mustChangePassword && to.path !== '/account') {
+    return { path: '/account' };
   }
 
   if (to.meta.superAdmin && !auth.isSuperAdmin) {
