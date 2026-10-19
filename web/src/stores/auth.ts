@@ -73,9 +73,17 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  /** 登录:成功后后端 Set-Cookie(janus_session + janus_csrf),请求层自动携带 CSRF */
-  async function login(email: string, password: string, rememberMe?: boolean): Promise<Tenant> {
-    const me = await authApi.login({ email, password, rememberMe });
+  /** 登录:成功后后端 Set-Cookie(janus_session + janus_csrf),请求层自动携带 CSRF
+   *
+   * setupToken 只在超管首次登录(尚无密码)时传:后端要求它才能建立会话,
+   * 缺了就是一个普通 401。其余账号传 undefined(JSON 序列化时直接丢掉)。 */
+  async function login(
+    email: string,
+    password: string,
+    rememberMe?: boolean,
+    setupToken?: string,
+  ): Promise<Tenant> {
+    const me = await authApi.login({ email, password, rememberMe, setupToken });
     tenant.value = me;
     sessionProbeFailed.value = false;
     await enrichUsage();

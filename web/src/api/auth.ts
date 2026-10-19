@@ -18,11 +18,15 @@ export function verifyEmail(data: { token: string }): Promise<void> {
   return post<void>('/auth/verify-email', data);
 }
 
-/** 登录:200 tenant + Set-Cookie(janus_session / janus_csrf) */
+/** 登录:200 tenant + Set-Cookie(janus_session / janus_csrf)
+ *
+ * setupToken:仅超管首次登录(尚无密码)需要。后端对 firstLoginSetup 的租户强制校验它
+ * (一次性、邮递到 JANUS_SUPERADMIN_EMAIL),没有它登录恒 401。 */
 export function login(data: {
   email: string;
   password: string;
   rememberMe?: boolean;
+  setupToken?: string;
 }): Promise<Tenant> {
   return post<Tenant>('/auth/login', data);
 }
