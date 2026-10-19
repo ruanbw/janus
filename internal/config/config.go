@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -22,18 +21,15 @@ import (
 const defaultDatabaseURL = "postgres://janus:janus@localhost:5432/janus?sslmode=disable"
 
 type Config struct {
-	Addr            string `env:"JANUS_ADDR" envDefault:":8080"`
-	DatabaseURL     string `env:"JANUS_DATABASE_URL" envDefault:"postgres://janus:janus@localhost:5432/janus?sslmode=disable"`
-	PlatformDomain  string `env:"JANUS_PLATFORM_DOMAIN" envDefault:"janus.test"`
-	ServerPublicIP  string `env:"JANUS_SERVER_PUBLIC_IP" envDefault:"127.0.0.1"`
-	SuperadminEmail string `env:"JANUS_SUPERADMIN_EMAIL"`
+	Addr           string `env:"JANUS_ADDR" envDefault:":8080"`
+	DatabaseURL    string `env:"JANUS_DATABASE_URL" envDefault:"postgres://janus:janus@localhost:5432/janus?sslmode=disable"`
+	PlatformDomain string `env:"JANUS_PLATFORM_DOMAIN" envDefault:"janus.test"`
+	ServerPublicIP string `env:"JANUS_SERVER_PUBLIC_IP" envDefault:"127.0.0.1"`
 
 	CookieSecure bool `env:"JANUS_COOKIE_SECURE" envDefault:"true"`
 
 	SessionTTL      time.Duration `env:"JANUS_SESSION_TTL" envDefault:"720h"`
 	SessionTTLShort time.Duration `env:"JANUS_SESSION_TTL_SHORT" envDefault:"24h"`
-	VerifyTokenTTL  time.Duration `env:"JANUS_VERIFY_TOKEN_TTL" envDefault:"24h"`
-	ResetTokenTTL   time.Duration `env:"JANUS_RESET_TOKEN_TTL" envDefault:"1h"`
 	JWTSecret       string        `env:"JANUS_JWT_SECRET"`
 	JWTTTL          time.Duration `env:"JANUS_JWT_TTL" envDefault:"24h"`
 
@@ -76,14 +72,6 @@ type Config struct {
 
 	// MigrationsDir 初始化脚本目录(内含唯一的 init.sql,见 AGENTS.md「数据库与 Schema 约定」)。
 	MigrationsDir string `env:"JANUS_MIGRATIONS_DIR" envDefault:"migrations"`
-
-	// SMTP 邮件(可选):配置后启用真实邮件发送,否则控制台 mailer
-	PublicBaseURL string `env:"JANUS_PUBLIC_BASE_URL" envDefault:"https://app.janus.test"`
-	SMTPHost      string `env:"JANUS_SMTP_HOST"`
-	SMTPPort      int    `env:"JANUS_SMTP_PORT" envDefault:"465"`
-	SMTPUsername  string `env:"JANUS_SMTP_USERNAME"`
-	SMTPPassword  string `env:"JANUS_SMTP_PASSWORD"`
-	SMTPFrom      string `env:"JANUS_SMTP_FROM"`
 }
 
 // Load 解析环境变量。解析失败直接返回错误,不再吞掉:
@@ -180,8 +168,6 @@ func (c Config) Validate() error {
 	}{
 		{"JANUS_SESSION_TTL", c.SessionTTL},
 		{"JANUS_SESSION_TTL_SHORT", c.SessionTTLShort},
-		{"JANUS_VERIFY_TOKEN_TTL", c.VerifyTokenTTL},
-		{"JANUS_RESET_TOKEN_TTL", c.ResetTokenTTL},
 		{"JANUS_DNS_RETRY_INTERVAL", c.DNSRetryInterval},
 		{"JANUS_DNS_MAX_AGE", c.DNSMaxAge},
 		{"JANUS_VISIT_RETENTION", c.VisitRetention},
@@ -239,15 +225,6 @@ func (c Config) Validate() error {
 	if c.PlatformDomain != "" && !fqdn.IsValid(c.PlatformDomain) {
 		return fmt.Errorf("JANUS_PLATFORM_DOMAIN 不是合法域名(允许单标签,如 localhost): %q", c.PlatformDomain)
 	}
-	// SMTPPort = 0 表示未配置(envDefault 会填 465);非零时必须落在 1-65535。
-	if c.SMTPPort != 0 && (c.SMTPPort < 1 || c.SMTPPort > 65535) {
-		return fmt.Errorf("JANUS_SMTP_PORT 必须是 1-65535,当前为 %d", c.SMTPPort)
-	}
-	if c.PublicBaseURL != "" {
-		if u, err := url.Parse(c.PublicBaseURL); err != nil || u.Scheme == "" || u.Host == "" {
-			return fmt.Errorf("JANUS_PUBLIC_BASE_URL 不是合法 URL: %q", c.PublicBaseURL)
-		}
-	}
 	if c.ServerPublicIP != "" && net.ParseIP(c.ServerPublicIP) == nil {
 		return fmt.Errorf("JANUS_SERVER_PUBLIC_IP 不是合法 IP: %q", c.ServerPublicIP)
 	}
@@ -266,10 +243,6 @@ func (c Config) Validate() error {
 		// 短密钥(如猜得到的口令)会让签名形同虚设。空密钥的处置(生产模式拒绝启动)
 		// 由另一条工作流负责,这里只校验"已配置的密钥"长度。
 		return fmt.Errorf("JANUS_JWT_SECRET 至少需要 32 字节(HS256 密钥强度要求),当前为 %d 字节", len(c.JWTSecret))
-	}
-	if c.SMTPHost == "" {
-		// 控制台 mailer 会把 token 打印到日志,生产环境不可用。
-		fmt.Fprintln(os.Stderr, "WARN: 未配置 JANUS_SMTP_HOST,使用 ConsoleMailer,验证/重置链接会打印到后端日志,仅适合开发环境")
 	}
 	return nil
 }

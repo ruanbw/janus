@@ -33,18 +33,18 @@ END $$;
 
 -- 2. 租户表 (Tenants)
 CREATE TABLE IF NOT EXISTS tenants (
-    id              BIGSERIAL PRIMARY KEY,
-    email           TEXT NOT NULL UNIQUE,
-    password_hash   TEXT,              -- 超管首次登录前为 NULL
-    tier_id         BIGINT NOT NULL REFERENCES tiers(id),
-    status          TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','active','banned')),
-    slug            TEXT NOT NULL UNIQUE,
-    is_super_admin  BOOLEAN NOT NULL DEFAULT false,
-    token_version   INT NOT NULL DEFAULT 1,
-    custom_404_html TEXT NOT NULL DEFAULT '',
-    custom_429_html TEXT NOT NULL DEFAULT '',
-    verified_at     TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                   BIGSERIAL PRIMARY KEY,
+    username             TEXT NOT NULL UNIQUE,
+    password_hash        TEXT,
+    tier_id              BIGINT NOT NULL REFERENCES tiers(id),
+    status               TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','active','banned')),
+    slug                 TEXT NOT NULL UNIQUE,
+    is_super_admin       BOOLEAN NOT NULL DEFAULT false,
+    must_change_password BOOLEAN NOT NULL DEFAULT false,
+    token_version        INT NOT NULL DEFAULT 1,
+    custom_404_html      TEXT NOT NULL DEFAULT '',
+    custom_429_html      TEXT NOT NULL DEFAULT '',
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- 3. 域名表 (Domains)
@@ -260,21 +260,9 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_tenant ON sessions(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 
--- 11. 邮箱验证/重置/设置 Token 表 (Email Tokens)
-CREATE TABLE IF NOT EXISTS email_tokens (
-    id         BIGSERIAL PRIMARY KEY,
-    tenant_id  BIGINT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    token_hash TEXT NOT NULL UNIQUE,
-    kind       TEXT NOT NULL CHECK (kind IN ('verify','reset','setup')),
-    expires_at TIMESTAMPTZ NOT NULL,
-    used_at    TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_email_tokens_expires ON email_tokens(expires_at);
--- 租户维度的 token 管理(按租户列出/作废某类 token、pending 租户超期清理)
--- 需要 (tenant_id, kind);此前只有 expires_at 与 token_hash 两个索引,
--- 这类查询只能全表扫。消费路径仍走 token_hash 的 UNIQUE 索引,不受影响。
-CREATE INDEX IF NOT EXISTS idx_email_tokens_tenant_kind ON email_tokens(tenant_id, kind);
+-- 11. (已删除)邮箱验证/重置/设置 Token 表 email_tokens
+-- 身份模型从「邮箱 + 邮件验证」改为「username + 密码」后,注册即 active,
+-- 验证/重置/首登 setup 三种 token 全部下线,表与索引一并从本文件移除。
 
 -- 初始种子数据
 INSERT INTO tiers (name, max_links, max_domains) VALUES ('free', 100, 10)

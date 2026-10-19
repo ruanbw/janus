@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -23,7 +21,6 @@ import (
 	"janus/internal/db"
 	"janus/internal/domain"
 	"janus/internal/httpapi"
-	"janus/internal/mailer"
 	"janus/internal/store"
 	"janus/pkg/event"
 )
@@ -389,29 +386,8 @@ func (a *App) initHandler() error {
 
 	// 若提供了 Store 则组装完整业务路由，否则保持轻量基础路由（支持无 DB 测试与自定义路由注入）
 	if a.store != nil {
-		var smtpCfg *mailer.SMTPConfig
-		if a.cfg.SMTPHost != "" {
-			smtpCfg = &mailer.SMTPConfig{
-				Host:     a.cfg.SMTPHost,
-				Port:     a.cfg.SMTPPort,
-				Username: a.cfg.SMTPUsername,
-				Password: a.cfg.SMTPPassword,
-				From:     a.cfg.SMTPFrom,
-			}
-		}
-		// 未配置 SMTP 时为控制台 mailer。SDK 场景没有可用日志出口:writer 传
-		// io.Discard 会让验证/重置链接静默丢失,这里保留丢弃行为但显式告警一次。
-		if smtpCfg == nil {
-			slog.Warn("未配置 SMTP,邮件(含验证/重置链接)将被静默丢弃;生产/SDK 场景请配置 SMTP")
-		}
-		m := mailer.NewMailer(mailer.Config{
-			BaseURL: a.cfg.PublicBaseURL,
-			SMTP:    smtpCfg,
-		}, io.Discard)
-
 		fullHandler := httpapi.New(httpapi.Deps{
 			Store:           a.store,
-			Mailer:          m,
 			Cfg:             a.cfg,
 			ProtectedRoutes: a.protectedRouteInjects,
 		})
@@ -561,10 +537,8 @@ func (a *App) bootstrapDatabase(ctx context.Context) error {
 		a.gdb = gdb
 		a.dbOwned = true
 		a.store = store.New(gdb)
-		if a.cfg.SuperadminEmail != "" {
-			if err := bootstrap.Superadmin(ctx, a.store, a.cfg.SuperadminEmail); err != nil {
-				return fmt.Errorf("init superadmin: %w", err)
-			}
+		if err := bootstrap.Superadmin(ctx, a.store); err != nil {
+			return fmt.Errorf("init superadmin: %w", err)
 		}
 		// 组装底层完整路由
 		return a.initHandler()

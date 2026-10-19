@@ -53,15 +53,18 @@ func (s *Store) IncrementTokenVersion(ctx context.Context, id int64) error {
 	return nil
 }
 
-// SetTenantPasswordAndBumpTokenVersion 在**同一事务**内写新密码并自增 token_version。
+// SetTenantPasswordAndBumpTokenVersion 在**同一事务**内写新密码、自增 token_version 并
+// 清除 must_change_password。
 //
 // 必须原子:分成两条语句的话,进程在中间崩掉就会留下"密码已改、token_version 未动"
-// 的状态 —— 恰好是这次要修的那个洞(旧 JWT 继续有效)。
+// 的状态 —— 恰好是这次要修的那个洞(旧 JWT 继续有效)。清除 must_change_password 也必须
+// 在同一事务:否则一个已改密的租户会被强制改密闸门永久挡在门外。
 func (s *Store) SetTenantPasswordAndBumpTokenVersion(ctx context.Context, id int64, hash string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		res := tx.Model(&Tenant{}).Where("id = ?", id).Updates(map[string]any{
-			"password_hash": hash,
-			"token_version": gorm.Expr("token_version + 1"),
+			"password_hash":        hash,
+			"token_version":        gorm.Expr("token_version + 1"),
+			"must_change_password": false,
 		})
 		if res.Error != nil {
 			return res.Error

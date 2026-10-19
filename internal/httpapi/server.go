@@ -21,16 +21,14 @@ import (
 	"janus/internal/domain"
 	"janus/internal/geo"
 	"janus/internal/jwt"
-	"janus/internal/mailer"
 	"janus/internal/rbac"
 	"janus/internal/rules"
 	"janus/internal/store"
 )
 
 type Deps struct {
-	Store  *store.Store
-	Mailer mailer.Mailer
-	Cfg    config.Config
+	Store *store.Store
+	Cfg   config.Config
 	// RateLimit 认证端点限流配置;nil 时使用 DefaultRateLimit()。
 	// 测试环境可注入高阈值/关闭(见 testutil)。
 	RateLimit *RateLimitConfig
@@ -58,18 +56,12 @@ type OwnershipChecker interface {
 
 type API struct {
 	store        *store.Store
-	mailer       mailer.Mailer
 	cfg          config.Config
 	dns          OwnershipChecker
 	registerRate *rateLimiter // POST /api/auth/register
-	authRate     *rateLimiter // login/verify-email/forgot/reset
-	// setupRate 限制「首次设置密码 setup token」的补发速度(按租户邮箱分桶),
-	// 防止任何知道超管邮箱的人把它当邮件炸弹:冷却窗口内最多一封。
-	setupRate *rateLimiter
-	// resendVerifyRate 限制 /api/auth/resend-verification 的发信速度(按邮箱分桶)。
-	resendVerifyRate *rateLimiter
+	authRate     *rateLimiter // login/token
 	// loginFailures 是账号级失败退避(登录 / token / 改密的旧密码猜测)。
-	// 按归一化邮箱累计失败并指数退避,与上面的每 IP 限流正交 —— 每 IP 限流挡不住
+	// 按归一化用户名累计失败并指数退避,与上面的每 IP 限流正交 —— 每 IP 限流挡不住
 	// "换 IP 打同一个账号"的撞库(见 auth_limit.go)。
 	loginFailures *loginFailureLimiter
 	// trustedProxyNets 是运维显式声明的可信代理网段(JANUS_TRUSTED_PROXY_CIDRS)。
@@ -145,15 +137,11 @@ func New(d Deps) http.Handler {
 	}
 
 	a := &API{
-		store:        d.Store,
-		mailer:       d.Mailer,
-		cfg:          d.Cfg,
-		dns:          d.DomainOwnership,
-		registerRate: newRateLimiter(rl.RegisterLimit, rl.RegisterWindow),
-		authRate:     newRateLimiter(rl.AuthLimit, rl.AuthWindow),
-		// 每 15 分钟最多一封:够运维在丢失邮件后自助补发,又挡得住邮件轰炸。
-		setupRate:        newRateLimiter(1, 15*time.Minute),
-		resendVerifyRate: newRateLimiter(1, 5*time.Minute),
+		store:            d.Store,
+		cfg:              d.Cfg,
+		dns:              d.DomainOwnership,
+		registerRate:     newRateLimiter(rl.RegisterLimit, rl.RegisterWindow),
+		authRate:         newRateLimiter(rl.AuthLimit, rl.AuthWindow),
 		loginFailures:    newLoginFailureLimiter(),
 		trustedProxyNets: trustedProxyNets,
 		rbacEnforcer:     rb,
@@ -181,18 +169,17 @@ func New(d Deps) http.Handler {
 	r.GET("/internal/caddy/authorize", a.handleCaddyAuthorize)
 
 	// ---------- 公开路由(无需认证) ----------
-	// 认证:注册/邮箱验证/登录/API Bearer JWT 签发/忘记密码/重置密码
+	// 认证:注册/登录/API Bearer JWT 签发
 	r.POST("/api/auth/register", a.handleRegister)
-	r.POST("/api/auth/verify-email", a.handleVerifyEmail)
-	r.POST("/api/auth/resend-verification", a.handleResendVerification) // 注册发信失败后的自助恢复入口
 	r.POST("/api/auth/login", a.handleLogin)
 	r.POST("/api/auth/token", a.handleToken) // API Bearer JWT 签发(公开,走 authRate 限流)
-	r.POST("/api/auth/forgot-password", a.handleForgotPassword)
-	r.POST("/api/auth/reset-password", a.handleResetPassword)
 
 	// ---------- 受保护路由:先认证(会话 cookie 或 Bearer JWT)后授权(Casbin RBAC) ----------
-	// 中间件顺序:authenticate 产出 context(租户/角色/认证方式),authorize 据此判权。
-	protAuth := r.Group("/api", a.authenticate())
+	// 中间件顺序:authenticate 产出 context(租户/角色/认证方式)→ requirePasswordChange 拦截
+	// 被强制改密的租户(白名单见 password_change.go)→ authorize 据此判权。
+	//
+	// 闸门挂在 protAuth 上(而不只是业务组),所以外部注入的受保护路由同样受它约束。
+	protAuth := r.Group("/api", a.authenticate(), a.requirePasswordChange())
 	prot := protAuth.Group("", a.authorize())
 	// 02:登出 / me
 	prot.POST("/auth/logout", a.handleLogout)
@@ -250,8 +237,8 @@ func New(d Deps) http.Handler {
 
 	// 挂载外部受保护扩展路由。
 	//
-	// 契约:传入的是 protAuth(只有 authenticate,**没有** Casbin authorize)。
-	// 基座只做认证,授权由扩展自行完成 —— 需要授权就用 Deps 里的 Enforcer()/Casbin
+	// 契约:传入的是 protAuth(authenticate + 强制改密闸门,**没有** Casbin authorize)。
+	// 基座只做认证与闸门,授权由扩展自行完成 —— 需要授权就用 Deps 里的 Enforcer()/Casbin
 	// 规则自行校验。此前 authz 中间件里有一个 is_protected_extension 放行分支,已删除:
 	// 它没有任何写入点(永不触发),却是一个"谁设置谁绕过"的后门开关。不要依赖它,
 	// 也不要以任何形式把它加回来。

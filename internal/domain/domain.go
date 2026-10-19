@@ -378,7 +378,37 @@ func (c *DNSChecker) resolverForTXT() *net.Resolver {
 	return c.txtResolver
 }
 
-// NormalizeEmail 邮箱归一化:去空白、转小写。登录/注册/找回/重置共用同一个口径。
-func NormalizeEmail(s string) string {
+// 用户名长度边界(冻结契约):3-32 字符。
+const (
+	minUsernameLen = 3
+	maxUsernameLen = 32
+)
+
+// NormalizeUsername 用户名归一化:去空白、转小写。注册/登录/token 三个入口共用同一个口径 ——
+// 否则 "Alice" 与 "alice" 会在不同入口命中不同的租户行(或都查不到)。
+func NormalizeUsername(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// IsValidUsername 校验用户名:长度 3-32,字符集 [a-z0-9_-],首尾必须是 [a-z0-9]。
+//
+// 入参必须是已归一化的值(见 NormalizeUsername)——大写字母在校验口径里非法,先归一化后校验
+// 是调用方的固定顺序;这也是 IsValidSlug 的同款写法(首尾不许分隔符,避免 "-a" 这类视觉歧义)。
+func IsValidUsername(s string) bool {
+	if len(s) < minUsernameLen || len(s) > maxUsernameLen {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		case c == '_' || c == '-':
+			if i == 0 || i == len(s)-1 {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }

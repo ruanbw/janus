@@ -4,7 +4,7 @@ package httpapi
 //
 // 为什么需要:登录 / token 端点原先只有每 IP 限流。攻击者换 IP(代理池、云主机、
 // 移动网络)就能对**同一个账号**持续撞库 —— 每 IP 的桶各自独立,单账号视角下流量
-// 完全没有上界。按归一化邮箱累计失败次数后,跨 IP 的持续猜测会被退避拦住。
+// 完全没有上界。按归一化用户名累计失败次数后,跨 IP 的持续猜测会被退避拦住。
 //
 // 与每 IP 限流的分工:IP 限流挡"一个来源打很多账号"(喷洒),账号退避挡"很多来源
 // 打一个账号"(撞库)。两者都必须有。
@@ -40,7 +40,7 @@ type loginFailEntry struct {
 	lastFail     time.Time
 }
 
-// loginFailureLimiter 按 key(登录场景是归一化邮箱)累计失败次数并指数退避。
+// loginFailureLimiter 按 key(登录场景是归一化用户名)累计失败次数并指数退避。
 type loginFailureLimiter struct {
 	mu      sync.Mutex
 	entries map[string]*loginFailEntry
@@ -122,7 +122,7 @@ func loginFailBackoff(step int) time.Duration {
 // 退避器由 API 实例持有(API.loginFailures,见 server.go)。为什么必须是实例级
 // 而不是包级单例:状态要与实例同生命周期 —— 生产进程只有一个实例,两者等价;但
 // 测试在同一个进程里先后起多个 httptest 实例,包级单例会把上一个用例的失败计数
-// 带进下一个用例(同一个邮箱在后续用例里被前一个用例的退避挡成 429)。
+// 带进下一个用例(同一个用户名在后续用例里被前一个用例的退避挡成 429)。
 
 // writeAccountThrottled 账号被退避时的统一响应:429 + Retry-After。
 func writeAccountThrottled(c *gin.Context, retryAfter time.Duration) {

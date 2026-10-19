@@ -1,6 +1,6 @@
 package httpapi
 
-// 安全与防滥用:注册/登录/忘记密码/验证邮箱/重置密码按来源 IP 做内存限流。
+// 安全与防滥用:注册/登录/API token 按来源 IP 做内存限流。
 
 import (
 	"net"
@@ -18,7 +18,7 @@ import (
 type RateLimitConfig struct {
 	RegisterLimit  int // 每窗口内 /api/auth/register 允许次数
 	RegisterWindow time.Duration
-	AuthLimit      int // 每窗口内 login/verify-email/forgot/reset 允许次数
+	AuthLimit      int // 每窗口内 login/token 允许次数
 	AuthWindow     time.Duration
 }
 

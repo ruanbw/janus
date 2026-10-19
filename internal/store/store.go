@@ -41,25 +41,24 @@ type Usage struct {
 }
 
 type Tenant struct {
-	ID              int64      `json:"id" gorm:"primaryKey"`
-	Email           string     `json:"email"`
-	PasswordHash    *string    `json:"-" gorm:"column:password_hash"`
-	Slug            string     `json:"slug"`
-	Status          string     `json:"status"`
-	IsSuperAdmin    bool       `json:"isSuperAdmin" gorm:"column:is_super_admin"`
-	TokenVersion    int64      `json:"-" gorm:"column:token_version"`
-	TierID          int64      `json:"-" gorm:"column:tier_id"`
-	Tier            Tier       `json:"tier" gorm:"foreignKey:TierID"`
-	VerifiedAt      *time.Time `json:"-" gorm:"column:verified_at"`
-	Custom404HTML   string     `json:"custom404Html" gorm:"column:custom_404_html"`
-	Custom429HTML   string     `json:"custom429Html" gorm:"column:custom_429_html"`
-	CreatedAt       time.Time  `json:"createdAt" gorm:"column:created_at"`
-	DefaultDomain   string     `json:"defaultDomain" gorm:"-"`             // 平台默认域名,查询后填充
-	FirstLoginSetup bool       `json:"firstLoginSetup,omitempty" gorm:"-"` // 超管首次登录(尚无密码)
-	Usage           *Usage     `json:"usage,omitempty" gorm:"-"`
+	ID                 int64     `json:"id" gorm:"primaryKey"`
+	Username           string    `json:"username"`
+	PasswordHash       *string   `json:"-" gorm:"column:password_hash"`
+	Slug               string    `json:"slug"`
+	Status             string    `json:"status"`
+	IsSuperAdmin       bool      `json:"isSuperAdmin" gorm:"column:is_super_admin"`
+	MustChangePassword bool      `json:"mustChangePassword" gorm:"column:must_change_password"`
+	TokenVersion       int64     `json:"-" gorm:"column:token_version"`
+	TierID             int64     `json:"-" gorm:"column:tier_id"`
+	Tier               Tier      `json:"tier" gorm:"foreignKey:TierID"`
+	Custom404HTML      string    `json:"custom404Html" gorm:"column:custom_404_html"`
+	Custom429HTML      string    `json:"custom429Html" gorm:"column:custom_429_html"`
+	CreatedAt          time.Time `json:"createdAt" gorm:"column:created_at"`
+	DefaultDomain      string    `json:"defaultDomain" gorm:"-"` // 平台默认域名,查询后填充
+	Usage              *Usage    `json:"usage,omitempty" gorm:"-"`
 }
 
-// loadTenantMeta 填充平台默认域名与 FirstLoginSetup(超管尚无密码时 true)。
+// loadTenantMeta 填充平台默认域名。
 func (s *Store) loadTenantMeta(ctx context.Context, t *Tenant) error {
 	var fqdn string
 	err := s.db.WithContext(ctx).Model(&Domain{}).
@@ -69,7 +68,6 @@ func (s *Store) loadTenantMeta(ctx context.Context, t *Tenant) error {
 		return err
 	}
 	t.DefaultDomain = fqdn
-	t.FirstLoginSetup = t.needsFirstLoginSetup()
 	return nil
 }
 
@@ -114,16 +112,19 @@ func (s *Store) ListTiers(ctx context.Context) ([]Tier, error) {
 	return out, nil
 }
 
-// CreateTenant 创建租户(默认免费档)。passwordHash 为空表示尚无密码(超管)。
-func (s *Store) CreateTenant(ctx context.Context, email, passwordHash, slug string, isSuperAdmin bool) (*Tenant, error) {
+// CreateTenant 创建租户(默认免费档、status=pending)。passwordHash 为空表示尚无密码。
+// mustChangePassword 为 true 时该租户首登必须改密(见 httpapi 的强制改密闸门),
+// 超管种子口令走这条路径(见 internal/bootstrap)。
+func (s *Store) CreateTenant(ctx context.Context, username, passwordHash, slug string, isSuperAdmin, mustChangePassword bool) (*Tenant, error) {
 	tier, err := s.GetFreeTier(ctx)
 	if err != nil {
 		return nil, err
 	}
 	t := Tenant{
-		Email: email, Slug: slug, Status: "pending",
+		Username: username, Slug: slug, Status: "pending",
 		IsSuperAdmin: isSuperAdmin, TierID: tier.ID,
-		TokenVersion: 1,
+		MustChangePassword: mustChangePassword,
+		TokenVersion:       1,
 	}
 	if passwordHash != "" {
 		t.PasswordHash = &passwordHash
@@ -138,8 +139,8 @@ func (s *Store) GetTenantByID(ctx context.Context, id int64) (*Tenant, error) {
 	return s.getTenant(ctx, s.db.WithContext(ctx).Where("id = ?", id))
 }
 
-func (s *Store) GetTenantByEmail(ctx context.Context, email string) (*Tenant, error) {
-	return s.getTenant(ctx, s.db.WithContext(ctx).Where("email = ?", email))
+func (s *Store) GetTenantByUsername(ctx context.Context, username string) (*Tenant, error) {
+	return s.getTenant(ctx, s.db.WithContext(ctx).Where("username = ?", username))
 }
 
 func (s *Store) GetTenantBySlug(ctx context.Context, slug string) (*Tenant, error) {
@@ -162,16 +163,20 @@ func (s *Store) TenantPasswordHash(ctx context.Context, id int64) (*string, erro
 	return &ns.String, nil
 }
 
-func (s *Store) SetTenantPassword(ctx context.Context, id int64, hash string) error {
-	return s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Update("password_hash", hash).Error
-}
-
-// VerifyTenant 邮箱验证通过:仅把 pending 租户置 active 并记录 verified_at。
-// 已封禁/已激活租户不因旧验证 token 被重新激活。
-func (s *Store) VerifyTenant(ctx context.Context, id int64) error {
-	return s.db.WithContext(ctx).Model(&Tenant{}).
-		Where("id = ? AND status = 'pending'", id).
-		Updates(map[string]any{"status": "active", "verified_at": gorm.Expr("COALESCE(verified_at, now())")}).Error
+// SetTenantPasswordAndRequireChange 直写密码并把租户置为「下次登录必须改密」。
+// 用于 bootstrap 的超管种子口令:种子是固定短口令,不能作为长期凭据。
+func (s *Store) SetTenantPasswordAndRequireChange(ctx context.Context, id int64, hash string) error {
+	res := s.db.WithContext(ctx).Model(&Tenant{}).Where("id = ?", id).Updates(map[string]any{
+		"password_hash":        hash,
+		"must_change_password": true,
+	})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) SetTenantStatus(ctx context.Context, id int64, status string) error {
@@ -334,21 +339,11 @@ func (s *Store) platformDefaultDomains(ctx context.Context, tenantIDs []int64) (
 	return m, nil
 }
 
-// fillTenantMeta 用平台默认域名与引导态填充租户列表。
-// ListTenants 与 ListTenantsPaged 共用一份实现:两处各写一遍就会对同一租户
-// 给出矛盾结论(与 needsFirstLoginSetup 抽出来的理由是同一个)。
+// fillTenantMeta 用平台默认域名填充租户列表(每种查询路径共用一份实现)。
 func fillTenantMeta(tenants []*Tenant, defs map[int64]string) {
 	for _, t := range tenants {
 		t.DefaultDomain = defs[t.ID]
-		t.FirstLoginSetup = t.needsFirstLoginSetup()
 	}
-}
-
-// needsFirstLoginSetup 判断该租户是否处于"超管尚未设置密码"的引导态。
-// 抽成方法是因为 loadTenantMeta 与 ListTenants 各写了一遍同样的判定;
-// 两处分处一改就会让 /api/me 与 /api/admin/tenants 对同一租户给出矛盾的结论。
-func (t *Tenant) needsFirstLoginSetup() bool {
-	return t.IsSuperAdmin && (t.PasswordHash == nil || *t.PasswordHash == "")
 }
 
 // ---------- 会话 ----------
@@ -422,17 +417,6 @@ func (s *Store) DeleteExpiredSessionsBatched(ctx context.Context, batch int) (in
 	return s.deleteExpiredBatched(ctx, "sessions", batch)
 }
 
-// DeleteExpiredEmailTokens 惰性清理过期邮箱 token(验证/重置)。
-func (s *Store) DeleteExpiredEmailTokens(ctx context.Context) error {
-	_, err := s.DeleteExpiredEmailTokensBatched(ctx, DefaultExpiredCleanupBatch)
-	return err
-}
-
-// DeleteExpiredEmailTokensBatched 分批删除过期邮箱 token,返回累计删除行数。
-func (s *Store) DeleteExpiredEmailTokensBatched(ctx context.Context, batch int) (int64, error) {
-	return s.deleteExpiredBatched(ctx, "email_tokens", batch)
-}
-
 // deleteExpiredBatched 分批删除某张表里已过期的行,每批独立事务,返回累计行数。
 //
 // 为什么必须分批:一条 `DELETE FROM sessions WHERE expires_at <= now()` 会把全部
@@ -443,7 +427,7 @@ func (s *Store) DeleteExpiredEmailTokensBatched(ctx context.Context, batch int) 
 // 每批只删当前仍满足条件的前 N 行(不推进游标):这样并发清理之间不会漏行,
 // 而 n < batch 即说明已无剩余,可以直接收口。
 //
-// table 只由本文件的两个调用点传常量,不接受外部输入(不做标识符拼接的防御)。
+// table 只由本文件的调用点传常量,不接受外部输入(不做标识符拼接的防御)。
 func (s *Store) deleteExpiredBatched(ctx context.Context, table string, batch int) (int64, error) {
 	if batch <= 0 {
 		batch = DefaultExpiredCleanupBatch
@@ -477,41 +461,6 @@ func (s *Store) deleteExpiredBatched(ctx context.Context, table string, batch in
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
-}
-
-// ---------- 邮箱 token(验证/重置) ----------
-
-type EmailToken struct {
-	ID        int64      `gorm:"primaryKey"`
-	TenantID  int64      `gorm:"column:tenant_id"`
-	TokenHash string     `gorm:"column:token_hash"`
-	Kind      string     `gorm:"column:kind"`
-	ExpiresAt time.Time  `gorm:"column:expires_at"`
-	UsedAt    *time.Time `gorm:"column:used_at"`
-}
-
-func (s *Store) CreateEmailToken(ctx context.Context, tenantID int64, tokenHash, kind string, ttl time.Duration) error {
-	tok := EmailToken{TenantID: tenantID, TokenHash: tokenHash, Kind: kind, ExpiresAt: time.Now().Add(ttl)}
-	return s.db.WithContext(ctx).Create(&tok).Error
-}
-
-// ConsumeEmailToken 校验并消费一个 token:有效(未过期、未使用、kind 匹配)返回租户 ID 并标记已用。
-// 用单条原子 UPDATE ... WHERE used_at IS NULL RETURNING 保证并发消费只有一个成功;
-// "不存在/已用/已过期" 统一返回 ErrNotFound(对外错误语义不变)。
-func (s *Store) ConsumeEmailToken(ctx context.Context, tokenHash, kind string) (int64, error) {
-	var tenantID int64
-	res := s.db.WithContext(ctx).Raw(
-		`UPDATE email_tokens SET used_at = now()
-		 WHERE token_hash = ? AND kind = ? AND expires_at > now() AND used_at IS NULL
-		 RETURNING tenant_id`, tokenHash, kind).Scan(&tenantID)
-	if res.Error != nil {
-		return 0, res.Error
-	}
-	// 零行:不存在/已用/已过期,统一 ErrNotFound(对外错误语义不变)
-	if res.RowsAffected == 0 {
-		return 0, ErrNotFound
-	}
-	return tenantID, nil
 }
 
 // ---------- 用量(配额) ----------

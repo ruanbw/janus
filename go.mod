@@ -11,7 +11,6 @@ require (
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/lionsoul2014/ip2region/binding/golang v0.0.0-20260901011515-c1a1fc7d5941
 	github.com/pressly/goose/v3 v3.28.0
-	github.com/wneessen/go-mail v0.8.1
 	github.com/yl2chen/cidranger v1.0.2
 	golang.org/x/crypto v0.55.0
 	gorm.io/driver/postgres v1.6.2

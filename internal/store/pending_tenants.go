@@ -1,15 +1,13 @@
 package store
 
-// 未验证 pending 租户的回收。
+// 未激活 pending 租户的回收。
 //
-// 注册流程会先落租户行(含 slug)与平台默认域名 <slug>.<平台域名>,只有邮箱验证
-// 通过才置 active。验证邮件可能永远不被点开(写错邮箱、机器人注册),而
-// tenants.slug 与 domains.fqdn 都是 UNIQUE —— 这些行会永久占住 slug 与默认域名:
-// 真正想用这个 slug 的注册者会一直撞 409,平台也一直为这些域名保留行
-// (证书探活的扫描 SQL 已用 t.status='active' 挡掉出网请求,但占位本身没被回收)。
+// 注册流程现在直接建 active 租户(身份模型已改为 username + 密码,不再有邮箱验证),
+// 所以 pending 只剩 bootstrap 在「创建超管」与「置 active」之间的一个瞬时态。这个回收
+// 保留的意义是防御性的一条底线:slug 与 domains.fqdn 都是 UNIQUE,任何原因卡在 pending
+// 的租户会永久占住一个 slug 与默认域名,而真正想用这个名字的注册者会一直撞 409。
 //
-// 保留期取 7 天:留给"验证邮件躺在收件箱里、过几天才点"的正常人,超过一周仍未验证
-// 即判定为终结的注册尝试。
+// 保留期取 7 天:留给正常的部署重试窗口,超过一周仍未激活即判定为终结的注册尝试。
 
 import (
 	"context"
@@ -30,13 +28,12 @@ const (
 	pendingTenantDeleteBatch = 500
 )
 
-// DeleteStalePendingTenants 回收"从未验证邮箱且已超过保留期"的 pending 租户,
-// 返回删除的租户数。
+// DeleteStalePendingTenants 回收「长期停在 pending 且从未激活」的租户,返回删除的租户数。
 //
-// 删除是物理删除,靠外键级联清掉该租户的域名/会话/邮箱 token(见 init.sql 的
-// ON DELETE CASCADE);slug 与默认域名随之释放。这些租户在定义上从未登录过
-// (登录要求 active),因此不会有短链、落地页文件或访问记录 —— 不需要额外的清理步骤
-// (也就绕开了 visits.domain_id 尚无 ON DELETE CASCADE 这个已知问题)。
+// 删除是物理删除,靠外键级联清掉该租户的域名/会话(见 init.sql 的 ON DELETE CASCADE);
+// slug 与默认域名随之释放。这些租户在定义上从未登录过(登录要求非 pending),因此不会
+// 有短链、落地页文件或访问记录 —— 不需要额外的清理步骤(也就绕开了 visits.domain_id
+// 尚无 ON DELETE CASCADE 这个已知问题)。
 //
 // 不删的东西:超管租户(无论状态:删掉它等于平台失去管理入口)与已封禁租户
 // (banned 是管理动作的结果,不是待清理的垃圾)。
@@ -53,7 +50,6 @@ func (s *Store) DeleteStalePendingTenants(ctx context.Context, olderThan time.Du
 				WHERE id IN (
 					SELECT id FROM tenants
 					WHERE status = 'pending'
-					  AND verified_at IS NULL
 					  AND is_super_admin = false
 					  AND created_at < now() - ?::interval
 					ORDER BY id
