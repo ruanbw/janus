@@ -96,6 +96,7 @@ type API struct {
 	links            *linkcache.Cache            // 短链快照(跳转热路径定位短链;nil 时未装配)
 	geo              geo.Lookup                  // IP → 国家码(跳转热路径在构造 Fact 之前查,ADR 0009)
 	metrics          *metrics.Registry           // 指标注册表(/metrics 导出)
+	stats            *statsCollector             // 跳转热路径计数 → 指标(抓取时同步)
 	ready            func(context.Context) error // /readyz 探活(nil 时不探)
 	metricsToken     string                      // /metrics 共享 token(空 = fail-closed)
 	visits           *visitqueue.Writer          // 访问明细异步写入;nil = 同步
@@ -238,6 +239,9 @@ func New(d Deps) http.Handler {
 		metricsToken:     d.MetricsToken,
 		visits:           d.VisitWriter,
 	}
+	// 热路径内部计数(缓存命中率、队列积压)在 /metrics 抓取时同步,见 metrics_collect.go。
+	// 在这里注册而不是首次抓取时:系列必须从启动起就存在。
+	a.stats = newStatsCollector(metricsRegistry, linkCache, d.VisitWriter)
 	if a.dns == nil {
 		a.dns = &domain.DNSChecker{ExpectedIP: d.Cfg.ServerPublicIP}
 	}

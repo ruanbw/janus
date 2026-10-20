@@ -55,18 +55,24 @@ type Options struct {
 	FlushInterval time.Duration
 }
 
-// Stats 是 Writer 的累计计数(原子读,任意时刻可安全调用)。
+// Stats 是 Writer 的计数快照(原子读,任意时刻可安全调用)。
 //
 // Enqueued 数的是被接受的记录(走队列与走同步直写都算),Written 数的是真正
 // 交给 Sink 且成功的条数;Failed 数的是失败的批次数而不是条数——失败即整批丢弃,
 // 所以 Enqueued-Written 与 Failed 之间没有直接换算关系。
 // 计数是异步累加的:有在途批次时快照可能短暂对不上,静止下来后
 // Enqueued == Written + 失败丢弃的条数。
+//
+// Pending 是唯一的瞬时值(不是累计):此刻还排在队列里、没被后台收走的条数。
+// 它回答的是「消费是不是跟不上生产」——Enqueued-Written 只能说明有多少条没写完,
+// 分不清是下游慢(卡在 Sink 里)还是队列在堆,两者的处置完全不同。
 type Stats struct {
 	Enqueued     int64
 	Written      int64
 	SyncFallback int64
 	Failed       int64
+	// Pending 队列当前积压条数;不含正在 Sink 里写的那一批。
+	Pending int
 }
 
 // Writer 是有界队列 + 单个后台批处理 goroutine。
@@ -233,6 +239,7 @@ func (w *Writer) Stats() Stats {
 		Written:      w.written.Load(),
 		SyncFallback: w.syncFallback.Load(),
 		Failed:       w.failed.Load(),
+		Pending:      len(w.queue),
 	}
 }
 

@@ -154,7 +154,26 @@ docker volume ls | grep -E 'pgdata|caddy_data|uploads'    # 先确认卷名
 docker run --rm -v janus_caddy_data:/data:ro -v "$PWD":/backup alpine tar czf /backup/caddy_data.tgz -C /data .
 ```
 
-## 10. 故障排查
+## 10. 监控指标
+
+`GET /metrics` 输出 Prometheus 文本格式 0.0.4。抓取必须来自内网地址并带上 `JANUS_METRICS_TOKEN`(`Authorization: Bearer <token>` 或 `?token=`),否则一律 403。
+
+| 指标 | 类型 | 说明 |
+| --- | --- | --- |
+| `janus_redirect_total{result}` | counter | 跳转裁决结果(`301`/`302`/`notfound`/`failed`/`rule_notfound`/`rule_throttle`)。看 404/429 占比判断规则误拦 |
+| `janus_visit_write_total{mode}` | counter | 访问明细写入方式(`async`/`sync`) |
+| `janus_linkcache_hits_total` / `janus_linkcache_misses_total` | counter | 短链快照命中/未命中。命中率 = hits / (hits + misses) |
+| `janus_linkcache_load_errors_total` | counter | 回源失败次数(短码不存在不计入) |
+| `janus_linkcache_entries` | gauge | 当前缓存的快照条数 |
+| `janus_visit_writer_enabled` | gauge | 访问明细是否走异步批量写入(1=异步,0=同步直写) |
+| `janus_visit_writer_pending` | gauge | 队列当前积压条数。**持续 > 0** 说明消费跟不上生产,下一步就是退回同步直写 |
+| `janus_visit_writer_enqueued_total` / `janus_visit_writer_written_total` | counter | 已接管的明细 / 已落库的明细 |
+| `janus_visit_writer_sync_fallback_total` | counter | 队列满或已关闭时退回同步直写的条数;增长说明该调大队列或查 DB 写入耗时 |
+| `janus_visit_writer_batch_failures_total` | counter | 失败的批次数(失败即整批丢弃,只剩服务端日志可追) |
+
+计数器是单调累计值,抓取时不会重复累加;`pending`、`entries` 等 gauge 是抓取那一刻的瞬时值。异步写入默认关闭(`JANUS_VISIT_ASYNC=false`),开启后必须先把队列积压与失败批次接进告警。
+
+## 11. 故障排查
 
 先看三处:`docker compose -f docker-compose.prod.yml ps`、`... logs backend`、`... logs caddy`。
 

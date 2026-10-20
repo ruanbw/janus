@@ -73,6 +73,9 @@ func (a *API) handleMetrics(c *gin.Context) {
 		c.Data(http.StatusOK, metricsContentType, nil)
 		return
 	}
+	// 先把缓存/队列的瞬时状态同步进注册表,再导出。WriteText 本身是纯读
+	// (连续两次抓取必须逐字节相同),所以同步只能发生在这里。
+	a.stats.collect()
 	var buf bytes.Buffer
 	if err := a.metrics.WriteText(&buf); err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
