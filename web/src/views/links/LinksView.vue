@@ -587,6 +587,9 @@ import PageHeader from '@/components/PageHeader.vue';
 import type { TableColumn } from '@/components/app/types';
 import { confirm } from '@/components/app/confirm';
 
+import { useLinkListQuery } from '@/composables/useLinkListQuery';
+import type { LinkStatusFilter, LinkTypeFilter } from '@/composables/useLinkListQuery';
+
 import { ApiError } from '@/types/api';
 import type { Domain, Link, LinkStatus } from '@/types/api';
 import { toCsvRow } from '@/utils/csv';
@@ -612,13 +615,66 @@ const links = ref<Link[]>([]);
 const domains = ref<Domain[]>([]);
 const loading = ref(false);
 const total = ref(0);
-const page = ref(1);
-const pageSize = ref(20);
-
-const keyword = ref('');
-const typeFilter = ref<string>('all');
-const statusFilter = ref<string>('all');
 const statusUpdatingId = ref<number | null>(null);
+
+// ==================== 筛选与分页(单一来源: useLinkListQuery) ====================
+// 「换筛选回第 1 页」「非法 page/pageSize 钳到 1」「toParams 只带生效的筛选项」
+// 这三条规则只写在 composable 里，页面不再有机会绕过其中一条。
+const {
+  query: listQuery,
+  hasActiveFilter: listFilterActive,
+  setKeyword,
+  setTypeFilter,
+  setStatusFilter,
+  setPage,
+  setPageSize,
+  reset: resetLinkQuery,
+  toParams,
+} = useLinkListQuery();
+
+// 模板沿用原来的 v-model 写法，因此用可写 computed 把赋值转交给 composable。
+// 若直接绑 query.keyword 之类的表达式，v-model 的赋值不会经过 setter，
+// 「换筛选回第 1 页」就会重新变成模板各写一遍。
+const keyword = computed({
+  get: () => listQuery.value.keyword,
+  set: (value: string) => onFilterChange(() => setKeyword(value)),
+});
+
+const typeFilter = computed({
+  get: () => listQuery.value.typeFilter,
+  set: (value: string) => onFilterChange(() => setTypeFilter(value as LinkTypeFilter)),
+});
+
+const statusFilter = computed({
+  get: () => listQuery.value.statusFilter,
+  set: (value: string) => onFilterChange(() => setStatusFilter(value as LinkStatusFilter)),
+});
+
+/**
+ * 应用一次「可能把页码归 1」的筛选变更。
+ *
+ * 这里的筛选是纯前端过滤(后端 handleListLinks 不支持 keyword/type/status)，
+ * 换筛选本身不重载数据；但 composable 的规则是换筛选回第 1 页 —— 若页码**真的**
+ * 从 >1 回到 1，表格里留着的还是旧页的行、分页器却已经写 1/N，用户点「下一页」
+ * 会从第 3 页直接跳到第 2 页。所以只在这一条路径补一次 loadData。
+ * 第 1 页上改筛选(含逐字符 keyword)不触发任何请求，请求次数与改动前一致。
+ */
+function onFilterChange(mutate: () => void): void {
+  const pageBefore = listQuery.value.page;
+  mutate();
+  if (pageBefore > 1 && listQuery.value.page === 1) void loadData();
+}
+
+/** 页码:模板可写(翻页控件与测试都直接赋值)，每次写入都经过 setPage 的下界钳制 */
+const page = computed({
+  get: () => listQuery.value.page,
+  set: (value: number) => setPage(value),
+});
+
+const pageSize = computed({
+  get: () => listQuery.value.pageSize,
+  set: (value: number) => setPageSize(value),
+});
 
 // ==================== 回收站视图 ====================
 // 软删的短链在正常列表里完全不可见,于是"短码还能不能用""配额还剩多少"
@@ -698,10 +754,24 @@ const STATUS_FILTER_OPTIONS = [
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100].map((size) => ({ value: size, label: String(size) }));
 
-const hasActiveFilter = computed(() => {
-  if (recycleBin.value) return keyword.value.trim() !== '';
-  return keyword.value.trim() !== '' || typeFilter.value !== 'all' || statusFilter.value !== 'all';
-});
+/**
+ * 「清空过滤」按钮的显示条件。回收站只按关键字过滤(类型/状态对已删除的短链
+ * 只是历史快照)，所以那里不能跟着 type/status 亮起来 —— 否则用户会看到
+ * 一个点下去毫无作用的按钮。
+ */
+const hasActiveFilter = computed(() =>
+  recycleBin.value ? listQuery.value.keyword !== '' : listFilterActive.value,
+);
+
+/**
+ * 列表请求参数。关键字/类型/状态目前仍由前端 filteredLinks 过滤:
+ * 后端 handleListLinks 只认 page/pageSize/includeDeleted，多发的筛选键会被忽略。
+ * 所以这里只取分页两键 —— 发了也没人用，反而让人以为筛选已经下推到服务端。
+ */
+function listParams(): { page: number; pageSize: number } {
+  const params = toParams();
+  return { page: Number(params.page), pageSize: Number(params.pageSize) };
+}
 
 /**
  * AppTable 的行记录是 `Record<string, unknown>`,单元格插槽里统一过一道,
@@ -890,7 +960,7 @@ async function loadData() {
       clearSelection();
     } else {
       const [linksRes, domainsRes, trashRes] = await Promise.all([
-        listLinks({ page: page.value, pageSize: pageSize.value }),
+        listLinks(listParams()),
         listDomains(),
         // 回收站角标:只取 total,所以 pageSize=1 即可(避免把整页回收站记录拉下来)
         listDeletedLinks(1, 1),
@@ -904,7 +974,7 @@ async function loadData() {
 
       // 批量删除后当前页可能被删空:回退一页再取,避免停在空白页
       if (links.value.length === 0 && page.value > 1) {
-        page.value -= 1;
+        setPage(page.value - 1);
         return loadData();
       }
       // 选中项可能已不在当前页/筛选结果内,丢弃以免后续批量操作打到陈旧 id
@@ -936,8 +1006,8 @@ function onSwitchTab(value: string | number): void {
   const next = value === 'deleted' ? 'deleted' : 'active';
   if (next === viewTab.value) return;
   viewTab.value = next;
-  page.value = 1;
-  keyword.value = '';
+  setPage(1);
+  setKeyword('');
   clearSelection();
   void loadData();
 }
@@ -1132,19 +1202,18 @@ function exportCsv() {
 }
 
 function resetFilters() {
-  keyword.value = '';
-  typeFilter.value = 'all';
-  statusFilter.value = 'all';
+  onFilterChange(() => resetLinkQuery());
 }
 
 function goToPage(p: number) {
   if (p < 1 || p > totalPages.value || p === page.value) return;
-  page.value = p;
+  setPage(p);
   loadData();
 }
 
 function onPageSizeChange() {
-  page.value = 1;
+  // 页大小变了，旧页码指向的位置也变了；直接沿用会落在不存在的页上。
+  setPage(1);
   loadData();
 }
 

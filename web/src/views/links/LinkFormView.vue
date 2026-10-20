@@ -208,12 +208,12 @@
                 <AppFormItem
                   name="targetUrls"
                   :label="form.linkType === 'landing' ? '落地页最终目标 URL' : '目标 URL 列表'"
-                  extra="支持配置多个目标 URL，访问时按轮询（Round-Robin）顺序分发。支持任意协议（如 https://、http://、mailto:）。"
+                  extra="支持配置多个目标 URL，访问时按轮询（Round-Robin）顺序分发。仅接受 http:// 与 https:// 开头的完整地址（相对路径与 mailto: 等其它协议会被后端拒绝）。"
                 >
                   <div class="space-y-2.5">
                     <div
-                      v-for="(_, index) in form.targetUrls"
-                      :key="index"
+                      v-for="(target, index) in targets"
+                      :key="target.id"
                       class="group flex items-center gap-2"
                     >
                       <!-- 序号徽章 -->
@@ -226,7 +226,7 @@
                       <!-- URL 输入框 -->
                       <div class="flex-1">
                         <AppInput
-                          v-model="form.targetUrls[index]"
+                          v-model="target.url"
                           placeholder="https://example.com/target-page"
                         >
                           <template #prefix>
@@ -237,12 +237,12 @@
 
                       <!-- 删除按钮 -->
                       <AppButton
-                        v-if="form.targetUrls.length > 1"
+                        v-if="canRemove"
                         type="text"
                         danger
                         class="shrink-0 text-ink-faint hover:text-err"
                         title="删除该目标"
-                        @click="removeTargetUrl(index)"
+                        @click="remove(target.id)"
                       >
                         <template #icon><Trash2 :size="16" /></template>
                       </AppButton>
@@ -253,17 +253,17 @@
                       <AppButton
                         type="dashed"
                         class="w-full sm:w-auto"
-                        @click="addTargetUrl"
+                        @click="add()"
                       >
                         <template #icon><Plus :size="15" /></template>
                         添加目标 URL
                       </AppButton>
                       <span
-                        v-if="form.targetUrls.length > 1"
+                        v-if="targets.length > 1"
                         class="text-xs text-ink-faint flex items-center gap-1"
                       >
                         <RefreshCw :size="12" class="text-brand" />
-                        已启用多地址轮询分发机制（共 {{ form.targetUrls.length }} 个目标）
+                        已启用多地址轮询分发机制（共 {{ targets.length }} 个目标）
                       </span>
                     </div>
                   </div>
@@ -578,6 +578,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
+import type { WritableComputedRef } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   ArrowLeft,
@@ -620,6 +621,7 @@ import {
 } from '@/constants/dict';
 import { ApiError, getQuotaUsage } from '@/types/api';
 import { useDirtyGuard } from '@/composables/useDirtyGuard';
+import { useLinkTargets } from '@/composables/useLinkTargets';
 import type {
   Domain,
   LandingSource,
@@ -660,9 +662,27 @@ const isDragging = ref(false);
 const link = ref<Link | null>(null);
 const domains = ref<Domain[]>([]);
 
+// 目标 URL 的增删改与校验全部交给 useLinkTargets：每行带稳定 id，删中间行不会让
+// 后面的输入串行；空行/非 http(s)/重复的判定优先级也只存在于这一处。
+const { targets, urls, canRemove, add, remove, replace, validate: validateTargets } =
+  useLinkTargets();
+
+/**
+ * 表单引擎按 name 读 model[name] 做校验，所以把目标值挂回 form.targetUrls。
+ *
+ * 读：按行原样输出，不用 urls（已 trim 且剔除空行）—— 错误提示里的「第 N 个」
+ * 必须与屏幕上的行号对齐，顺便让「只填了空白」也落进校验而不是被当成没这行。
+ * 写：接到 loadTargetUrls 上。整体覆盖是回填详情与从外部置状态需要的写法，
+ * 而 composable 的契约只有逐条增删改，这一差异就在这里消化掉。
+ */
+const targetRows = computed({
+  get: () => targets.value.map((entry) => entry.url),
+  set: (list: string[]) => loadTargetUrls(list),
+});
+
 const form = reactive<{
   code: string;
-  targetUrls: string[];
+  targetUrls: WritableComputedRef<string[]>;
   domainIds: number[];
   redirectStatus: RedirectStatus;
   linkType: LinkType;
@@ -672,7 +692,7 @@ const form = reactive<{
   status: 'enabled' | 'disabled';
 }>({
   code: '',
-  targetUrls: [''],
+  targetUrls: targetRows,
   domainIds: [],
   redirectStatus: '302',
   linkType: 'redirect',
@@ -735,9 +755,7 @@ const canOpenPreview = computed(() => {
 });
 
 /** 有效的目标 URL 计数 */
-const validTargetsCount = computed(() => {
-  return form.targetUrls.filter((u) => u.trim().length > 0).length;
-});
+const validTargetsCount = computed(() => urls.value.length);
 
 /** 短码说明:创建时说明生成规则,编辑时说明不可修改 */
 const codeExtra = computed(() =>
@@ -776,12 +794,32 @@ const schema: FormSchema = {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: '请至少填写一个目标 URL' });
       return;
     }
-    for (let i = 0; i < value.length; i++) {
-      const url = (value[i] ?? '').trim();
-      if (!url) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: '第 ' + (i + 1) + ' 个目标 URL 不能为空' });
+    // 空行 / 非 http(s) 绝对地址 / 重复三种判定及其优先级交给 composable，
+    // 否则编辑器与提交校验各说一套：用户按提示改完仍被拒。
+    const result = validateTargets();
+    if (!result.ok) {
+      const nth = '第 ' + (result.index + 1) + ' 个目标 URL ';
+      if (result.reason === 'empty') {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: nth + '不能为空' });
         return;
       }
+      if (result.reason === 'invalidUrl') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: nth + '必须是 http:// 或 https:// 开头的完整地址',
+        });
+        return;
+      }
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: nth + '与前面的目标重复(轮询会按重复次数加权，请删除重复项)',
+      });
+      return;
+    }
+    // 控制字符与超长不属于 composable 的职责(它只管空/非法/重复)，
+    // 但后端 validTargetURL 会因此直接 400，必须在提交前拦住。
+    for (let i = 0; i < value.length; i++) {
+      const url = (value[i] ?? '').trim();
       if (hasControlChars(url)) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: '目标 URL 不能包含控制字符(换行/制表符等)' });
         return;
@@ -840,11 +878,27 @@ function formatFileSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
 }
 
+/**
+ * 用一组 URL 整体重置目标行。
+ *
+ * composable 的契约只有增/删/改/移（不提供整体覆盖），而回填详情与新建默认值都需要
+ * 「把当前若干行换成另一组」，所以在这里用 追加 → 裁剪 → 逐行 replace 拼出整体替换。
+ * next 恒非空，remove 的「至少留一行」兜底因此不会被触发。
+ */
+function loadTargetUrls(list: string[]): void {
+  const next = list.length > 0 ? list : [''];
+  while (targets.value.length < next.length) add();
+  while (targets.value.length > next.length) {
+    remove(targets.value[targets.value.length - 1].id);
+  }
+  next.forEach((url, index) => replace(targets.value[index].id, url));
+}
+
 /** 用短链详情回填表单(编辑模式) */
 function applyLink(data: Link) {
   const fqdnSet = new Set(data.domains);
   form.code = data.code;
-  form.targetUrls = data.targetUrls.length > 0 ? [...data.targetUrls] : [''];
+  loadTargetUrls(data.targetUrls);
   form.redirectStatus = data.redirectStatus;
   form.linkType = data.linkType || 'redirect';
   form.landingSource = data.landingSource || 'url';
@@ -858,7 +912,7 @@ function applyLink(data: Link) {
 /** 创建模式的默认值 */
 function applyDefaults() {
   form.code = '';
-  form.targetUrls = [''];
+  loadTargetUrls(['']);
   form.redirectStatus = '302';
   form.linkType = 'redirect';
   form.landingSource = 'url';
@@ -1027,17 +1081,6 @@ async function init() {
 
 onMounted(init);
 
-/** 新增一行目标 URL */
-function addTargetUrl() {
-  form.targetUrls.push('');
-}
-
-/** 删除指定行目标 URL(至少保留 1 行) */
-function removeTargetUrl(index: number) {
-  if (form.targetUrls.length <= 1) return;
-  form.targetUrls.splice(index, 1);
-}
-
 /** 选择 zip 文件 */
 async function onSelectZip(file: File): Promise<boolean> {
   if (!file.name.toLowerCase().endsWith('.zip')) {
@@ -1096,7 +1139,7 @@ async function onSubmit() {
   submitting.value = true;
   try {
     const payload: LinkPayload = {
-      targetUrls: form.targetUrls.map((s) => s.trim()),
+      targetUrls: urls.value,
       domainIds: form.domainIds,
       linkType: form.linkType,
     };
