@@ -1,16 +1,20 @@
 <template>
   <AuthShell>
-    <template #title>注册新租户</template>
+    <template #title>{{ t('auth.register.title') }}</template>
     <template #subtitle>
-      注册后将自动获得平台默认域名
+      {{ t('auth.register.subtitle') }}
       <span class="slug-chip mono ml-1 inline-block rounded-md border border-brand/30 bg-brand/10 px-1.5 py-px align-middle text-xs text-brand">{{ slugHint }}</span>
     </template>
 
     <AppForm :model="form" :schema="schema" @finish="onSubmit">
-      <AppFormItem label="账号" name="username" extra="3-32 位小写字母、数字、下划线或连字符,用于登录后台">
+      <AppFormItem
+        :label="t('auth.register.usernameLabel')"
+        name="username"
+        :extra="t('auth.register.usernameExtra')"
+      >
         <AppInput
           v-model="form.username"
-          placeholder="例如 mybrand"
+          :placeholder="t('auth.register.usernamePlaceholder')"
           autocomplete="username"
           :maxlength="USERNAME_MAX_LENGTH"
           size="large"
@@ -18,11 +22,11 @@
           <template #prefix><User :size="16" /></template>
         </AppInput>
       </AppFormItem>
-      <AppFormItem label="密码" name="password">
+      <AppFormItem :label="t('auth.register.passwordLabel')" name="password">
         <AppInput
           v-model="form.password"
           type="password"
-          placeholder="至少 8 位"
+          :placeholder="t('auth.register.passwordPlaceholder')"
           autocomplete="new-password"
           size="large"
         >
@@ -30,11 +34,11 @@
         </AppInput>
         <PasswordStrength :password="form.password" />
       </AppFormItem>
-      <AppFormItem label="确认密码" name="confirmPassword">
+      <AppFormItem :label="t('auth.register.confirmPasswordLabel')" name="confirmPassword">
         <AppInput
           v-model="form.confirmPassword"
           type="password"
-          placeholder="再次输入密码"
+          :placeholder="t('auth.register.confirmPasswordPlaceholder')"
           autocomplete="new-password"
           size="large"
         >
@@ -42,13 +46,13 @@
         </AppInput>
       </AppFormItem>
       <AppFormItem
-        label="默认域名前缀"
+        :label="t('auth.register.slugLabel')"
         name="slug"
-        extra="小写字母或数字开头/结尾,可包含连字符;将用于生成你的平台默认域名"
+        :extra="t('auth.register.slugExtra')"
       >
         <AppInput
           v-model="form.slug"
-          placeholder="例如 mybrand"
+          :placeholder="t('auth.register.slugPlaceholder')"
           :maxlength="SLUG_MAX_LENGTH"
           size="large"
         >
@@ -56,14 +60,14 @@
         </AppInput>
       </AppFormItem>
       <AppButton type="primary" html-type="submit" block size="large" :loading="submitting">
-        注册
+        {{ t('auth.register.submit') }}
       </AppButton>
     </AppForm>
 
     <div class="auth-footer-links mt-6 text-center text-xs text-ink-faint">
-      已有账号?
+      {{ t('auth.register.hasAccount') }}
       <router-link to="/login" class="font-medium text-brand transition-colors hover:text-brand/75">
-        直接登录
+        {{ t('auth.register.loginLink') }}
       </router-link>
     </div>
   </AuthShell>
@@ -85,6 +89,7 @@ import {
   USERNAME_MAX_LENGTH,
   USERNAME_PATTERN,
 } from '@/constants/dict';
+import { t } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
 import { message } from '@/utils/toast';
@@ -104,27 +109,32 @@ const form = reactive({
 
 const slugHint = computed(() => {
   const slug = form.slug.trim();
-  return slug ? slug + '.' + PLATFORM_DOMAIN : '<前缀>.' + PLATFORM_DOMAIN;
+  // 未填前缀时的占位文案也进字典：英文环境下不能出现中文的「<前缀>」
+  return slug ? `${slug}.${PLATFORM_DOMAIN}` : t('auth.register.slugHint', { domain: PLATFORM_DOMAIN });
 });
 
+// zod 的 message 是普通字符串，因此在这里（setup 内）按当前语言取一次；
+// 语法规则本身不走字典（USERNAME_PATTERN / SLUG_PATTERN 是冻结契约）。
 const schema: FormSchema = {
   username: z
     .string()
-    .min(1, '请输入账号')
-    .regex(USERNAME_PATTERN, '账号需为 3-32 位小写字母、数字、下划线或连字符'),
+    .min(1, t('auth.validation.usernameRequired'))
+    .regex(USERNAME_PATTERN, t('auth.validation.usernamePattern')),
   password: z
     .string()
-    .min(1, '请输入密码')
-    .min(8, '密码至少 8 位')
-    .regex(/^(?=.*[A-Za-z])(?=.*\d)/, '密码需同时包含字母与数字'),
+    .min(1, t('auth.validation.passwordRequired'))
+    .min(8, t('auth.validation.passwordMin', { n: 8 }))
+    .regex(/^(?=.*[A-Za-z])(?=.*\d)/, t('auth.validation.passwordPattern')),
   confirmPassword: z
     .string()
-    .min(1, '请再次输入密码')
-    .refine((v) => !v || v === form.password, { message: '两次输入的密码不一致' }),
+    .min(1, t('auth.validation.confirmPasswordRequired'))
+    .refine((v) => !v || v === form.password, {
+      message: t('auth.validation.confirmPasswordMismatch'),
+    }),
   slug: z
     .string()
-    .min(1, '请输入前缀')
-    .regex(SLUG_PATTERN, '仅允许小写字母、数字与连字符,且须以字母或数字开头/结尾'),
+    .min(1, t('auth.validation.slugRequired'))
+    .regex(SLUG_PATTERN, t('auth.validation.slugPattern')),
 };
 
 async function onSubmit() {
@@ -138,19 +148,19 @@ async function onSubmit() {
       slug: form.slug.trim(),
     });
     auth.tenant = tenant;
-    message.success('注册成功');
+    message.success(t('auth.register.success'));
     router.push(tenant.mustChangePassword ? '/account' : '/domains');
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 409) {
-        message.error(error.message || '账号或前缀已被占用');
+        message.error(error.message || t('auth.register.errorConflict'));
       } else if (error.status === 400) {
-        message.error(error.message || '注册信息不合法,请检查后重试');
+        message.error(error.message || t('auth.register.errorBadRequest'));
       } else {
         message.error(error.message);
       }
     } else {
-      message.error('注册失败,请稍后重试');
+      message.error(t('auth.register.errorFallback'));
     }
   } finally {
     submitting.value = false;

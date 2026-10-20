@@ -9,6 +9,7 @@ import '@/styles/main.css';
 import App from './App.vue';
 import router from './router';
 import UI from '@/components/app';
+import { installI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useThemeStore } from '@/stores/theme';
 import { setUnauthorizedHandler } from '@/utils/request';
@@ -61,6 +62,8 @@ window.addEventListener('error', (event) => {
 app.use(pinia);
 app.use(router);
 app.use(UI);
+// 必须在 mount 之前:首个渲染的组件模板里可能已经用 $t
+installI18n(app);
 
 // 首帧前应用主题,避免深浅色闪变
 useThemeStore(pinia).apply();

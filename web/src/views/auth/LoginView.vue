@@ -1,13 +1,13 @@
 <template>
   <AuthShell>
-    <template #title>登录后台</template>
-    <template #subtitle>管理你的域名、短链与访问统计</template>
+    <template #title>{{ t('auth.login.title') }}</template>
+    <template #subtitle>{{ t('auth.login.subtitle') }}</template>
 
     <AppForm :model="form" :schema="schema" @finish="onSubmit">
-      <AppFormItem ref="usernameItem" label="账号" name="username">
+      <AppFormItem ref="usernameItem" :label="t('auth.login.usernameLabel')" name="username">
         <AppInput
           v-model="form.username"
-          placeholder="请输入账号"
+          :placeholder="t('auth.login.usernamePlaceholder')"
           autocomplete="username"
           :maxlength="USERNAME_MAX_LENGTH"
           size="large"
@@ -15,11 +15,11 @@
           <template #prefix><User :size="16" /></template>
         </AppInput>
       </AppFormItem>
-      <AppFormItem ref="passwordItem" label="密码" name="password">
+      <AppFormItem ref="passwordItem" :label="t('auth.login.passwordLabel')" name="password">
         <AppInput
           v-model="form.password"
           type="password"
-          placeholder="请输入密码"
+          :placeholder="t('auth.login.passwordPlaceholder')"
           autocomplete="current-password"
           size="large"
         >
@@ -27,17 +27,17 @@
         </AppInput>
       </AppFormItem>
       <div class="form-options mb-5 flex items-center">
-        <AppCheckbox v-model="form.rememberMe">记住我(会话保持 30 天)</AppCheckbox>
+        <AppCheckbox v-model="form.rememberMe">{{ t('auth.login.rememberMe') }}</AppCheckbox>
       </div>
       <AppButton type="primary" html-type="submit" block size="large" :loading="submitting">
-        登录
+        {{ t('auth.login.submit') }}
       </AppButton>
     </AppForm>
 
     <div class="auth-footer-links mt-6 text-center text-xs text-ink-faint">
-      还没有账号?
+      {{ t('auth.login.noAccount') }}
       <router-link to="/register" class="font-medium text-brand transition-colors hover:text-brand/75">
-        注册新租户
+        {{ t('auth.login.registerLink') }}
       </router-link>
     </div>
   </AuthShell>
@@ -52,6 +52,7 @@ import type { FormSchema } from '@/components/app/form';
 
 import AuthShell from '@/components/AuthShell.vue';
 import { USERNAME_MAX_LENGTH, USERNAME_PATTERN } from '@/constants/dict';
+import { t } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { ApiError } from '@/types/api';
 import { message } from '@/utils/toast';
@@ -69,19 +70,21 @@ const form = reactive({
   rememberMe: true,
 });
 
+// zod 的 message 是普通字符串，因此在这里（setup 内）按当前语言取一次：
+// 校验文案随后由 AppFormItem 直接渲染，与模板里的 t() 用的是同一份字典。
 const schema: FormSchema = {
   username: z
     .string()
-    .min(1, '请输入账号')
-    .regex(USERNAME_PATTERN, '账号需为 3-32 位小写字母、数字、下划线或连字符'),
-  password: z.string().min(1, '请输入密码'),
+    .min(1, t('auth.validation.usernameRequired'))
+    .regex(USERNAME_PATTERN, t('auth.validation.usernamePattern')),
+  password: z.string().min(1, t('auth.validation.passwordRequired')),
 };
 
 async function onSubmit() {
   submitting.value = true;
   try {
     await auth.login(form.username.trim(), form.password, form.rememberMe);
-    message.success('登录成功');
+    message.success(t('auth.login.success'));
     // 仅允许站内单斜杠路径;拒绝 //evil.com 这类协议相对地址
     const rawRedirect = route.query.redirect;
     const redirect =
@@ -97,14 +100,15 @@ async function onSubmit() {
   } catch (error) {
     if (error instanceof ApiError) {
       if (error.status === 403) {
-        message.error('账号已被封禁,无法登录');
+        message.error(t('auth.login.errorBanned'));
       } else if (/账号或密码错误|用户名或密码错误/.test(error.message)) {
+        // 服务端错误文案原样回填：接口返回什么就显示什么，不经过前端字典
         passwordItem.value?.setError(error.message);
       } else {
         message.error(error.message);
       }
     } else {
-      message.error('登录失败,请稍后重试');
+      message.error(t('auth.login.errorFallback'));
     }
   } finally {
     submitting.value = false;
