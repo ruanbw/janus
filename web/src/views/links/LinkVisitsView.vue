@@ -49,7 +49,10 @@
             <span class="mono text-xs text-ink-faint">共 {{ total }} 条</span>
           </div>
 
-          <!-- 工具栏:设备类型筛选 / 只看失败 / 关键词(均仅在当前页数据内过滤) -->
+          <!-- 工具栏:设备类型筛选 / 只看失败 / 关键词。
+               「只看失败」走服务端 outcome 过滤:它改变的是「哪些记录存在」,
+               必须影响总数与分页;设备与关键词无法下发(后端不解析 UA / 不做全文搜索),
+               仍是当前页内的前端过滤。 -->
           <div class="flex flex-wrap items-center gap-3 px-4 py-3">
             <div
               role="group"
@@ -75,7 +78,7 @@
               <AppSwitch
                 v-model="onlyFailed"
                 aria-label="只看失败"
-                title="仅显示失败的动作(前端过滤,不影响总数)"
+                title="仅显示失败的访问(服务端过滤,作用于全部页)"
               />
               <span class="text-xs text-ink-soft">只看失败</span>
             </div>
@@ -96,7 +99,7 @@
             </AppButton>
 
             <span v-if="hasLocalFilter" class="text-xs text-ink-faint" data-od-id="visit-filter-scope-hint">
-              设备、搜索与「只看失败」仅筛选当前页
+              设备与关键词仅筛选当前页
             </span>
           </div>
 
@@ -118,12 +121,17 @@
                   <AppEmpty
                     :description="
                       rows.length === 0
-                        ? '该短链暂无访问记录,短链被访问后明细将在此处逐条呈现'
-                        : '当前页没有符合筛选条件的记录(搜索与「只看失败」仅在当前页数据内过滤)'
+                        ? onlyFailed
+                          ? '该短链当前没有失败的访问记录'
+                          : '该短链暂无访问记录,短链被访问后明细将在此处逐条呈现'
+                        : '当前页没有符合筛选条件的记录(设备与关键词仅在当前页数据内过滤)'
                     "
                   />
                   <div v-if="rows.length > 0" class="flex justify-center">
                     <AppButton size="sm" @click="resetLocalFilters">重置本地过滤</AppButton>
+                  </div>
+                  <div v-else-if="onlyFailed" class="flex justify-center">
+                    <AppButton size="sm" @click="onlyFailed = false">显示全部访问</AppButton>
                   </div>
                 </template>
 
@@ -238,6 +246,7 @@
           <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3">
             <div class="flex items-center gap-3 text-xs text-ink-soft">
               <span>共 <strong class="font-mono text-ink">{{ total }}</strong> 条访问明细</span>
+              <AppTag v-if="onlyFailed" color="err">仅失败</AppTag>
               <span v-if="hasLocalFilter">
                 当前页命中
                 <strong class="font-mono text-ink">{{ filteredRows.length }}</strong> / {{ rows.length }} 条
@@ -626,7 +635,7 @@ import AppResult from '@/components/app/AppResult.vue';
 import AppSpin from '@/components/app/AppSpin.vue';
 import AppTooltip from '@/components/app/AppTooltip.vue';
 import { ApiError } from '@/types/api';
-import type { Link, Rule, RuleAction, RuleCondition, Visit, VisitAction, VisitReason } from '@/types/api';
+import type { Link, Rule, RuleAction, RuleCondition, Visit, VisitAction, VisitOutcome, VisitReason } from '@/types/api';
 import type { TableColumn } from '@/components/app/types';
 import type { TagColor } from '@/components/app/AppTag.vue';
 import { formatClock, formatCountry, formatDateTime } from '@/utils/format';
@@ -724,12 +733,14 @@ interface VisitRow {
 const link = ref<Link | null>(null);
 const visits = ref<Visit[]>([]);
 const total = ref(0);
+/** 访问明细请求序号,用于丢弃过期响应(见 loadVisits) */
+let visitsRequestSeq = 0;
 
 /**
- * 分页与请求参数统一交给 useVisitFilters：页码归 1、空筛选字段不下发这些语义
- * 只实现一次。本页的「设备类型 / 只看失败 / 搜索」是**当前页内**的前端过滤，
- * 后端 /links/:id/visits 也没有对应参数，所以服务端 filters 恒为空，
- * 请求实际只带 page/pageSize（见 loadVisits）。
+ * 分页与筛选统一交给 useVisitFilters：页码归 1、空筛选字段不下发这些语义
+ * 只实现一次。后端 /links/:id/visits 支持 action / outcome，
+ * 所以「只看失败」是服务端过滤(影响总数与分页)；设备类型与关键词后端没有
+ * 对应参数(不解析 UA、不做全文搜索)，只能留在当前页内过滤(见 filteredRows)。
  */
 const visitFilters = useVisitFilters();
 const { page, pageSize } = visitFilters;
@@ -739,8 +750,24 @@ const rulesList = ref<Rule[]>([]);
 const rulesMap = computed(() => new Map(rulesList.value.map((r) => [r.id, r])));
 
 const deviceFilter = ref<'all' | ParsedUA['deviceType']>('all');
-const onlyFailed = ref(false);
 const keyword = ref('');
+
+/**
+ * 只看失败 = filters.outcome === 'failed'。
+ *
+ * 做成可写的 computed 而不是独立的 ref：筛选状态只能有一份。否则开关与请求
+ * 参数会各自维护一份「是否只看失败」，取消过滤时总有一个漏清，表现为「开关关了
+ * 但列表还是失败的」。写入走 set() 统一把页码归 1，并立即重新拉一页。
+ */
+const onlyFailed = computed({
+  get: () => visitFilters.filters.value.outcome === 'failed',
+  set: (on: boolean) => {
+    if (onlyFailed.value === on) return;
+    visitFilters.set({ outcome: on ? 'failed' : '' });
+    selectedId.value = null;
+    void loadVisits();
+  },
+});
 
 const loading = ref(false);
 const loaded = ref(false);
@@ -892,18 +919,25 @@ async function loadRules() {
 
 async function loadVisits() {
   if (loadError.value) return;
+  // 请求序号：切页 / 切筛选 / 快速连点都会并发多个请求，慢的那个后回来会盖掉
+  // 新结果（用户看到的是上一页或上一个筛选的明细）。只认最后发出的那一次。
+  const seq = ++visitsRequestSeq;
   try {
     const params = visitFilters.toParams();
     const res = await listVisits(linkId.value, {
       // toParams 的索引类型是 string | number，分页这两个字段恒为数字
       page: Number(params.page),
       pageSize: Number(params.pageSize),
+      ...(params.outcome ? { outcome: params.outcome as VisitOutcome } : {}),
+      ...(params.action ? { action: params.action as VisitAction } : {}),
     });
+    if (seq !== visitsRequestSeq) return;
     visits.value = res.items;
     total.value = res.total;
     selectedId.value = null;
     traceStates.value = {};
   } catch (error) {
+    if (seq !== visitsRequestSeq) return;
     if (error instanceof ApiError) message.error(error.message);
     else message.error('加载访问明细失败,请稍后重试');
     visits.value = [];
@@ -981,14 +1015,13 @@ function deviceTagColor(deviceType: ParsedUA['deviceType']): TagColor {
   return getDeviceTagColor(deviceType);
 }
 
-/** 本地过滤:设备类型 + 只看失败 + 搜索(仅限当前页) */
+/** 本地过滤:设备类型 + 关键词(仅限当前页)。失败筛选在服务端,不在这里。 */
 const filteredRows = computed<VisitRow[]>(() => {
   const q = keyword.value.trim().toLowerCase();
   return rows.value.filter((row) => {
     if (deviceFilter.value !== 'all') {
       if (!row.hasUa || row.parsedUa.deviceType !== deviceFilter.value) return false;
     }
-    if (onlyFailed.value && row.visit.outcome !== 'failed') return false;
     if (!q) return true;
     return (
       (row.visit.ip || '').toLowerCase().includes(q) ||
@@ -1000,12 +1033,11 @@ const filteredRows = computed<VisitRow[]>(() => {
 });
 
 const hasLocalFilter = computed(
-  () => deviceFilter.value !== 'all' || onlyFailed.value || keyword.value.trim() !== '',
+  () => deviceFilter.value !== 'all' || keyword.value.trim() !== '',
 );
 
 function resetLocalFilters() {
   keyword.value = '';
-  onlyFailed.value = false;
   deviceFilter.value = 'all';
 }
 
