@@ -144,7 +144,7 @@
                     </span>
                   </template>
 
-                  <!-- 地理位置:国家 / 数据中心 / 语言 -->
+                  <!-- 地理位置:国家 / 语言 -->
                   <template v-else-if="column.key === 'geo'">
                     <div class="flex min-w-0 flex-col gap-0.5">
                       <span
@@ -153,9 +153,6 @@
                       >
                         国家:{{ toRow(record).country }}
                       </span>
-                      <AppTag :color="toRow(record).network.color" :title="toRow(record).network.title">
-                        {{ toRow(record).network.text }}
-                      </AppTag>
                       <span
                         class="text-xs text-ink-soft"
                         :title="toRow(record).lang || '未携带 Accept-Language'"
@@ -362,14 +359,6 @@
                     <dd class="m-0 flex items-center gap-1.5 text-xs text-ink">
                       <AppTag :color="selectedRow.country === '—' ? 'default' : 'ok'">
                         {{ selectedRow.country }}
-                      </AppTag>
-                    </dd>
-                  </div>
-                  <div class="min-w-0">
-                    <dt class="mb-0.5 flex items-center gap-1.5 text-2xs text-ink-faint">网络属性</dt>
-                    <dd class="m-0 flex items-center gap-1.5 text-xs text-ink">
-                      <AppTag :color="selectedRow.network.color" :title="selectedRow.network.title">
-                        {{ selectedRow.network.text }}
                       </AppTag>
                     </dd>
                   </div>
@@ -723,7 +712,6 @@ interface VisitRow {
   parsedUa: ParsedUA;
   country: string;
   lang: string;
-  network: { text: string; color: TagColor; title: string };
   action: { text: string; color: TagColor };
   matchedRule?: Rule;
   reasonText: string;
@@ -936,13 +924,6 @@ function toRow(visit: Visit): VisitRow {
     parsedUa: parseUserAgent(visit.userAgent || ''),
     country: formatCountry(visit.country),
     lang: visit.lang || '—',
-    network: visit.isDatacenter
-      ? { text: '数据中心', color: 'warning' as TagColor, title: visit.asn ? `ASN ${visit.asn}` : '数据中心出口' }
-      : {
-          text: '住宅/未知',
-          color: 'default' as TagColor,
-          title: visit.asn ? `ASN ${visit.asn}` : '未标记为数据中心出口(该字段暂无数据源)',
-        },
     action: meta,
     matchedRule: rule,
     reasonText,

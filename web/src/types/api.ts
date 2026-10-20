@@ -310,10 +310,6 @@ export interface Visit {
   /** 国家:ISO 3166-1 alpha-2 码(US / CN)。后端按访客 IP 查离线库得出,
    *  私网/回环/库中未收录的网段查不到,为空字符串 */
   country: string;
-  /** 是否数据中心出口(地理占位,当前恒为 false) */
-  isDatacenter: boolean;
-  /** 自治系统号(地理占位,当前恒为空字符串) */
-  asn: string;
   /** Accept-Language 首标签，如 zh-CN（空表示未携带该请求头） */
   lang: string;
   /**

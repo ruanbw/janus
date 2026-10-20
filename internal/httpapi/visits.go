@@ -157,9 +157,9 @@ const maxLangLen = 64
 // recordVisit 记录一次访问/点击明细(IP、UA、来源页、语言、国家由请求补齐)。
 // 统计失败只吞掉错误:短链是否跳转是访问者的事,不能被写入失败牵连。
 //
-// asn / is_datacenter 不在这里填:当前没有数据源(ADR 0009),写进去的只会是空值与 false,
-// 与数据库默认值一样,反而像是"查到了但没值"。真要支持这两个值时,得先在
-// store.VisitRecord 里加字段并在这里一并填。
+// 机房/ASN 属性不在这里填:基座没有数据源(ADR 0009/0012),对应列已从 schema 与
+// API 中移除。需要这两个维度的部署应通过扩展点(FactEnricher)提供,而不是让
+// 每个访问明细都留两列恒为默认值的死数据。
 func (a *API) recordVisit(c *gin.Context, rec store.VisitRecord) {
 	rec.IP = a.clientIPForVisitor(c.Request)
 	rec.UserAgent = c.Request.UserAgent()

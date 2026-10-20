@@ -211,8 +211,6 @@ CREATE TABLE IF NOT EXISTS visits (
     target_url    TEXT NOT NULL DEFAULT '',
     lang          TEXT NOT NULL DEFAULT '',
     country       TEXT NOT NULL DEFAULT '',
-    is_datacenter BOOLEAN NOT NULL DEFAULT false,
-    asn           TEXT NOT NULL DEFAULT '',
     rule_id       BIGINT REFERENCES rules(id) ON DELETE SET NULL,
     rule_action   TEXT NOT NULL DEFAULT '' CHECK (rule_action IN ('', 'pass', 'redirect', 'notfound', 'throttle')),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()

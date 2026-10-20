@@ -9,21 +9,19 @@ import (
 )
 
 type Visit struct {
-	ID           int64  `json:"id" gorm:"primaryKey"`
-	LinkID       int64  `json:"linkId" gorm:"column:link_id"`
-	DomainID     int64  `json:"-" gorm:"column:domain_id"`
-	Domain       string `json:"domain" gorm:"->"` // 只读字段,查询时 join 填充
-	IP           string `json:"ip"`
-	UserAgent    string `json:"userAgent" gorm:"column:user_agent"`
-	Referer      string `json:"referer"`
-	Action       string `json:"action"`
-	Outcome      string `json:"outcome"`
-	Reason       string `json:"reason"`
-	TargetURL    string `json:"targetUrl" gorm:"column:target_url"`
-	Country      string `json:"country"`
-	IsDatacenter bool   `json:"isDatacenter" gorm:"column:is_datacenter"`
-	ASN          string `json:"asn"`
-	Lang         string `json:"lang"`
+	ID        int64  `json:"id" gorm:"primaryKey"`
+	LinkID    int64  `json:"linkId" gorm:"column:link_id"`
+	DomainID  int64  `json:"-" gorm:"column:domain_id"`
+	Domain    string `json:"domain" gorm:"->"` // 只读字段,查询时 join 填充
+	IP        string `json:"ip"`
+	UserAgent string `json:"userAgent" gorm:"column:user_agent"`
+	Referer   string `json:"referer"`
+	Action    string `json:"action"`
+	Outcome   string `json:"outcome"`
+	Reason    string `json:"reason"`
+	TargetURL string `json:"targetUrl" gorm:"column:target_url"`
+	Country   string `json:"country"`
+	Lang      string `json:"lang"`
 	// RuleID / RuleAction 是本次访问的规则裁决结果(spec D8):无规则参与时为空。
 	// RuleID 可空是因为规则被删后 ON DELETE SET NULL,历史明细保留但不再指向任何规则。
 	RuleID     *int64    `json:"ruleId" gorm:"column:rule_id"`
@@ -177,7 +175,7 @@ func truncateRunes(s string, max int) string {
 }
 
 // VisitRecord 一次访问/点击的入库字段(Action/Outcome/Reason/TargetURL/Lang/Country 由调用方填写;
-// Country 来自离线 ip2region 库,查不到时为空。IsDatacenter/ASN 仍无数据源,不在此列)。
+// Country 来自离线 ip2region 库,查不到时为空)。
 type VisitRecord struct {
 	LinkID    int64
 	DomainID  int64
@@ -190,8 +188,6 @@ type VisitRecord struct {
 	TargetURL string
 	Lang      string
 	// Country:访客 IP 解析出的 ISO 3166-1 alpha-2 国家码(查不到时为空)。
-	// asn / is_datacenter 不在此列:当前没有数据源(ADR 0009),
-	// 传空值与数据库默认值无法区分"没查"和"查了没有",不如不传。
 	Country string
 	// RuleID / RuleAction:本次命中的规则与它的裁决(无规则参与时留空)。
 	// 命中不写任何计数表(spec D9),只多写这两列——明细是这次裁决唯一留痕的地方。
@@ -299,7 +295,7 @@ func (s *Store) ListVisitsByLinkFiltered(ctx context.Context, linkID int64, f Vi
 	var out []*Visit
 	err := itemQ.
 		Select("v.id, v.link_id, d.fqdn AS domain, v.ip, v.user_agent, v.referer, " +
-			"v.action, v.outcome, v.reason, v.target_url, v.country, v.is_datacenter, v.asn, v.lang, " +
+			"v.action, v.outcome, v.reason, v.target_url, v.country, v.lang, " +
 			"v.rule_id, v.rule_action, v.created_at").
 		Joins("JOIN domains d ON d.id = v.domain_id").
 		Order("v.id DESC").
