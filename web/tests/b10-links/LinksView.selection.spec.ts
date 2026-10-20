@@ -96,6 +96,11 @@ function batchBar(wrapper: ReturnType<typeof mountView>) {
   return wrapper.find('[data-od-id="link-batch-bar"]');
 }
 
+/** 搜索是防抖下发的(300ms)，等待窗口过去再断言 */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   domainsApi.listDomains.mockResolvedValue([]);
@@ -117,6 +122,7 @@ describe('LinksView 批量选择的可见性', () => {
 
     // 关键字只匹配另外两条：abc123 被筛掉后就不该还留在选择里
     await wrapper.get('input[aria-label="搜索短链"]').setValue('def456');
+    await sleep(350);
     await flushPromises();
 
     expect(batchBar(wrapper).exists(), '被筛掉的行不能再被批量删除').toBe(false);

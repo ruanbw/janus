@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -459,13 +460,21 @@ func (a *API) handleListLinks(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
 		return
 	}
+	// keyword/type/status 可选过滤:筛选必须下推到 SQL,否则 total 与分页是全量,
+	// 前端只能在"当前页"里再筛一遍 —— 用户搜到的永远是第 1 页恰好有的那几条。
+	filter, err := parseLinkListFilter(c.Request.URL.Query())
+	if err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
+		return
+	}
 	ctx := c.Request.Context()
 	var items []*store.Link
 	var total int
 	if includeDeleted {
-		items, total, err = a.store.ListDeletedLinksByTenant(ctx, t.ID, page, pageSize)
+		// 回收站只按关键词过滤(类型/状态是历史快照,页面上也不提供这两个筛选项)
+		items, total, err = a.store.ListDeletedLinksByTenant(ctx, t.ID, filter.Keyword, page, pageSize)
 	} else {
-		items, total, err = a.store.ListLinksByTenant(ctx, t.ID, page, pageSize)
+		items, total, err = a.store.ListLinksByTenant(ctx, t.ID, filter, page, pageSize)
 	}
 	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
@@ -478,6 +487,43 @@ func (a *API) handleListLinks(c *gin.Context) {
 		a.withLandingUploaded(l)
 	}
 	writeJSON(c, http.StatusOK, map[string]any{"items": items, "total": total})
+}
+
+// maxLinkKeywordLength 短链搜索关键词的长度上限。
+// 上限不是为了省索引(ILIKE 本来就扫),而是防止把一整页文本当关键词发过来。
+const maxLinkKeywordLength = 100
+
+// parseLinkListFilter 解析短链列表的筛选参数。
+//
+// 值域以外的取值一律 400,与 handleListVisits 的 action/outcome 同一口径:
+// 拼错一个 status 时静默返回全量,会让用户以为"已经筛过了",结果里却混着
+// 不符合条件的记录。关键词只做 trim 与长度上限;空串/纯空白 = 不过滤
+// (用户边打字边删空格不该突然收到 400)。
+func parseLinkListFilter(q url.Values) (store.LinkListFilter, error) {
+	var f store.LinkListFilter
+
+	f.Keyword = strings.TrimSpace(q.Get("keyword"))
+	if utf8.RuneCountInString(f.Keyword) > maxLinkKeywordLength {
+		return f, fmt.Errorf("keyword 过长(最多 %d 个字符)", maxLinkKeywordLength)
+	}
+
+	switch v := q.Get("type"); v {
+	case "":
+	case "redirect", "landing":
+		f.Type = v
+	default:
+		return f, fmt.Errorf("type 必须为 redirect 或 landing")
+	}
+
+	switch v := q.Get("status"); v {
+	case "":
+	case "enabled", "disabled":
+		f.Status = v
+	default:
+		return f, fmt.Errorf("status 必须为 enabled 或 disabled")
+	}
+
+	return f, nil
 }
 
 // parseBoolQuery 解析布尔查询参数。参数缺省时返回 def;显式写了非法值时 400,

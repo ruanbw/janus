@@ -5,6 +5,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -364,9 +365,66 @@ func (s *Store) GetLinkByID(ctx context.Context, tenantID, id int64) (*Link, err
 	return &l, nil
 }
 
+// LinkListFilter 短链列表的过滤条件(零值 = 该维度不过滤)。
+//
+// 关键词同时匹配短码、出口目标 URL 与承载域名:这三个是租户真正记得住的标识。
+// 规则名不参与匹配 —— 全局规则的名字几乎会命中所有短链,把它塞进"搜索"只会
+// 制造噪声(而按名称找规则请去规则列表)。
+type LinkListFilter struct {
+	Keyword string
+	// Type 取 redirect / landing;空串不过滤。
+	Type string
+	// Status 取 enabled / disabled;空串不过滤。
+	Status string
+}
+
+// likePattern 把用户关键词转成 ILIKE 模式。
+//
+// `%` `_` 是 LIKE 通配符,`\` 是默认转义符:不转义时搜 "50%" 会命中全部短链
+// (等于把一次精确搜索变成全表扫描 + 错误结果)。顺序很重要 —— 必须先转义
+// 反斜杠本身,否则后续插入的 `\%` 会被再转一次。
+func likePattern(keyword string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(keyword)
+	return "%" + escaped + "%"
+}
+
+// applyLinkListFilter 把过滤条件附加到查询上。
+//
+// 关键词用 EXISTS 子查询而不是 JOIN:一个短链有多个目标/域名时,JOIN 会让同一条
+// 短链出现多行,COUNT 与分页 total 随匹配数翻倍。
+//
+// 域名关联不过滤 link_deleted:该列只是 links.deleted_at 的冗余镜像(见
+// init.sql 的同步触发器),活着的时候恒为 false,过滤它只会让回收站里按域名
+// 搜不到已删除的短链 —— 而"找回被删的短链"正是回收站搜索的用途。
+func applyLinkListFilter(db *gorm.DB, f LinkListFilter) *gorm.DB {
+	if f.Keyword != "" {
+		pattern := likePattern(f.Keyword)
+		db = db.Where(`(
+			code ILIKE ? ESCAPE '\'
+			OR EXISTS (
+				SELECT 1 FROM link_targets lt
+				 WHERE lt.link_id = links.id AND lt.url ILIKE ? ESCAPE '\'
+			)
+			OR EXISTS (
+				SELECT 1 FROM link_domains ld
+				  JOIN domains d ON d.id = ld.domain_id
+				 WHERE ld.link_id = links.id AND d.fqdn ILIKE ? ESCAPE '\'
+			)
+		)`, pattern, pattern, pattern)
+	}
+	if f.Type != "" {
+		db = db.Where("link_type = ?", f.Type)
+	}
+	if f.Status != "" {
+		db = db.Where("status = ?", f.Status)
+	}
+	return db
+}
+
 // ListLinksByTenant 分页列出租户短链(不含逻辑删除),按创建时间倒序。
-func (s *Store) ListLinksByTenant(ctx context.Context, tenantID int64, page, pageSize int) ([]*Link, int, error) {
-	return s.listLinks(ctx, tenantID, page, pageSize, false)
+// deletedOnly=false;过滤条件见 LinkListFilter。
+func (s *Store) ListLinksByTenant(ctx context.Context, tenantID int64, f LinkListFilter, page, pageSize int) ([]*Link, int, error) {
+	return s.listLinks(ctx, tenantID, f, page, pageSize, false)
 }
 
 // ListDeletedLinksByTenant 分页列出租户**已逻辑删除**的短链(回收站视图),
@@ -375,17 +433,23 @@ func (s *Store) ListLinksByTenant(ctx context.Context, tenantID int64, page, pag
 // 与 ListLinksByTenant 是互斥的两个视图而不是"加个开关把两边混在一起":
 // 回收站是另一个 UI 语境(只有还原/彻底删除两个动作、没有状态开关与规则列),
 // 混在一页里会让分页 total 与页面上真正可操作的对象对不上。
-func (s *Store) ListDeletedLinksByTenant(ctx context.Context, tenantID int64, page, pageSize int) ([]*Link, int, error) {
-	return s.listLinks(ctx, tenantID, page, pageSize, true)
+// 回收站只支持关键词过滤:类型/状态对已删除的记录只是历史快照,按它们筛会让
+// 「回收站里还剩几条」变得难以解释(与页面上隐藏这两个筛选项同一口径)。
+func (s *Store) ListDeletedLinksByTenant(ctx context.Context, tenantID int64, keyword string, page, pageSize int) ([]*Link, int, error) {
+	return s.listLinks(ctx, tenantID, LinkListFilter{Keyword: keyword}, page, pageSize, true)
 }
 
 // listLinks 列表查询的共同实现;deletedOnly=false 取存活短链,true 取回收站。
-func (s *Store) listLinks(ctx context.Context, tenantID int64, page, pageSize int, deletedOnly bool) ([]*Link, int, error) {
+// 两条路径都套用 applyLinkListFilter —— 回收站调用方只填 Keyword,于是类型/状态
+// 天然不生效,不需要在里面再写一次 if。
+func (s *Store) listLinks(ctx context.Context, tenantID int64, f LinkListFilter, page, pageSize int, deletedOnly bool) ([]*Link, int, error) {
 	scope := func(db *gorm.DB) *gorm.DB {
 		if deletedOnly {
-			return db.Where("tenant_id = ? AND deleted_at IS NOT NULL", tenantID)
+			db = db.Where("tenant_id = ? AND deleted_at IS NOT NULL", tenantID)
+		} else {
+			db = db.Where("tenant_id = ? AND deleted_at IS NULL", tenantID)
 		}
-		return db.Where("tenant_id = ? AND deleted_at IS NULL", tenantID)
+		return applyLinkListFilter(db, f)
 	}
 	var total int64
 	if err := scope(s.db.WithContext(ctx).Model(&Link{})).Count(&total).Error; err != nil {

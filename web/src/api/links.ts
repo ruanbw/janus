@@ -13,6 +13,15 @@ import type {
 export interface LinkListQuery {
   page?: number;
   pageSize?: number;
+  /**
+   * 关键词:服务端同时匹配短码、出口目标 URL 与承载域名。
+   * 缺省/空串 = 不过滤。列表接口在 SQL 侧过滤,所以 total 与分页都是筛选后的结果集。
+   */
+  keyword?: string;
+  /** 类型过滤;缺省 = 不过滤 */
+  type?: LinkType;
+  /** 状态过滤;缺省 = 不过滤 */
+  status?: LinkStatus;
   /** 回收站视图:列出已逻辑删除的短链。默认 false(只看存活短链)。 */
   includeDeleted?: boolean;
 }
@@ -74,11 +83,14 @@ export async function listLinks(
 export async function listDeletedLinks(
   page: number,
   pageSize?: number,
+  keyword?: string,
 ): Promise<PageResult<DeletedLink>> {
   const result = await get<PageResult<DeletedLink>>('/links', {
     page,
     pageSize,
     includeDeleted: true,
+    // 回收站只支持关键词过滤(类型/状态对已删除记录只是历史快照)
+    ...(keyword ? { keyword } : {}),
   });
   return { ...result, items: result.items.map(normalizeLink) as DeletedLink[] };
 }

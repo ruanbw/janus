@@ -49,7 +49,7 @@
           <span>
             已选
             <strong class="font-mono text-ink">{{ selectedCount }}</strong>
-            / {{ filteredLinks.length }} 条(当前页筛选结果)
+            / {{ links.length }} 条(本页)
           </span>
         </div>
         <div class="flex items-center gap-2">
@@ -104,10 +104,10 @@
       :class="recycleBin ? 'sm:grid-cols-1' : 'sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_180px_180px_auto]'"
     >
       <AppInput
-        v-model="keyword"
+        v-model="keywordInput"
         allow-clear
         :aria-label="recycleBin ? '搜索已删除的短链' : '搜索短链'"
-        :placeholder="recycleBin ? '搜索已删除短链的短码、域名或目标 URL…' : '搜索短码、域名、目标 URL 或规则名…'"
+        :placeholder="recycleBin ? '搜索已删除短链的短码、域名或目标 URL…' : '搜索短码、域名或目标 URL…'"
       >
         <template #prefix><Search :size="15" class="text-ink-faint" /></template>
       </AppInput>
@@ -149,7 +149,7 @@
           v-if="column.key === 'select'"
           :model-value="allSelected"
           :indeterminate="someSelected"
-          :disabled="filteredLinks.length === 0"
+          :disabled="links.length === 0"
           aria-label="全选当前页短链"
           @change="toggleSelectAll"
         />
@@ -548,8 +548,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useDebounceFn } from '@vueuse/core';
 import dayjs from 'dayjs';
 import {
   ArrowDown,
@@ -591,12 +592,12 @@ import { useLinkListQuery } from '@/composables/useLinkListQuery';
 import type { LinkStatusFilter, LinkTypeFilter } from '@/composables/useLinkListQuery';
 
 import { ApiError } from '@/types/api';
-import type { Domain, Link, LinkStatus } from '@/types/api';
+import type { Domain, Link, LinkStatus, LinkType } from '@/types/api';
 import { toCsvRow } from '@/utils/csv';
 import { formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 
-import type { DeletedLink } from '@/api/links';
+import type { DeletedLink, LinkListQuery } from '@/api/links';
 
 const route = useRoute();
 const router = useRouter();
@@ -632,13 +633,25 @@ const {
   toParams,
 } = useLinkListQuery();
 
-// 模板沿用原来的 v-model 写法，因此用可写 computed 把赋值转交给 composable。
-// 若直接绑 query.keyword 之类的表达式，v-model 的赋值不会经过 setter，
-// 「换筛选回第 1 页」就会重新变成模板各写一遍。
-const keyword = computed({
-  get: () => listQuery.value.keyword,
-  set: (value: string) => onFilterChange(() => setKeyword(value)),
-});
+/**
+ * 关键字输入框的显示值。**不能**直接 v-model 到 query.keyword:
+ * 搜索是防抖下发的,而 computed 的 getter 在防抖生效前仍是旧值 ——
+ * v-model 每次输入后都会用 getter 回写输入框,用户会看到自己打的字被吞掉。
+ * 所以输入框持有自己的 ref,防抖窗口结束后才转交给 composable(它会 trim 并归页)。
+ */
+const KEYWORD_DEBOUNCE_MS = 300;
+const keywordInput = ref(listQuery.value.keyword);
+
+const applyKeyword = useDebounceFn((value: string) => {
+  // 防抖窗口内可能发生了「清空过滤」或切视图(两者都会重置 keywordInput):
+  // 那次输入已经作废,不能再拿旧值把条件加回去。
+  if (value !== keywordInput.value) return;
+  // 与当前生效条件相同(例如刚被清空)时不重复发一次同样的请求
+  if (value.trim() === listQuery.value.keyword) return;
+  onFilterChange(() => setKeyword(value));
+}, KEYWORD_DEBOUNCE_MS);
+
+watch(keywordInput, (value) => applyKeyword(value));
 
 const typeFilter = computed({
   get: () => listQuery.value.typeFilter,
@@ -651,23 +664,17 @@ const statusFilter = computed({
 });
 
 /**
- * 应用一次「可能把页码归 1」的筛选变更。
+ * 应用一次筛选变更并重新拉取。
  *
- * 这里的筛选是纯前端过滤(后端 handleListLinks 不支持 keyword/type/status)，
- * 换筛选本身不重载数据；但 composable 的规则是换筛选回第 1 页 —— 若页码**真的**
- * 从 >1 回到 1，表格里留着的还是旧页的行、分页器却已经写 1/N，用户点「下一页」
- * 会从第 3 页直接跳到第 2 页。所以只在这一条路径补一次 loadData。
- * 第 1 页上改筛选(含逐字符 keyword)不触发任何请求，请求次数与改动前一致。
+ * 筛选已下推到服务端(SQL),所以换筛选必须重载:total、分页与表格内容都变了。
+ * composable 负责「换筛选回第 1 页」；这里额外清空选择 —— 选择必须随可见集收敛,
+ * 否则被筛掉的行仍留在 selectedIds 里,批量删除会删到用户当前看不见的记录
+ * (确认框里的短码摘要只遍历可见行,连删了谁都没列全)。
  */
 function onFilterChange(mutate: () => void): void {
-  const pageBefore = listQuery.value.page;
   mutate();
-  // 筛选是本地 computed，换筛选不一定重载数据（loadData 里那句 clearSelection
-  // 因此可能不执行）。而隐藏行仍留在 selectedIds 里，批量删除就会删到用户当前
-  // 看不见的记录 —— 确认框里的短码摘要只遍历可见行，连删了谁都没列全。
-  // 选择必须随可见集收敛：换筛选一律清空。
   clearSelection();
-  if (pageBefore > 1 && listQuery.value.page === 1) void loadData();
+  void loadData();
 }
 
 /** 页码:模板可写(翻页控件与测试都直接赋值)，每次写入都经过 setPage 的下界钳制 */
@@ -769,13 +776,18 @@ const hasActiveFilter = computed(() =>
 );
 
 /**
- * 列表请求参数。关键字/类型/状态目前仍由前端 filteredLinks 过滤:
- * 后端 handleListLinks 只认 page/pageSize/includeDeleted，多发的筛选键会被忽略。
- * 所以这里只取分页两键 —— 发了也没人用，反而让人以为筛选已经下推到服务端。
+ * 列表请求参数。筛选全部下推给后端(keyword/type/status),
+ * 于是 total 与分页都是「筛选后的结果集」,而不是全量。
  */
-function listParams(): { page: number; pageSize: number } {
-  const params = toParams();
-  return { page: Number(params.page), pageSize: Number(params.pageSize) };
+function listParams(): LinkListQuery {
+  const p = toParams();
+  return {
+    page: Number(p.page),
+    pageSize: Number(p.pageSize),
+    ...(p.keyword ? { keyword: String(p.keyword) } : {}),
+    ...(p.type ? { type: p.type as LinkType } : {}),
+    ...(p.status ? { status: p.status as LinkStatus } : {}),
+  };
 }
 
 /**
@@ -786,36 +798,13 @@ function toLink(record: Record<string, unknown>): Link {
   return record as unknown as Link;
 }
 
-const filteredLinks = computed(() => {
-  const q = keyword.value.trim().toLowerCase();
-
-  return links.value.filter((l) => {
-    const codeMatch = l.code.toLowerCase().includes(q);
-    const domainMatch = l.domains?.some((d) => d.toLowerCase().includes(q)) ?? false;
-    const targetMatch = l.targetUrls?.some((u) => u.toLowerCase().includes(q)) ?? false;
-    const ruleMatch = l.ruleNames?.some((n) => n.toLowerCase().includes(q)) ?? false;
-    const okKeyword = !q || codeMatch || domainMatch || targetMatch || ruleMatch;
-
-    // 回收站不套用类型/状态过滤:两者对已删除的短链只是一个历史快照,
-    // 按它们筛会让"回收站里还剩几条"变得难以解释。
-    if (recycleBin.value) return okKeyword;
-
-    const tf = typeFilter.value;
-    const sf = statusFilter.value;
-    let okType = true;
-    if (tf === 'redirect') okType = l.linkType === 'redirect';
-    else if (tf === 'landing') okType = l.linkType === 'landing';
-
-    let okStatus = true;
-    if (sf === 'enabled') okStatus = l.status === 'enabled';
-    else if (sf === 'disabled') okStatus = l.status === 'disabled';
-
-    return okKeyword && okType && okStatus;
-  });
-});
-
-/** AppTable 的 dataSource(与 RulesListView / DomainsView 同一套转法) */
-const tableData = computed(() => filteredLinks.value as unknown as Record<string, unknown>[]);
+/**
+ * AppTable 的 dataSource(与 RulesListView / DomainsView 同一套转法)。
+ *
+ * 这里不再有第二套前端过滤:keyword/type/status 已经由 SQL 完成,
+ * 再造一份内存过滤只会让「表格里有、total 里没有」这类不一致重新长出来。
+ */
+const tableData = computed(() => links.value as unknown as Record<string, unknown>[]);
 
 // ==================== 多选与批量删除 ====================
 const selectedIds = ref<number[]>([]);
@@ -824,7 +813,7 @@ const batchOperating = ref(false);
 const selectedCount = computed(() => selectedIds.value.length);
 
 /** 可选范围 = 当前页 + 当前筛选结果(与列表所见一致) */
-const selectableIds = computed(() => filteredLinks.value.map((l) => l.id));
+const selectableIds = computed(() => links.value.map((l) => l.id));
 
 const allSelected = computed(
   () => selectableIds.value.length > 0 && selectableIds.value.every((id) => selectedIds.value.includes(id)),
@@ -852,7 +841,7 @@ function clearSelection() {
 
 /** 选中短码摘要(超长截断),用于删除确认文案 */
 function selectedCodesSummary(limit = 8): string {
-  const codes = filteredLinks.value.filter((l) => isSelected(l.id)).map((l) => l.code);
+  const codes = links.value.filter((l) => isSelected(l.id)).map((l) => l.code);
   if (codes.length === 0) return '';
   const head = codes.slice(0, limit).join('、');
   return codes.length > limit ? `${head} 等 ${codes.length} 条` : head;
@@ -968,7 +957,7 @@ async function loadData() {
   loading.value = true;
   try {
     if (recycleBin.value) {
-      const res = await listDeletedLinks(page.value, pageSize.value);
+      const res = await listDeletedLinks(page.value, pageSize.value, listQuery.value.keyword);
       if (seq !== loadSeq) return;
       links.value = res.items;
       total.value = res.total;
@@ -1025,6 +1014,10 @@ function onSwitchTab(value: string | number): void {
   viewTab.value = next;
   setPage(1);
   setKeyword('');
+  // 回收站不提供类型/状态筛选:留着旧值会变成一个看不见却仍在生效的条件
+  setTypeFilter('all');
+  setStatusFilter('all');
+  keywordInput.value = '';
   clearSelection();
   void loadData();
 }
@@ -1188,7 +1181,7 @@ function exportCsv() {
     '状态',
     '创建时间',
   ];
-  const rows = filteredLinks.value.map((l) => [
+  const rows = links.value.map((l) => [
     l.code,
     (l.domains || []).join('; '),
     l.linkType === 'landing' ? '落地页型' : '跳转型',
@@ -1215,10 +1208,13 @@ function exportCsv() {
   // click 后同步 revoke 会在下载真正开始前撤销 blob URL，部分浏览器(Firefox)
   // 会因此取消下载；延迟释放，给下载器留出接管 URL 的时间。
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  message.success(`已导出 ${rows.length} 条短链记录`);
+  // 导出的是**当前页**的筛选结果,不是全部匹配项:文案必须说清楚,
+  // 否则用户会以为拿到的是整个结果集
+  message.success(`已导出本页 ${rows.length} 条短链记录`);
 }
 
 function resetFilters() {
+  keywordInput.value = '';
   onFilterChange(() => resetLinkQuery());
 }
 
