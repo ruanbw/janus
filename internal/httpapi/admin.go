@@ -210,5 +210,6 @@ func (a *API) handleAdminDeleteDomain(c *gin.Context) {
 	for _, linkID := range purged {
 		a.removeLandingFiles(linkID)
 	}
+	a.invalidateLinksForDomain(id)
 	writeNoContent(c)
 }

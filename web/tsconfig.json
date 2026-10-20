@@ -12,6 +12,10 @@
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "skipLibCheck": true,
     "noEmit": true,
+    // 增量类型检查:vue-tsc 每次冷跑要 40s+,而日常改动只动一两个文件。
+    // tsbuildinfo 落在 node_modules 下,不污染仓库也不进 git。
+    "incremental": true,
+    "tsBuildInfoFile": "node_modules/.tmp/tsconfig.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]

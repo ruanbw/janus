@@ -212,6 +212,7 @@ func (a *API) handleCreateLink(c *gin.Context) {
 		writeAPIError(c, err)
 		return
 	}
+	a.invalidateLinksForTenant(t.ID)
 	writeJSON(c, http.StatusCreated, a.withLandingUploaded(link))
 }
 
@@ -654,6 +655,7 @@ func (a *API) handlePatchLink(c *gin.Context) {
 	if link.LinkType == store.LinkTypeRedirect || link.LandingSource == store.LandingSourceURL {
 		a.removeLandingFiles(id)
 	}
+	a.invalidateLinksForTenant(t.ID)
 	writeJSON(c, http.StatusOK, a.withLandingUploaded(link))
 }
 
@@ -680,6 +682,7 @@ func (a *API) restoreLink(c *gin.Context, t *store.Tenant, id int64, req patchLi
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
+	a.invalidateLinksForTenant(t.ID)
 	writeJSON(c, http.StatusOK, a.withLandingUploaded(link))
 }
 
@@ -707,6 +710,7 @@ func (a *API) handleDeleteLink(c *gin.Context) {
 		writeErr(c, http.StatusNotFound, errNotFound, "link not found")
 		return
 	}
+	a.invalidateLinksForTenant(t.ID)
 	writeNoContent(c)
 }
 
@@ -734,6 +738,7 @@ func (a *API) handlePurgeLink(c *gin.Context) {
 		return
 	}
 	a.removeLandingFiles(id) // 彻底删除连同落地页文件(16)
+	a.invalidateLinksForTenant(t.ID)
 	writeNoContent(c)
 }
 
@@ -796,6 +801,7 @@ func (a *API) handleBatchDeleteLinks(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
+	a.invalidateLinksForTenant(t.ID)
 	writeJSON(c, http.StatusOK, map[string]any{"deleted": n})
 }
 
@@ -824,6 +830,7 @@ func (a *API) handleBatchPurgeLinks(c *gin.Context) {
 	for _, id := range purged {
 		a.removeLandingFiles(id) // 彻底删除连同落地页文件(16)
 	}
+	a.invalidateLinksForTenant(t.ID)
 	writeJSON(c, http.StatusOK, map[string]any{"deleted": len(purged)})
 }
 

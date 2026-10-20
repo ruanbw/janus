@@ -421,6 +421,8 @@ func (a *API) handlePatchDomain(c *gin.Context) {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
 	}
+	// 状态变更可能让该域名下短链重新可访问/不可访问:丢弃缓存里的短链快照。
+	a.invalidateLinksForDomain(id)
 	writeJSON(c, http.StatusOK, a.domainViewOf(updated, ""))
 }
 
@@ -481,6 +483,9 @@ func (a *API) handleDeleteDomain(c *gin.Context) {
 	for _, linkID := range purged {
 		a.removeLandingFiles(linkID)
 	}
+	// 域名删除会连带删掉 link_domains 行:不失效的话,缓存里的 (domainID, code)
+	// 还能命中最多一个 TTL,表现为"域名都删了还能跳"。
+	a.invalidateLinksForDomain(id)
 	writeNoContent(c)
 }
 

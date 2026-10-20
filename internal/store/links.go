@@ -801,6 +801,15 @@ func (s *Store) PickTarget(ctx context.Context, linkID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return s.PickTargetKnown(ctx, linkID, targets)
+}
+
+// PickTargetKnown 与 PickTarget 语义相同,但目标列表由调用方提供。
+//
+// 存在的理由:跳转热路径已经从快照缓存拿到了 Targets(linkcache.Record),
+// 再让 PickTarget 回源查一次 link_targets 是纯粹的重复往返 —— 一条短链一次访问
+// 因此多付一次查询。这里只保留"多目标时确实需要 DB"的那一半:轮询指针必须原子自增。
+func (s *Store) PickTargetKnown(ctx context.Context, linkID int64, targets []string) (string, error) {
 	if len(targets) == 0 {
 		return "", ErrNotFound
 	}

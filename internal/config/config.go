@@ -65,6 +65,20 @@ type Config struct {
 	DNSMaxAge         time.Duration `env:"JANUS_DNS_MAX_AGE" envDefault:"72h"`
 	VisitRetention    time.Duration `env:"JANUS_VISIT_RETENTION" envDefault:"2160h"`
 	VisitCleanupEvery time.Duration `env:"JANUS_VISIT_CLEANUP_INTERVAL" envDefault:"24h"`
+	// VisitAsync 是否把访问明细改为「有界队列 + 批量写入」。
+	//
+	// 默认 false:同步写一条 INSERT 是最简单、最不会丢数据的形态,也是单机小站
+	// 的正确选择。开启后跳转响应不再等待流水落库,代价是进程被强杀时可能丢掉
+	// 队列里最后一批(典型 < 200ms)明细 —— 分析数据可以丢一点,跳转不能卡。
+	//
+	// 队列满时不会阻塞访客,也不丢记录:直接退回同步直写(见 visitqueue)。
+	VisitAsync bool `env:"JANUS_VISIT_ASYNC" envDefault:"false"`
+	// VisitQueueSize 异步队列长度上限。
+	VisitQueueSize int `env:"JANUS_VISIT_QUEUE_SIZE" envDefault:"1024"`
+	// VisitBatchSize 单批最多写入条数。
+	VisitBatchSize int `env:"JANUS_VISIT_BATCH_SIZE" envDefault:"100"`
+	// VisitFlushInterval 最长攒批时间:低流量下保证明细不会无限期躺在内存里。
+	VisitFlushInterval time.Duration `env:"JANUS_VISIT_FLUSH_INTERVAL" envDefault:"200ms"`
 	// VisitCleanupBatch 单次清理最多删除的行数。0 = 不分批(不推荐)。
 	// 不分批时一条 DELETE 会持有全部过期行的锁直到提交,高流量租户上是长事务。
 	VisitCleanupBatch int `env:"JANUS_VISIT_CLEANUP_BATCH" envDefault:"10000"`
@@ -186,6 +200,19 @@ func (c Config) Validate() error {
 			if d.v <= 0 {
 				return fmt.Errorf("%s 必须为正数,当前为 %v(非正时长会让后台 worker 的 time.NewTicker panic 并终止进程)", d.name, d.v)
 			}
+		}
+	}
+	// 异步写入的三个参数只在开启时才需要为正:关掉时它们没有任何消费者,
+	// 为一个"不生效的配置"拒绝启动只会让部署无故失败。
+	if c.VisitAsync {
+		if c.VisitQueueSize <= 0 {
+			return fmt.Errorf("JANUS_VISIT_QUEUE_SIZE 必须为正数,当前为 %d", c.VisitQueueSize)
+		}
+		if c.VisitBatchSize <= 0 {
+			return fmt.Errorf("JANUS_VISIT_BATCH_SIZE 必须为正数,当前为 %d", c.VisitBatchSize)
+		}
+		if c.VisitFlushInterval <= 0 {
+			return fmt.Errorf("JANUS_VISIT_FLUSH_INTERVAL 必须为正数,当前为 %v", c.VisitFlushInterval)
 		}
 	}
 	// JWTTTL 单独判定:它是 SDK 覆盖的最小字段之一,常与其它节奏字段不同步,

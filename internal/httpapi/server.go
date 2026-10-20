@@ -6,12 +6,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/netip"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,10 +23,12 @@ import (
 	"github.com/ruanbw/janus/internal/domain"
 	"github.com/ruanbw/janus/internal/geo"
 	"github.com/ruanbw/janus/internal/jwt"
+	"github.com/ruanbw/janus/internal/linkcache"
 	"github.com/ruanbw/janus/internal/metrics"
 	"github.com/ruanbw/janus/internal/rbac"
 	"github.com/ruanbw/janus/internal/rules"
 	"github.com/ruanbw/janus/internal/store"
+	"github.com/ruanbw/janus/internal/visitqueue"
 )
 
 type Deps struct {
@@ -58,6 +62,12 @@ type Deps struct {
 	// MetricsToken 是 /metrics 的共享 token。为空时该端点一律 403(fail-closed):
 	// 指标里有租户数、域名状态与规则 fail-open 次数,足以反推业务规模与故障。
 	MetricsToken string
+	// VisitWriter 是访问明细的异步批量写入器;nil 表示同步逐行写入(默认)。
+	//
+	// 生命周期归调用方:关停时必须先停 HTTP 再 Close 它,否则停机瞬间还在跳转的
+	// 请求会把明细丢在队列里。基座不给它加"自动关闭"的钩子,是因为 httpapi.New
+	// 的返回值是 http.Handler,没有可挂的关闭语义。
+	VisitWriter *visitqueue.Writer
 }
 
 // OwnershipChecker 抽象域名归属校验(见 Deps.DomainOwnership)。
@@ -83,10 +93,12 @@ type API struct {
 	rbacEnforcer     *rbac.Enforcer              // Casbin RBAC 授权(enforcer 线程安全,authorize 中间件使用)
 	jwtMgr           *jwt.Manager                // Bearer JWT 校验(authenticate 中间件使用)
 	ruleCache        *rules.Cache                // 规则快照(跳转热路径求值;nil 时求值恒为"无规则")
+	links            *linkcache.Cache            // 短链快照(跳转热路径定位短链;nil 时未装配)
 	geo              geo.Lookup                  // IP → 国家码(跳转热路径在构造 Fact 之前查,ADR 0009)
 	metrics          *metrics.Registry           // 指标注册表(/metrics 导出)
 	ready            func(context.Context) error // /readyz 探活(nil 时不探)
 	metricsToken     string                      // /metrics 共享 token(空 = fail-closed)
+	visits           *visitqueue.Writer          // 访问明细异步写入;nil = 同步
 }
 
 // New 构建 Gin 引擎:全局中间件(panic 恢复+访问日志、后台域名 SPA 分流)+ 全部路由。
@@ -117,6 +129,43 @@ func New(d Deps) http.Handler {
 	if ruleCache == nil {
 		ruleCache = rules.NewCache(d.Store.RulesForTenant)
 	}
+
+	// 短链快照缓存:跳转热路径不再每次回源。
+	//
+	// 缓存键是 (domainID, code):同一租户的多个域名下允许同名短码。
+	// 加载失败与未命中都不缓存(短码刚创建必须立刻可用);失效由管理端写路径
+	// 显式 Invalidate(见 invalidateLinksFor*),TTL 只是漏调时的兜底。
+	linkStore := d.Store
+	linkCache := linkcache.New(func(ctx context.Context, domainID int64, code string) (*linkcache.Record, error) {
+		if linkStore == nil {
+			// 嵌入方可能只挂部分路由;/:code 此时本就不可用,返回未命中而不是 panic。
+			return nil, linkcache.ErrNotFound
+		}
+		l, _, _, err := linkStore.LookupLinkForVisit(ctx, domainID, code)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, linkcache.ErrNotFound
+			}
+			return nil, err
+		}
+		status, err := strconv.Atoi(string(l.RedirectStatus))
+		if err != nil {
+			return nil, fmt.Errorf("短链 %d 的 redirect_status 非法: %w", l.ID, err)
+		}
+		return &linkcache.Record{
+			LinkID:         l.ID,
+			TenantID:       l.TenantID,
+			DomainID:       domainID,
+			Status:         l.Status,
+			Deleted:        l.DeletedAt != nil,
+			LinkType:       l.LinkType,
+			LandingSource:  l.LandingSource,
+			LandingURL:     l.LandingURL,
+			RedirectStatus: status,
+			RulesEnabled:   l.RulesEnabled,
+			Targets:        l.TargetURLs,
+		}, nil
+	})
 
 	// 地理/情报值:基座直接使用内嵌的离线 ip2region 库(带缓存,无网络、无 API Key、无挂载卷)。
 	geoLookup := d.GeoLookup
@@ -182,10 +231,12 @@ func New(d Deps) http.Handler {
 		rbacEnforcer:     rb,
 		jwtMgr:           jwtMgr,
 		ruleCache:        ruleCache,
+		links:            linkCache,
 		geo:              geoLookup,
 		metrics:          metricsRegistry,
 		ready:            readinessProbe,
 		metricsToken:     d.MetricsToken,
+		visits:           d.VisitWriter,
 	}
 	if a.dns == nil {
 		a.dns = &domain.DNSChecker{ExpectedIP: d.Cfg.ServerPublicIP}

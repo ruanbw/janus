@@ -166,6 +166,22 @@ func (a *API) recordVisit(c *gin.Context, rec store.VisitRecord) {
 	rec.Referer = c.Request.Referer()
 	rec.Lang = clientLang(c.Request)
 	rec.Country = a.visitGeo(c).Country
+	// 异步路径:把明细交给有界队列批量落库,跳转响应不再等待 INSERT。
+	// Enqueue 自己保证不丢(队列满 → 同步直写,失败才返回错误),所以这里不需要
+	// 再补一次同步写 —— 那会在 Sink 失败时写出重复行。
+	if a.visits != nil {
+		if err := a.visits.Enqueue(c.Request.Context(), rec); err != nil {
+			slog.Error("访问明细入队失败", "err", err, "linkId", rec.LinkID)
+		}
+		if a.metrics != nil {
+			a.metrics.CounterVec("janus_visit_write_total", "访问明细写入方式。", "mode").Inc("async")
+		}
+		TriggerPostVisitHooks(c.Request.Context(), c.Request, rec)
+		return
+	}
+	if a.metrics != nil {
+		a.metrics.CounterVec("janus_visit_write_total", "访问明细写入方式。", "mode").Inc("sync")
+	}
 	if err := a.store.InsertVisit(c.Request.Context(), rec); err != nil {
 		if rec.RuleID == nil {
 			slog.Error("写入访问明细失败", "err", err, "linkId", rec.LinkID)

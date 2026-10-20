@@ -208,7 +208,13 @@ func (s *Store) InsertVisit(ctx context.Context, rec VisitRecord) error {
 	if err := validateVisitInsert(rec.Action, rec.Outcome, rec.Reason); err != nil {
 		return err
 	}
-	v := Visit{
+	v := newVisitModel(rec)
+	return s.db.WithContext(ctx).Create(&v).Error
+}
+
+// newVisitModel 把记录转成落库模型(统一截断口径,避免两条写入路径各截一套)。
+func newVisitModel(rec VisitRecord) Visit {
+	return Visit{
 		LinkID: rec.LinkID, DomainID: rec.DomainID, IP: rec.IP,
 		UserAgent: truncateRunes(rec.UserAgent, maxVisitUserAgentLen),
 		Referer:   truncateRunes(rec.Referer, maxVisitRefererLen),
@@ -218,7 +224,50 @@ func (s *Store) InsertVisit(ctx context.Context, rec VisitRecord) error {
 		Country:   truncateRunes(rec.Country, maxVisitCountryLen),
 		RuleID:    rec.RuleID, RuleAction: rec.RuleAction,
 	}
-	return s.db.WithContext(ctx).Create(&v).Error
+}
+
+// InsertVisits 批量写入访问明细(visitqueue 的 Sink)。
+//
+// 批量失败时逐行回退,而不是丢掉整批:最常见的失败原因是某一行的 rule_id 悬空
+// (规则在两次写入之间被删),一条坏行不该带走同一批里另外 99 条分析数据。
+// 回退时对悬空 rule_id 再降级一次(置 NULL 重写),与同步路径的降级语义一致。
+//
+// 返回错误表示"仍有行没写进去";已经写进去的行不回滚 —— 访问明细是分析数据,
+// 部分成功比整批丢失更有用。调用方负责记日志。
+func (s *Store) InsertVisits(ctx context.Context, recs []VisitRecord) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	models := make([]Visit, len(recs))
+	for i, rec := range recs {
+		if err := validateVisitInsert(rec.Action, rec.Outcome, rec.Reason); err != nil {
+			return err
+		}
+		models[i] = newVisitModel(rec)
+	}
+	if err := s.db.WithContext(ctx).CreateInBatches(&models, len(models)).Error; err == nil {
+		return nil
+	}
+
+	var firstErr error
+	for i := range models {
+		row := models[i]
+		if err := s.db.WithContext(ctx).Create(&row).Error; err != nil {
+			if row.RuleID == nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			// 规则被删导致外键悬空:去掉 rule_id 再写一次,保留其余字段。
+			row.RuleID = nil
+			row.RuleAction = ""
+			if err2 := s.db.WithContext(ctx).Create(&row).Error; err2 != nil && firstErr == nil {
+				firstErr = err2
+			}
+		}
+	}
+	return firstErr
 }
 
 // CountVisitsByLink 访问计数 = 成功的访问行(action IN ('redirect','landing_view') 且 outcome='success')。

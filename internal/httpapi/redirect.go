@@ -36,6 +36,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ruanbw/janus/internal/httpapi/templates"
+	"github.com/ruanbw/janus/internal/linkcache"
 	"github.com/ruanbw/janus/internal/rules"
 	"github.com/ruanbw/janus/internal/store"
 )
@@ -282,6 +283,70 @@ func (a *API) errorPageTenantID(c *gin.Context) int64 {
 	return tenantID
 }
 
+// linkSnapshot 取跳转所需的短链快照。
+//
+// 单独包一层是为了让 "缓存未装配"(嵌入方只挂部分路由)与 "未命中" 语义分开:
+// 前者退回直连 DB,后者才是 404。生产路径上缓存总是装配的,这条分支只服务嵌入方
+// 与测试,不增加热路径成本。
+func (a *API) linkSnapshot(ctx context.Context, domainID int64, code string) (*linkcache.Record, error) {
+	if a.links != nil {
+		return a.links.Get(ctx, domainID, code)
+	}
+	l, _, _, err := a.store.LookupLinkForVisit(ctx, domainID, code)
+	if err != nil {
+		return nil, err
+	}
+	status, err := strconv.Atoi(string(l.RedirectStatus))
+	if err != nil {
+		return nil, err
+	}
+	return &linkcache.Record{
+		LinkID: l.ID, TenantID: l.TenantID, DomainID: domainID,
+		Status: l.Status, Deleted: l.DeletedAt != nil,
+		LinkType: l.LinkType, LandingSource: l.LandingSource, LandingURL: l.LandingURL,
+		RedirectStatus: status, RulesEnabled: l.RulesEnabled, Targets: l.TargetURLs,
+	}, nil
+}
+
+// storeLinkFromRecord 把缓存快照转成后续链路使用的 store.Link。
+//
+// 只填跳转链路真正读到的字段:目标选择(TargetURLs / ID)、类型分支(LinkType /
+// LandingSource / LandingURL)、跳转码(RedirectStatus)、规则开关(RulesEnabled)。
+// 多填只会让"缓存里少了什么字段"变得难以发现。
+func storeLinkFromRecord(rec *linkcache.Record) *store.Link {
+	return &store.Link{
+		ID:             rec.LinkID,
+		TenantID:       rec.TenantID,
+		LinkType:       rec.LinkType,
+		LandingSource:  rec.LandingSource,
+		LandingURL:     rec.LandingURL,
+		RedirectStatus: store.RedirectStatus(strconv.Itoa(rec.RedirectStatus)),
+		RulesEnabled:   rec.RulesEnabled,
+		TargetURLs:     rec.Targets,
+	}
+}
+
+// invalidateLinksForTenant 在短链写入后失效该租户的跳转快照。
+//
+// 粒度刻意取租户而不是单条:写操作是管理端低频动作,而"按 (domain,code) 精确失效"
+// 要求写路径先把这条短链的全部域名查出来 —— 多一次查询换来的只是少失效几条缓存,
+// 收益为负。宁可让该租户的短链在下一次访问时各回源一次。
+func (a *API) invalidateLinksForTenant(tenantID int64) {
+	if a.links != nil {
+		a.links.InvalidateTenant(tenantID)
+	}
+}
+
+// invalidateLinksForDomain 在域名变更(停用/删除)后失效该域名下的跳转快照。
+//
+// 域名删除会连带删掉 link_domains 行:不失效的话,缓存里那条 (domainID, code)
+// 仍会命中最多一个 TTL,表现为"域名都删了还能跳"。
+func (a *API) invalidateLinksForDomain(domainID int64) {
+	if a.links != nil {
+		a.links.InvalidateDomain(domainID)
+	}
+}
+
 // 跳转结果指标:janus_redirect_total{result}。
 //
 // 为什么按结果分桶而不是只记总数:短链服务的健康信号是"404/429 的比例"。
@@ -317,13 +382,25 @@ func (a *API) handleRedirect(c *gin.Context) {
 		a.renderVisitorError(c, http.StatusNotFound, tenantID, nil)
 		return
 	}
-	// 宽松命中:短链不可用时也返回它,由本函数把"为什么不可用"记进明细
-	link, _, reason, err := a.store.LookupLinkForVisit(c.Request.Context(), d.ID, code)
+	// 宽松命中:短链不可用时也返回它,由本函数把"为什么不可用"记进明细。
+	//
+	// 走快照缓存(linkcache):命中时省掉 lookup 的 JOIN 与两次 link_targets 查询。
+	// 未命中与加载失败都不进缓存,所以刚创建的短码立刻可用;缓存失效由管理端写路径
+	// 显式 Invalidate,TTL(60s)只是漏调时的兜底。
+	rec, err := a.linkSnapshot(c.Request.Context(), d.ID, code)
 	if err != nil {
 		// 未命中(短码不存在):无法归属到任何短链,不记明细
 		a.countRedirect("notfound")
 		a.renderVisitorError(c, http.StatusNotFound, d.TenantID, nil)
 		return
+	}
+	link := storeLinkFromRecord(rec)
+	reason := ""
+	switch {
+	case rec.Deleted:
+		reason = store.VisitReasonLinkDeleted
+	case rec.Status != "enabled":
+		reason = store.VisitReasonLinkDisabled
 	}
 	// 动作按短链类型确定:跳转型记 redirect,落地页型记 landing_view
 	action := store.VisitActionRedirect
@@ -385,7 +462,7 @@ func (a *API) handleRedirect(c *gin.Context) {
 		return
 	}
 	// 跳转型:先选目标(无目标即失败,落一行明细)
-	targetURL, err := a.store.PickTarget(c.Request.Context(), link.ID)
+	targetURL, err := a.store.PickTargetKnown(c.Request.Context(), link.ID, link.TargetURLs)
 	if err != nil {
 		// 防御性分支:上面已按 len(TargetURLs)==0 判过一次,这里兜住并发改动
 		a.recordVisit(c, store.VisitRecord{

@@ -17,6 +17,7 @@ import (
 	"github.com/ruanbw/janus/internal/domain"
 	"github.com/ruanbw/janus/internal/httpapi"
 	"github.com/ruanbw/janus/internal/store"
+	"github.com/ruanbw/janus/internal/visitqueue"
 )
 
 func main() {
@@ -58,7 +59,33 @@ func main() {
 		log.Fatalf("init superadmin: %v", err)
 	}
 
-	app := httpapi.New(httpapi.Deps{Store: st, Cfg: cfg, MetricsToken: cfg.MetricsToken})
+	// 访问明细写入器:默认关闭(同步逐行 INSERT)。
+	// 开启时用一个有界队列批量落库,跳转响应不再等待 INSERT;停机顺序必须是
+	// 先停 HTTP(不再有新访问)→ 再 Close(排空队列)→ 最后停 worker。
+	var visitWriter *visitqueue.Writer
+	if cfg.VisitAsync {
+		visitWriter = visitqueue.New(visitqueue.Options{
+			QueueSize:     cfg.VisitQueueSize,
+			BatchSize:     cfg.VisitBatchSize,
+			FlushInterval: cfg.VisitFlushInterval,
+			Sink: func(sinkCtx context.Context, batch []store.VisitRecord) error {
+				return st.InsertVisits(sinkCtx, batch)
+			},
+			OnBatchError: func(err error, n int) {
+				// 不重试:访问明细是分析数据,批量失败时 InsertVisits 内部已逐行回退,
+				// 仍然失败的行只能丢 —— 无限重放会在大促期间把 DB 压垮。
+				log.Printf("访问明细批量写入失败(%d 条): %v", n, err)
+			},
+		})
+		log.Printf("访问明细异步写入已开启(queue=%d batch=%d flush=%v)", cfg.VisitQueueSize, cfg.VisitBatchSize, cfg.VisitFlushInterval)
+	}
+
+	app := httpapi.New(httpapi.Deps{
+		Store:        st,
+		Cfg:          cfg,
+		MetricsToken: cfg.MetricsToken,
+		VisitWriter:  visitWriter,
+	})
 
 	// 后台任务:DNS 重试、证书预签发探活、访问/会话清理。
 	// Shutdown 后显式 cancel 并等待 worker 退出,避免进程退出时后台任务仍在写库。
@@ -100,6 +127,16 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("http shutdown: %v", err)
 	}
+	// HTTP 已停,不会再有新的访问明细进队列:此时排空。
+	// 用独立 ctx:上一个 shutdownCtx 可能已经到期,拿它 Close 会把待写明细丢掉。
+	if visitWriter != nil {
+		flushCtx, flushCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := visitWriter.Close(flushCtx); err != nil {
+			log.Printf("访问明细队列排空超时: %v", err)
+		}
+		flushCancel()
+	}
+
 	workerCancel()
 	select {
 	case <-workerDone:

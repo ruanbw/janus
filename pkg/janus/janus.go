@@ -22,6 +22,7 @@ import (
 	"github.com/ruanbw/janus/internal/domain"
 	"github.com/ruanbw/janus/internal/httpapi"
 	"github.com/ruanbw/janus/internal/store"
+	"github.com/ruanbw/janus/internal/visitqueue"
 	"github.com/ruanbw/janus/pkg/event"
 )
 
@@ -270,6 +271,7 @@ type App struct {
 	protectedRouteInjects []func(rg *gin.RouterGroup)
 	extraFS               fs.FS
 	workerDone            chan struct{}
+	visitWriter           *visitqueue.Writer
 	cancelRun             context.CancelFunc
 	eventSubs             []eventSubscription
 	dbOwned               bool // gdb 是否由本实例(经 bootstrapDatabase)自建
@@ -386,11 +388,25 @@ func (a *App) initHandler() error {
 
 	// 若提供了 Store 则组装完整业务路由，否则保持轻量基础路由（支持无 DB 测试与自定义路由注入）
 	if a.store != nil {
+		// 访问明细写入器:仅当显式开启时创建。生命周期挂在 App 上,
+		// Shutdown 里先停 HTTP 再排空队列(关闭顺序见 Shutdown)。
+		if a.cfg.VisitAsync && a.visitWriter == nil {
+			st := a.store
+			a.visitWriter = visitqueue.New(visitqueue.Options{
+				QueueSize:     a.cfg.VisitQueueSize,
+				BatchSize:     a.cfg.VisitBatchSize,
+				FlushInterval: a.cfg.VisitFlushInterval,
+				Sink: func(ctx context.Context, batch []store.VisitRecord) error {
+					return st.InsertVisits(ctx, batch)
+				},
+			})
+		}
 		fullHandler := httpapi.New(httpapi.Deps{
 			Store:           a.store,
 			Cfg:             a.cfg,
 			ProtectedRoutes: a.protectedRouteInjects,
 			MetricsToken:    a.cfg.MetricsToken,
+			VisitWriter:     a.visitWriter,
 		})
 		engine.NoRoute(func(c *gin.Context) {
 			fullHandler.ServeHTTP(c.Writer, c.Request)
@@ -583,6 +599,17 @@ func (a *App) Shutdown(ctx context.Context) error {
 	if a.server != nil {
 		srvErr = a.server.Shutdown(ctx)
 		a.server = nil
+	}
+
+	// HTTP 已停:排空访问明细队列。用独立 ctx,因为调用方传进来的 ctx 可能已经到期,
+	// 拿它 Close 会把队列里待写的明细丢掉。
+	if a.visitWriter != nil {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := a.visitWriter.Close(flushCtx); err != nil && srvErr == nil {
+			srvErr = err
+		}
+		cancel()
+		a.visitWriter = nil
 	}
 
 	if a.workerDone != nil {
