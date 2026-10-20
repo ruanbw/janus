@@ -7,6 +7,12 @@
         <AppButton size="sm" variant="outline" :loading="loading" title="刷新访问明细" @click="loadData">
           刷新
         </AppButton>
+        <!-- 导出「当前页」而不是全部匹配项:与列表页同一口径(按钮文案里直说本页),
+             避免用户以为拿到的是整个筛选结果集。 -->
+        <AppButton size="sm" variant="outline" :disabled="rows.length === 0" @click="exportCsv">
+          <template #icon><FileDown :size="13" /></template>
+          导出本页 CSV
+        </AppButton>
         <AppButton size="sm" variant="outline" @click="goBack">
           <template #icon><ArrowLeft :size="13" /></template>
           返回列表
@@ -648,7 +654,7 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useDebounceFn } from '@vueuse/core';
 import { useRoute, useRouter } from 'vue-router';
-import { ArrowLeft, Copy, FlaskConical, Info, MousePointerClick, RefreshCw, Search, X } from '@lucide/vue';
+import { ArrowLeft, Copy, FileDown, FlaskConical, Info, MousePointerClick, RefreshCw, Search, X } from '@lucide/vue';
 
 import { getLink } from '@/api/links';
 import { listVisits } from '@/api/visits';
@@ -660,9 +666,11 @@ import AppResult from '@/components/app/AppResult.vue';
 import AppSpin from '@/components/app/AppSpin.vue';
 import AppTooltip from '@/components/app/AppTooltip.vue';
 import { ApiError } from '@/types/api';
+import { downloadCsv } from '@/utils/csv';
 import type { Link, OverviewRange, Rule, RuleAction, RuleCondition, Visit, VisitAction, VisitOutcome, VisitReason } from '@/types/api';
 import type { TableColumn } from '@/components/app/types';
 import type { TagColor } from '@/components/app/AppTag.vue';
+import dayjs from 'dayjs';
 import { formatClock, formatCountry, formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 import { getDeviceTagColor, parseUserAgent } from '@/utils/userAgent';
@@ -1221,6 +1229,56 @@ function replayDiffers(row: VisitRow): boolean {
   const replay = traceStateOf(row.visit.id).trace;
   if (!replay) return false;
   return (replay.matched?.id ?? null) !== row.visit.ruleId;
+}
+
+/**
+ * 导出当前页的访问明细。
+ *
+ * 列的口径与页面一致:时间给完整年月日时分秒(CSV 里不存在「悬停看完整值」),
+ * 失败原因用与表格相同的文案(含命中规则名),而不是原始 reason 码 ——
+ * 拿到文件的人不一定有后台可对照。
+ */
+function exportCsv() {
+  const headers = [
+    '访问时间',
+    '访客 IP',
+    '国家/地区',
+    '语言',
+    '设备类型',
+    '设备型号',
+    '操作系统',
+    '浏览器',
+    '动作',
+    '结果',
+    '失败原因',
+    '目标地址',
+    '来源页',
+    '完整 User-Agent',
+  ];
+
+  const rows = filteredRows.value.map((row) => [
+    formatDateTime(row.visit.createdAt),
+    row.visit.ip || '',
+    row.country,
+    row.visit.lang || '',
+    row.hasUa ? row.parsedUa.deviceType : '未知设备',
+    row.hasUa ? row.parsedUa.deviceModel : '',
+    row.hasUa ? row.parsedUa.os : '',
+    row.hasUa ? row.parsedUa.browser : '',
+    row.action.text,
+    row.visit.outcome === 'failed' ? '失败' : '成功',
+    row.reasonText,
+    row.visit.targetUrl || '',
+    row.visit.referer || '',
+    row.visit.userAgent || '',
+  ]);
+
+  downloadCsv(
+    `visits-${link.value?.code || linkId.value}-${dayjs().format('YYYYMMDD-HHmmss')}.csv`,
+    headers,
+    rows,
+  );
+  message.success(`已导出本页 ${rows.length} 条访问明细`);
 }
 
 async function copyUa(row: VisitRow) {

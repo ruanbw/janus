@@ -30,3 +30,37 @@ export function toCsvCell(value: unknown): string {
 export function toCsvRow(cells: readonly unknown[]): string {
   return cells.map((cell) => toCsvCell(cell)).join(',');
 }
+
+/**
+ * 生成 CSV 文本(含 UTF-8 BOM)。
+ *
+ * BOM 是给 Excel 的:没有它,Excel 会按本地代码页打开,中文表头与目标 URL 全是乱码。
+ * 表头是固定字面量,保持不加引号以便阅读;数据行逐单元格转义(见 toCsvRow)。
+ */
+export function buildCsv(headers: readonly string[], rows: readonly (readonly unknown[])[]): string {
+  return '\uFEFF' + [headers.join(','), ...rows.map((row) => toCsvRow(row))].join('\n');
+}
+
+/**
+ * 触发一次文件下载。
+ *
+ * `revokeObjectURL` 必须延迟:click() 只是「开始下载」,浏览器此时还在解析 blob URL,
+ * 同步释放会让部分实现(实测 Firefox)直接取消下载。1s 足够下载器接管句柄,
+ * 又不会把页面生命周期里的 blob 长期攒着。
+ */
+export function downloadCsv(
+  filename: string,
+  headers: readonly string[],
+  rows: readonly (readonly unknown[])[],
+): void {
+  const blob = new Blob([buildCsv(headers, rows)], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), DOWNLOAD_REVOKE_DELAY_MS);
+}
+
+/** blob URL 的释放延迟(见 downloadCsv 的注释) */
+const DOWNLOAD_REVOKE_DELAY_MS = 1000;

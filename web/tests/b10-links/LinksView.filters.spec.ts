@@ -52,11 +52,17 @@ import AppSelect from '@/components/app/AppSelect.vue';
 import AppTabs from '@/components/app/AppTabs.vue';
 import LinksView from '@/views/links/LinksView.vue';
 
-/** 搜索防抖窗口(与视图里的 KEYWORD_DEBOUNCE_MS 对齐,留出调度余量) */
-const DEBOUNCE_WAIT_MS = 350;
+/**
+ * 搜索防抖窗口(与视图里的 KEYWORD_DEBOUNCE_MS 对齐)。
+ *
+ * 等待不用固定 sleep:并行跑整个测试套件时,一次 flushPromises 都可能被调度
+ * 饿到几百毫秒外,固定 sleep 会让「防抖合并请求」这类断言偶发失败(实测出现过)。
+ * 改用 vi.waitFor 轮询断言条件 —— 慢机器上它只是多等一会儿,不会误判。
+ */
+const DEBOUNCE_WAIT_MS = 300;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+async function waitFor(assertion: () => void, timeout = 8000): Promise<void> {
+  await vi.waitFor(assertion, { timeout, interval: 25 });
 }
 
 function linkOf(code: string, id: number): Link {
@@ -124,14 +130,13 @@ describe('LinksView 筛选下推', () => {
     expect(linksApi.listLinks).toHaveBeenLastCalledWith({ page: 1, pageSize: 20 });
 
     await searchInput(wrapper).setValue('promo');
-    await sleep(DEBOUNCE_WAIT_MS);
-    await flushPromises();
-
-    expect(linksApi.listLinks).toHaveBeenLastCalledWith({
-      page: 1,
-      pageSize: 20,
-      keyword: 'promo',
-    });
+    await waitFor(() =>
+      expect(linksApi.listLinks).toHaveBeenLastCalledWith({
+        page: 1,
+        pageSize: 20,
+        keyword: 'promo',
+      }),
+    );
     // 防抖期间 v-model 不能把输入框回写成旧值,否则用户会看到字被吞掉
     expect((searchInput(wrapper).element as HTMLInputElement).value).toBe('promo');
 
@@ -139,21 +144,30 @@ describe('LinksView 筛选下推', () => {
   });
 
   it('Given 连续输入, When 防抖窗口结束, Then 只发一次带最终关键词的请求', async () => {
-    const wrapper = mountView();
-    await flushPromises();
-    const baseline = linksApi.listLinks.mock.calls.length;
+    // 假时钟:这条断言依赖「三次输入都落在同一个防抖窗口内」,
+    // 真时钟下并行跑测试时一次 flush 就可能是几百毫秒,窗口会被意外切开。
+    vi.useFakeTimers();
+    try {
+      const wrapper = mountView();
+      await flushPromises();
+      const baseline = linksApi.listLinks.mock.calls.length;
 
-    await searchInput(wrapper).setValue('p');
-    await searchInput(wrapper).setValue('pr');
-    await searchInput(wrapper).setValue('pro');
-    await sleep(DEBOUNCE_WAIT_MS);
-    await flushPromises();
+      await searchInput(wrapper).setValue('p');
+      await searchInput(wrapper).setValue('pr');
+      await searchInput(wrapper).setValue('pro');
+      // 三次输入之间只推进微任务,不推进定时器 → 防抖窗口不可能被切开
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(DEBOUNCE_WAIT_MS + 50);
+      await flushPromises();
 
-    const added = linksApi.listLinks.mock.calls.slice(baseline);
-    expect(added, '逐字符发请求会把列表刷新成"打字机"').toHaveLength(1);
-    expect(added[0]![0]).toEqual({ page: 1, pageSize: 20, keyword: 'pro' });
+      const added = linksApi.listLinks.mock.calls.slice(baseline);
+      expect(added, '逐字符发请求会把列表刷新成"打字机"').toHaveLength(1);
+      expect(added[0]![0]).toEqual({ page: 1, pageSize: 20, keyword: 'pro' });
 
-    wrapper.unmount();
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('Given 选择类型筛选, Then 请求带 type', async () => {
@@ -196,10 +210,7 @@ describe('LinksView 筛选下推', () => {
     expect(wrapper.text()).toContain('1 / 2');
 
     await searchInput(wrapper).setValue('promo');
-    await sleep(DEBOUNCE_WAIT_MS);
-    await flushPromises();
-
-    expect(wrapper.text()).toContain('共 3 条短链');
+    await waitFor(() => expect(wrapper.text()).toContain('共 3 条短链'));
     expect(wrapper.text()).toContain('1 / 1');
 
     wrapper.unmount();
@@ -215,11 +226,8 @@ describe('LinksView 筛选下推', () => {
 
     linksApi.listDeletedLinks.mockResolvedValue({ items: [], total: 0 });
     await wrapper.get('input[aria-label="搜索已删除的短链"]').setValue('old');
-    await sleep(DEBOUNCE_WAIT_MS);
-    await flushPromises();
-
     // 回收站只下发关键词:类型/状态对已删除记录只是历史快照
-    expect(linksApi.listDeletedLinks).toHaveBeenLastCalledWith(1, 20, 'old');
+    await waitFor(() => expect(linksApi.listDeletedLinks).toHaveBeenLastCalledWith(1, 20, 'old'));
 
     wrapper.unmount();
   });
@@ -232,11 +240,10 @@ describe('LinksView 筛选下推', () => {
     // 不等防抖:立刻点「清空过滤」不适用(按钮此时还没出现),这里直接清空输入框,
     // 模拟用户在防抖窗口内反悔
     await searchInput(wrapper).setValue('');
-    await sleep(DEBOUNCE_WAIT_MS);
-    await flushPromises();
-
     // 最终条件必须是无筛选,而不是被那次已作废的输入重新加上 keyword
-    expect(linksApi.listLinks).toHaveBeenLastCalledWith({ page: 1, pageSize: 20 });
+    await waitFor(() =>
+      expect(linksApi.listLinks).toHaveBeenLastCalledWith({ page: 1, pageSize: 20 }),
+    );
 
     wrapper.unmount();
   });

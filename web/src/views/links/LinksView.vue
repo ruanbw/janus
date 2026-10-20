@@ -593,7 +593,7 @@ import type { LinkStatusFilter, LinkTypeFilter } from '@/composables/useLinkList
 
 import { ApiError } from '@/types/api';
 import type { Domain, Link, LinkStatus, LinkType } from '@/types/api';
-import { toCsvRow } from '@/utils/csv';
+import { downloadCsv } from '@/utils/csv';
 import { formatDateTime } from '@/utils/format';
 import { message } from '@/utils/toast';
 
@@ -1194,20 +1194,8 @@ function exportCsv() {
     formatDateTime(l.createdAt),
   ]);
 
-  // 逐单元格转义并做公式注入防护:短码/目标 URL 由租户输入控制,
-  // 直接拼接的话 `=HYPERLINK(...)` 这类内容会在打开表格的同事机器上被 Excel 求值。
-  // 表头是固定字面量,保持原样不加引号。
-  const csvContent = [headers.join(','), ...rows.map((r) => toCsvRow(r))].join('\n');
-
-  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `links-export-${dayjs().format('YYYYMMDD-HHmmss')}.csv`;
-  a.click();
-  // click 后同步 revoke 会在下载真正开始前撤销 blob URL，部分浏览器(Firefox)
-  // 会因此取消下载；延迟释放，给下载器留出接管 URL 的时间。
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  // 转义、BOM 与 blob 生命周期统一由 utils/csv 负责（访问明细导出用的是同一份）
+  downloadCsv(`links-export-${dayjs().format('YYYYMMDD-HHmmss')}.csv`, headers, rows);
   // 导出的是**当前页**的筛选结果,不是全部匹配项:文案必须说清楚,
   // 否则用户会以为拿到的是整个结果集
   message.success(`已导出本页 ${rows.length} 条短链记录`);

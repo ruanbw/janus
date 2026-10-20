@@ -96,9 +96,9 @@ function batchBar(wrapper: ReturnType<typeof mountView>) {
   return wrapper.find('[data-od-id="link-batch-bar"]');
 }
 
-/** 搜索是防抖下发的(300ms)，等待窗口过去再断言 */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/** 搜索是防抖下发的：用条件轮询代替固定 sleep(并行跑套件时 sleep 会被调度饿到很晚) */
+async function waitFor(assertion: () => void, timeout = 8000): Promise<void> {
+  await vi.waitFor(assertion, { timeout, interval: 25 });
 }
 
 beforeEach(() => {
@@ -116,20 +116,19 @@ describe('LinksView 批量选择的可见性', () => {
     const wrapper = mountView();
     await flushPromises();
 
-      await selectRow(wrapper, 'abc123');
+    await selectRow(wrapper, 'abc123');
     expect(batchBar(wrapper).exists(), '勾选后应出现批量操作条').toBe(true);
     expect(batchBar(wrapper).text()).toContain('已选');
 
     // 关键字只匹配另外两条：abc123 被筛掉后就不该还留在选择里
     await wrapper.get('input[aria-label="搜索短链"]').setValue('def456');
-    await sleep(350);
-    await flushPromises();
-
-    expect(batchBar(wrapper).exists(), '被筛掉的行不能再被批量删除').toBe(false);
+    await waitFor(() =>
+      expect(batchBar(wrapper).exists(), '被筛掉的行不能再被批量删除').toBe(false),
+    );
     expect(linksApi.batchDeleteLinks).not.toHaveBeenCalled();
 
     wrapper.unmount();
-  });
+  }, 15000);
 
   it('Given 勾选了一条短链, When 刷新列表, Then 选择清空(不会用陈旧 id 批量删除)', async () => {
     const wrapper = mountView();

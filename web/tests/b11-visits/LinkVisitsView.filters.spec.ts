@@ -101,9 +101,13 @@ function mountView() {
   });
 }
 
-/** 搜索是防抖下发的（300ms），等待窗口过去再断言 */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * 搜索是防抖下发的（300ms）。这里用条件轮询而不是固定 sleep:
+ * 并行跑整个测试套件时,一次 flushPromises 都可能被调度饿到几百毫秒外,
+ * 固定 sleep 会让「只发一次请求」这类断言偶发失败(实测出现过)。
+ */
+async function waitFor(assertion: () => void, timeout = 8000): Promise<void> {
+  await vi.waitFor(assertion, { timeout, interval: 25 });
 }
 
 function searchInput(wrapper: ReturnType<typeof mountView>) {
@@ -249,14 +253,13 @@ describe('LinkVisitsView 关键词搜索', () => {
     expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, { page: 1, pageSize: 20 });
 
     await searchInput(wrapper).setValue('203.0.113');
-    await sleep(350);
-    await flushPromises();
-
-    expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, {
-      page: 1,
-      pageSize: 20,
-      keyword: '203.0.113',
-    });
+    await waitFor(() =>
+      expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, {
+        page: 1,
+        pageSize: 20,
+        keyword: '203.0.113',
+      }),
+    );
     // 防抖期间 v-model 不能把输入框回写成旧值,否则用户会看到字被吞掉
     expect((searchInput(wrapper).element as HTMLInputElement).value).toBe('203.0.113');
 
@@ -264,21 +267,29 @@ describe('LinkVisitsView 关键词搜索', () => {
   });
 
   it('Given 连续输入, When 防抖结束, Then 只发一次带最终关键词的请求', async () => {
-    const wrapper = mountView();
-    await flushPromises();
-    const baseline = visitsApi.listVisits.mock.calls.length;
+    // 假时钟:这条断言依赖「三次输入落在同一防抖窗口内」,真时钟在并行跑套件时
+    // 随时可能被切开(实测曾因此偶发失败)
+    vi.useFakeTimers();
+    try {
+      const wrapper = mountView();
+      await flushPromises();
+      const baseline = visitsApi.listVisits.mock.calls.length;
 
-    await searchInput(wrapper).setValue('2');
-    await searchInput(wrapper).setValue('20');
-    await searchInput(wrapper).setValue('203');
-    await sleep(350);
-    await flushPromises();
+      await searchInput(wrapper).setValue('2');
+      await searchInput(wrapper).setValue('20');
+      await searchInput(wrapper).setValue('203');
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(350);
+      await flushPromises();
 
-    const added = visitsApi.listVisits.mock.calls.slice(baseline);
-    expect(added, '逐字符发请求会让明细列表抖成"打字机"').toHaveLength(1);
-    expect(added[0]![1]).toEqual({ page: 1, pageSize: 20, keyword: '203' });
+      const added = visitsApi.listVisits.mock.calls.slice(baseline);
+      expect(added, '逐字符发请求会让明细列表抖成"打字机"').toHaveLength(1);
+      expect(added[0]![1]).toEqual({ page: 1, pageSize: 20, keyword: '203' });
 
-    wrapper.unmount();
+      wrapper.unmount();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('Given 服务端按关键词返回 total, Then 总数与分页都按筛选后的结果集', async () => {
@@ -291,10 +302,7 @@ describe('LinkVisitsView 关键词搜索', () => {
     expect(wrapper.text()).toContain('1 / 2');
 
     await searchInput(wrapper).setValue('203.0.113.9');
-    await sleep(350);
-    await flushPromises();
-
-    expect(wrapper.text()).toContain('共 3 条访问明细');
+    await waitFor(() => expect(wrapper.text()).toContain('共 3 条访问明细'));
     expect(wrapper.text()).toContain('1 / 1');
 
     wrapper.unmount();
@@ -310,10 +318,7 @@ describe('LinkVisitsView 关键词搜索', () => {
     await flushPromises();
 
     await searchInput(wrapper).setValue('zzz-not-in-row');
-    await sleep(350);
-    await flushPromises();
-
-    expect(wrapper.text()).toContain('198.51.100.7');
+    await waitFor(() => expect(wrapper.text()).toContain('198.51.100.7'));
 
     wrapper.unmount();
   });
@@ -323,13 +328,13 @@ describe('LinkVisitsView 关键词搜索', () => {
     await flushPromises();
 
     await searchInput(wrapper).setValue('203.0.113');
-    await sleep(350);
-    await flushPromises();
-    expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, {
-      page: 1,
-      pageSize: 20,
-      keyword: '203.0.113',
-    });
+    await waitFor(() =>
+      expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, {
+        page: 1,
+        pageSize: 20,
+        keyword: '203.0.113',
+      }),
+    );
 
     const clear = wrapper.findAll('button').find((btn) => btn.text() === '清空过滤');
     expect(clear, '筛选生效时应出现「清空过滤」').toBeTruthy();
@@ -403,6 +408,100 @@ describe('LinkVisitsView 时间窗口', () => {
     await flushPromises();
 
     expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, { page: 1, pageSize: 20 });
+
+    wrapper.unmount();
+  });
+});
+
+describe('LinkVisitsView 导出', () => {
+  let createObjectURL: ReturnType<typeof vi.fn>;
+  let anchorClick: ReturnType<typeof vi.spyOn>;
+  let originalCreate: typeof URL.createObjectURL;
+  let originalBlob: typeof Blob;
+  let blobParts: BlobPart[] = [];
+
+  beforeEach(() => {
+    blobParts = [];
+    createObjectURL = vi.fn(() => 'blob:mock-url');
+    originalCreate = URL.createObjectURL;
+    URL.createObjectURL = createObjectURL as unknown as typeof URL.createObjectURL;
+    anchorClick = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const RealBlob = globalThis.Blob;
+    originalBlob = globalThis.Blob;
+    globalThis.Blob = class extends RealBlob {
+      constructor(parts: BlobPart[] = [], options?: BlobPropertyBag) {
+        super(parts, options);
+        blobParts = parts;
+      }
+    } as typeof Blob;
+  });
+
+  afterEach(() => {
+    URL.createObjectURL = originalCreate;
+    globalThis.Blob = originalBlob;
+    anchorClick.mockRestore();
+  });
+
+  function csvText(): string {
+    return blobParts.map((part) => String(part)).join('');
+  }
+
+  it('Given 有明细, When 点导出, Then 文件名含短码且表头是访问明细的列', async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    const exportBtn = wrapper.findAll('button').find((b) => /导出本页 CSV/.test(b.text()));
+    expect(exportBtn, '页头应有导出按钮').toBeTruthy();
+    await exportBtn!.trigger('click');
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(anchorClick).toHaveBeenCalledTimes(1);
+
+    const text = csvText();
+    expect(text.startsWith('\uFEFF'), '缺 BOM 时 Excel 打开中文是乱码').toBe(true);
+    for (const col of ['访问时间', '访客 IP', '失败原因', '完整 User-Agent']) {
+      expect(text).toContain(col);
+    }
+    // 数据行:失败原因用界面文案而不是原始 reason 码
+    expect(text).toContain('无可用目标');
+
+    wrapper.unmount();
+  });
+
+  it('Given 当前页没有明细, Then 导出按钮禁用（不产出空文件）', async () => {
+    visitsApi.listVisits.mockResolvedValue({ items: [], total: 0 });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const exportBtn = wrapper.findAll('button').find((b) => /导出本页 CSV/.test(b.text()));
+    expect(exportBtn?.attributes('disabled'), '空列表时不该允许导出').toBeDefined();
+    expect(createObjectURL).not.toHaveBeenCalled();
+
+    wrapper.unmount();
+  });
+
+  it('Given 设备类型在本页被过滤, Then 导出的是过滤后的行（与屏幕一致）', async () => {
+    visitsApi.listVisits.mockResolvedValue({
+      items: [
+        visitOf({ id: 1, ip: '198.51.100.1', userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)' }),
+        visitOf({ id: 2, ip: '198.51.100.2', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }),
+      ],
+      total: 2,
+    });
+    const wrapper = mountView();
+    await flushPromises();
+
+    const mobileBtn = wrapper.findAll('button').find((b) => b.text() === '移动端');
+    expect(mobileBtn, '工具栏应有设备筛选项').toBeTruthy();
+    await mobileBtn!.trigger('click');
+    await flushPromises();
+
+    const exportBtn = wrapper.findAll('button').find((b) => /导出本页 CSV/.test(b.text()));
+    await exportBtn!.trigger('click');
+
+    const text = csvText();
+    expect(text).toContain('198.51.100.1');
+    expect(text).not.toContain('198.51.100.2');
 
     wrapper.unmount();
   });
