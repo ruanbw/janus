@@ -503,7 +503,7 @@
         <AppFormItem
           label="短链行列表"
           name="batchInput"
-          extra="每行一条，短码与 URL 用空格分隔；若只有 URL 则由后端自动生成短码"
+          extra="每行一条，短码与 URL 用空格（或逗号、制表符）分隔；省略协议按 https 处理；若只有 URL 则由后端自动生成短码"
         >
           <AppTextarea
             v-model="batchText"
@@ -512,10 +512,55 @@
             placeholder="deal-a https://example.com/target-a&#10;deal-b https://example.com/target-b&#10;https://example.com/target-c"
           />
         </AppFormItem>
+
+        <!-- 解析结果:导入前就把「哪几行有问题」摊开,而不是让用户导完再看失败数 -->
+        <div v-if="batchItems.length > 0" class="space-y-2" data-od-id="batch-parse-preview">
+          <div class="flex flex-wrap items-center gap-2 text-xs">
+            <AppTag color="ok">可导入 {{ batchValidCount }} 条</AppTag>
+            <AppTag v-if="batchInvalidCount > 0" color="err">有误 {{ batchInvalidCount }} 条</AppTag>
+            <span v-if="batchOverLimit" class="text-err">
+              超过单次上限 {{ MAX_BATCH_LINES }} 行，请分批导入
+            </span>
+          </div>
+
+          <ul v-if="batchInvalidCount > 0" class="space-y-1 rounded-lg border border-err/40 bg-err/5 p-2.5">
+            <li
+              v-for="item in batchInvalidPreview"
+              :key="item.lineNo"
+              class="flex gap-2 text-xs leading-relaxed"
+            >
+              <span class="shrink-0 font-mono text-ink-faint">第 {{ item.lineNo }} 行</span>
+              <span class="min-w-0 flex-1 text-err">{{ item.reason }}</span>
+              <span class="mono min-w-0 max-w-[38%] truncate text-ink-soft" :title="item.line">
+                {{ item.line }}
+              </span>
+            </li>
+            <li v-if="batchInvalidCount > batchInvalidPreview.length" class="text-xs text-ink-faint">
+              还有 {{ batchInvalidCount - batchInvalidPreview.length }} 行未列出…
+            </li>
+          </ul>
+        </div>
+
+        <!-- 导入进度:串行 POST 可能跑几十秒,必须让用户看到走到第几条 -->
+        <div v-if="batchImporting" class="space-y-1.5" data-od-id="batch-progress">
+          <div class="flex items-center justify-between text-xs text-ink-soft">
+            <span>正在导入 {{ batchProgress.done }} / {{ batchProgress.total }}</span>
+            <span class="font-mono">
+              成功 {{ batchProgress.success }} · 失败 {{ batchProgress.failed }}
+            </span>
+          </div>
+          <AppProgress
+            :percent="batchProgress.total === 0 ? 0 : Math.round((batchProgress.done / batchProgress.total) * 100)"
+            :show-info="false"
+          />
+        </div>
       </div>
 
       <template #footer>
-        <span class="mr-auto text-xs text-ink-soft">有效行数：{{ parsedBatchLinesCount }}</span>
+        <span class="mr-auto text-xs text-ink-soft">
+          有效行数：{{ batchValidCount }}
+          <template v-if="batchInvalidCount > 0">（{{ batchInvalidCount }} 行将被跳过）</template>
+        </span>
         <AppButton
           size="sm"
           variant="outline"
@@ -537,7 +582,7 @@
         <AppButton
           size="sm"
           type="primary"
-          :disabled="batchImporting || parsedBatchLinesCount === 0"
+          :disabled="batchImporting || !canStartBatchImport"
           @click="executeBatchImport"
         >
           {{ batchImporting ? '导入中...' : '开始导入' }}
@@ -588,6 +633,8 @@ import PageHeader from '@/components/PageHeader.vue';
 import type { TableColumn } from '@/components/app/types';
 import { confirm } from '@/components/app/confirm';
 
+import { parseBatchLines } from '@/views/links/batchImport';
+import type { BatchImportItem } from '@/views/links/batchImport';
 import { useLinkListQuery } from '@/composables/useLinkListQuery';
 import type { LinkStatusFilter, LinkTypeFilter } from '@/composables/useLinkListQuery';
 
@@ -926,12 +973,31 @@ const batchImporting = ref(false);
  */
 let batchAbortRequested = false;
 
-const parsedBatchLinesCount = computed(() => {
-  return batchText.value
-    .split('\n')
-    .map((s) => s.trim())
-    .filter(Boolean).length;
-});
+/** 单次导入的行数上限：串行 POST 每条约 100ms，再多用户只会盯着一个不动的进度条 */
+const MAX_BATCH_LINES = 500;
+/** 错误清单最多展示几条:再多就盖住表单本身 */
+const BATCH_INVALID_PREVIEW = 5;
+
+/** 全量解析结果(合法 + 不合法) */
+const batchItems = computed(() => parseBatchLines(batchText.value));
+const batchValidItems = computed(() =>
+  batchItems.value.filter((item): item is Extract<BatchImportItem, { ok: true }> => item.ok),
+);
+const batchInvalidItems = computed(() =>
+  batchItems.value.filter((item): item is Extract<BatchImportItem, { ok: false }> => !item.ok),
+);
+const batchValidCount = computed(() => batchValidItems.value.length);
+const batchInvalidCount = computed(() => batchInvalidItems.value.length);
+const batchInvalidPreview = computed(() => batchInvalidItems.value.slice(0, BATCH_INVALID_PREVIEW));
+const batchOverLimit = computed(
+  () => batchValidItems.value.length > MAX_BATCH_LINES,
+);
+const canStartBatchImport = computed(
+  () => batchValidCount.value > 0 && !batchOverLimit.value,
+);
+
+/** 导入进度(串行 POST 期间逐条更新) */
+const batchProgress = reactive({ done: 0, total: 0, success: 0, failed: 0 });
 
 const batchDomainOptions = computed(() =>
   domains.value.map((d) => ({
@@ -1243,87 +1309,78 @@ function openBatchModal() {
 }
 
 async function executeBatchImport() {
-  const lines = batchText.value
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean);
-
-  if (lines.length === 0) return;
+  // 只提交解析通过的条目:有问题的行在模态框里已经逐行列出,
+  // 不再"先发请求再失败",那样用户只能在 toast 里看到最后一条错误。
+  const items = batchValidItems.value;
+  if (items.length === 0) return;
+  if (batchOverLimit.value) {
+    message.error(`单次最多导入 ${MAX_BATCH_LINES} 行，请分批导入`);
+    return;
+  }
   if (!batchDomainId.value) {
     message.error('请选择承载域名');
     return;
   }
+  const domainId = batchDomainId.value;
 
   batchImporting.value = true;
   batchAbortRequested = false;
-  let successCount = 0;
-  let failCount = 0;
+  batchProgress.done = 0;
+  batchProgress.total = items.length;
+  batchProgress.success = 0;
+  batchProgress.failed = 0;
   const errors: string[] = [];
 
-  for (const line of lines) {
+  for (const item of items) {
     // 每轮开头检查,而不是 await 之后:用户点中止时应当立刻停,
     // 不该再发出下一次写入请求。
     if (batchAbortRequested) break;
-    const parts = line.split(/[\s,]+/).filter(Boolean);
-    let code: string | undefined = undefined;
-    let url = '';
-    if (parts.length >= 2) {
-      code = parts[0];
-      url = parts[1];
-    } else if (parts.length === 1) {
-      url = parts[0];
-    }
-
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
-    }
-
-    try {
-      new URL(url);
-    } catch {
-      failCount++;
-      errors.push(`URL 非法: ${url}`);
-      continue;
-    }
 
     try {
       await createLink({
-        code: code || undefined,
-        targetUrls: [url],
-        domainIds: [batchDomainId.value],
+        code: item.code,
+        targetUrls: [item.url],
+        domainIds: [domainId],
         redirectStatus: '302',
         linkType: 'redirect',
       });
-      successCount++;
+      batchProgress.success += 1;
     } catch (err) {
-      failCount++;
+      batchProgress.failed += 1;
       if (err instanceof ApiError) {
-        errors.push(`${code || url}: ${err.message}`);
+        errors.push(`第 ${item.lineNo} 行 ${item.code || item.url}: ${err.message}`);
       }
+    } finally {
+      batchProgress.done += 1;
     }
   }
 
+  const { success, failed, done } = { ...batchProgress };
+  const aborted = batchAbortRequested;
   batchImporting.value = false;
+  batchAbortRequested = false;
   showBatchModal.value = false;
   batchText.value = '';
-  batchAbortRequested = false;
 
-  if (batchAbortRequested) {
+  if (aborted) {
     // 中止时如实报告已经发出去的部分,而不是当作没发生过:否则用户不知道到底
     // 入库了多少条、要不要重新整理清单去重。
-    message.warning(
-      `导入已中止：已完成 ${successCount} 条${failCount > 0 ? `，失败 ${failCount} 条` : ''}`,
-    );
-    if (successCount > 0) await loadData();
+    message.warning(`导入已中止：已处理 ${done} 行，成功 ${success} 条${failed > 0 ? `，失败 ${failed} 条` : ''}`);
+    if (success > 0) await loadData();
     return;
   }
 
-  if (successCount > 0) {
-    message.success(`成功导入 ${successCount} 条短链${failCount > 0 ? `，失败 ${failCount} 条` : ''}`);
+  if (success > 0) {
+    message.success(`成功导入 ${success} 条短链${failed > 0 ? `，失败 ${failed} 条` : ''}`);
     await loadData();
-  } else {
-    message.error(`导入失败：全部 ${failCount} 条均未成功 (${errors[0] || '未知错误'})`);
+    // 有失败行时别把错误藏进一条会消失的 toast:改成信息级提示,让用户去查
+    if (failed > 0) {
+      message.info(errors[0] ?? '部分行导入失败，请检查短码是否已被占用');
+    }
+    return;
   }
+
+  message.error(`导入失败：全部 ${failed} 行均未成功 (${errors[0] || '未知错误'})`);
 }
 
 // ==================== 键盘事件与路由监听 ====================
