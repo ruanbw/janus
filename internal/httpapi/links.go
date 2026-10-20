@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -489,10 +488,6 @@ func (a *API) handleListLinks(c *gin.Context) {
 	writeJSON(c, http.StatusOK, map[string]any{"items": items, "total": total})
 }
 
-// maxLinkKeywordLength 短链搜索关键词的长度上限。
-// 上限不是为了省索引(ILIKE 本来就扫),而是防止把一整页文本当关键词发过来。
-const maxLinkKeywordLength = 100
-
 // parseLinkListFilter 解析短链列表的筛选参数。
 //
 // 值域以外的取值一律 400,与 handleListVisits 的 action/outcome 同一口径:
@@ -502,10 +497,11 @@ const maxLinkKeywordLength = 100
 func parseLinkListFilter(q url.Values) (store.LinkListFilter, error) {
 	var f store.LinkListFilter
 
-	f.Keyword = strings.TrimSpace(q.Get("keyword"))
-	if utf8.RuneCountInString(f.Keyword) > maxLinkKeywordLength {
-		return f, fmt.Errorf("keyword 过长(最多 %d 个字符)", maxLinkKeywordLength)
+	keyword, err := parseKeyword(q)
+	if err != nil {
+		return f, err
 	}
+	f.Keyword = keyword
 
 	switch v := q.Get("type"); v {
 	case "":
@@ -1013,13 +1009,20 @@ func (a *API) handleListVisits(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, "outcome 必须为 success / failed")
 		return
 	}
+	// keyword 可选:在 IP / User-Agent / 来源页 / 目标地址里做包含匹配。
+	// 下推到 SQL 才能在全部历史里找那一次访问,而不是只搜当前页。
+	keyword, err := parseKeyword(c.Request.URL.Query())
+	if err != nil {
+		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
+		return
+	}
 	page, pageSize, err := parsePageParams(c)
 	if err != nil {
 		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
 		return
 	}
 	items, total, err := a.store.ListVisitsByLinkFiltered(c.Request.Context(), id,
-		store.VisitFilter{Action: action, Outcome: outcome}, page, pageSize)
+		store.VisitFilter{Action: action, Outcome: outcome, Keyword: keyword}, page, pageSize)
 	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return

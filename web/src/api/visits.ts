@@ -17,6 +17,11 @@ export interface VisitListQuery {
   action?: VisitAction;
   /** 按结果过滤:success 成功 / failed 失败;省略=不过滤 */
   outcome?: VisitOutcome;
+  /**
+   * 关键词:服务端在 IP / User-Agent / 来源页 / 目标地址里做包含匹配。
+   * 省略=不过滤。列表在 SQL 侧过滤,total 与分页都是筛选后的结果集。
+   */
+  keyword?: string;
 }
 
 /** 某条短链的访问列表(时间、UA、来源、动作与结果) */

@@ -50,9 +50,8 @@
           </div>
 
           <!-- 工具栏:设备类型筛选 / 只看失败 / 关键词。
-               「只看失败」走服务端 outcome 过滤:它改变的是「哪些记录存在」,
-               必须影响总数与分页;设备与关键词无法下发(后端不解析 UA / 不做全文搜索),
-               仍是当前页内的前端过滤。 -->
+               「只看失败」与关键词都走服务端过滤(影响总数与分页);
+               设备类型必须解析 UA,后端没有这份数据,只能在当前页内过滤。 -->
           <div class="flex flex-wrap items-center gap-3 px-4 py-3">
             <div
               role="group"
@@ -84,7 +83,7 @@
             </div>
 
             <AppInput
-              v-model="keyword"
+              v-model="keywordInput"
               allow-clear
               class="min-w-[200px] grow"
               placeholder="搜索 IP、UA、来源或目标…"
@@ -93,13 +92,13 @@
               <template #prefix><Search :size="14" /></template>
             </AppInput>
 
-            <AppButton v-if="hasLocalFilter" size="sm" variant="ghost" class="text-ink-soft" @click="resetLocalFilters">
+            <AppButton v-if="hasAnyFilter" size="sm" variant="ghost" class="text-ink-soft" @click="resetFilters">
               <template #icon><X :size="13" /></template>
               清空过滤
             </AppButton>
 
-            <span v-if="hasLocalFilter" class="text-xs text-ink-faint" data-od-id="visit-filter-scope-hint">
-              设备与关键词仅筛选当前页
+            <span v-if="hasDeviceFilter" class="text-xs text-ink-faint" data-od-id="visit-filter-scope-hint">
+              设备类型仅筛选当前页
             </span>
           </div>
 
@@ -121,17 +120,21 @@
                   <AppEmpty
                     :description="
                       rows.length === 0
-                        ? onlyFailed
-                          ? '该短链当前没有失败的访问记录'
-                          : '该短链暂无访问记录,短链被访问后明细将在此处逐条呈现'
-                        : '当前页没有符合筛选条件的记录(设备与关键词仅在当前页数据内过滤)'
+                        ? !hasAnyFilter
+                          ? '该短链暂无访问记录,短链被访问后明细将在此处逐条呈现'
+                          : onlyFailed && keywordFilter === ''
+                            ? '该短链当前没有失败的访问记录'
+                            : '没有符合当前筛选条件的访问记录'
+                        : '当前页没有符合筛选条件的记录(设备类型仅在本页数据内过滤)'
                     "
                   />
-                  <div v-if="rows.length > 0" class="flex justify-center">
-                    <AppButton size="sm" @click="resetLocalFilters">重置本地过滤</AppButton>
-                  </div>
-                  <div v-else-if="onlyFailed" class="flex justify-center">
-                    <AppButton size="sm" @click="onlyFailed = false">显示全部访问</AppButton>
+                  <!--
+                    空态也要有出口:筛选是服务端的,当前页可以一条都不剩。
+                    按钮统一清空全部条件(设备 + 关键词 + 只看失败) —— 只清其中一项时,
+                    另外一项仍会把结果集压成空,用户点了按钮却"还是什么都没有"。
+                  -->
+                  <div v-if="hasAnyFilter" class="flex justify-center">
+                    <AppButton size="sm" @click="resetFilters">清空过滤条件</AppButton>
                   </div>
                 </template>
 
@@ -247,7 +250,7 @@
             <div class="flex items-center gap-3 text-xs text-ink-soft">
               <span>共 <strong class="font-mono text-ink">{{ total }}</strong> 条访问明细</span>
               <AppTag v-if="onlyFailed" color="err">仅失败</AppTag>
-              <span v-if="hasLocalFilter">
+              <span v-if="hasDeviceFilter">
                 当前页命中
                 <strong class="font-mono text-ink">{{ filteredRows.length }}</strong> / {{ rows.length }} 条
               </span>
@@ -623,6 +626,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
+import { useDebounceFn } from '@vueuse/core';
 import { useRoute, useRouter } from 'vue-router';
 import { ArrowLeft, Copy, FlaskConical, Info, MousePointerClick, RefreshCw, Search, X } from '@lucide/vue';
 
@@ -738,9 +742,9 @@ let visitsRequestSeq = 0;
 
 /**
  * 分页与筛选统一交给 useVisitFilters：页码归 1、空筛选字段不下发这些语义
- * 只实现一次。后端 /links/:id/visits 支持 action / outcome，
- * 所以「只看失败」是服务端过滤(影响总数与分页)；设备类型与关键词后端没有
- * 对应参数(不解析 UA、不做全文搜索)，只能留在当前页内过滤(见 filteredRows)。
+ * 只实现一次。后端 /links/:id/visits 支持 action / outcome / keyword，
+ * 所以「只看失败」与搜索都是服务端过滤(影响总数与分页)；设备类型必须解析 UA，
+ * 后端没有这份数据，只能留在当前页内过滤(见 filteredRows)。
  */
 const visitFilters = useVisitFilters();
 const { page, pageSize } = visitFilters;
@@ -750,7 +754,28 @@ const rulesList = ref<Rule[]>([]);
 const rulesMap = computed(() => new Map(rulesList.value.map((r) => [r.id, r])));
 
 const deviceFilter = ref<'all' | ParsedUA['deviceType']>('all');
-const keyword = ref('');
+
+/**
+ * 关键词输入框的显示值。**不能**直接 v-model 到 filters.keyword:
+ * 搜索是防抖下发的,而 composable 的值在防抖生效前仍是旧值 ——
+ * v-model 每次输入都会用旧值回写输入框,用户会看到自己打的字被吞。
+ */
+const KEYWORD_DEBOUNCE_MS = 300;
+const keywordInput = ref(visitFilters.filters.value.keyword);
+
+/** 当前生效的关键词(服务端过滤条件) */
+const keywordFilter = computed(() => visitFilters.filters.value.keyword);
+
+const applyKeyword = useDebounceFn((value: string) => {
+  // 防抖窗口内可能发生了「清空过滤」:那次输入已经作废,不能再加回去
+  if (value !== keywordInput.value) return;
+  if (value.trim() === keywordFilter.value) return;
+  visitFilters.set({ keyword: value });
+  selectedId.value = null;
+  void loadVisits();
+}, KEYWORD_DEBOUNCE_MS);
+
+watch(keywordInput, (value) => applyKeyword(value));
 
 /**
  * 只看失败 = filters.outcome === 'failed'。
@@ -930,6 +955,7 @@ async function loadVisits() {
       pageSize: Number(params.pageSize),
       ...(params.outcome ? { outcome: params.outcome as VisitOutcome } : {}),
       ...(params.action ? { action: params.action as VisitAction } : {}),
+      ...(params.keyword ? { keyword: String(params.keyword) } : {}),
     });
     if (seq !== visitsRequestSeq) return;
     visits.value = res.items;
@@ -1015,30 +1041,34 @@ function deviceTagColor(deviceType: ParsedUA['deviceType']): TagColor {
   return getDeviceTagColor(deviceType);
 }
 
-/** 本地过滤:设备类型 + 关键词(仅限当前页)。失败筛选在服务端,不在这里。 */
+/** 本地过滤:只剩设备类型(需要解析 UA)。失败与关键词都在服务端。 */
 const filteredRows = computed<VisitRow[]>(() => {
-  const q = keyword.value.trim().toLowerCase();
-  return rows.value.filter((row) => {
-    if (deviceFilter.value !== 'all') {
-      if (!row.hasUa || row.parsedUa.deviceType !== deviceFilter.value) return false;
-    }
-    if (!q) return true;
-    return (
-      (row.visit.ip || '').toLowerCase().includes(q) ||
-      (row.visit.userAgent || '').toLowerCase().includes(q) ||
-      (row.visit.referer || '').toLowerCase().includes(q) ||
-      (row.visit.targetUrl || '').toLowerCase().includes(q)
-    );
-  });
+  if (deviceFilter.value === 'all') return rows.value;
+  return rows.value.filter(
+    (row) => row.hasUa && row.parsedUa.deviceType === deviceFilter.value,
+  );
 });
 
-const hasLocalFilter = computed(
-  () => deviceFilter.value !== 'all' || keyword.value.trim() !== '',
+const hasDeviceFilter = computed(() => deviceFilter.value !== 'all');
+
+/** 「清空过滤」的显示条件:本地设备筛选或任一服务端筛选生效 */
+const hasAnyFilter = computed(
+  () => hasDeviceFilter.value || keywordFilter.value !== '' || onlyFailed.value,
 );
 
-function resetLocalFilters() {
-  keyword.value = '';
+/**
+ * 清空全部筛选。服务端条件(关键词/失败)需要重新拉一次数据;
+ * 只清本地设备筛选时数据没变,不多打一次请求。
+ */
+function resetFilters() {
+  const hadServerFilter = keywordFilter.value !== '' || onlyFailed.value;
   deviceFilter.value = 'all';
+  keywordInput.value = '';
+  if (!hadServerFilter) return;
+
+  visitFilters.set({ keyword: '', outcome: '' });
+  selectedId.value = null;
+  void loadVisits();
 }
 
 // ==================== 分页交互 ====================

@@ -68,13 +68,13 @@ func TestParseLinkListFilterRejectsUnknownValues(t *testing.T) {
 }
 
 func TestParseLinkListFilterCapsKeywordLength(t *testing.T) {
-	long := strings.Repeat("a", maxLinkKeywordLength+1)
+	long := strings.Repeat("a", maxSearchKeywordLength+1)
 	if _, err := parseLinkListFilter(url.Values{"keyword": {long}}); err == nil {
-		t.Fatalf("超过 %d 字符的关键词应被拒绝", maxLinkKeywordLength)
+		t.Fatalf("超过 %d 字符的关键词应被拒绝", maxSearchKeywordLength)
 	}
 
 	// 边界值本身合法
-	ok := strings.Repeat("a", maxLinkKeywordLength)
+	ok := strings.Repeat("a", maxSearchKeywordLength)
 	if _, err := parseLinkListFilter(url.Values{"keyword": {ok}}); err != nil {
 		t.Fatalf("等于上限的关键词应被接受: %v", err)
 	}

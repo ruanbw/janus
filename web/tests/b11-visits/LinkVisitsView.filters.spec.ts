@@ -1,5 +1,5 @@
 /**
- * 访问明细「只看失败」的服务端过滤契约。
+ * 访问明细「只看失败」与关键词搜索的服务端过滤契约。
  *
  * 被钉住的不变式（Given-When-Then）：
  *   Given 用户在访问明细页打开「只看失败」
@@ -101,6 +101,15 @@ function mountView() {
   });
 }
 
+/** 搜索是防抖下发的（300ms），等待窗口过去再断言 */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function searchInput(wrapper: ReturnType<typeof mountView>) {
+  return wrapper.get('input[aria-label="搜索访问明细"]');
+}
+
 /** 打开 / 关闭「只看失败」开关：走真实 DOM 事件，避免绕过 AppSwitch 的 v-model */
 async function toggleOnlyFailed(wrapper: ReturnType<typeof mountView>, on: boolean): Promise<void> {
   const box = wrapper.get('[aria-label="只看失败"]');
@@ -185,7 +194,7 @@ describe('LinkVisitsView「只看失败」', () => {
     wrapper.unmount();
   });
 
-  it('Given 打开只看失败后没有任何记录, Then 空态提供「显示全部访问」并能一键清除过滤', async () => {
+  it('Given 打开只看失败后没有任何记录, Then 空态可一键清空全部过滤', async () => {
     visitsApi.listVisits.mockResolvedValue({ items: [], total: 0 });
     const wrapper = mountView();
     await flushPromises();
@@ -194,10 +203,10 @@ describe('LinkVisitsView「只看失败」', () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain('没有失败的访问记录');
-    const showAll = wrapper.findAll('button').find((btn) => btn.text() === '显示全部访问');
-    expect(showAll, '空态里要有清除过滤的入口').toBeTruthy();
+    const clear = wrapper.findAll('button').find((btn) => btn.text() === '清空过滤条件');
+    expect(clear, '空态里要有清除过滤的入口').toBeTruthy();
 
-    await showAll!.trigger('click');
+    await clear!.trigger('click');
     await flushPromises();
     expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, { page: 1, pageSize: 20 });
 
@@ -228,6 +237,107 @@ describe('LinkVisitsView「只看失败」', () => {
     await flushPromises();
     expect(wrapper.text()).not.toContain('198.51.100.9');
     expect(wrapper.text()).toContain('198.51.100.2');
+
+    wrapper.unmount();
+  });
+});
+
+describe('LinkVisitsView 关键词搜索', () => {
+  it('Given 输入关键词, When 防抖结束, Then 请求带 keyword 且输入框内容不被吞', async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, { page: 1, pageSize: 20 });
+
+    await searchInput(wrapper).setValue('203.0.113');
+    await sleep(350);
+    await flushPromises();
+
+    expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, {
+      page: 1,
+      pageSize: 20,
+      keyword: '203.0.113',
+    });
+    // 防抖期间 v-model 不能把输入框回写成旧值,否则用户会看到字被吞掉
+    expect((searchInput(wrapper).element as HTMLInputElement).value).toBe('203.0.113');
+
+    wrapper.unmount();
+  });
+
+  it('Given 连续输入, When 防抖结束, Then 只发一次带最终关键词的请求', async () => {
+    const wrapper = mountView();
+    await flushPromises();
+    const baseline = visitsApi.listVisits.mock.calls.length;
+
+    await searchInput(wrapper).setValue('2');
+    await searchInput(wrapper).setValue('20');
+    await searchInput(wrapper).setValue('203');
+    await sleep(350);
+    await flushPromises();
+
+    const added = visitsApi.listVisits.mock.calls.slice(baseline);
+    expect(added, '逐字符发请求会让明细列表抖成"打字机"').toHaveLength(1);
+    expect(added[0]![1]).toEqual({ page: 1, pageSize: 20, keyword: '203' });
+
+    wrapper.unmount();
+  });
+
+  it('Given 服务端按关键词返回 total, Then 总数与分页都按筛选后的结果集', async () => {
+    visitsApi.listVisits
+      .mockResolvedValueOnce({ items: [visitOf()], total: 40 }) // 初次:两页
+      .mockResolvedValue({ items: [visitOf({ ip: '203.0.113.9' })], total: 3 }); // 搜索后:一页
+
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('1 / 2');
+
+    await searchInput(wrapper).setValue('203.0.113.9');
+    await sleep(350);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('共 3 条访问明细');
+    expect(wrapper.text()).toContain('1 / 1');
+
+    wrapper.unmount();
+  });
+
+  it('Given 关键词搜索生效, Then 服务端返回的行不再被本地二次过滤', async () => {
+    // 服务端说匹配就用它:前端再拿关键词去匹配 IP/UA 只会把服务端认定的结果丢掉
+    visitsApi.listVisits
+      .mockResolvedValueOnce({ items: [visitOf()], total: 1 })
+      .mockResolvedValue({ items: [visitOf({ ip: '198.51.100.7' })], total: 1 });
+
+    const wrapper = mountView();
+    await flushPromises();
+
+    await searchInput(wrapper).setValue('zzz-not-in-row');
+    await sleep(350);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('198.51.100.7');
+
+    wrapper.unmount();
+  });
+
+  it('Given 关键词已生效, When 清空过滤, Then 请求回到不带 keyword 的条件', async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await searchInput(wrapper).setValue('203.0.113');
+    await sleep(350);
+    await flushPromises();
+    expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, {
+      page: 1,
+      pageSize: 20,
+      keyword: '203.0.113',
+    });
+
+    const clear = wrapper.findAll('button').find((btn) => btn.text() === '清空过滤');
+    expect(clear, '筛选生效时应出现「清空过滤」').toBeTruthy();
+    await clear!.trigger('click');
+    await flushPromises();
+
+    expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, { page: 1, pageSize: 20 });
+    expect((searchInput(wrapper).element as HTMLInputElement).value).toBe('');
 
     wrapper.unmount();
   });

@@ -314,10 +314,46 @@ func (s *Store) ListVisitsByLink(ctx context.Context, linkID int64, action strin
 type VisitFilter struct {
 	Action  string
 	Outcome string
+	// Keyword 同时匹配访客 IP、User-Agent、来源页与目标地址;空串不过滤。
+	//
+	// 这四列是操作者真正会拿来"找那一次访问"的线索:查某个 IP 的全部行为、
+	// 定位某条来源链接带来的流量、核对某个目标地址是否真的被命中。
+	Keyword string
 }
 
-// ListVisitsByLinkFiltered 按 action + outcome 过滤的分页访问列表(按时间倒序)。
-// 两个过滤值都做白名单校验,非法值返回 ErrInvalidAction / ErrInvalidOutcome。
+// applyVisitFilter 把过滤条件同时附加到 count 与明细两段查询上。
+//
+// 两段必须共用这一个函数:分开写两份条件时,任何一次改动漏掉一边,
+// 就会变成"total 说 37 条、列表只有 12 条"这种对不上账的界面。
+func applyVisitFilter(q, itemQ *gorm.DB, f VisitFilter) (*gorm.DB, *gorm.DB) {
+	if f.Action != "" {
+		q = q.Where("action = ?", f.Action)
+		itemQ = itemQ.Where("v.action = ?", f.Action)
+	}
+	if f.Outcome != "" {
+		q = q.Where("outcome = ?", f.Outcome)
+		itemQ = itemQ.Where("v.outcome = ?", f.Outcome)
+	}
+	if f.Keyword != "" {
+		pattern := likePattern(f.Keyword)
+		q = q.Where(`(
+			ip ILIKE ? ESCAPE '\'
+			OR user_agent ILIKE ? ESCAPE '\'
+			OR referer ILIKE ? ESCAPE '\'
+			OR target_url ILIKE ? ESCAPE '\'
+		)`, pattern, pattern, pattern, pattern)
+		itemQ = itemQ.Where(`(
+			v.ip ILIKE ? ESCAPE '\'
+			OR v.user_agent ILIKE ? ESCAPE '\'
+			OR v.referer ILIKE ? ESCAPE '\'
+			OR v.target_url ILIKE ? ESCAPE '\'
+		)`, pattern, pattern, pattern, pattern)
+	}
+	return q, itemQ
+}
+
+// ListVisitsByLinkFiltered 按 action + outcome + keyword 过滤的分页访问列表(按时间倒序)。
+// 两个枚举值都做白名单校验,非法值返回 ErrInvalidAction / ErrInvalidOutcome。
 //
 // count 与明细两段查询必须用同一组过滤条件,否则 total 与 items 会不一致。
 func (s *Store) ListVisitsByLinkFiltered(ctx context.Context, linkID int64, f VisitFilter, page, pageSize int) ([]*Visit, int, error) {
@@ -329,14 +365,7 @@ func (s *Store) ListVisitsByLinkFiltered(ctx context.Context, linkID int64, f Vi
 	}
 	q := s.db.WithContext(ctx).Model(&Visit{}).Where("link_id = ?", linkID)
 	itemQ := s.db.WithContext(ctx).Table("visits v").Where("v.link_id = ?", linkID)
-	if f.Action != "" {
-		q = q.Where("action = ?", f.Action)
-		itemQ = itemQ.Where("v.action = ?", f.Action)
-	}
-	if f.Outcome != "" {
-		q = q.Where("outcome = ?", f.Outcome)
-		itemQ = itemQ.Where("v.outcome = ?", f.Outcome)
-	}
+	q, itemQ = applyVisitFilter(q, itemQ, f)
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		return nil, 0, err
