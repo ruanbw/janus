@@ -8,6 +8,7 @@ web/dist/
 .scratch
 .serena/
 .pi/
+.pi-loop/
 docs/plans/
 docs/superpowers/
 plans/
