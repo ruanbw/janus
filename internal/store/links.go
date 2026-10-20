@@ -794,6 +794,7 @@ func (s *Store) LookupLinkForVisit(ctx context.Context, domainID int64, code str
 //
 // 多目标仍保留原来的**单语句** `UPDATE ... RETURNING`:轮询指针必须原子自增,
 // 读-改-写(read rr_index → 算 → 写回)会让并发下同一个目标被重复选中。
+// "按 rr_index 取值"那一步单独抽成 TargetForRR,原因见它的注释。
 // 导出签名保持不变(redirect.go / landing.go 都按它选目标)。
 func (s *Store) PickTarget(ctx context.Context, linkID int64) (string, error) {
 	targets, err := s.linkTargetURLs(ctx, linkID)
@@ -812,8 +813,26 @@ func (s *Store) PickTarget(ctx context.Context, linkID int64) (string, error) {
 		Scan(&cur).Error; err != nil {
 		return "", err
 	}
-	n := len(targets)
-	return targets[int(((cur-1)%int64(n)+int64(n))%int64(n))], nil
+	return TargetForRR(targets, cur), nil
+}
+
+// TargetForRR 按轮询指针的值在 targets 上选一个目标。
+//
+// 公式必须与 SQL 侧逐位一致:`UPDATE links SET rr_index = rr_index + 1 ... RETURNING rr_index`
+// 返回的是**自增后**的值,所以第一次轮询拿到 1、对应下标 0,即 ((rr-1)%n + n)%n。
+// 差一位不是"小偏差":每条多目标短链会稳定地少用一个目标(或反复命中同一个),
+// 投放方看到的是某个落地页永远没有量,而日志里一切正常。
+//
+// 入参 targets 只读:它将来是短链快照缓存里被多个并发跳转共享的 []string,
+// 任何就地换序都等于在没有锁的情况下写共享内存,而且会把轮询顺序永久写坏。
+// 单独抽成纯函数也是为了在内存快照上选目标,不必再查一次 link_targets。
+func TargetForRR(targets []string, rr int64) string {
+	n := int64(len(targets))
+	if n == 0 {
+		// 调用方据此判 no_target(与 PickTarget 的空列表语义一致)。
+		return ""
+	}
+	return targets[((rr-1)%n+n)%n]
 }
 
 // IncrementClicks 点击计数原子 +1(落地页按钮回传;失败由调用方决定是否阻断)。
