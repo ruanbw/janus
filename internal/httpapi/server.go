@@ -21,6 +21,7 @@ import (
 	"github.com/ruanbw/janus/internal/domain"
 	"github.com/ruanbw/janus/internal/geo"
 	"github.com/ruanbw/janus/internal/jwt"
+	"github.com/ruanbw/janus/internal/metrics"
 	"github.com/ruanbw/janus/internal/rbac"
 	"github.com/ruanbw/janus/internal/rules"
 	"github.com/ruanbw/janus/internal/store"
@@ -45,6 +46,18 @@ type Deps struct {
 	DomainOwnership OwnershipChecker
 	// ProtectedRoutes 外部注入的受保护控制面路由注入回调
 	ProtectedRoutes []func(rg *gin.RouterGroup)
+	// Ready 是 /readyz 的探活函数。nil 时用 (*store.Store).Ping。
+	//
+	// 暴露成函数而不是只依赖 Store:探活接口的正确性不能靠"一个真的能连上的
+	// Postgres"才能被验证 —— 那样它和它要检查的东西一起坏掉。测试注入假实现,
+	// 生产走默认值。
+	Ready func(ctx context.Context) error
+	// Metrics 指标注册表。/metrics 导出它;nil 时新建一份空的。
+	// 调用方可以持有同一份注册表自己注册指标(如扩展的路由计数)。
+	Metrics *metrics.Registry
+	// MetricsToken 是 /metrics 的共享 token。为空时该端点一律 403(fail-closed):
+	// 指标里有租户数、域名状态与规则 fail-open 次数,足以反推业务规模与故障。
+	MetricsToken string
 }
 
 // OwnershipChecker 抽象域名归属校验(见 Deps.DomainOwnership)。
@@ -67,10 +80,13 @@ type API struct {
 	// trustedProxyNets 是运维显式声明的可信代理网段(JANUS_TRUSTED_PROXY_CIDRS)。
 	// 为空 = 不采信任何来源的 X-Forwarded-For(限流只认 TCP 对端)。
 	trustedProxyNets []netip.Prefix
-	rbacEnforcer     *rbac.Enforcer // Casbin RBAC 授权(enforcer 线程安全,authorize 中间件使用)
-	jwtMgr           *jwt.Manager   // Bearer JWT 校验(authenticate 中间件使用)
-	ruleCache        *rules.Cache   // 规则快照(跳转热路径求值;nil 时求值恒为"无规则")
-	geo              geo.Lookup     // IP → 国家码(跳转热路径在构造 Fact 之前查,ADR 0009)
+	rbacEnforcer     *rbac.Enforcer              // Casbin RBAC 授权(enforcer 线程安全,authorize 中间件使用)
+	jwtMgr           *jwt.Manager                // Bearer JWT 校验(authenticate 中间件使用)
+	ruleCache        *rules.Cache                // 规则快照(跳转热路径求值;nil 时求值恒为"无规则")
+	geo              geo.Lookup                  // IP → 国家码(跳转热路径在构造 Fact 之前查,ADR 0009)
+	metrics          *metrics.Registry           // 指标注册表(/metrics 导出)
+	ready            func(context.Context) error // /readyz 探活(nil 时不探)
+	metricsToken     string                      // /metrics 共享 token(空 = fail-closed)
 }
 
 // New 构建 Gin 引擎:全局中间件(panic 恢复+访问日志、后台域名 SPA 分流)+ 全部路由。
@@ -136,6 +152,25 @@ func New(d Deps) http.Handler {
 		log.Printf("WARN: JANUS_TRUSTED_PROXY_CIDRS 未配置,限流只按 TCP 对端计数。若 Janus 前面有反向代理(如默认部署的 Caddy),所有请求将共用代理这一个来源 IP,认证类限流会退化成「全站共享 %d 次/%v」,请配置该环境变量后重启", rl.AuthLimit, rl.AuthWindow)
 	}
 
+	// 指标注册表:共享同一份,调用方(扩展/自定义 handler)可以自己往里注册。
+	metricsRegistry := d.Metrics
+	if metricsRegistry == nil {
+		metricsRegistry = metrics.New()
+	}
+
+	// 就绪探针:默认探 DB。Store 为 nil 时返回错误而不是 panic —— 嵌入方
+	// 可能只挂一部分路由,此时 /readyz 应该是 503 而不是把进程打挂。
+	readinessProbe := d.Ready
+	if readinessProbe == nil {
+		st := d.Store
+		readinessProbe = func(ctx context.Context) error {
+			if st == nil {
+				return fmt.Errorf("store 未装配")
+			}
+			return st.Ping(ctx)
+		}
+	}
+
 	a := &API{
 		store:            d.Store,
 		cfg:              d.Cfg,
@@ -148,11 +183,13 @@ func New(d Deps) http.Handler {
 		jwtMgr:           jwtMgr,
 		ruleCache:        ruleCache,
 		geo:              geoLookup,
+		metrics:          metricsRegistry,
+		ready:            readinessProbe,
+		metricsToken:     d.MetricsToken,
 	}
 	if a.dns == nil {
 		a.dns = &domain.DNSChecker{ExpectedIP: d.Cfg.ServerPublicIP}
 	}
-
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	// 16:落地页上传托管用 /{code}/ 尾斜杠布局,关闭 gin 自动尾斜杠重定向
@@ -160,10 +197,17 @@ func New(d Deps) http.Handler {
 	r.Use(a.panicRecoverAndLog())
 	r.Use(a.bodyLimit())
 
-	// 健康检查(docker compose healthcheck)
+	// 健康检查:
+	//   /healthz 保持原语义(恒定 200)以兼容既有 compose healthcheck;
+	//   /livez   恒 200,只回答"进程活着";
+	//   /readyz  探 DB,失败 503 —— 编排器据此摘流而不重启进程;
+	//   /metrics 仅内网 + token(见 health.go)。
 	r.GET("/healthz", func(c *gin.Context) {
 		writeJSON(c, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	r.GET("/livez", a.handleLivez)
+	r.GET("/readyz", a.handleReadyz)
+	r.GET("/metrics", a.handleMetrics)
 
 	// Caddy on-demand TLS 授权端点(仅内网可达)
 	r.GET("/internal/caddy/authorize", a.handleCaddyAuthorize)

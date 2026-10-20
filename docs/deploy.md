@@ -19,6 +19,7 @@
 | `JANUS_SERVER_PUBLIC_IP` | ✅ | 服务器公网 IP,DNS 激活校验比对地址 |
 | `JANUS_DB_PASSWORD` | ✅ | Postgres 密码。注意 `.env.example` 预置的 `janus` 能直接启动(compose 只挡空值,不挡默认值),不会报错 |
 | `JANUS_CADDY_ASK_TOKEN` | ✅ | Caddy on-demand TLS 授权端点 `/internal/caddy/authorize` 的共享密钥,建议 `openssl rand -hex 32`。compose 以 `${JANUS_CADDY_ASK_TOKEN:?}` 同时注入 backend 与 caddy 两个容器;留空则 `docker compose up -d` 直接报错退出 |
+| `JANUS_METRICS_TOKEN` | 可选 | `GET /metrics` 的共享 token(抓取端带 `Authorization: Bearer <token>` 或 `?token=`)。留空则该端点一律 403;除 token 外还要求来源是内网地址。建议 `openssl rand -hex 32` |
 | `JANUS_TRUSTED_PROXY_CIDRS` | ✅ | 声明「哪些对端的 X-Forwarded-For 可以采信」,生产填 Caddy 所在容器网段(Docker 默认网桥为 `172.16.0.0/12`)。compose 以 `${...:?}` 转发,留空直接启动失败;不配而强行走起来的后果:认证端点限流退化成**全站共享一个桶**(一个人试密码全站吃 429)、落地页 SDK 生成的 click 地址降级为 `http://` |
 | `JANUS_JWT_SECRET` | ✅ | API Bearer JWT 签名密钥,`openssl rand -hex 32`(后端要求 ≥ 32 字节,短于 32 字节直接拒绝启动)。留空只告警、不拒绝启动,但每次重启换随机密钥 → 已签发的 API token 全部失效 |
 | `JANUS_ACME_EMAIL` | 建议 | Let's Encrypt 账户邮箱 |

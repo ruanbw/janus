@@ -282,11 +282,29 @@ func (a *API) errorPageTenantID(c *gin.Context) int64 {
 	return tenantID
 }
 
+// 跳转结果指标:janus_redirect_total{result}。
+//
+// 为什么按结果分桶而不是只记总数:短链服务的健康信号是"404/429 的比例"。
+// 只记总数时,规则误拦把一半流量打成 429,曲线依然平缓 —— 没有任何指标会跳。
+// 取值:
+//   - "301"/"302"        成功跳转(含规则改写与轮询目标)
+//   - "notfound"         域名未解析 / 短码不存在
+//   - "failed"           短链存在但不可用(停用 / 软删 / 无目标 / 落地页文件缺失)
+//   - "rule_notfound"    规则裁决 notfound
+//   - "rule_throttle"    规则裁决 throttle(429)
+func (a *API) countRedirect(result string) {
+	if a.metrics == nil {
+		return
+	}
+	a.metrics.CounterVec("janus_redirect_total", "短链访问的裁决结果。", "result").Inc(result)
+}
+
 func (a *API) handleRedirect(c *gin.Context) {
 	code := c.Param("code")
 	if code == "" || strings.Contains(code, "/") {
 		// 未命中路径:这里是本条链路上唯一为渲染租户自定义错误页而做的一次 DB 查询
 		// (fqdn 唯一索引等值查询),与文件头"零 DB 查询"约束的关系见其第 1 条注记。
+		a.countRedirect("notfound")
 		a.renderVisitorError(c, http.StatusNotFound, a.errorPageTenantID(c), nil)
 		return
 	}
@@ -295,6 +313,7 @@ func (a *API) handleRedirect(c *gin.Context) {
 		// 域名不存在,或存在但不是 active(停用 / 待激活)。后者仍要拿到租户 id,
 		// 好让访客看到该租户自己的 404 页而不是系统内置页(issue 7)。
 		_, tenantID := a.resolveDomainForError(c)
+		a.countRedirect("notfound")
 		a.renderVisitorError(c, http.StatusNotFound, tenantID, nil)
 		return
 	}
@@ -302,6 +321,7 @@ func (a *API) handleRedirect(c *gin.Context) {
 	link, _, reason, err := a.store.LookupLinkForVisit(c.Request.Context(), d.ID, code)
 	if err != nil {
 		// 未命中(短码不存在):无法归属到任何短链,不记明细
+		a.countRedirect("notfound")
 		a.renderVisitorError(c, http.StatusNotFound, d.TenantID, nil)
 		return
 	}
@@ -315,6 +335,7 @@ func (a *API) handleRedirect(c *gin.Context) {
 			LinkID: link.ID, DomainID: d.ID,
 			Action: action, Outcome: store.VisitOutcomeFailed, Reason: reason,
 		})
+		a.countRedirect("failed")
 		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 		return
 	}
@@ -332,6 +353,7 @@ func (a *API) handleRedirect(c *gin.Context) {
 					LinkID: link.ID, DomainID: d.ID,
 					Action: action, Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonLandingMissing,
 				})
+				a.countRedirect("failed")
 				a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 				return
 			}
@@ -342,6 +364,7 @@ func (a *API) handleRedirect(c *gin.Context) {
 			LinkID: link.ID, DomainID: d.ID,
 			Action: action, Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonNoTarget,
 		})
+		a.countRedirect("failed")
 		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, nil)
 		return
 	}
@@ -392,6 +415,11 @@ func (a *API) redirectToTarget(c *gin.Context, link *store.Link, targetURL strin
 		// 客户端每次仍可缓存,但使用前必须回源校验(ETag/Last-Modified 不在时即重新取)。
 		// 302 分支保持不带此头,保持既有的可缓存语义。
 		c.Header("Cache-Control", "no-cache, must-revalidate")
+	}
+	if status == http.StatusMovedPermanently {
+		a.countRedirect("301")
+	} else {
+		a.countRedirect("302")
 	}
 	c.Redirect(status, targetURL)
 }
@@ -517,6 +545,7 @@ func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domai
 			Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonRuleBlocked,
 			RuleID: ruleID, RuleAction: ruleAction,
 		})
+		a.countRedirect("rule_notfound")
 		a.renderVisitorError(c, http.StatusNotFound, link.TenantID, &dec)
 		return true
 	case store.RuleActionThrottle:
@@ -525,6 +554,7 @@ func (a *API) applyRuleDecision(c *gin.Context, link *store.Link, d *store.Domai
 			Outcome: store.VisitOutcomeFailed, Reason: store.VisitReasonRuleThrottled,
 			RuleID: ruleID, RuleAction: ruleAction,
 		})
+		a.countRedirect("rule_throttle")
 		a.renderVisitorError(c, http.StatusTooManyRequests, link.TenantID, &dec)
 		return true
 	case store.RuleActionRedirect:

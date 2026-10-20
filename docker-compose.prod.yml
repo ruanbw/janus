@@ -48,6 +48,8 @@ services:
       JANUS_SESSION_TTL_SHORT: "${JANUS_SESSION_TTL_SHORT:-24h}"
       # JWT(API Bearer 认证):密钥必须配置强随机值(openssl rand -hex 32);留空则每次启动随机,重启后已签发 token 失效
       JANUS_JWT_SECRET: "${JANUS_JWT_SECRET:-}"
+      # 可选:配置后 GET /metrics 才可抓取(仅内网 + Bearer/?token=);留空即 403
+      JANUS_METRICS_TOKEN: "${JANUS_METRICS_TOKEN:-}"
       JANUS_JWT_TTL: "${JANUS_JWT_TTL:-24h}"
       JANUS_DNS_RETRY_INTERVAL: "${JANUS_DNS_RETRY_INTERVAL:-5m}"
       JANUS_DNS_MAX_AGE: "${JANUS_DNS_MAX_AGE:-72h}"

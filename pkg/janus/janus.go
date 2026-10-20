@@ -390,6 +390,7 @@ func (a *App) initHandler() error {
 			Store:           a.store,
 			Cfg:             a.cfg,
 			ProtectedRoutes: a.protectedRouteInjects,
+			MetricsToken:    a.cfg.MetricsToken,
 		})
 		engine.NoRoute(func(c *gin.Context) {
 			fullHandler.ServeHTTP(c.Writer, c.Request)

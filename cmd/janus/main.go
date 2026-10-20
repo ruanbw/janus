@@ -58,7 +58,7 @@ func main() {
 		log.Fatalf("init superadmin: %v", err)
 	}
 
-	app := httpapi.New(httpapi.Deps{Store: st, Cfg: cfg})
+	app := httpapi.New(httpapi.Deps{Store: st, Cfg: cfg, MetricsToken: cfg.MetricsToken})
 
 	// 后台任务:DNS 重试、证书预签发探活、访问/会话清理。
 	// Shutdown 后显式 cancel 并等待 worker 退出,避免进程退出时后台任务仍在写库。

@@ -53,6 +53,14 @@ type Config struct {
 	// (见 httpapi.CaddyAskTokenHeader)。
 	CaddyAskToken string `env:"JANUS_CADDY_ASK_TOKEN"`
 
+	// MetricsToken 是 GET /metrics 的共享 token。
+	//
+	// 为空时该端点一律 403(fail-closed):指标里有租户数、域名状态与规则 fail-open
+	// 次数,足以反推业务规模与故障,不能是公网匿名可读的。需要抓取时配置成随机值,
+	// 抓取端带 Authorization: Bearer <token> 或 ?token=<token>。
+	// 与 Caddy ask token 一样,/metrics 还额外要求来源是内网地址。
+	MetricsToken string `env:"JANUS_METRICS_TOKEN"`
+
 	DNSRetryInterval  time.Duration `env:"JANUS_DNS_RETRY_INTERVAL" envDefault:"5m"`
 	DNSMaxAge         time.Duration `env:"JANUS_DNS_MAX_AGE" envDefault:"72h"`
 	VisitRetention    time.Duration `env:"JANUS_VISIT_RETENTION" envDefault:"2160h"`

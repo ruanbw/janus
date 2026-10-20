@@ -474,3 +474,18 @@ func (s *Store) Usage(ctx context.Context, tenantID int64) (*Usage, error) {
 	// 计数口径与 WithQuotaInTx 内的配额判断共用同一份实现(quota.go)。
 	return usageWithDB(ctx, s.db, t)
 }
+
+// Ping 探活:给 /readyz 用,失败即表示"进程活着但现在不能对外服务"。
+//
+// 用连接池的 Ping 而不是 SELECT 1:两者在驱动层都会取一条连接,
+// 但 Ping 不做 SQL 解析,探针每几秒一次时开销更小。
+func (s *Store) Ping(ctx context.Context) error {
+	if s == nil || s.db == nil {
+		return errors.New("store: 数据库未初始化")
+	}
+	sqlDB, err := s.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx)
+}
