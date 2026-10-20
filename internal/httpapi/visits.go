@@ -69,6 +69,25 @@ func localDayStart(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }
 
+// visitRangeFrom 把访问明细的 range 参数解析成时间窗口左端。
+//
+// 返回 (from, active, ok):
+//   - 空串与 "all" → active=false(不限时间),这是列表页的默认值;
+//   - today/3d/7d/30d/1y → active=true,左端是**自然日** 00:00 起算,
+//     与总览页 overviewRangeDays 的口径完全一致(两页不能各有一套"今日");
+//   - 其他值 → ok=false,由 handler 映射 400,而不是静默退化成"全部"。
+func visitRangeFrom(raw string, now time.Time) (time.Time, bool, bool) {
+	value := strings.TrimSpace(raw)
+	if value == "" || value == "all" {
+		return time.Time{}, false, true
+	}
+	days, ok := overviewRangeDays[value]
+	if !ok {
+		return time.Time{}, false, false
+	}
+	return localDayStart(now).AddDate(0, 0, -(days - 1)), true, true
+}
+
 // handleVisitsOverview GET /api/visits/overview?range=today|3d|7d|30d|1y — 总览页的全量聚合。
 //
 // 为什么不用"前端拉明细自己数"(这是本端点存在的原因,也是它与 handleListVisits

@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 
 import { useVisitFilters, type VisitFilterState } from '@/composables/useVisitFilters';
 
-const EMPTY: VisitFilterState = { action: '', outcome: '', country: '', keyword: '' };
+const EMPTY: VisitFilterState = { action: '', outcome: '', country: '', keyword: '', range: '' };
 
 describe('useVisitFilters 初始状态', () => {
   it('Given 不传 initial，When 创建，Then 筛选全空、第 1 页、每页 20 条', () => {
@@ -203,5 +203,34 @@ describe('useVisitFilters.reset', () => {
 
     expect(f.filters.value).toEqual(EMPTY);
     expect(f.page.value).toBe(1);
+  });
+});
+
+describe('useVisitFilters 时间窗口', () => {
+  it('Given 设置 range=7d, When toParams, Then 下发 range 且页码归 1', () => {
+    const f = useVisitFilters();
+    f.setPage(3);
+
+    f.set({ range: '7d' });
+
+    expect(f.page.value, '换窗口后旧页码已指不到同一批数据').toBe(1);
+    expect(f.toParams()).toEqual({ page: 1, pageSize: 20, range: '7d' });
+    expect(f.hasActive.value, '只有时间窗口也属于"正在过滤"').toBe(true);
+  });
+
+  it('Given range 生效, When reset, Then 回到不限时间', () => {
+    const f = useVisitFilters({ range: '30d' });
+
+    f.reset();
+
+    expect(f.filters.value.range).toBe('');
+    expect(f.toParams()).toEqual({ page: 1, pageSize: 20 });
+  });
+
+  it('Given range=all 之外的非法值, When 创建, Then 原样保留(校验在服务端)', () => {
+    // composable 不做值域校验:非法值应由后端 400,而不是前端悄悄改成"全部"
+    const f = useVisitFilters({ range: 'bogus' as never });
+    expect(f.filters.value.range).toBe('bogus');
+    expect(f.toParams().range).toBe('bogus');
   });
 });

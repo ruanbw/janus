@@ -49,10 +49,30 @@
             <span class="mono text-xs text-ink-faint">共 {{ total }} 条</span>
           </div>
 
-          <!-- 工具栏:设备类型筛选 / 只看失败 / 关键词。
-               「只看失败」与关键词都走服务端过滤(影响总数与分页);
+          <!-- 工具栏:时间窗口 / 设备类型 / 只看失败 / 关键词。
+               时间窗口、「只看失败」与关键词都走服务端过滤(影响总数与分页);
                设备类型必须解析 UA,后端没有这份数据,只能在当前页内过滤。 -->
           <div class="flex flex-wrap items-center gap-3 px-4 py-3">
+            <div
+              role="group"
+              aria-label="按时间窗口筛选"
+              class="inline-flex gap-0.5 rounded-lg border border-border bg-muted p-0.5"
+            >
+              <AppButton
+                v-for="opt in RANGE_OPTIONS"
+                :key="opt.value"
+                size="sm"
+                variant="ghost"
+                :class="rangeFilter === opt.value
+                  ? 'bg-background font-semibold text-foreground shadow-xs hover:bg-background'
+                  : 'text-muted-foreground'"
+                :aria-pressed="rangeFilter === opt.value"
+                @click="rangeFilter = opt.value"
+              >
+                {{ opt.label }}
+              </AppButton>
+            </div>
+
             <div
               role="group"
               aria-label="按设备类型筛选"
@@ -633,13 +653,14 @@ import { ArrowLeft, Copy, FlaskConical, Info, MousePointerClick, RefreshCw, Sear
 import { getLink } from '@/api/links';
 import { listVisits } from '@/api/visits';
 import { useVisitFilters } from '@/composables/useVisitFilters';
+import type { VisitRangeFilter } from '@/composables/useVisitFilters';
 import PageHeader from '@/components/PageHeader.vue';
 import AppEmpty from '@/components/app/AppEmpty.vue';
 import AppResult from '@/components/app/AppResult.vue';
 import AppSpin from '@/components/app/AppSpin.vue';
 import AppTooltip from '@/components/app/AppTooltip.vue';
 import { ApiError } from '@/types/api';
-import type { Link, Rule, RuleAction, RuleCondition, Visit, VisitAction, VisitOutcome, VisitReason } from '@/types/api';
+import type { Link, OverviewRange, Rule, RuleAction, RuleCondition, Visit, VisitAction, VisitOutcome, VisitReason } from '@/types/api';
 import type { TableColumn } from '@/components/app/types';
 import type { TagColor } from '@/components/app/AppTag.vue';
 import { formatClock, formatCountry, formatDateTime } from '@/utils/format';
@@ -686,6 +707,17 @@ const RULE_REASON_HTTP: Partial<Record<VisitReason, string>> = {
   rule_blocked: '404',
   rule_throttled: '429',
 };
+
+/**
+ * 时间窗口快捷值。取值与后端 overviewRangeDays 的键一一对应:
+ * 「今日」是自然日 00:00 起算,而不是"24 小时前" —— 两页不能各有一套今日。
+ */
+const RANGE_OPTIONS: { value: VisitRangeFilter; label: string }[] = [
+  { value: '', label: '全部' },
+  { value: 'today', label: '今日' },
+  { value: '7d', label: '近 7 天' },
+  { value: '30d', label: '近 30 天' },
+];
 
 /** 设备类型筛选项 */
 const DEVICE_OPTIONS: { value: 'all' | ParsedUA['deviceType']; label: string }[] = [
@@ -752,6 +784,20 @@ const { page, pageSize } = visitFilters;
 /** 租户规则列表缓存，用于将明细中的 ruleId 快速映射到规则名与具体条件 */
 const rulesList = ref<Rule[]>([]);
 const rulesMap = computed(() => new Map(rulesList.value.map((r) => [r.id, r])));
+
+/**
+ * 时间窗口 = filters.range。做成可写 computed 让筛选状态只有一份:
+ * 独立 ref 会在「清空过滤」与请求参数之间各留一份,总有一个漏清。
+ */
+const rangeFilter = computed({
+  get: () => visitFilters.filters.value.range,
+  set: (value: VisitRangeFilter) => {
+    if (rangeFilter.value === value) return;
+    visitFilters.set({ range: value });
+    selectedId.value = null;
+    void loadVisits();
+  },
+});
 
 const deviceFilter = ref<'all' | ParsedUA['deviceType']>('all');
 
@@ -956,6 +1002,7 @@ async function loadVisits() {
       ...(params.outcome ? { outcome: params.outcome as VisitOutcome } : {}),
       ...(params.action ? { action: params.action as VisitAction } : {}),
       ...(params.keyword ? { keyword: String(params.keyword) } : {}),
+      ...(params.range ? { range: params.range as OverviewRange } : {}),
     });
     if (seq !== visitsRequestSeq) return;
     visits.value = res.items;
@@ -1053,7 +1100,11 @@ const hasDeviceFilter = computed(() => deviceFilter.value !== 'all');
 
 /** 「清空过滤」的显示条件:本地设备筛选或任一服务端筛选生效 */
 const hasAnyFilter = computed(
-  () => hasDeviceFilter.value || keywordFilter.value !== '' || onlyFailed.value,
+  () =>
+    hasDeviceFilter.value ||
+    keywordFilter.value !== '' ||
+    onlyFailed.value ||
+    rangeFilter.value !== '',
 );
 
 /**
@@ -1061,12 +1112,13 @@ const hasAnyFilter = computed(
  * 只清本地设备筛选时数据没变,不多打一次请求。
  */
 function resetFilters() {
-  const hadServerFilter = keywordFilter.value !== '' || onlyFailed.value;
+  const hadServerFilter =
+    keywordFilter.value !== '' || onlyFailed.value || rangeFilter.value !== '';
   deviceFilter.value = 'all';
   keywordInput.value = '';
   if (!hadServerFilter) return;
 
-  visitFilters.set({ keyword: '', outcome: '' });
+  visitFilters.set({ keyword: '', outcome: '', range: '' });
   selectedId.value = null;
   void loadVisits();
 }

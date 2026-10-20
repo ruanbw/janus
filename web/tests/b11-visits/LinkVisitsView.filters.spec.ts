@@ -342,3 +342,68 @@ describe('LinkVisitsView 关键词搜索', () => {
     wrapper.unmount();
   });
 });
+
+describe('LinkVisitsView 时间窗口', () => {
+  /** 工具栏里的时间窗口按钮（按文案定位，避免依赖 DOM 顺序） */
+  function rangeButton(wrapper: ReturnType<typeof mountView>, label: string) {
+    const btn = wrapper.findAll('button').find((b) => b.text() === label);
+    expect(btn, `工具栏应有「${label}」窗口按钮`).toBeTruthy();
+    return btn!;
+  }
+
+  it('Given 选择「近 7 天」, Then 请求带 range=7d', async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await rangeButton(wrapper, '近 7 天').trigger('click');
+    await flushPromises();
+
+    expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, {
+      page: 1,
+      pageSize: 20,
+      range: '7d',
+    });
+
+    wrapper.unmount();
+  });
+
+  it('Given 时间窗口生效, Then 总数与分页按窗口内的结果集计算', async () => {
+    visitsApi.listVisits
+      .mockResolvedValueOnce({ items: [visitOf()], total: 40 }) // 不限时间:两页
+      .mockResolvedValue({ items: [visitOf()], total: 3 }); // 窗口内:一页
+
+    const wrapper = mountView();
+    await flushPromises();
+    expect(wrapper.text()).toContain('1 / 2');
+
+    await rangeButton(wrapper, '今日').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('共 3 条访问明细');
+    expect(wrapper.text()).toContain('1 / 1');
+
+    wrapper.unmount();
+  });
+
+  it('Given 只选了时间窗口, When 清空过滤, Then 请求回到不限时间', async () => {
+    const wrapper = mountView();
+    await flushPromises();
+
+    await rangeButton(wrapper, '近 30 天').trigger('click');
+    await flushPromises();
+    expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, {
+      page: 1,
+      pageSize: 20,
+      range: '30d',
+    });
+
+    const clear = wrapper.findAll('button').find((btn) => btn.text() === '清空过滤');
+    expect(clear, '只选时间窗口时也应出现「清空过滤」').toBeTruthy();
+    await clear!.trigger('click');
+    await flushPromises();
+
+    expect(visitsApi.listVisits).toHaveBeenLastCalledWith(LINK_ID, { page: 1, pageSize: 20 });
+
+    wrapper.unmount();
+  });
+});

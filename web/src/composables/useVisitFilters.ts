@@ -1,5 +1,5 @@
 /**
- * 访问明细筛选状态：四组筛选 + 分页 + 「是否在过滤」的唯一来源。
+ * 访问明细筛选状态：四组筛选 + 时间窗口 + 分页 + 「是否在过滤」的唯一来源。
  *
  * 抽出来的动机见 tests/b9-composables/useVisitFilters.spec.ts 的文件头。三条语义
  * 在这里各只实现一次，视图层不再自己拼参数：
@@ -11,17 +11,20 @@
  */
 import { computed, ref } from 'vue';
 
-import type { VisitAction, VisitOutcome } from '@/types/api';
+import type { OverviewRange, VisitAction, VisitOutcome } from '@/types/api';
 
 /** 空串表示「全部」，对应后端不传该参数 */
 export type VisitActionFilter = '' | VisitAction;
 export type VisitOutcomeFilter = '' | VisitOutcome;
+/** 时间窗口；空串 = 不限（默认）。取值与后端 overviewRangeDays 的键一致 */
+export type VisitRangeFilter = '' | OverviewRange;
 
 export interface VisitFilterState {
   action: VisitActionFilter;
   outcome: VisitOutcomeFilter;
   country: string;
   keyword: string;
+  range: VisitRangeFilter;
 }
 
 /** 每页条数的默认值；分页控件默认选中项也取它 */
@@ -29,7 +32,7 @@ export const DEFAULT_VISIT_PAGE_SIZE = 20;
 
 /** 每次都要新建对象：默认值若共享，两个表单实例会互相污染 */
 function defaultFilters(): VisitFilterState {
-  return { action: '', outcome: '', country: '', keyword: '' };
+  return { action: '', outcome: '', country: '', keyword: '', range: '' };
 }
 
 /** 文本筛选统一 trim；空串与纯空格都归一成「不过滤」 */
@@ -39,6 +42,7 @@ function normalize(state: VisitFilterState): VisitFilterState {
     outcome: state.outcome ?? '',
     country: (state.country ?? '').trim(),
     keyword: (state.keyword ?? '').trim(),
+    range: state.range ?? '',
   };
 }
 
@@ -50,8 +54,8 @@ export function useVisitFilters(initial?: Partial<VisitFilterState>) {
   // 必须是 computed：模板里的「重置筛选」入口要随 set/reset 立即显隐，
   // 快照成普通布尔会让按钮状态停在创建那一刻。
   const hasActive = computed(() => {
-    const { action, outcome, country, keyword } = filters.value;
-    return action !== '' || outcome !== '' || country !== '' || keyword !== '';
+    const { action, outcome, country, keyword, range } = filters.value;
+    return action !== '' || outcome !== '' || country !== '' || keyword !== '' || range !== '';
   });
 
   /**
@@ -89,11 +93,12 @@ export function useVisitFilters(initial?: Partial<VisitFilterState>) {
       page: page.value,
       pageSize: pageSize.value,
     };
-    const { action, outcome, country, keyword } = filters.value;
+    const { action, outcome, country, keyword, range } = filters.value;
     if (action) params.action = action;
     if (outcome) params.outcome = outcome;
     if (country) params.country = country;
     if (keyword) params.keyword = keyword;
+    if (range) params.range = range;
     return params;
   }
 

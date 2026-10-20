@@ -319,6 +319,11 @@ type VisitFilter struct {
 	// 这四列是操作者真正会拿来"找那一次访问"的线索:查某个 IP 的全部行为、
 	// 定位某条来源链接带来的流量、核对某个目标地址是否真的被命中。
 	Keyword string
+	// From 只返回 created_at >= From 的明细;nil = 不限时间。
+	//
+	// 时间窗口的边界由调用方(handler)按自然日算好再传进来:store 不猜时区,
+	// 也不在 SQL 里写 now(),否则单测只能依赖"当前时刻"而无法复现。
+	From *time.Time
 }
 
 // applyVisitFilter 把过滤条件同时附加到 count 与明细两段查询上。
@@ -348,6 +353,10 @@ func applyVisitFilter(q, itemQ *gorm.DB, f VisitFilter) (*gorm.DB, *gorm.DB) {
 			OR v.referer ILIKE ? ESCAPE '\'
 			OR v.target_url ILIKE ? ESCAPE '\'
 		)`, pattern, pattern, pattern, pattern)
+	}
+	if f.From != nil && !f.From.IsZero() {
+		q = q.Where("created_at >= ?", *f.From)
+		itemQ = itemQ.Where("v.created_at >= ?", *f.From)
 	}
 	return q, itemQ
 }

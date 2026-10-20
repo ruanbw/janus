@@ -1016,13 +1016,20 @@ func (a *API) handleListVisits(c *gin.Context) {
 		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
 		return
 	}
+	// range 可选时间窗口(all/缺省 = 不限):与分析视角的"最近 N 天"同口径,
+	// 不限制时,一条活跃短链的早期记录会被永远挤出前几页。
+	from, hasFrom, ok := visitRangeFrom(c.Request.URL.Query().Get("range"), time.Now())
+	if !ok {
+		writeErr(c, http.StatusBadRequest, errValidation, "range 必须为 all / today / 3d / 7d / 30d / 1y")
+		return
+	}
 	page, pageSize, err := parsePageParams(c)
 	if err != nil {
 		writeErr(c, http.StatusBadRequest, errValidation, err.Error())
 		return
 	}
 	items, total, err := a.store.ListVisitsByLinkFiltered(c.Request.Context(), id,
-		store.VisitFilter{Action: action, Outcome: outcome, Keyword: keyword}, page, pageSize)
+		store.VisitFilter{Action: action, Outcome: outcome, Keyword: keyword, From: fromFilter(from, hasFrom)}, page, pageSize)
 	if err != nil {
 		writeErr(c, http.StatusInternalServerError, errInternal, "internal error")
 		return
@@ -1031,6 +1038,14 @@ func (a *API) handleListVisits(c *gin.Context) {
 		items = []*store.Visit{}
 	}
 	writeJSON(c, http.StatusOK, map[string]any{"items": items, "total": total})
+}
+
+// fromFilter 把「是否有窗口」折成 VisitFilter.From 需要的指针语义(nil = 不限)。
+func fromFilter(from time.Time, active bool) *time.Time {
+	if !active {
+		return nil
+	}
+	return &from
 }
 
 func (a *API) handleLinkStats(c *gin.Context) {

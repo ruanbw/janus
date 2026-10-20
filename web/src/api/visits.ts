@@ -22,6 +22,11 @@ export interface VisitListQuery {
    * 省略=不过滤。列表在 SQL 侧过滤,total 与分页都是筛选后的结果集。
    */
   keyword?: string;
+  /**
+   * 时间窗口:today/3d/7d/30d/1y(与总览页同一套自然日口径);省略=不限。
+   * 服务端按服务器本地时区的自然日 00:00 起算,前端不自己推算边界。
+   */
+  range?: OverviewRange;
 }
 
 /** 某条短链的访问列表(时间、UA、来源、动作与结果) */

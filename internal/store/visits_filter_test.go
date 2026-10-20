@@ -3,6 +3,7 @@ package store
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // 本文件锁定访问明细关键词过滤的 SQL 形状(不连库,同 links_filter_test.go)。
@@ -104,5 +105,34 @@ func TestVisitFilterEmptyKeywordIsNoop(t *testing.T) {
 	}
 	if len(countVars) != 1 {
 		t.Fatalf("只有 link_id 一个参数, 得到 %v", countVars)
+	}
+}
+
+// TestVisitFilterFromBoundsCountAndList 固化时间窗口左端同时作用于两段查询。
+//
+// 只给 count 加时间条件(或只给列表加)时,分页器会按全量算页数,
+// 用户翻到后面全是空页 —— 又是"界面能渲染、数字是错的"。
+func TestVisitFilterFromBoundsCountAndList(t *testing.T) {
+	from := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+	countSQL, listSQL, countVars, listVars := renderVisitFilterSQL(t, VisitFilter{From: &from})
+
+	if !strings.Contains(countSQL, "created_at >= ") {
+		t.Fatalf("count 查询缺少时间窗口:\n%s", countSQL)
+	}
+	if !strings.Contains(listSQL, "v.created_at >= ") {
+		t.Fatalf("明细查询缺少时间窗口:\n%s", listSQL)
+	}
+
+	// 两段都带上同一个左端参数
+	for name, vars := range map[string][]any{"count": countVars, "list": listVars} {
+		found := false
+		for _, v := range vars {
+			if t0, ok := v.(time.Time); ok && t0.Equal(from) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s 查询未绑定窗口左端 %v: %v", name, from, vars)
+		}
 	}
 }
