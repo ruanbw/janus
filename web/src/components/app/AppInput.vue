@@ -16,6 +16,7 @@
       :disabled="disabled"
       :readonly="readonly"
       :autocomplete="autocomplete"
+      :aria-label="ariaLabel"
       :aria-invalid="isInvalid ? 'true' : 'false'"
       :class="inputClasses"
       @input="onInput"
@@ -84,6 +85,14 @@ const props = withDefaults(
     invalid?: boolean;
     /** 显式 id；缺省时自动跟随外层 AppFormItem，保证 <label for> 能命中 */
     id?: string;
+    /**
+     * 无可见 <label> 时的无障碍名（表格上方的搜索框等）。
+     *
+     * 必须显式声明并转给真正的 <input>：本组件根节点是外层 <div>，未声明的
+     * attr 会走 fallthrough 落到那个 div 上 —— 读屏软件读不到「搜索短链」，
+     * 用户只听到一个没有名字的文本框。调用方仍可写 `:aria-label`。
+     */
+    ariaLabel?: string;
     class?: any;
   }>(),
   { modelValue: '', type: 'text', size: 'middle', allowClear: false },

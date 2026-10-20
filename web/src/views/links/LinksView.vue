@@ -662,6 +662,11 @@ const statusFilter = computed({
 function onFilterChange(mutate: () => void): void {
   const pageBefore = listQuery.value.page;
   mutate();
+  // 筛选是本地 computed，换筛选不一定重载数据（loadData 里那句 clearSelection
+  // 因此可能不执行）。而隐藏行仍留在 selectedIds 里，批量删除就会删到用户当前
+  // 看不见的记录 —— 确认框里的短码摘要只遍历可见行，连删了谁都没列全。
+  // 选择必须随可见集收敛：换筛选一律清空。
+  clearSelection();
   if (pageBefore > 1 && listQuery.value.page === 1) void loadData();
 }
 
@@ -876,9 +881,21 @@ async function afterBatchDone(
   }
 }
 
+/**
+ * 批量操作的落地目标：只保留当前可见（且被选中）的 id。
+ *
+ * 正常情况下选择已被各入口清空，这里不会过滤掉任何东西；它是一道防线——
+ * 破坏性操作的范围必须与用户在确认框里看到的短码摘要一致，宁可少删一条，
+ * 也不能删一条确认文案里没列出来的记录。
+ */
+function batchTargetIds(): number[] {
+  const visible = new Set(selectableIds.value);
+  return selectedIds.value.filter((id) => visible.has(id));
+}
+
 function handleBatchDelete() {
-  if (selectedIds.value.length === 0) return;
-  const ids = [...selectedIds.value];
+  const ids = batchTargetIds();
+  if (ids.length === 0) return;
   const summary = selectedCodesSummary();
   confirm({
     title: `逻辑删除选中的 ${ids.length} 条短链?`,
@@ -893,8 +910,8 @@ function handleBatchDelete() {
 }
 
 function handleBatchPurge() {
-  if (selectedIds.value.length === 0) return;
-  const ids = [...selectedIds.value];
+  const ids = batchTargetIds();
+  if (ids.length === 0) return;
   const summary = selectedCodesSummary();
   confirm({
     title: `彻底清除选中的 ${ids.length} 条短链?`,
@@ -1129,8 +1146,8 @@ function handleRestoreLink(link: Link) {
 
 /** 批量还原:逐条 PATCH,汇总成功数与"短码被占用"导致的失败数。 */
 async function handleBatchRestore(): Promise<void> {
-  if (selectedIds.value.length === 0) return;
-  const ids = [...selectedIds.value];
+  const ids = batchTargetIds();
+  if (ids.length === 0) return;
 
   batchOperating.value = true;
   try {

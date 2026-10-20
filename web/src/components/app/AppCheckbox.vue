@@ -5,7 +5,7 @@
   >
     <UiCheckbox
       :id="uid"
-      :aria-label="$props['aria-label']"
+      :aria-label="ariaLabel"
       :model-value="model"
       :disabled="disabled"
       :name="name"
@@ -48,8 +48,13 @@ const props = withDefaults(
     /**
      * 无可见文案时的无障碍名（如表格行内的勾选框）。根节点是 <label>,
      * 直接写 aria-label 会落在 label 上而不是复选框上，所以单独透传。
+     *
+     * 必须声明成 camelCase：`'aria-label'` 这种带引号的键在 props 里会被 Vue
+     * 归一化成 `ariaLabel`，模板里写 `$props['aria-label']` 永远取到 undefined ——
+     * 属性被静默丢弃，读屏软件只会念出一个没有名字的复选框。调用方仍可照常写
+     * `:aria-label`（Vue 会把 kebab-case 匹配到 camelCase prop）。
      */
-    'aria-label'?: string;
+    ariaLabel?: string;
     class?: any;
   }>(),
   { disabled: false, indeterminate: false },

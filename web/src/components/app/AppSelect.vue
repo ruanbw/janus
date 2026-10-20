@@ -10,6 +10,7 @@
     <SelectTrigger
       :id="fieldId"
       :class="triggerClasses"
+      :aria-label="ariaLabel"
       :aria-invalid="isInvalid ? 'true' : 'false'"
     >
       <!-- 多选:值标签 + 溢出计数 -->
@@ -149,6 +150,13 @@ const props = withDefaults(
     invalid?: boolean;
     /** 显式 id；缺省时自动跟随外层 AppFormItem */
     id?: string;
+    /**
+     * 无可见 <label> 时的无障碍名（工具栏上的「按类型过滤」等）。
+     *
+     * 根节点是 SelectRoot（不渲染 DOM），未声明的 attr 无处可落、会被静默丢弃，
+     * 所以必须显式声明并转给真正可聚焦的 SelectTrigger。调用方仍可写 `:aria-label`。
+     */
+    ariaLabel?: string;
     class?: any;
   }>(),
   {
