@@ -619,6 +619,7 @@ import { ArrowLeft, Copy, FlaskConical, Info, MousePointerClick, RefreshCw, Sear
 
 import { getLink } from '@/api/links';
 import { listVisits } from '@/api/visits';
+import { useVisitFilters } from '@/composables/useVisitFilters';
 import PageHeader from '@/components/PageHeader.vue';
 import AppEmpty from '@/components/app/AppEmpty.vue';
 import AppResult from '@/components/app/AppResult.vue';
@@ -723,8 +724,15 @@ interface VisitRow {
 const link = ref<Link | null>(null);
 const visits = ref<Visit[]>([]);
 const total = ref(0);
-const page = ref(1);
-const pageSize = ref(20);
+
+/**
+ * 分页与请求参数统一交给 useVisitFilters：页码归 1、空筛选字段不下发这些语义
+ * 只实现一次。本页的「设备类型 / 只看失败 / 搜索」是**当前页内**的前端过滤，
+ * 后端 /links/:id/visits 也没有对应参数，所以服务端 filters 恒为空，
+ * 请求实际只带 page/pageSize（见 loadVisits）。
+ */
+const visitFilters = useVisitFilters();
+const { page, pageSize } = visitFilters;
 
 /** 租户规则列表缓存，用于将明细中的 ruleId 快速映射到规则名与具体条件 */
 const rulesList = ref<Rule[]>([]);
@@ -885,9 +893,11 @@ async function loadRules() {
 async function loadVisits() {
   if (loadError.value) return;
   try {
+    const params = visitFilters.toParams();
     const res = await listVisits(linkId.value, {
-      page: page.value,
-      pageSize: pageSize.value,
+      // toParams 的索引类型是 string | number，分页这两个字段恒为数字
+      page: Number(params.page),
+      pageSize: Number(params.pageSize),
     });
     visits.value = res.items;
     total.value = res.total;
@@ -1004,13 +1014,14 @@ const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.v
 
 function goToPage(p: number) {
   if (p < 1 || p > totalPages.value || p === page.value) return;
-  page.value = p;
+  visitFilters.setPage(p);
   selectedId.value = null;
   loadVisits();
 }
 
 function onPageSizeChange() {
-  page.value = 1;
+  // 换每页条数不属于 VisitFilterState，但当前页必然失效，所以回到第 1 页
+  visitFilters.setPage(1);
   selectedId.value = null;
   loadVisits();
 }
@@ -1139,7 +1150,7 @@ watch(linkId, () => {
   link.value = null;
   visits.value = [];
   total.value = 0;
-  page.value = 1;
+  visitFilters.setPage(1);
   selectedId.value = null;
   loadError.value = null;
   loaded.value = false;
